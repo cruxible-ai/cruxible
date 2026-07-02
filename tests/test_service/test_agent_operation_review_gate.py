@@ -30,6 +30,11 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.graph.assertion_state import (
+    RelationshipAssertion,
+    RelationshipReviewState,
+)
+from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
 from cruxible_core.service import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
@@ -507,4 +512,93 @@ class TestAgentOperationReviewGate:
         )
 
         assert result.valid is True
+        assert _work_item_status(instance) == "closed"
+
+
+class TestCloseGatePendingEdgeExploit:
+    """Regression for wi-close-gate-requires-approved-review.
+
+    The close gate query ``approved_reviews_for_work_item`` previously used
+    ``relationship_state: reviewable`` (live OR review-pending edges). A
+    ``review_request_for_work_item`` edge whose relationship-review assertion is
+    still ``pending`` -- i.e. the link itself never cleared review -- therefore
+    satisfied the gate, letting a WorkItem close with no adjudicated review.
+    Switching the query to ``relationship_state: live`` drops pending/rejected
+    edges while keeping the legitimate direct-write (``unreviewed``) edge that
+    an approved ReviewRequest is linked by.
+    """
+
+    @staticmethod
+    def _seed_approved_review_without_edge(instance: CruxibleInstance) -> None:
+        """Create an APPROVED rr-gated (actor-guarded, note co-written), no work edge."""
+        service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="ReviewRequest",
+                        entity_id="rr-gated",
+                        properties={
+                            "review_request_id": "rr-gated",
+                            "title": "Review gated work item",
+                            "status": "approved",
+                        },
+                    ),
+                    _review_note_entity(),
+                ],
+                relationships=[_note_about_review("sn-gated", "rr-gated")],
+            ),
+            actor_context=_actor_context(),
+        )
+
+    @staticmethod
+    def _link_review_with_review_status(
+        instance: CruxibleInstance,
+        *,
+        review_status: str,
+    ) -> None:
+        """Attach rr-gated -> wi-gated with an explicit assertion review status."""
+        graph = instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                from_type="ReviewRequest",
+                from_id="rr-gated",
+                relationship_type="review_request_for_work_item",
+                to_type="WorkItem",
+                to_id="wi-gated",
+                metadata=RelationshipMetadata(
+                    assertion=RelationshipAssertion(
+                        review=RelationshipReviewState(status=review_status)
+                    )
+                ),
+            )
+        )
+        instance.save_graph(graph)
+
+    def test_close_rejected_with_only_pending_review_edge(self, tmp_path: Path) -> None:
+        instance = _agent_operation_instance(tmp_path)
+        _seed_work_item(instance)
+        # An approved ReviewRequest entity, but linked by a still-PENDING edge
+        # that never cleared review -- the exact exploit shape.
+        self._seed_approved_review_without_edge(instance)
+        self._link_review_with_review_status(instance, review_status="pending")
+
+        with pytest.raises(
+            DataValidationError,
+            match="work_item_closed_requires_approved_review",
+        ):
+            _close_work_item(instance)
+
+        assert _work_item_status(instance) == "active"
+
+    def test_close_allowed_with_live_review_edge(self, tmp_path: Path) -> None:
+        instance = _agent_operation_instance(tmp_path)
+        _seed_work_item(instance)
+        self._seed_approved_review_without_edge(instance)
+        # The legitimate link an approved review lands on via direct write:
+        # lifecycle-active and not pending/rejected (unreviewed => live).
+        self._link_review_with_review_status(instance, review_status="unreviewed")
+
+        _close_work_item(instance)
+
         assert _work_item_status(instance) == "closed"
