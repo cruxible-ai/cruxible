@@ -9,8 +9,8 @@ import yaml
 
 from cruxible_core.config.composer import (
     compose_config_sequence,
+    compose_runtime_config_files,
     resolve_config_layers,
-    write_runtime_composed_config,
 )
 from cruxible_core.config.loader import load_config, load_config_from_string, save_config
 from cruxible_core.config.schema import CoreConfig
@@ -22,6 +22,7 @@ from cruxible_core.kits import (
     config_yaml_has_kit_provider_refs,
     copy_kit_runtime_files,
     materialize_kit,
+    resolve_kit_ref,
     write_materialized_kit_metadata,
 )
 from cruxible_core.runtime.instance import CruxibleInstance
@@ -67,6 +68,7 @@ def refuse_auth_managed_without_server_auth(
     )
     if not auth_managed_types:
         return
+    resolved_config_path = Path(instance_config_path).expanduser().resolve()
     names = ", ".join(auth_managed_types)
     raise ConfigError(
         f"Refusing to load a config that declares auth-managed entity type(s) "
@@ -77,7 +79,7 @@ def refuse_auth_managed_without_server_auth(
         f"CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET set (see docs/quickstart.md).\n"
         f"  Option B: remove `auth_managed: true` and `write_policy: mint_only` "
         f"from entity type(s) [{names}] in this instance's config copy at "
-        f"{instance_config_path}."
+        f"{resolved_config_path}."
     )
 
 
@@ -138,6 +140,16 @@ def service_init(
         raise ConfigError("Provide exactly one of config_path, config_yaml, or kit")
 
     if normalized_kit is not None:
+        # Check the kit's entry config from the resolved bundle BEFORE
+        # materialization copies any kit file into the instance root, so an
+        # auth-off refusal leaves the root untouched.
+        bundle = resolve_kit_ref(normalized_kit)
+        bundle_entry_config = bundle.root / bundle.manifest.entry_config
+        if bundle_entry_config.is_file():
+            refuse_auth_managed_without_server_auth(
+                load_config(bundle_entry_config),
+                instance_config_path=bundle_entry_config,
+            )
         materialized_config = materialize_kit(
             kit=normalized_kit,
             root=root,
@@ -151,6 +163,11 @@ def service_init(
         config = load_config_from_string(config_yaml)
         config = compose_config_sequence(
             resolve_config_layers(config, config_dir=root),
+        )
+        # Refuse before the managed config copy is written to disk.
+        refuse_auth_managed_without_server_auth(
+            config,
+            instance_config_path=root / _MANAGED_CONFIG_RELATIVE_PATH,
         )
         config_path = _save_managed_config(root, config)
         wrote_managed_config = True
@@ -166,6 +183,11 @@ def service_init(
         try:
             composed = compose_config_sequence(
                 resolve_config_layers(config, config_path=resolved),
+            )
+            # Refuse before the flattened managed config is written to disk.
+            refuse_auth_managed_without_server_auth(
+                composed,
+                instance_config_path=root / _MANAGED_CONFIG_RELATIVE_PATH,
             )
             config_path = _save_managed_config(root, composed)
             wrote_managed_config = True
@@ -231,6 +253,13 @@ def service_init_governed_upload(
                 "does not contain cruxible-kit.yaml. Use `cruxible init --kit` for "
                 "standalone kits, or `cruxible state create-overlay --kit` for overlay kits."
             )
+        # Refuse before any kit runtime file is copied into the governed root so
+        # an auth-off refusal leaves nothing behind (service_init re-checks the
+        # composed config, but by then the copy would already have happened).
+        refuse_auth_managed_without_server_auth(
+            load_config_from_string(config_yaml),
+            instance_config_path=governed_root / _MANAGED_CONFIG_RELATIVE_PATH,
+        )
         if (caller_workspace / KIT_MANIFEST_FILE).exists():
             copy_kit_runtime_files(
                 caller_workspace,
@@ -360,20 +389,28 @@ def service_reload_config(
                 resolve_config_layers(overlay, config_path=overlay_path),
                 runtime=True,
             )
+            # Refuse BEFORE the overlay and composed active config are written so
+            # a refused reload leaves the instance on its previous config.
+            refuse_auth_managed_without_server_auth(
+                composed, instance_config_path=active_path
+            )
             overlay_path.parent.mkdir(parents=True, exist_ok=True)
             overlay_path.write_text(config_yaml)
             active_path.parent.mkdir(parents=True, exist_ok=True)
             save_config(composed, active_path)
         else:
-            composed = write_runtime_composed_config(
+            # Compose in memory and refuse BEFORE the composed active config is
+            # written so a refused reload leaves the instance on its previous config.
+            composed = compose_runtime_config_files(
                 base_path=base_path,
                 overlay_path=overlay_path,
-                output_path=active_path,
             )
+            refuse_auth_managed_without_server_auth(
+                composed, instance_config_path=active_path
+            )
+            active_path.parent.mkdir(parents=True, exist_ok=True)
+            save_config(composed, active_path)
         warnings = validate_config(composed)
-        refuse_auth_managed_without_server_auth(
-            composed, instance_config_path=active_path
-        )
         if config_path is not None:
             # A new overlay path changes which local file is tracked, but the
             # active config remains the generated upstream+overlay composition.

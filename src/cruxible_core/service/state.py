@@ -12,12 +12,12 @@ from cruxible_core.config.composer import (
     compose_runtime_config_files,
     write_runtime_composed_config,
 )
-from cruxible_core.config.loader import load_config
+from cruxible_core.config.loader import load_config, save_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.kits import materialize_kit
+from cruxible_core.kits import materialize_kit, resolve_kit_ref
 from cruxible_core.kits.state_refs import resolve_state_source
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.execution import service_lock
@@ -84,12 +84,33 @@ def service_create_state_overlay(
 
     resolved = resolve_state_source(transport_ref=transport_ref, state_ref=state_ref)
     pulled = _pull_bundle(resolved.pull_transport_ref)
-    upstream_dir = _materialize_upstream_bundle(root, pulled.root_dir, pulled.manifest.release_id)
 
     normalized_kit = (kit or "").strip() or None
     if normalized_kit is not None and no_kit:
         raise ConfigError("Provide kit or no_kit, not both")
     selected_kit = None if no_kit else (normalized_kit or resolved.default_kit)
+
+    composed_path = root / ".cruxible" / "composed" / "config.yaml"
+    # Refuse an auth-managed config on an auth-off daemon BEFORE anything is
+    # written into the overlay root. The auth_managed flag must appear
+    # syntactically in one of the two config layers, so checking the pulled base
+    # config (still in its temp bundle) and the overlay kit's entry config (still
+    # in its resolved bundle) covers every composition; the in-memory composed
+    # check below is belt-and-braces.
+    refuse_auth_managed_without_server_auth(
+        load_config(pulled.root_dir / "config.yaml"),
+        instance_config_path=composed_path,
+    )
+    if selected_kit is not None:
+        kit_bundle = resolve_kit_ref(selected_kit)
+        kit_entry_config = kit_bundle.root / kit_bundle.manifest.entry_config
+        if kit_entry_config.is_file():
+            refuse_auth_managed_without_server_auth(
+                load_config(kit_entry_config),
+                instance_config_path=composed_path,
+            )
+
+    upstream_dir = _materialize_upstream_bundle(root, pulled.root_dir, pulled.manifest.release_id)
 
     overlay_path = (
         materialize_kit(
@@ -102,20 +123,16 @@ def service_create_state_overlay(
         if selected_kit is not None
         else _write_default_overlay_config(root, pulled.manifest.state_id, upstream_dir)
     )
-    composed_path = root / ".cruxible" / "composed" / "config.yaml"
-    write_runtime_composed_config(
+    composed = compose_runtime_config_files(
         base_path=upstream_dir / "config.yaml",
         overlay_path=overlay_path,
-        output_path=composed_path,
     )
-
-    # Refuse an overlay whose composed config declares auth-managed entity types
-    # on an auth-off daemon before the instance is materialized (hosted-init callers
-    # clean up the partial root on any exception).
     refuse_auth_managed_without_server_auth(
-        load_config(composed_path),
+        composed,
         instance_config_path=composed_path,
     )
+    composed_path.parent.mkdir(parents=True, exist_ok=True)
+    save_config(composed, composed_path)
 
     instance = CruxibleInstance.init(
         root,
@@ -234,13 +251,25 @@ def service_pull_state_apply(
     if preview.conflicts:
         raise ConfigError("State pull preview has blocking conflicts", errors=preview.conflicts)
 
+    root = instance.get_root_path()
+    # The pull activates the target release's composed config: refuse an
+    # auth-managed composition on an auth-off daemon BEFORE the pre-pull snapshot,
+    # upstream materialization, or active-config overwrite happen. Composed in
+    # memory from the still-temporary pulled bundle.
+    refuse_auth_managed_without_server_auth(
+        compose_runtime_config_files(
+            base_path=pulled.root_dir / "config.yaml",
+            overlay_path=root / upstream.overlay_config_path,
+        ),
+        instance_config_path=instance.get_config_path(),
+    )
+
     pre_pull_snapshot_id = service_create_snapshot(
         instance,
         label=f"pre-pull-{preview.target_release_id}",
         actor_context=actor_context,
     ).snapshot.snapshot_id
 
-    root = instance.get_root_path()
     upstream_dir = _materialize_upstream_bundle(root, pulled.root_dir, pulled.manifest.release_id)
     write_runtime_composed_config(
         base_path=upstream_dir / "config.yaml",

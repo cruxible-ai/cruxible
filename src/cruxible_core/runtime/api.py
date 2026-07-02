@@ -1333,12 +1333,24 @@ def clone_snapshot_governed(
     check_permission("cruxible_clone_snapshot", instance_id=instance_id)
     validate_root_dir(root_dir)
     instance = get_manager().get(instance_id)
-    registered = get_registry().create_governed_instance(workspace_root=root_dir)
-    result = service_clone_snapshot(
-        instance,
-        snapshot_id,
-        registered.record.location,
-        instance_mode=CruxibleInstance.GOVERNED_MODE,
+    # Mirror hosted init: clone into the reserved location first and register the
+    # row only on success, so a refused/failed clone leaves neither a stale
+    # registry row nor a partial instance root behind.
+    registry = get_registry()
+    clone_instance_id = registry.generate_governed_instance_id()
+    clone_root = registry.governed_instance_location(clone_instance_id)
+    try:
+        result = service_clone_snapshot(
+            instance,
+            snapshot_id,
+            clone_root,
+            instance_mode=CruxibleInstance.GOVERNED_MODE,
+        )
+    except Exception:
+        shutil.rmtree(clone_root, ignore_errors=True)
+        raise
+    registered = registry.create_governed_instance_with_id(
+        clone_instance_id, workspace_root=root_dir
     )
     get_manager().register(registered.record.instance_id, result.instance)
     return contracts.CloneSnapshotResult(
@@ -3185,15 +3197,25 @@ def create_state_overlay_governed(
     """Create a daemon-owned governed overlay from a published state release."""
     check_permission("cruxible_state_create_overlay", instance_id=root_dir)
     validate_root_dir(root_dir)
-    registered = get_registry().create_governed_instance(workspace_root=root_dir)
-    result = service_create_state_overlay(
-        transport_ref=transport_ref,
-        state_ref=state_ref,
-        kit=kit,
-        no_kit=no_kit,
-        root_dir=registered.record.location,
-        instance_mode=CruxibleInstance.GOVERNED_MODE,
-    )
+    # Mirror hosted init: build the overlay at the reserved location first and
+    # register the row only on success, so a refused/failed overlay leaves neither
+    # a stale registry row nor a partial instance root behind.
+    registry = get_registry()
+    instance_id = registry.generate_governed_instance_id()
+    instance_root = registry.governed_instance_location(instance_id)
+    try:
+        result = service_create_state_overlay(
+            transport_ref=transport_ref,
+            state_ref=state_ref,
+            kit=kit,
+            no_kit=no_kit,
+            root_dir=instance_root,
+            instance_mode=CruxibleInstance.GOVERNED_MODE,
+        )
+    except Exception:
+        shutil.rmtree(instance_root, ignore_errors=True)
+        raise
+    registered = registry.create_governed_instance_with_id(instance_id, workspace_root=root_dir)
     get_manager().register(registered.record.instance_id, result.instance)
     return contracts.StateOverlayResult(
         instance_id=registered.record.instance_id,
