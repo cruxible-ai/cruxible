@@ -608,6 +608,7 @@ decision_policies:
 
 named_queries:
   matters_impacted_by_opinion:
+    explicit: true
     mode: traversal
     description: Starting from an opinion, find matters judged affected by that opinion.
     entry_point: Opinion
@@ -617,6 +618,7 @@ named_queries:
         direction: outgoing
 
   client_impact_watch:
+    explicit: true
     mode: traversal
     description: Starting from a client, find opinions judged to affect that client's matters.
     entry_point: Client
@@ -628,6 +630,7 @@ named_queries:
         direction: incoming
 
   matter_statutory_scope:
+    explicit: true
     mode: traversal
     description: Starting from a matter, find statutes and doctrines accepted as within the matter's legal scope.
     entry_point: Matter
@@ -637,6 +640,7 @@ named_queries:
         direction: outgoing
 
   adverse_authority_for_matter:
+    explicit: true
     mode: traversal
     description: Starting from a matter, find opinions whose holdings undermine arguments in that matter.
     entry_point: Matter
@@ -650,6 +654,7 @@ named_queries:
         direction: incoming
 
   supporting_authority_for_matter:
+    explicit: true
     mode: traversal
     description: Starting from a matter, find opinions whose holdings support arguments in that matter.
     entry_point: Matter
@@ -663,6 +668,7 @@ named_queries:
         direction: incoming
 
   negative_treatment_for_cited_authorities:
+    explicit: true
     mode: traversal
     description: Starting from a matter, find new opinions that negatively treat authorities cited by matter arguments.
     entry_point: Matter
@@ -676,6 +682,7 @@ named_queries:
         direction: incoming
 
   precedent_chain_for_issue:
+    explicit: true
     mode: traversal
     description: Starting from a legal issue, find opinions with reviewed holdings that address the issue.
     entry_point: LegalIssue
@@ -687,6 +694,7 @@ named_queries:
         direction: incoming
 
   statutory_interpretations_for_issue:
+    explicit: true
     mode: traversal
     description: Starting from a legal issue, find statutes interpreted by holdings addressing that issue.
     entry_point: LegalIssue
@@ -698,6 +706,7 @@ named_queries:
         direction: outgoing
 
   review_items_for_matter:
+    explicit: true
     mode: traversal
     description: Starting from a matter, find open or historical review items created by monitored opinions.
     entry_point: Matter
@@ -707,6 +716,7 @@ named_queries:
         direction: incoming
 
   filing_response_obligations_for_matter:
+    explicit: true
     mode: traversal
     description: Starting from a matter, find filings judged to require a response or deadline.
     entry_point: Matter
@@ -716,6 +726,7 @@ named_queries:
         direction: incoming
 
   deadline_watch:
+    explicit: true
     mode: traversal
     description: Starting from an attorney, find deadlines across assigned matters.
     entry_point: Attorney
@@ -727,6 +738,7 @@ named_queries:
         direction: outgoing
 
   argument_track_record:
+    explicit: true
     mode: traversal
     description: Starting from an argument, find case outcomes where that argument was resolved or evaluated.
     entry_point: Argument
@@ -736,6 +748,7 @@ named_queries:
         direction: incoming
 
   case_outcomes_for_matter:
+    explicit: true
     mode: traversal
     description: Starting from a matter, find case outcomes recorded for that matter.
     entry_point: Matter
@@ -745,6 +758,7 @@ named_queries:
         direction: incoming
 
   opinion_review_items:
+    explicit: true
     mode: traversal
     description: Starting from an opinion, find review items created by that opinion.
     entry_point: Opinion
@@ -754,6 +768,7 @@ named_queries:
         direction: outgoing
 
   authorities_in_matter_jurisdiction:
+    explicit: true
     mode: traversal
     description: Starting from a matter, find opinions issued by courts in the matter's jurisdiction.
     entry_point: Matter
@@ -765,6 +780,7 @@ named_queries:
         direction: incoming
 
   opinions_by_judge:
+    explicit: true
     mode: traversal
     description: Starting from a judge, find opinions that judge authored or joined.
     entry_point: Judge
@@ -774,6 +790,7 @@ named_queries:
         direction: incoming
 
   supporting_authority_now_bad_law:
+    explicit: true
     mode: traversal
     description: >
       Starting from a matter, reach its supporting holdings and their opinions,
@@ -793,6 +810,7 @@ named_queries:
         direction: incoming
 
   statute_interpretations_for_matter:
+    explicit: true
     mode: traversal
     description: >
       Starting from a matter, follow its statutory scope to statutes, then find

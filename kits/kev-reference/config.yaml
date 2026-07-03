@@ -92,6 +92,7 @@ relationships:
 
 named_queries:
   vulnerability_products:
+    explicit: true
     mode: traversal
     description: Starting from a vulnerability, return affected products with reference edge evidence.
     entry_point: Vulnerability
@@ -112,6 +113,7 @@ named_queries:
         direction: asc
 
   product_vulnerabilities:
+    explicit: true
     mode: traversal
     description: Starting from a product, return KEV vulnerabilities that affect it.
     entry_point: Product
@@ -131,6 +133,7 @@ named_queries:
         direction: asc
 
   vendor_products:
+    explicit: true
     mode: traversal
     description: Starting from a vendor, return products published by that vendor.
     entry_point: Vendor
@@ -149,6 +152,7 @@ named_queries:
         direction: asc
 
   vendor_vulnerabilities:
+    explicit: true
     mode: traversal
     description: >
       Starting from a vendor, return vulnerabilities across that vendor's

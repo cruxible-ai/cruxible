@@ -857,33 +857,44 @@ _COMPACT_QUERY_KEYS = {
     "order",
 }
 
-_EXPLICIT_QUERY_KEYS = {
-    "allow_relationship_state_override",
-    "dedupe",
-    "example_ids",
-    "include",
-    "limit",
-    "max_paths",
-    "max_paths_per_result",
-    "mode",
-    "name",
-    "order_by",
-    "relationship_state",
-    "required_params",
-    "result_shape",
-    "returns",
-    "select",
-    "traversal",
-    "where",
-    "description",
-    "entry_point",
-}
+_EXPLICIT_QUERY_MARKER = "explicit"
+_EXPLICIT_QUERY_SUGGESTION = (
+    "If this query is intentionally authored in the explicit engine schema, "
+    "add 'explicit: true' to its body."
+)
+_EXPLICIT_QUERY_FORBIDDEN_COMPACT_KEYS = (
+    "traverse",
+    "traverse_all",
+    "bound",
+    "order",
+    "as",
+    "max_depth",
+    "direction",
+)
 
 
-def _looks_explicit_named_query(body: dict[str, Any]) -> bool:
-    """Return true for engine-schema query dicts compact cannot express."""
-    explicit_only = set(body) - _COMPACT_QUERY_KEYS
-    return bool(explicit_only) and set(body) <= _EXPLICIT_QUERY_KEYS
+def _reject_unknown_named_query_keys(name: str, body: dict[str, Any]) -> None:
+    """Fail closed on compact query keys, with explicit-schema escape-hatch guidance."""
+    try:
+        _reject_unknown_keys(f"query '{name}'", body, _COMPACT_QUERY_KEYS)
+    except CompactExpansionError as exc:
+        raise CompactExpansionError(f"{exc}. {_EXPLICIT_QUERY_SUGGESTION}") from None
+
+
+def _explicit_named_query_body(name: str, body: dict[str, Any]) -> dict[str, Any] | None:
+    """Return an explicit engine-schema query body only when the opt-in marker is present."""
+    if body.get(_EXPLICIT_QUERY_MARKER) is not True:
+        return None
+
+    explicit_body = deepcopy(body)
+    explicit_body.pop(_EXPLICIT_QUERY_MARKER, None)
+    for key in _EXPLICIT_QUERY_FORBIDDEN_COMPACT_KEYS:
+        if key in explicit_body:
+            raise CompactExpansionError(
+                f"query '{name}': explicit body contains compact-grammar key '{key}' "
+                "— remove 'explicit: true' or convert the body"
+            )
+    return explicit_body
 
 
 def _entity_primary_key(entity_types: dict[str, Any], entity_name: str) -> str | None:
@@ -908,9 +919,10 @@ def _expand_named_query(
     """Expand one compact named query to the explicit ``NamedQuerySchema`` shape."""
     if not isinstance(body, dict):
         raise CompactExpansionError(f"query '{name}': body must be a mapping")
-    if _looks_explicit_named_query(body):
-        return deepcopy(body)
-    _reject_unknown_keys(f"query '{name}'", body, _COMPACT_QUERY_KEYS)
+    explicit_body = _explicit_named_query_body(name, body)
+    if explicit_body is not None:
+        return explicit_body
+    _reject_unknown_named_query_keys(name, body)
 
     mode = body.get("mode")
     if mode is None:

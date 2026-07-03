@@ -273,6 +273,7 @@ relationships:
 
 named_queries:
   vulnerability_asset_context:
+    explicit: true
     mode: traversal
     description: >
       Starting from a vulnerability, return internal assets that run affected
@@ -395,6 +396,7 @@ named_queries:
         direction: asc
 
   product_asset_context:
+    explicit: true
     mode: traversal
     description: >
       Starting from a reference product, return assets that run that product,
@@ -487,6 +489,7 @@ named_queries:
         direction: asc
 
   asset_vulnerability_postures_requiring_action:
+    explicit: true
     mode: collection
     description: >
       Return existing asset-vulnerability posture relationships that represent
@@ -516,6 +519,7 @@ named_queries:
         direction: asc
 
   owner_patch_queue:
+    explicit: true
     mode: traversal
     description: >
       Starting from an owner, return approved asset-vulnerability exposures
@@ -590,6 +594,7 @@ named_queries:
         direction: asc
 
   vendor_service_impact:
+    explicit: true
     mode: traversal
     description: >
       Starting from a vendor, trace through affected products, reviewable
@@ -681,6 +686,7 @@ named_queries:
         enum_ref: criticality
 
   control_coverage_gap:
+    explicit: true
     mode: traversal
     description: >
       Starting from a compensating control, find the business services
@@ -768,6 +774,7 @@ named_queries:
         enum_ref: criticality
 
   vulnerability_class_context:
+    explicit: true
     mode: traversal
     description: >
       Starting from a vulnerability class, return reviewable vulnerability

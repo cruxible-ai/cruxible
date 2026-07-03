@@ -387,6 +387,7 @@ relationships:
 
 named_queries:
   incident_impacted_suppliers:
+    explicit: true
     mode: traversal
     description: Starting from an incident, find suppliers judged impacted.
     entry_point: Incident
@@ -396,6 +397,7 @@ named_queries:
         direction: outgoing
 
   incident_impacted_components:
+    explicit: true
     mode: traversal
     description: Starting from an incident, find components judged impacted via the supplier cascade.
     entry_point: Incident
@@ -405,6 +407,7 @@ named_queries:
         direction: outgoing
 
   incident_impacted_assemblies:
+    explicit: true
     mode: traversal
     description: >
       Starting from an incident, find assemblies judged impacted via direct
@@ -416,6 +419,7 @@ named_queries:
         direction: outgoing
 
   incident_exposed_assembly_context:
+    explicit: true
     mode: traversal
     description: >
       Starting from an incident, derive assembly context exposed by accepted
@@ -431,6 +435,7 @@ named_queries:
         max_depth: 8
 
   incident_component_exposed_products:
+    explicit: true
     mode: traversal
     description: >
       Starting from an incident, derive finished products exposed through
@@ -449,6 +454,7 @@ named_queries:
         direction: outgoing
 
   incident_direct_assembly_exposed_products:
+    explicit: true
     mode: traversal
     description: >
       Starting from an incident, derive finished products exposed through
@@ -463,6 +469,7 @@ named_queries:
         direction: outgoing
 
   incident_nested_assembly_exposed_products:
+    explicit: true
     mode: traversal
     description: >
       Starting from an incident, derive finished products exposed through
@@ -479,6 +486,7 @@ named_queries:
         direction: outgoing
 
   incident_exposed_shipments:
+    explicit: true
     mode: traversal
     description: >
       Starting from an incident, derive outbound shipments exposed through
@@ -504,6 +512,7 @@ named_queries:
         direction: outgoing
 
   single_source_components_for_incident:
+    explicit: true
     mode: traversal
     description: >
       Starting from an incident, find impacted components that have only one
@@ -518,6 +527,7 @@ named_queries:
           alternate_state: no_alternate
 
   single_source_assemblies_for_incident:
+    explicit: true
     mode: traversal
     description: >
       Starting from an incident, find impacted directly supplied assemblies
@@ -531,6 +541,7 @@ named_queries:
           alternate_state: no_alternate
 
   supplier_supplied_components:
+    explicit: true
     mode: traversal
     description: Starting from a supplier, find directly supplied components.
     entry_point: Supplier
@@ -540,6 +551,7 @@ named_queries:
         direction: outgoing
 
   supplier_supplied_assemblies:
+    explicit: true
     mode: traversal
     description: Starting from a supplier, find directly supplied assemblies.
     entry_point: Supplier
@@ -549,6 +561,7 @@ named_queries:
         direction: outgoing
 
   component_parent_assemblies:
+    explicit: true
     mode: traversal
     description: >
       Starting from a component, find direct and higher-level parent assemblies
@@ -561,6 +574,7 @@ named_queries:
         max_depth: 8
 
   assembly_child_components:
+    explicit: true
     mode: traversal
     description: Starting from an assembly, find direct child components.
     entry_point: Assembly
@@ -570,6 +584,7 @@ named_queries:
         direction: incoming
 
   assembly_child_assemblies:
+    explicit: true
     mode: traversal
     description: Starting from an assembly, find direct child assemblies.
     entry_point: Assembly
@@ -579,6 +594,7 @@ named_queries:
         direction: incoming
 
   product_top_level_assemblies:
+    explicit: true
     mode: traversal
     description: Starting from a product, find top-level assemblies in its BOM.
     entry_point: Product
@@ -588,6 +604,7 @@ named_queries:
         direction: incoming
 
   product_shipments:
+    explicit: true
     mode: traversal
     description: Starting from a product, find shipments containing it.
     entry_point: Product
@@ -597,6 +614,7 @@ named_queries:
         direction: outgoing
 
   product_buffer_assessments:
+    explicit: true
     mode: traversal
     description: Starting from a product, find current buffer assessments used for product exposure context.
     entry_point: Product
@@ -606,6 +624,7 @@ named_queries:
         direction: outgoing
 
   component_inventory_positions:
+    explicit: true
     mode: traversal
     description: Starting from a component, find inventory positions for that component.
     entry_point: Component
@@ -615,6 +634,7 @@ named_queries:
         direction: outgoing
 
   assembly_inventory_positions:
+    explicit: true
     mode: traversal
     description: Starting from an assembly, find inventory positions for that assembly.
     entry_point: Assembly
@@ -624,6 +644,7 @@ named_queries:
         direction: outgoing
 
   shipment_products:
+    explicit: true
     mode: traversal
     description: Starting from a shipment, find products contained in it.
     entry_point: Shipment
@@ -633,6 +654,7 @@ named_queries:
         direction: incoming
 
   supplier_impacting_incidents:
+    explicit: true
     mode: traversal
     description: Starting from a supplier, find incidents judged to impact it.
     entry_point: Supplier
@@ -642,6 +664,7 @@ named_queries:
         direction: incoming
 
   product_component_impacting_incidents:
+    explicit: true
     mode: traversal
     description: Starting from a product, find incidents that impact components in its BOM.
     entry_point: Product
@@ -656,6 +679,7 @@ named_queries:
         direction: incoming
 
   product_direct_assembly_impacting_incidents:
+    explicit: true
     mode: traversal
     description: Starting from a product, find incidents that directly impact top-level assemblies in its BOM.
     entry_point: Product
@@ -667,6 +691,7 @@ named_queries:
         direction: incoming
 
   product_nested_assembly_impacting_incidents:
+    explicit: true
     mode: traversal
     description: Starting from a product, find incidents that directly impact nested assemblies in its BOM.
     entry_point: Product
@@ -681,6 +706,7 @@ named_queries:
         direction: incoming
 
   assembly_impacting_incidents:
+    explicit: true
     mode: traversal
     description: Starting from an assembly, find incidents judged to impact it directly.
     entry_point: Assembly

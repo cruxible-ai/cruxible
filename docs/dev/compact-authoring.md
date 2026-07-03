@@ -6,6 +6,34 @@ Compact configs are YAML that expand deterministically to the explicit
 
 The compact reference kit is `kits/agent-operation/config.yaml`.
 
+## Explicit Engine-Schema Query Bodies
+
+Compact `named_queries:` entries normally use the compact query grammar. If a
+query must embed an explicit engine-schema body that compact cannot express, add
+`explicit: true` inside that query body. The expander strips the marker and
+passes through the remaining mapping verbatim.
+
+```yaml
+named_queries:
+  product_vulnerabilities:
+    explicit: true
+    mode: traversal
+    entry_point: Product
+    returns: Vulnerability
+    traversal:
+      - as: affected_by
+        relationship: vulnerability_affects_product
+        direction: incoming
+    order_by:
+      - by: $result.properties.kev_due_date
+        direction: asc
+        value_type: date
+```
+
+Unsupported keys without `explicit: true` always error. Do not add the marker to
+a compact query body: compact-only keys such as `traverse`, `traverse_all`,
+`bound`, `order`, `as`, and `max_depth` are rejected in explicit bodies.
+
 ## Traversal Steps
 
 Single-relationship traversal steps may keep relying on direction inference from
@@ -109,4 +137,16 @@ quality_checks:
         direction: out
         min: 1
       severity: error
+```
+
+Quality-check mappings with both `name` and `kind` are structural explicit
+engine-schema forms and pass through unchanged. Any quality-check mapping without
+both keys follows the single-key compact form above.
+
+```yaml
+quality_checks:
+  - name: minimum_assets_loaded
+    kind: bounds
+    target: Asset
+    min: 1
 ```
