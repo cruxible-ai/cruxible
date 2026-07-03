@@ -8,75 +8,87 @@ description: >
 
 entity_types:
   Vendor:
-    description: Vendor or software publisher, identified by CPE vendor string.
+    description: "Vendor or software publisher, identified by CPE vendor string."
+    id: vendor_id
     properties:
-      vendor_id: {primary_key: true}
-      name: {indexed: true}
+      name: string indexed
 
   Product:
-    description: Product identified by CPE vendor and product strings.
+    description: "Product identified by CPE vendor and product strings."
+    id: product_id
     properties:
-      product_id: {primary_key: true}
-      vendor_id: {}
-      vendor_name: {}
-      product_name: {indexed: true}
-      cpe_vendor: {}
-      cpe_product: {}
-      cpe_part: {}
+      vendor_id: string
+      vendor_name: string
+      product_name: string indexed
+      cpe_vendor: string
+      cpe_product: string
+      cpe_part: string
 
   Vulnerability:
-    description: Public vulnerability record from CISA KEV catalog.
+    description: "Public vulnerability record from CISA KEV catalog."
+    id: cve_id
     properties:
-      cve_id: {primary_key: true}
-      vulnerability_name: {optional: true}
-      description: {}
-      date_added_to_kev: {type: date, optional: true}
-      kev_due_date: {type: date, optional: true}
-      required_action: {optional: true}
-      known_ransomware_use: {enum: [Known, Unknown], optional: true}
-      cvss_score: {type: number, optional: true}
-      cvss_severity: {optional: true}
-      epss_score: {type: number, optional: true}
-      epss_percentile: {type: number, optional: true}
-      cwes: {type: json, optional: true}
+      vulnerability_name: string
+      description: string
+      date_added_to_kev: date
+      kev_due_date: date
+      required_action: string
+      known_ransomware_use:
+        enum:
+        - Known
+        - Unknown
+        optional: true
+      cvss_score:
+        type: number
+        optional: true
+      cvss_severity: string
+      epss_score:
+        type: number
+        optional: true
+      epss_percentile:
+        type: number
+        optional: true
+      cwes:
+        type: json
+        optional: true
 
 relationships:
-  - name: product_from_vendor
-    description: Deterministic product-to-vendor mapping from CPE structure.
-    from: Product
-    to: Vendor
-
-  - name: vulnerability_affects_product
-    description: >
-      Public reference mapping from vulnerability to affected product.
-      Version ranges aggregated from NVD CPE match configurations.
-    from: Vulnerability
-    to: Product
+  - product_from_vendor: Product -> Vendor  # Deterministic product-to-vendor mapping from CPE structure.
+  - vulnerability_affects_product: Vulnerability -> Product
+    description: |
+      Public reference mapping from vulnerability to affected product. Version ranges aggregated from NVD CPE match configurations.
     properties:
-      source: {}
-      source_record_id: {}
-      cpe_part: {optional: true}
-      cpe_vendor: {optional: true}
-      cpe_product: {optional: true}
+      source: string
+      source_record_id: string
+      cpe_part: string
+      cpe_vendor: string
+      cpe_product: string
       affected_versions:
         type: json
-        description: >
-          List of affected version ranges from NVD CPE match data.
+        description: 'List of affected version ranges from NVD CPE match data.
+      
+          '
         json_schema:
           type: array
           items:
             type: object
             properties:
-              version_start_including: {type: string}
-              version_start_excluding: {type: string}
-              version_end_including: {type: string}
-              version_end_excluding: {type: string}
-              fixed_version: {type: string}
-      fixed_version: {optional: true}
-      default_status: {optional: true}
-      vulnerable: {type: bool}
-      version_logic: {optional: true}
-      source_last_modified_at: {type: datetime, optional: true}
+              version_start_including:
+                type: string
+              version_start_excluding:
+                type: string
+              version_end_including:
+                type: string
+              version_end_excluding:
+                type: string
+              fixed_version:
+                type: string
+      fixed_version: string
+      default_status: string
+      vulnerable:
+        type: bool
+      version_logic: string
+      source_last_modified_at: datetime
 
 named_queries:
   vulnerability_products:
@@ -171,7 +183,6 @@ quality_checks:
     relationship_type: vulnerability_affects_product
     property: affected_versions
     rule: no_empty_objects_in_array
-
   - name: affected_versions_have_useful_keys
     kind: json_content
     severity: warning
@@ -180,23 +191,21 @@ quality_checks:
     property: affected_versions
     rule: required_nested_keys
     keys:
-      - version_start_including
-      - version_start_excluding
-      - version_end_including
-      - version_end_excluding
-      - version_exact
-      - fixed_version
+    - version_start_including
+    - version_start_excluding
+    - version_end_including
+    - version_end_excluding
+    - version_exact
+    - fixed_version
     match: any
-
-  - name: products_have_exactly_one_vendor
-    kind: cardinality
-    severity: error
-    entity_type: Product
-    relationship_type: product_from_vendor
-    direction: outgoing
-    min_count: 1
-    max_count: 1
-
+  - products_have_exactly_one_vendor:
+      cardinality:
+        entity: Product
+        relationship: product_from_vendor
+        direction: out
+        min: 1
+        max: 1
+      severity: error
   - name: product_vendor_id_matches_vendor_edge
     kind: relationship_property_consistency
     description: Product.vendor_id should match the linked Vendor identity.
@@ -207,7 +216,6 @@ quality_checks:
     source_property: vendor_id
     target_property: vendor_id
     allow_missing_source: false
-
   - name: product_vendor_name_matches_vendor_edge
     kind: relationship_property_consistency
     description: Product.vendor_name, when present, should match the linked Vendor name.

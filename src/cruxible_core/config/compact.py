@@ -857,6 +857,34 @@ _COMPACT_QUERY_KEYS = {
     "order",
 }
 
+_EXPLICIT_QUERY_KEYS = {
+    "allow_relationship_state_override",
+    "dedupe",
+    "example_ids",
+    "include",
+    "limit",
+    "max_paths",
+    "max_paths_per_result",
+    "mode",
+    "name",
+    "order_by",
+    "relationship_state",
+    "required_params",
+    "result_shape",
+    "returns",
+    "select",
+    "traversal",
+    "where",
+    "description",
+    "entry_point",
+}
+
+
+def _looks_explicit_named_query(body: dict[str, Any]) -> bool:
+    """Return true for engine-schema query dicts compact cannot express."""
+    explicit_only = set(body) - _COMPACT_QUERY_KEYS
+    return bool(explicit_only) and set(body) <= _EXPLICIT_QUERY_KEYS
+
 
 def _entity_primary_key(entity_types: dict[str, Any], entity_name: str) -> str | None:
     """Return the primary-key property name for an entity type, if any."""
@@ -880,6 +908,8 @@ def _expand_named_query(
     """Expand one compact named query to the explicit ``NamedQuerySchema`` shape."""
     if not isinstance(body, dict):
         raise CompactExpansionError(f"query '{name}': body must be a mapping")
+    if _looks_explicit_named_query(body):
+        return deepcopy(body)
     _reject_unknown_keys(f"query '{name}'", body, _COMPACT_QUERY_KEYS)
 
     mode = body.get("mode")
@@ -1588,8 +1618,14 @@ def _expand_quality_checks(raw_checks: list[Any]) -> list[dict[str, Any]]:
     """
     out: list[dict[str, Any]] = []
     for item in raw_checks:
-        if not isinstance(item, dict) or len(item) != 1:
+        if not isinstance(item, dict):
+            raise CompactExpansionError(f"quality check must be a mapping, got {item!r}")
+        if "name" in item and "kind" in item:
+            out.append(deepcopy(item))
+            continue
+        if len(item) != 1:
             raise CompactExpansionError(f"quality check must be a single-key mapping, got {item!r}")
+
         name, body = next(iter(item.items()))
 
         if not isinstance(body, dict):

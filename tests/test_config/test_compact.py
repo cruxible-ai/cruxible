@@ -1720,9 +1720,19 @@ def test_looks_compact_distinguishes_compact_from_explicit() -> None:
     compact = _yaml.safe_load((KIT_DIR / "config.yaml").read_text(encoding="utf-8"))
     assert looks_compact(compact) is True
 
-    explicit = _yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / "kits" / "kev-reference" / "config.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    explicit = {
+        "version": "1.0",
+        "name": "explicit_fixture",
+        "entity_types": {
+            "Thing": {
+                "properties": {
+                    "thing_id": {"primary_key": True},
+                    "label": {"indexed": True},
+                }
+            }
+        },
+        "relationships": [
+            {"name": "thing_related_to_thing", "from": "Thing", "to": "Thing"}
+        ],
+    }
     assert looks_compact(explicit) is False
