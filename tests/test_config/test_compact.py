@@ -591,6 +591,96 @@ def test_bound_caps_an_auto_include_set() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Explicit named-query escape hatch
+# ---------------------------------------------------------------------------
+
+
+def test_explicit_named_query_keys_without_marker_raise_with_marker_suggestion() -> None:
+    with pytest.raises(CompactExpansionError) as excinfo:
+        _expand(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: collection
+                returns: WorkItem
+                dedupe: path
+            """,
+        )
+
+    message = str(excinfo.value)
+    assert "query 'q': unsupported key 'dedupe'" in message
+    assert "add 'explicit: true' to its body" in message
+
+
+def test_explicit_named_query_marker_rejects_compact_only_keys() -> None:
+    with pytest.raises(
+        CompactExpansionError,
+        match=(
+            "query 'q': explicit body contains compact-grammar key 'order' "
+            ".*remove 'explicit: true' or convert the body"
+        ),
+    ):
+        _expand(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                explicit: true
+                mode: collection
+                returns: WorkItem
+                order:
+                  - title asc string
+            """,
+        )
+
+
+def test_explicit_named_query_marker_passes_through_and_is_stripped() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            explicit: true
+            mode: traversal
+            description: Explicit engine-schema query body.
+            entry_point: Actor
+            returns: WorkItem
+            result_shape: path
+            dedupe: path
+            relationship_state: reviewable
+            max_paths: 25
+            traversal:
+              - as: work_item
+                relationship: work_item_owned_by_actor
+                direction: incoming
+            order_by:
+              - by: $result.entity_id
+                direction: asc
+        """,
+    )
+
+    assert config["named_queries"]["q"] == {
+        "mode": "traversal",
+        "description": "Explicit engine-schema query body.",
+        "entry_point": "Actor",
+        "returns": "WorkItem",
+        "result_shape": "path",
+        "dedupe": "path",
+        "relationship_state": "reviewable",
+        "max_paths": 25,
+        "traversal": [
+            {
+                "as": "work_item",
+                "relationship": "work_item_owned_by_actor",
+                "direction": "incoming",
+            }
+        ],
+        "order_by": [{"by": "$result.entity_id", "direction": "asc"}],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Where scopes
 # ---------------------------------------------------------------------------
 
@@ -1720,9 +1810,19 @@ def test_looks_compact_distinguishes_compact_from_explicit() -> None:
     compact = _yaml.safe_load((KIT_DIR / "config.yaml").read_text(encoding="utf-8"))
     assert looks_compact(compact) is True
 
-    explicit = _yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / "kits" / "kev-reference" / "config.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    explicit = {
+        "version": "1.0",
+        "name": "explicit_fixture",
+        "entity_types": {
+            "Thing": {
+                "properties": {
+                    "thing_id": {"primary_key": True},
+                    "label": {"indexed": True},
+                }
+            }
+        },
+        "relationships": [
+            {"name": "thing_related_to_thing", "from": "Thing", "to": "Thing"}
+        ],
+    }
     assert looks_compact(explicit) is False

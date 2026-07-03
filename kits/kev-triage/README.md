@@ -92,16 +92,16 @@ flowchart LR
   classDef governedWorkflow fill:#e67e22,stroke:#a0521c,color:#fff
 
   workflow_pipeline_build_local_state["1. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_propose_asset_products["2. Asset Runs Product<br/>Governed proposal"]
-  workflow_pipeline_propose_vulnerability_classification["3. Vulnerability Classified As<br/>Governed proposal"]
-  workflow_pipeline_propose_asset_exposure["4. Asset Vulnerability Posture<br/>Governed proposal"]
-  workflow_pipeline_propose_exposure_reconciliation["5. Asset Remediated Vulnerability<br/>Governed proposal"]
-  workflow_pipeline_build_local_state --> workflow_pipeline_propose_asset_products
-  workflow_pipeline_propose_asset_products --> workflow_pipeline_propose_vulnerability_classification
-  workflow_pipeline_propose_vulnerability_classification --> workflow_pipeline_propose_asset_exposure
-  workflow_pipeline_propose_asset_exposure --> workflow_pipeline_propose_exposure_reconciliation
+  workflow_pipeline_propose_asset_exposure["2. Asset Vulnerability Posture<br/>Governed proposal"]
+  workflow_pipeline_propose_asset_products["3. Asset Runs Product<br/>Governed proposal"]
+  workflow_pipeline_propose_exposure_reconciliation["4. Asset Remediated Vulnerability<br/>Governed proposal"]
+  workflow_pipeline_propose_vulnerability_classification["5. Vulnerability Classified As<br/>Governed proposal"]
+  workflow_pipeline_build_local_state --> workflow_pipeline_propose_asset_exposure
+  workflow_pipeline_propose_asset_exposure --> workflow_pipeline_propose_asset_products
+  workflow_pipeline_propose_asset_products --> workflow_pipeline_propose_exposure_reconciliation
+  workflow_pipeline_propose_exposure_reconciliation --> workflow_pipeline_propose_vulnerability_classification
   class workflow_pipeline_build_local_state canonicalWorkflow
-  class workflow_pipeline_propose_asset_products,workflow_pipeline_propose_vulnerability_classification,workflow_pipeline_propose_asset_exposure,workflow_pipeline_propose_exposure_reconciliation governedWorkflow
+  class workflow_pipeline_propose_asset_exposure,workflow_pipeline_propose_asset_products,workflow_pipeline_propose_exposure_reconciliation,workflow_pipeline_propose_vulnerability_classification governedWorkflow
 ```
 <!-- CRUXIBLE:END workflow-pipeline -->
 
@@ -120,21 +120,49 @@ flowchart LR
 **Provider source**
 - Parse Local Seed Bundle (Python Function, v1.0.0); source: `src/cruxible_core/providers/common/tabular.py::load_tabular_artifact_bundle`; artifact: Local Seed Bundle
 
-### 2. Propose Asset Products
+### 2. Propose Asset Exposure
 
 **Role:** Governed proposal
 
 **Input context**
-- Entity context: Product
+- Query context: Asset, Compensating Control, Asset Has Control, Asset Runs Product, Control Mitigates Class, Vulnerability Affects Product, Vulnerability Classified As
+
+**Result**
+- Proposed relationships: Asset Vulnerability Posture
+
+**Provider source**
+- Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
+- Assess Asset Exposure (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_exposure`
+
+### 3. Propose Asset Products
+
+**Role:** Governed proposal
+
+**Input context**
+- Query context: Product
 
 **Result**
 - Proposed relationships: Asset Runs Product
 
 **Provider source**
-- Parse Local Seed Bundle (Python Function, v1.0.0); source: `src/cruxible_core/providers/common/tabular.py::load_tabular_artifact_bundle`; artifact: Local Seed Bundle
 - Match Software To Products (Python Function, v1.0.0); source: `kit://providers/matching.py::match_software_to_products`
+- Parse Local Seed Bundle (Python Function, v1.0.0); source: `src/cruxible_core/providers/common/tabular.py::load_tabular_artifact_bundle`; artifact: Local Seed Bundle
 
-### 3. Propose Vulnerability Classification
+### 4. Propose Exposure Reconciliation
+
+**Role:** Governed proposal
+
+**Input context**
+- Query context: Asset Remediated Vulnerability, Asset Runs Product, Asset Vulnerability Posture, Vulnerability Affects Product
+
+**Result**
+- Proposed relationships: Asset Remediated Vulnerability
+
+**Provider source**
+- Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
+- Assess Exposure Reconciliation (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_exposure_reconciliation`
+
+### 5. Propose Vulnerability Classification
 
 **Role:** Governed proposal
 
@@ -146,35 +174,6 @@ flowchart LR
 
 **Provider source**
 - -
-
-### 4. Propose Asset Exposure
-
-**Role:** Governed proposal
-
-**Input context**
-- Entity context: Asset, Compensating Control
-- Relationship context: Asset Has Control, Asset Runs Product, Control Mitigates Class, Vulnerability Affects Product, Vulnerability Classified As
-
-**Result**
-- Proposed relationships: Asset Vulnerability Posture
-
-**Provider source**
-- Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
-- Assess Asset Exposure (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_exposure`
-
-### 5. Propose Exposure Reconciliation
-
-**Role:** Governed proposal
-
-**Input context**
-- Relationship context: Asset Remediated Vulnerability, Asset Runs Product, Asset Vulnerability Posture, Vulnerability Affects Product
-
-**Result**
-- Proposed relationships: Asset Remediated Vulnerability
-
-**Provider source**
-- Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
-- Assess Exposure Reconciliation (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_exposure_reconciliation`
 <!-- CRUXIBLE:END workflow-summary -->
 
 ## Governed Relationships
@@ -221,13 +220,16 @@ flowchart LR
 
   query_entity_Asset["Asset"]
   query_entity_BusinessService["Business Service"]
+  query_entity_Collection_query["Collection Query"]
   query_entity_CompensatingControl["Compensating Control"]
   query_entity_Owner["Owner"]
   query_entity_Product["Product"]
   query_entity_Vendor["Vendor"]
   query_entity_Vulnerability["Vulnerability"]
   query_entity_VulnerabilityClass["Vulnerability Class"]
-  class query_entity_Asset,query_entity_BusinessService,query_entity_CompensatingControl,query_entity_Owner,query_entity_Product,query_entity_Vendor,query_entity_Vulnerability,query_entity_VulnerabilityClass queryEntity
+  query_entity_asset_vulnerability_posture["Asset Vulnerability Posture"]
+  class query_entity_Asset,query_entity_BusinessService,query_entity_Collection_query,query_entity_CompensatingControl,query_entity_Owner,query_entity_Product,query_entity_Vendor,query_entity_Vulnerability,query_entity_VulnerabilityClass,query_entity_asset_vulnerability_posture queryEntity
+  query_entity_Collection_query --> query_entity_asset_vulnerability_posture
   query_entity_CompensatingControl --> query_entity_BusinessService
   query_entity_Owner --> query_entity_Vulnerability
   query_entity_Product --> query_entity_Asset
@@ -249,45 +251,51 @@ skill or agent harness, not by turning every useful traversal into a governed
 relationship.
 
 <!-- CRUXIBLE:BEGIN query-catalog -->
+### Collection Query
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Asset Vulnerability Postures Requiring Action | collection | Asset Vulnerability Posture | reviewable |  | Return existing asset-vulnerability posture relationships that represent exposed work needing attention. This is a work-queue read surface for current posture facts, not candidate discovery. |
+
 ### Compensating Control
 
-| Query | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- |
-| Control Coverage Gap | Business Service | reviewable | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a compensating control, find the business services with asset-vulnerability posture tied to classes this control covers. This broad investigation query exposes the mitigation effect for agent interpretation: blocks/compensates are stronger mitigation coverage, reduces is risk-reduction coverage, and detects is monitoring rather than blocking mitigation. It keeps accepted, unreviewed, and pending posture/classification context visible where reviewable query visibility allows. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Control Coverage Gap | traversal | Business Service | reviewable | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a compensating control, find the business services with asset-vulnerability posture tied to classes this control covers. This broad investigation query exposes the mitigation effect for agent interpretation: blocks/compensates are stronger mitigation coverage, reduces is risk-reduction coverage, and detects is monitoring rather than blocking mitigation. It keeps accepted, unreviewed, and pending posture/classification context visible where reviewable query visibility allows. |
 
 ### Owner
 
-| Query | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- |
-| Owner Patch Queue | Vulnerability | live | Asset Owned By (Incoming) -> Asset Vulnerability Posture (Outgoing) | Starting from an owner, return approved asset-vulnerability exposures across the owner's assets, excluding pairs already closed or covered by a scoped exception, and decorated with service, broad exception, control, and patch-window context for prioritization. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Owner Patch Queue | traversal | Vulnerability | live | Asset Owned By (Incoming) -> Asset Vulnerability Posture (Outgoing) | Starting from an owner, return approved asset-vulnerability exposures across the owner's assets, excluding pairs already closed or covered by a scoped exception, and decorated with service, broad exception, control, and patch-window context for prioritization. |
 
 ### Product
 
-| Query | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- |
-| Product Asset Context | Asset | reviewable | Asset Runs Product (Incoming) | Starting from a reference product, return assets that run that product, with product-mapping evidence and side context for affected vulnerabilities, exposure state, owners, services, exceptions, controls, and patch windows. |
-| Product Vulnerabilities | Vulnerability | live | Vulnerability Affects Product (Incoming) | Starting from a product, return KEV vulnerabilities that affect it. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Product Asset Context | traversal | Asset | reviewable | Asset Runs Product (Incoming) | Starting from a reference product, return assets that run that product, with product-mapping evidence and side context for affected vulnerabilities, exposure state, owners, services, exceptions, controls, and patch windows. |
+| Product Vulnerabilities | traversal | Vulnerability | live | Vulnerability Affects Product (Incoming) | Starting from a product, return KEV vulnerabilities that affect it. |
 
 ### Vendor
 
-| Query | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- |
-| Vendor Products | Product | live | Product From Vendor (Incoming) | Starting from a vendor, return products published by that vendor. |
-| Vendor Service Impact | Business Service | reviewable | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vendor, trace through affected products, reviewable asset-vulnerability posture, and service dependencies to find business services in the blast radius. This broad investigation query keeps accepted, unreviewed, pending, remediated, and exception-covered context visible so agents can triage from the first result instead of treating it as a strict action queue. |
-| Vendor Vulnerabilities | Vulnerability | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) | Starting from a vendor, return vulnerabilities across that vendor's products, preserving the product evidence path. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Vendor Products | traversal | Product | live | Product From Vendor (Incoming) | Starting from a vendor, return products published by that vendor. |
+| Vendor Service Impact | traversal | Business Service | reviewable | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vendor, trace through affected products, reviewable asset-vulnerability posture, and service dependencies to find business services in the blast radius. This broad investigation query keeps accepted, unreviewed, pending, remediated, and exception-covered context visible so agents can triage from the first result instead of treating it as a strict action queue. |
+| Vendor Vulnerabilities | traversal | Vulnerability | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) | Starting from a vendor, return vulnerabilities across that vendor's products, preserving the product evidence path. |
 
 ### Vulnerability
 
-| Query | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- |
-| Vulnerability Asset Context | Asset | reviewable | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) | Starting from a vulnerability, return internal assets that run affected products, with the relationship evidence needed to tell whether each asset is only a candidate, has pending or accepted exposure state, has remediation state, or is covered by operational context such as owners, services, exceptions, controls, and patch windows. |
-| Vulnerability Products | Product | live | Vulnerability Affects Product (Outgoing) | Starting from a vulnerability, return affected products with reference edge evidence. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Vulnerability Asset Context | traversal | Asset | reviewable | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) | Starting from a vulnerability, return internal assets that run affected products, with the relationship evidence needed to tell whether each asset is only a candidate, has pending or accepted exposure state, has remediation state, or is covered by operational context such as owners, services, exceptions, controls, and patch windows. |
+| Vulnerability Products | traversal | Product | live | Vulnerability Affects Product (Outgoing) | Starting from a vulnerability, return affected products with reference edge evidence. |
 
 ### Vulnerability Class
 
-| Query | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- |
-| Vulnerability Class Context | Vulnerability | reviewable | Vulnerability Classified As (Incoming) | Starting from a vulnerability class, return reviewable vulnerability classifications in the class and include the compensating controls mapped to that class. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Vulnerability Class Context | traversal | Vulnerability | reviewable | Vulnerability Classified As (Incoming) | Starting from a vulnerability class, return reviewable vulnerability classifications in the class and include the compensating controls mapped to that class. |
 <!-- CRUXIBLE:END query-catalog -->
 
 `owner_patch_queue` is the strict action queue: it returns approved exposed
@@ -365,8 +373,8 @@ No configured constraints.
   - `version_mismatch` (`quality_check`): Matched correct product but installed version is wrong.
   - `wrong_product_match` (`provider_fix`): Fuzzy match linked asset to the wrong reference product.
 - Scope keys:
-  - `inventory_source`: `EDGE.inventory_source`
   - `hostname`: `FROM.hostname`
+  - `inventory_source`: `EDGE.inventory_source`
   - `product`: `TO.product_name`
 
 #### `asset_vulnerability_posture`
