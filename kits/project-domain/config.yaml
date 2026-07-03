@@ -128,6 +128,14 @@ relationships:
 
   - roadmap_item_targets_capability: RoadmapItem -> Capability  # Roadmap item targets a capability.
 
+  # --- Ownership / accountability (mirrors the base *_owned_by_actor edges;
+  # ownership is an edge to a mint-materialized Actor, never a string property) ---
+  - roadmap_item_owned_by_actor: RoadmapItem -> Actor  # Actor accountable for a roadmap item.
+
+  - product_area_owned_by_actor: ProductArea -> Actor  # Actor accountable for a product area.
+
+  - capability_owned_by_actor: Capability -> Actor  # Actor accountable for a capability.
+
   # --- Governed interpretation relationships for agent proposals ---
   - roadmap_item_depends_on_roadmap_item: RoadmapItem -> RoadmapItem  # Governed judgment that one roadmap item depends on another roadmap item landing, being decided, or stabilizing first.
     proposal_policy: standard_project
@@ -213,6 +221,11 @@ named_queries:
         from: $entry
         relationship: roadmap_item_targets_capability
         direction: outgoing
+      owner:
+        from: $entry
+        relationship: roadmap_item_owned_by_actor
+        direction: outgoing
+        limit: 1
 
   work_items_for_area:
     mode: traversal
@@ -285,6 +298,11 @@ named_queries:
         from: $entry
         relationship: capability_in_area
         direction: incoming
+      owner:
+        from: $entry
+        relationship: product_area_owned_by_actor
+        direction: outgoing
+        limit: 1
 
   release_readiness_context:
     mode: traversal

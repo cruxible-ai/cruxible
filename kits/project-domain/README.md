@@ -57,9 +57,11 @@ flowchart LR
 
   %% Deterministic canonical relationships
   entity_Capability -- "Capability In Area" --> entity_ProductArea
+  entity_Capability -- "Capability Owned By Actor" --> entity_Actor
   entity_Decision -- "Decision Owned By Actor" --> entity_Actor
   entity_Milestone -- "Milestone In Release" --> entity_ReleaseLine
   entity_OpenQuestion -- "Open Question Owned By Actor" --> entity_Actor
+  entity_ProductArea -- "Product Area Owned By Actor" --> entity_Actor
   entity_ReviewRequest -- "Review Request Assigned To Actor" --> entity_Actor
   entity_ReviewRequest -- "Review Request For Work Item" --> entity_WorkItem
   entity_ReviewRequest -- "Review Request In Milestone" --> entity_Milestone
@@ -68,6 +70,7 @@ flowchart LR
   entity_Risk -- "Risk Owned By Actor" --> entity_Actor
   entity_RoadmapItem -- "Roadmap Item In Milestone" --> entity_Milestone
   entity_RoadmapItem -- "Roadmap Item In Release" --> entity_ReleaseLine
+  entity_RoadmapItem -- "Roadmap Item Owned By Actor" --> entity_Actor
   entity_RoadmapItem -- "Roadmap Item Targets Area" --> entity_ProductArea
   entity_RoadmapItem -- "Roadmap Item Targets Capability" --> entity_Capability
   entity_StateNote -- "State Note About Actor" --> entity_Actor
@@ -110,8 +113,8 @@ flowchart LR
   entity_WorkItem -. "Work Item Depends On Work Item" .-> entity_WorkItem
   entity_WorkItem -. "Work Item Mitigates Risk" .-> entity_Risk
   entity_WorkItem -. "Work Item Supersedes Work Item" .-> entity_WorkItem
-  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 

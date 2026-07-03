@@ -46,38 +46,72 @@ git clone https://github.com/cruxible-ai/cruxible-core.git
 cd cruxible-core
 uv sync --extra server --extra mcp
 source .venv/bin/activate
-
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
 ```
 
-The daemon is local-only by default and binds to `127.0.0.1:8100`. Initialize
-an instance from a kit and run your first query:
+Start the daemon with runtime auth on. It binds to `127.0.0.1:8100`,
+generates a one-time bootstrap secret, and writes it to a `0600` file:
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation
-
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance_id> \
-  query run actor_work_queue --param actor_id=alice --json
+CRUXIBLE_SERVER_AUTH=true CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" \
+  cruxible server start --bootstrap-secret-file "$HOME/.cruxible/bootstrap.secret"
 ```
 
-The returned `instance_id` is the handle every surface (CLI, MCP tools, HTTP
-client, UI) uses from then on. The same query surface is available from
-Python:
+From a second shell, initialize the **agent-operation** kit — durable
+operating state for a team of agents (work items, reviews, decisions,
+risks, actors) — and remember the connection so later commands need no
+flags:
+
+```bash
+export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$HOME/.cruxible/bootstrap.secret")"
+cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --bootstrap
+cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
+```
+
+Claim the admin credential, then mint one for your first agent. **Minting is
+what creates the agent's identity in state**: the kit's `Actor` type is
+auth-managed, so the Actor entity materializes from the mint, and no other
+write path can create one — an agent roster you can trust because it cannot
+be typo'd into existence:
+
+```bash
+cruxible credential claim-bootstrap --secret-file "$HOME/.cruxible/bootstrap.secret"
+export CRUXIBLE_SERVER_BEARER_TOKEN=<admin-token>   # printed once by the claim
+
+cruxible credential mint --label claude --mode graph_write
+export CRUXIBLE_SERVER_BEARER_TOKEN=<claude-token>  # act as the agent from here
+```
+
+Give the agent work and read its queue back. Writes are validated against
+the kit's ontology, attributed to the token's actor, and receipted:
+
+```bash
+cruxible entity add WorkItem wi-first-slice \
+  --set title="Model the first slice of our domain" \
+  --set type=research --set status=active --set priority=high
+
+cruxible relationship add work_item_owned_by_actor WorkItem wi-first-slice Actor claude
+
+cruxible query run actor_work_queue --param actor_id=claude --json
+```
+
+The same surface is available from Python (and MCP, below):
 
 ```python
 from cruxible_client import CruxibleClient
 
-with CruxibleClient(base_url="http://127.0.0.1:8100") as client:
-    result = client.query(
-        "<instance_id>",
-        "actor_work_queue",
-        {"actor_id": "alice"},
-    )
+with CruxibleClient(base_url="http://127.0.0.1:8100", token="<claude-token>") as client:
+    result = client.query("<instance-id>", "actor_work_queue", {"actor_id": "claude"})
     for item in result.items:
         print(item)
 ```
 
-For auth, hardening, and daemon operations, see the
+Auth is on in this path because agent identity lives in the auth layer. To
+run open (no tokens) for a local experiment, start the daemon without
+`CRUXIBLE_SERVER_AUTH` — kits that declare auth-managed identity, like
+agent-operation, refuse to load with an error naming exactly which config
+keys to remove, rather than silently degrading.
+
+For the full bootstrap flow, permission tiers, and hardening, see the
 [Quickstart](docs/quickstart.md) and
 [Runtime Auth And Agent Roles](docs/runtime-auth-and-agent-roles.md).
 
@@ -327,6 +361,22 @@ state.db
 
 ## Kits
 
+A kit packages an ontology with its governance, queries, workflows, and
+providers as one versioned, composable unit.
+
+Start with **agent-operation** — the operating state layer for a team of
+agents, and the kit Cruxible is developed with. It is domain-agnostic: work
+items, review requests, decisions, risks, open questions, and actors apply
+whether your agents write code, run research, or manage a pipeline. Actors
+are auth-managed, review gates are enforced at the write chokepoint (a work
+item cannot close without an approved review), and every agent's writes are
+attributed to its token.
+
+The **KEV pair** is the depth proof for domain state: a public
+known-exploited-vulnerability reference state, plus a governed overlay where
+deterministic ingest, governed proposals (which assets run which products),
+and review workflows run end to end on real data.
+
 | Kit | Kind | Status | What it models |
 |-----|------|--------|----------------|
 | [agent-operation](kits/agent-operation/) | Agent operating state | ready | Work items, review requests, decisions, risks, open questions, state notes, actors, lifecycle, and dependency context. |
@@ -366,7 +416,8 @@ MCP example:
       "command": "cruxible-mcp",
       "env": {
         "CRUXIBLE_MODE": "governed_write",
-        "CRUXIBLE_SERVER_URL": "http://127.0.0.1:8100"
+        "CRUXIBLE_SERVER_URL": "http://127.0.0.1:8100",
+        "CRUXIBLE_SERVER_BEARER_TOKEN": "<agent-token>"
       }
     }
   }

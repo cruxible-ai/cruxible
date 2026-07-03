@@ -138,6 +138,61 @@ reject the edge or alter group state. It is a direct-write verb, so a governed
 Deletion should be reserved for bad imports, test data, or invalid state that
 should not be preserved as operational history.
 
+## Choosing The Right Repair
+
+Every repair verb preserves history except deletion. Pick by symptom:
+
+| Symptom | Repair | Why this verb |
+|---|---|---|
+| A governed edge that passed review turns out to be wrong | Retract the edge (`relationship update --lifecycle-status retracted`), then invalidate the precedent (`group trust --status invalidated`) | The edge stops participating in live reads, and future matching proposals come back for review instead of auto-resolving on the bad precedent |
+| A fact was true and no longer is | Supersede: set lifecycle `superseded` and, where the kit models it, add a `*_supersedes_*` edge to the replacement | The old fact remains inspectable as history; queries follow live state |
+| A fact is temporarily suspended, not wrong | Relationship lifecycle `inactive` | Reversible without erasing or re-reviewing anything |
+| The interpretation or summary is wrong, but the record matters | A note with `kind: correction`, plus a supersedes edge to the note it corrects (in kits that model notes) | Current summaries stay current; the correction chain carries the history instead of a rewritten description |
+| A direct write duplicated a member of a reviewed group | `stamp_existing` at group approval | The reviewed group becomes the authority for the already-live edge (see the constraints above) |
+| Repeated bad outcomes on a resolution path | Record outcomes against the claims, set the resolution to `watch` or `invalidated` | Trust demotion is the feedback loop's job; don't hand-retract edges that are individually defensible |
+| Bad import, test data, invalid state | Delete | The one case where preserving history is wrong — junk is not history |
+
+When in doubt: lifecycle transitions and corrections are cheap and visible;
+deletion and trust invalidation are the two verbs that change what future
+operations are allowed to assume, so they deserve a rationale.
+
+## Adjusting Trust On Precedents
+
+Group resolutions are precedents: an accepted resolution can let matching
+future proposals auto-resolve when the kit's policy allows it. Trust is
+adjusted per resolution:
+
+```bash
+cruxible group resolutions                # find the resolution ID
+cruxible group trust --resolution <id> --status invalidated \
+  --reason "Upstream mapping changed; re-review matches"
+```
+
+- `trusted` — matching future proposals may auto-resolve under policy;
+- `watch` — the precedent stands, but matches come back for review;
+- `invalidated` — the precedent is no longer trusted; matches always re-review.
+
+Trust changes never touch existing edges. Retracting a wrong edge and
+demoting the precedent that admitted it are two separate, deliberate acts.
+
+## Auth-Managed Entities
+
+Entity types declared `auth_managed` (for example the agent-operation kit's
+`Actor`) are outside normal maintenance: they materialize from
+runtime-credential mints, and `write_policy: mint_only` refuses every other
+writer — including lifecycle updates. Their status transitions come from the
+credential lifecycle (revocation materializes the status change), not from
+maintenance verbs. Editorial facts about such an entity belong on notes
+attached to it (e.g. `state_note_about_actor`), never on the entity itself.
+
+## Archiving
+
+There is no archive verb yet. The working pattern for retiring a whole
+instance's worth of history: stop writing to it, keep the daemon (or a
+restored snapshot) available read-only, and start the successor instance
+clean rather than porting closed items — receipts and review threads stay
+queryable where they happened, and the new instance carries only live work.
+
 ## Evaluate And Health
 
 `evaluate` is the low-level graph and config quality checker. It reports facts
