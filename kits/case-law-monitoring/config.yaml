@@ -13,395 +13,335 @@ description: >
 
 entity_types:
   Opinion:
-    description: Published opinion, order, or precedential legal authority monitored by the legal agent.
+    description: "Published opinion, order, or precedential legal authority monitored by the legal agent."
+    id: opinion_id
     properties:
-      opinion_id:
-        type: string
-        primary_key: true
-      case_name:
-        type: string
-        indexed: true
-      citation:
-        type: string
-        optional: true
-        indexed: true
-      docket_number:
-        type: string
-        optional: true
-      date_filed:
-        type: date
-        optional: true
-      jurisdiction:
-        type: string
-        optional: true
-        indexed: true
+      case_name: string indexed
+      citation: string indexed
+      docket_number: string
+      date_filed: date
+      jurisdiction: string indexed
       precedential_status:
         type: string
         optional: true
-        enum: [published, unpublished, precedential, nonprecedential, order]
-      source_url:
-        type: string
-        optional: true
+        enum:
+        - published
+        - unpublished
+        - precedential
+        - nonprecedential
+        - order
+      source_url: string
 
   Court:
-    description: Court or tribunal issuing opinions and hosting matters.
+    description: "Court or tribunal issuing opinions and hosting matters."
+    id: court_id
     properties:
-      court_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      jurisdiction:
-        type: string
-        indexed: true
+      name: string indexed
+      jurisdiction: string indexed
       level:
         type: string
         optional: true
-        enum: [trial, appellate, supreme, administrative]
+        enum:
+        - trial
+        - appellate
+        - supreme
+        - administrative
 
   Judge:
-    description: Judge, panel member, or adjudicator associated with an opinion.
+    description: "Judge, panel member, or adjudicator associated with an opinion."
+    id: judge_id
     properties:
-      judge_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      court_hint:
-        type: string
-        optional: true
+      name: string indexed
+      court_hint: string
 
   Statute:
-    description: Statute, regulation, rule, or doctrinal source interpreted by opinions and relevant to matters.
+    description: "Statute, regulation, rule, or doctrinal source interpreted by opinions and relevant to matters."
+    id: statute_id
     properties:
-      statute_id:
-        type: string
-        primary_key: true
-      title:
-        type: string
-        indexed: true
-      section:
-        type: string
-        indexed: true
-      jurisdiction:
-        type: string
-        optional: true
-      topic:
-        type: string
-        optional: true
+      title: string indexed
+      section: string indexed
+      jurisdiction: string
+      topic: string
 
   LegalIssue:
-    description: Practice-specific legal issue or doctrine tracked by a firm or team.
+    description: "Practice-specific legal issue or doctrine tracked by a firm or team."
+    id: issue_id
     properties:
-      issue_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      practice_area:
-        type: string
-        optional: true
-      description:
-        type: string
-        optional: true
+      name: string indexed
+      practice_area: string
+      description: string
 
   Client:
-    description: Firm client associated with one or more matters.
+    description: "Firm client associated with one or more matters."
+    id: client_id
     properties:
-      client_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      industry:
-        type: string
-        optional: true
+      name: string indexed
+      industry: string
 
   Matter:
-    description: Firm matter, pending case, investigation, deal, or client representation that legal developments may affect.
+    description: "Firm matter, pending case, investigation, deal, or client representation that legal developments may affect."
+    id: matter_id
     properties:
-      matter_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
+      name: string indexed
       client_name:
         type: string
         optional: true
         indexed: true
-        description: Denormalized display name; matter_for_client is the relationship source of truth.
+        description: Denormalized display name; matter_for_client is the relationship source
+          of truth.
       matter_type:
         type: string
         optional: true
-        enum: [litigation, investigation, advisory, transaction, regulatory]
+        enum:
+        - litigation
+        - investigation
+        - advisory
+        - transaction
+        - regulatory
       status:
         type: string
         optional: true
-        enum: [active, stayed, closed, monitoring]
-      jurisdiction:
-        type: string
-        optional: true
+        enum:
+        - active
+        - stayed
+        - closed
+        - monitoring
+      jurisdiction: string
 
   Filing:
-    description: Filing, brief, motion, order, docket entry, or client work product associated with a matter.
+    description: "Filing, brief, motion, order, docket entry, or client work product associated with a matter."
+    id: filing_id
     properties:
-      filing_id:
-        type: string
-        primary_key: true
-      docket_number:
-        type: string
-        optional: true
-      title:
-        type: string
-        indexed: true
+      docket_number: string
+      title: string indexed
       filing_type:
         type: string
         optional: true
-        enum: [complaint, motion, brief, order, notice, letter, memo]
-      filed_at:
-        type: date
-        optional: true
+        enum:
+        - complaint
+        - motion
+        - brief
+        - order
+        - notice
+        - letter
+        - memo
+      filed_at: date
 
   Deadline:
-    description: Filing deadline, response obligation, hearing date, or other matter deadline.
+    description: "Filing deadline, response obligation, hearing date, or other matter deadline."
+    id: deadline_id
     properties:
-      deadline_id:
-        type: string
-        primary_key: true
-      title:
-        type: string
-        indexed: true
-      due_date:
-        type: date
+      title: string indexed
+      due_date: date
       deadline_type:
         type: string
         optional: true
-        enum: [filing, response, discovery, hearing, statute_of_limitations, client_update]
+        enum:
+        - filing
+        - response
+        - discovery
+        - hearing
+        - statute_of_limitations
+        - client_update
       status:
         type: string
         optional: true
-        enum: [pending, met, missed, extended, waived, closed]
+        enum:
+        - pending
+        - met
+        - missed
+        - extended
+        - waived
+        - closed
 
   Attorney:
-    description: Attorney or legal team member responsible for matters and review items.
+    description: "Attorney or legal team member responsible for matters and review items."
+    id: attorney_id
     properties:
-      attorney_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      team:
-        type: string
-        optional: true
-      email:
-        type: string
-        optional: true
+      name: string indexed
+      team: string
+      email: string
 
   Argument:
-    description: Legal argument, position, theory, or cited-authority bundle used in a matter.
+    description: "Legal argument, position, theory, or cited-authority bundle used in a matter."
+    id: argument_id
     properties:
-      argument_id:
-        type: string
-        primary_key: true
-      title:
-        type: string
-        indexed: true
-      description:
-        type: string
-        optional: true
+      title: string indexed
+      description: string
       argument_type:
         type: string
         optional: true
-        enum: [claim, defense, counterclaim, affirmative_defense, motion, advisory_position]
+        enum:
+        - claim
+        - defense
+        - counterclaim
+        - affirmative_defense
+        - motion
+        - advisory_position
       position:
         type: string
         optional: true
-        enum: [plaintiff, defense, petitioner, respondent, advisory, neutral]
+        enum:
+        - plaintiff
+        - defense
+        - petitioner
+        - respondent
+        - advisory
+        - neutral
       status:
         type: string
         optional: true
-        enum: [draft, filed, planned, abandoned, preserved]
+        enum:
+        - draft
+        - filed
+        - planned
+        - abandoned
+        - preserved
 
   Holding:
-    description: Atomic holding or rule extracted from an opinion for reviewed legal reasoning.
+    description: "Atomic holding or rule extracted from an opinion for reviewed legal reasoning."
+    id: holding_id
     properties:
-      holding_id:
-        type: string
-        primary_key: true
-      summary:
-        type: string
-        indexed: true
+      summary: string indexed
       holding_type:
         type: string
         optional: true
-        enum: [rule, exception, application, distinction, procedural]
-      scope:
-        type: string
-        optional: true
+        enum:
+        - rule
+        - exception
+        - application
+        - distinction
+        - procedural
+      scope: string
 
   ReviewItem:
-    description: Review obligation or attorney work item created by legal developments.
+    description: "Review obligation or attorney work item created by legal developments."
+    id: review_item_id
     properties:
-      review_item_id:
-        type: string
-        primary_key: true
-      title:
-        type: string
-        indexed: true
+      title: string indexed
       priority:
         type: string
         optional: true
-        enum: [critical, high, medium, low]
+        enum:
+        - critical
+        - high
+        - medium
+        - low
       status:
         type: string
         optional: true
-        enum: [open, assigned, reviewed, closed]
-      due_at:
-        type: date
-        optional: true
+        enum:
+        - open
+        - assigned
+        - reviewed
+        - closed
+      due_at: date
 
   CaseOutcome:
-    description: Resolved matter result. Distinct from Cruxible Loop 2 outcomes, which judge whether system decisions were correct.
+    description: "Resolved matter result. Distinct from Cruxible Loop 2 outcomes, which judge whether system decisions were correct."
+    id: outcome_id
     properties:
-      outcome_id:
-        type: string
-        primary_key: true
       result:
         type: string
-        enum: [won, lost, settled, dismissed, default_judgment, withdrawn, moot]
-      resolved_at:
-        type: date
-        optional: true
-      notes:
-        type: string
-        optional: true
+        enum:
+        - won
+        - lost
+        - settled
+        - dismissed
+        - default_judgment
+        - withdrawn
+        - moot
+      resolved_at: date
+      notes: string
 
 # ─── Relationships ──────────────────────────────────────────────────
 
 relationships:
   # Canonical anchors and firm state.
-  - name: opinion_from_court
-    description: Opinion was issued by a court.
-    from: Opinion
-    to: Court
+  - opinion_from_court: Opinion -> Court  # Opinion was issued by a court.
 
-  - name: opinion_decided_by_judge
-    description: Opinion was decided or joined by a judge.
-    from: Opinion
-    to: Judge
+  - opinion_decided_by_judge: Opinion -> Judge  # Opinion was decided or joined by a judge.
     properties:
       role:
         type: string
         optional: true
-        enum: [author, panel_member, concurrence, dissent]
+        enum:
+        - author
+        - panel_member
+        - concurrence
+        - dissent
 
-  - name: opinion_cites_opinion
-    description: Opinion cites another opinion as authority.
-    from: Opinion
-    to: Opinion
+  - opinion_cites_opinion: Opinion -> Opinion  # Opinion cites another opinion as authority.
     properties:
-      citation_context:
-        type: string
-        optional: true
+      citation_context: string
 
-  - name: filing_in_matter
-    description: Filing belongs to a firm matter.
-    from: Filing
-    to: Matter
+  - filing_in_matter: Filing -> Matter  # Filing belongs to a firm matter.
 
-  - name: matter_for_client
-    description: Matter belongs to a firm client.
-    from: Matter
-    to: Client
+  - matter_for_client: Matter -> Client  # Matter belongs to a firm client.
 
-  - name: matter_assigned_to_attorney
-    description: Matter is assigned to an attorney or responsible team member.
-    from: Matter
-    to: Attorney
+  - matter_assigned_to_attorney: Matter -> Attorney  # Matter is assigned to an attorney or responsible team member.
     properties:
       role:
         type: string
         optional: true
-        enum: [lead, reviewer, responsible_attorney, watcher]
+        enum:
+        - lead
+        - reviewer
+        - responsible_attorney
+        - watcher
 
-  - name: matter_in_jurisdiction
-    description: Matter is pending in or primarily governed by a court jurisdiction.
-    from: Matter
-    to: Court
+  - matter_in_jurisdiction: Matter -> Court  # Matter is pending in or primarily governed by a court jurisdiction.
 
-  - name: matter_has_deadline
-    description: Matter has a filing deadline, response obligation, or other tracked deadline.
-    from: Matter
-    to: Deadline
+  - matter_has_deadline: Matter -> Deadline  # Matter has a filing deadline, response obligation, or other tracked deadline.
 
-  - name: argument_in_matter
-    description: Legal argument belongs to a matter.
-    from: Argument
-    to: Matter
+  - argument_in_matter: Argument -> Matter  # Legal argument belongs to a matter.
 
-  - name: argument_raises_issue
-    description: Legal argument raises a tracked legal issue.
-    from: Argument
-    to: LegalIssue
+  - argument_raises_issue: Argument -> LegalIssue  # Legal argument raises a tracked legal issue.
 
-  - name: argument_cites_opinion
-    description: Legal argument relies on a cited opinion.
-    from: Argument
-    to: Opinion
+  - argument_cites_opinion: Argument -> Opinion  # Legal argument relies on a cited opinion.
     properties:
       citation_role:
         type: string
         optional: true
-        enum: [primary, supporting, distinguishing, background]
+        enum:
+        - primary
+        - supporting
+        - distinguishing
+        - background
 
-  - name: statute_governs_issue
-    description: Statute, rule, or regulation is relevant to a tracked legal issue.
-    from: Statute
-    to: LegalIssue
+  - statute_governs_issue: Statute -> LegalIssue  # Statute, rule, or regulation is relevant to a tracked legal issue.
 
-  - name: outcome_of_matter
-    description: Case outcome resolves or records the result of a matter.
-    from: CaseOutcome
-    to: Matter
+  - outcome_of_matter: CaseOutcome -> Matter  # Case outcome resolves or records the result of a matter.
 
-  - name: outcome_resolved_argument
-    description: Case outcome resolved or affected a specific argument.
-    from: CaseOutcome
-    to: Argument
+  - outcome_resolved_argument: CaseOutcome -> Argument  # Case outcome resolved or affected a specific argument.
     properties:
       role:
         type: string
         optional: true
-        enum: [primary_argument, alternative_argument, defensive, amicus, not_reached]
+        enum:
+        - primary_argument
+        - alternative_argument
+        - defensive
+        - amicus
+        - not_reached
       prevailed:
         type: bool
         optional: true
       weight:
         type: string
         optional: true
-        enum: [adopted, distinguished, rejected, not_reached]
-      notes:
-        type: string
-        optional: true
+        enum:
+        - adopted
+        - distinguished
+        - rejected
+        - not_reached
+      notes: string
 
   # Governed legal judgments.
-  - name: matter_turns_on_statute
-    description: Governed judgment that a matter's legal scope depends on a statute, rule, or doctrine.
-    from: Matter
-    to: Statute
+  - matter_turns_on_statute: Matter -> Statute  # Governed judgment that a matter's legal scope depends on a statute, rule, or doctrine.
     properties:
-      scope_basis:
-        type: string
-        optional: true
-      rationale:
-        type: string
-        optional: true
+      scope_basis: string
+      rationale: string
     proposal_policy:
       signals:
         matter_statute_match:
@@ -412,17 +352,10 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: opinion_has_holding
-    description: Governed judgment that an opinion contains a specific holding.
-    from: Opinion
-    to: Holding
+  - opinion_has_holding: Opinion -> Holding  # Governed judgment that an opinion contains a specific holding.
     properties:
-      locator:
-        type: string
-        optional: true
-      rationale:
-        type: string
-        optional: true
+      locator: string
+      rationale: string
     proposal_policy:
       signals:
         holding_extractor:
@@ -433,17 +366,18 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: holding_interprets_statute
-    description: Governed judgment that a holding interprets a statute, rule, or regulation.
-    from: Holding
-    to: Statute
+  - holding_interprets_statute: Holding -> Statute  # Governed judgment that a holding interprets a statute, rule, or regulation.
     properties:
       interpretation_type:
         type: string
-        enum: [broadens, narrows, clarifies, creates_exception, applies, distinguishes]
-      rationale:
-        type: string
-        optional: true
+        enum:
+        - broadens
+        - narrows
+        - clarifies
+        - creates_exception
+        - applies
+        - distinguishes
+      rationale: string
     proposal_policy:
       signals:
         statute_interpretation_extractor:
@@ -454,18 +388,17 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: holding_addresses_issue
-    description: Governed judgment that a holding materially addresses a tracked legal issue.
-    from: Holding
-    to: LegalIssue
+  - holding_addresses_issue: Holding -> LegalIssue  # Governed judgment that a holding materially addresses a tracked legal issue.
     properties:
       issue_fit:
         type: string
         optional: true
-        enum: [direct, analogous, adjacent, weak]
-      rationale:
-        type: string
-        optional: true
+        enum:
+        - direct
+        - analogous
+        - adjacent
+        - weak
+      rationale: string
     proposal_policy:
       signals:
         issue_mapper:
@@ -476,17 +409,18 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: opinion_treats_opinion
-    description: Governed judgment that an opinion treats a cited opinion in a legally meaningful way.
-    from: Opinion
-    to: Opinion
+  - opinion_treats_opinion: Opinion -> Opinion  # Governed judgment that an opinion treats a cited opinion in a legally meaningful way.
     properties:
       treatment:
         type: string
-        enum: [follows, distinguishes, criticizes, limits, overrules, abrogates]
-      rationale:
-        type: string
-        optional: true
+        enum:
+        - follows
+        - distinguishes
+        - criticizes
+        - limits
+        - overrules
+        - abrogates
+      rationale: string
     proposal_policy:
       signals:
         citation_treatment_classifier:
@@ -497,18 +431,17 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: holding_supports_argument
-    description: Governed judgment that a holding supports a firm argument.
-    from: Holding
-    to: Argument
+  - holding_supports_argument: Holding -> Argument  # Governed judgment that a holding supports a firm argument.
     properties:
       support_strength:
         type: string
         optional: true
-        enum: [strong, moderate, weak, analogous]
-      rationale:
-        type: string
-        optional: true
+        enum:
+        - strong
+        - moderate
+        - weak
+        - analogous
+      rationale: string
     proposal_policy:
       signals:
         argument_impact_assessor:
@@ -519,18 +452,17 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: holding_undermines_argument
-    description: Governed judgment that a holding undermines, narrows, or creates risk for a firm argument.
-    from: Holding
-    to: Argument
+  - holding_undermines_argument: Holding -> Argument  # Governed judgment that a holding undermines, narrows, or creates risk for a firm argument.
     properties:
       risk_type:
         type: string
         optional: true
-        enum: [adverse_authority, distinction_required, waiver_risk, strategy_shift]
-      rationale:
-        type: string
-        optional: true
+        enum:
+        - adverse_authority
+        - distinction_required
+        - waiver_risk
+        - strategy_shift
+      rationale: string
     proposal_policy:
       signals:
         argument_impact_assessor:
@@ -541,21 +473,26 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: opinion_affects_matter
-    description: Governed judgment that a new opinion affects a firm matter.
-    from: Opinion
-    to: Matter
+  - opinion_affects_matter: Opinion -> Matter  # Governed judgment that a new opinion affects a firm matter.
     properties:
       impact_level:
         type: string
-        enum: [critical, high, medium, low, none]
+        enum:
+        - critical
+        - high
+        - medium
+        - low
+        - none
       impact_type:
         type: string
         optional: true
-        enum: [argument_update, adverse_authority, filing_deadline, settlement_posture, monitoring_only]
-      rationale:
-        type: string
-        optional: true
+        enum:
+        - argument_update
+        - adverse_authority
+        - filing_deadline
+        - settlement_posture
+        - monitoring_only
+      rationale: string
     proposal_policy:
       signals:
         matter_impact_assessor:
@@ -569,18 +506,18 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: opinion_creates_review_item
-    description: Governed judgment that an opinion creates a concrete review obligation.
-    from: Opinion
-    to: ReviewItem
+  - opinion_creates_review_item: Opinion -> ReviewItem  # Governed judgment that an opinion creates a concrete review obligation.
     properties:
       obligation_type:
         type: string
         optional: true
-        enum: [brief_update, client_alert, strategy_review, citation_check, deadline_check]
-      rationale:
-        type: string
-        optional: true
+        enum:
+        - brief_update
+        - client_alert
+        - strategy_review
+        - citation_check
+        - deadline_check
+      rationale: string
     proposal_policy:
       signals:
         review_item_router:
@@ -591,17 +528,10 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: review_item_for_matter
-    description: Governed judgment linking a review item to the matter that needs attention.
-    from: ReviewItem
-    to: Matter
+  - review_item_for_matter: ReviewItem -> Matter  # Governed judgment linking a review item to the matter that needs attention.
     properties:
-      assignment_basis:
-        type: string
-        optional: true
-      rationale:
-        type: string
-        optional: true
+      assignment_basis: string
+      rationale: string
     proposal_policy:
       signals:
         review_item_router:
@@ -612,21 +542,20 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: filing_requires_response
-    description: Governed judgment that a filing creates a response obligation or deadline for a tracked matter.
-    from: Filing
-    to: Matter
+  - filing_requires_response: Filing -> Matter  # Governed judgment that a filing creates a response obligation or deadline for a tracked matter.
     properties:
       response_type:
         type: string
         optional: true
-        enum: [answer, opposition, reply, motion_to_dismiss, no_action, client_update]
-      deadline_date:
-        type: date
-        optional: true
-      rationale:
-        type: string
-        optional: true
+        enum:
+        - answer
+        - opposition
+        - reply
+        - motion_to_dismiss
+        - no_action
+        - client_update
+      deadline_date: date
+      rationale: string
     proposal_policy:
       signals:
         filing_obligation_assessor:
@@ -882,79 +811,64 @@ named_queries:
 # ─── Quality checks ──────────────────────────────────────────────────
 
 quality_checks:
-  - name: opinions_have_court
-    kind: cardinality
-    description: Every opinion should be linked to an issuing court.
-    entity_type: Opinion
-    relationship_type: opinion_from_court
-    direction: outgoing
-    min_count: 1
-    severity: warning
+  - opinions_have_court:
+      cardinality:
+        entity: Opinion
+        relationship: opinion_from_court
+        direction: out
+        min: 1
+      description: "Every opinion should be linked to an issuing court."
+      severity: warning
+  - matters_have_responsible_attorney:
+      cardinality:
+        entity: Matter
+        relationship: matter_assigned_to_attorney
+        direction: out
+        min: 1
+      description: "Every active matter should have at least one responsible attorney."
+      severity: warning
+  - matters_have_one_client:
+      cardinality:
+        entity: Matter
+        relationship: matter_for_client
+        direction: out
+        min: 1
+        max: 1
+      description: "Every matter should be linked to exactly one firm client."
+      severity: warning
+  - deadlines_have_matter:
+      cardinality:
+        entity: Deadline
+        relationship: matter_has_deadline
+        direction: in
+        min: 1
+      description: "Every deadline should be attached to at least one matter."
+      severity: warning
+  - case_outcomes_have_matter:
+      cardinality:
+        entity: CaseOutcome
+        relationship: outcome_of_matter
+        direction: out
+        min: 1
+        max: 1
+      description: "Every case outcome should resolve exactly one matter."
+      severity: error
+  - opinion_treatments_have_treatment:
+      property: opinion_treats_opinion.treatment
+      rule: required
+      description: "Every opinion treatment edge should specify the treatment type."
+      severity: error
+  - matter_impacts_have_level:
+      property: opinion_affects_matter.impact_level
+      rule: required
+      description: "Every matter impact edge should have an impact level."
+      severity: error
+  - filing_responses_have_response_type:
+      property: filing_requires_response.response_type
+      rule: required
+      description: "Every filing response edge should specify the response obligation type."
+      severity: error
 
-  - name: matters_have_responsible_attorney
-    kind: cardinality
-    description: Every active matter should have at least one responsible attorney.
-    entity_type: Matter
-    relationship_type: matter_assigned_to_attorney
-    direction: outgoing
-    min_count: 1
-    severity: warning
-
-  - name: matters_have_one_client
-    kind: cardinality
-    description: Every matter should be linked to exactly one firm client.
-    entity_type: Matter
-    relationship_type: matter_for_client
-    direction: outgoing
-    min_count: 1
-    max_count: 1
-    severity: warning
-
-  - name: deadlines_have_matter
-    kind: cardinality
-    description: Every deadline should be attached to at least one matter.
-    entity_type: Deadline
-    relationship_type: matter_has_deadline
-    direction: incoming
-    min_count: 1
-    severity: warning
-
-  - name: case_outcomes_have_matter
-    kind: cardinality
-    description: Every case outcome should resolve exactly one matter.
-    entity_type: CaseOutcome
-    relationship_type: outcome_of_matter
-    direction: outgoing
-    min_count: 1
-    max_count: 1
-    severity: error
-
-  - name: opinion_treatments_have_treatment
-    kind: property
-    description: Every opinion treatment edge should specify the treatment type.
-    target: relationship
-    relationship_type: opinion_treats_opinion
-    property: treatment
-    rule: required
-    severity: error
-
-  - name: matter_impacts_have_level
-    kind: property
-    description: Every matter impact edge should have an impact level.
-    target: relationship
-    relationship_type: opinion_affects_matter
-    property: impact_level
-    rule: required
-    severity: error
-
-  - name: filing_responses_have_response_type
-    kind: property
-    description: Every filing response edge should specify the response obligation type.
-    target: relationship
-    relationship_type: filing_requires_response
-    property: response_type
-    rule: required
-    severity: error
 contracts:
   EmptyInput:
     fields: {}
