@@ -12,139 +12,166 @@ description: >
 
 enums:
   criticality:
-    values: [low, medium, high, critical]
+    values:
+    - low
+    - medium
+    - high
+    - critical
     ordered: low_to_high
     description: Shared low-to-critical rank for materiality, severity, and priority.
   asset_type:
-    values: [server, laptop]
+    values:
+    - server
+    - laptop
     description: Asset form factor from CMDB or inventory.
   asset_environment:
-    values: [production, staging, corporate]
+    values:
+    - production
+    - staging
+    - corporate
     description: Operational environment where an asset runs.
   control_type:
-    values: [waf, endpoint_detection, network_acl]
+    values:
+    - waf
+    - endpoint_detection
+    - network_acl
     description: Security control implementation category.
   control_status:
-    values: [active, inactive]
+    values:
+    - active
+    - inactive
     description: Operational status for a security control.
   control_effect:
-    values: [blocks, reduces, detects, compensates]
+    values:
+    - blocks
+    - reduces
+    - detects
+    - compensates
     description: How a control affects a vulnerability class.
   vulnerability_posture_status:
-    values: [exposed, mitigated, not_affected, unknown]
+    values:
+    - exposed
+    - mitigated
+    - not_affected
+    - unknown
     description: Current accepted posture for an asset-vulnerability pair.
   attack_vector:
-    values: [network, adjacent, local, physical]
+    values:
+    - network
+    - adjacent
+    - local
+    - physical
     description: Operational attack vector bucket for vulnerability classes.
   exception_status:
-    values: [approved, expired, revoked]
+    values:
+    - approved
+    - expired
+    - revoked
     description: Lifecycle status for a patch or remediation exception.
   patch_cadence:
-    values: [weekly, biweekly, monthly]
+    values:
+    - weekly
+    - biweekly
+    - monthly
     description: Normal cadence for an operational patch window.
   patch_freeze_status:
-    values: [none, partial_freeze]
+    values:
+    - none
+    - partial_freeze
     description: Change-freeze state for a patch window.
   remediation_type:
-    values: [patch, mitigation, exception, product_mapping_changed, reference_changed, not_affected]
+    values:
+    - patch
+    - mitigation
+    - exception
+    - product_mapping_changed
+    - reference_changed
+    - not_affected
     description: Closure mechanism for an asset-vulnerability pair.
 
 # ─── Local: internal entity types ─────────────────────────────────────
 
 entity_types:
   Asset:
-    description: Internal asset from CMDB, cloud inventory, or endpoint tooling.
+    description: "Internal asset from CMDB, cloud inventory, or endpoint tooling."
+    id: asset_id
     properties:
-      asset_id: {primary_key: true}
-      hostname: {indexed: true}
-      asset_type: {enum_ref: asset_type}
-      criticality: {enum_ref: criticality}
-      environment: {enum_ref: asset_environment}
+      hostname: string indexed
+      asset_type: enum asset_type
+      criticality: enum criticality
+      environment: enum asset_environment
       internet_exposed:
         type: bool
 
   BusinessService:
-    description: Internal business or technical service depending on assets.
+    description: "Internal business or technical service depending on assets."
+    id: service_id
     properties:
-      service_id: {primary_key: true}
-      name: {indexed: true}
-      criticality: {enum_ref: criticality}
+      name: string indexed
+      criticality: enum criticality
 
   Owner:
-    description: Team or person responsible for an asset or service.
+    description: "Team or person responsible for an asset or service."
+    id: owner_id
     properties:
-      owner_id: {primary_key: true}
-      name: {}
-      team: {}
-      email: {}
+      name: string
+      team: string
+      email: string
 
   CompensatingControl:
-    description: Control that can reduce or block exploitability.
+    description: "Control that can reduce or block exploitability."
+    id: control_id
     properties:
-      control_id: {primary_key: true}
-      name: {}
-      control_type: {enum_ref: control_type}
-      status: {enum_ref: control_status}
+      name: string
+      control_type: enum control_type
+      status: enum control_status
 
   VulnerabilityClass:
-    description: >
-      Operational vulnerability category used by local controls, policy,
-      and scenario analysis. This is local-layer classification rather than
-      reference-layer public data.
+    description: |
+      Operational vulnerability category used by local controls, policy, and scenario analysis. This is local-layer classification rather than reference-layer public data.
+    id: class_id
     properties:
-      class_id: {primary_key: true}
-      name: {indexed: true}
-      description: {}
-      attack_vector: {enum_ref: attack_vector}
+      name: string indexed
+      description: string
+      attack_vector: enum attack_vector
 
   Exception:
-    description: Approved patch or remediation exception.
+    description: "Approved patch or remediation exception."
+    id: exception_id
     properties:
-      exception_id: {primary_key: true}
-      reason: {}
-      review_due_at: {type: date}
-      status: {enum_ref: exception_status}
+      reason: string
+      review_due_at: date
+      status: enum exception_status
 
   PatchWindow:
-    description: Operational patching schedule or change window.
+    description: "Operational patching schedule or change window."
+    id: patch_window_id
     properties:
-      patch_window_id: {primary_key: true}
-      cadence: {enum_ref: patch_cadence}
-      next_window_at: {type: datetime}
-      freeze_status: {enum_ref: patch_freeze_status}
-      emergency_patch_allowed: {type: bool}
-      outage_allowed: {type: bool}
-      testing_required: {type: bool}
-      rollback_required: {type: bool}
-      owner_id: {}
+      cadence: enum patch_cadence
+      next_window_at: datetime
+      freeze_status: enum patch_freeze_status
+      emergency_patch_allowed:
+        type: bool
+      outage_allowed:
+        type: bool
+      testing_required:
+        type: bool
+      rollback_required:
+        type: bool
+      owner_id: string
 
 # ─── Local: deterministic internal mappings ────────────────────────────
 
 relationships:
-  - name: service_depends_on_asset
-    description: Internal dependency mapping from services to assets.
-    from: BusinessService
-    to: Asset
+  - service_depends_on_asset: BusinessService -> Asset  # Internal dependency mapping from services to assets.
 
-  - name: asset_owned_by
-    description: Ownership or routing mapping for assets.
-    from: Asset
-    to: Owner
+  - asset_owned_by: Asset -> Owner  # Ownership or routing mapping for assets.
 
-  - name: asset_has_control
-    description: Internal mapping from assets to compensating controls.
-    from: Asset
-    to: CompensatingControl
+  - asset_has_control: Asset -> CompensatingControl  # Internal mapping from assets to compensating controls.
 
-  - name: asset_has_exception
-    description: Internal mapping from assets to approved exceptions.
-    from: Asset
-    to: Exception
+  - asset_has_exception: Asset -> Exception  # Internal mapping from assets to approved exceptions.
 
-  - name: asset_patch_window
-    description: Internal patching schedule mapping.
-    from: Asset
-    to: PatchWindow
+  - asset_patch_window: Asset -> PatchWindow  # Internal patching schedule mapping.
 
 # ─── Local: governed relationships ─────────────────────────────────────
 #
@@ -152,21 +179,16 @@ relationships:
 # flow, not direct writes. Each has a proposal_policy block that defines
 # which signal sources provide evidence and how auto-resolution works.
 
-  - name: asset_runs_product
-    description: >
-      Governed mapping from an internal asset to a reference-layer product.
-      Internal systems describe software by display name and version;
-      the reference layer uses CPE-derived product IDs. Fuzzy matching
-      goes through the proposal flow.
-    from: Asset
-    to: Product
+  - asset_runs_product: Asset -> Product
+    description: |
+      Governed mapping from an internal asset to a reference-layer product. Internal systems describe software by display name and version; the reference layer uses CPE-derived product IDs. Fuzzy matching goes through the proposal flow.
     properties:
-      observed_software_name: {}
-      observed_vendor: {}
-      installed_version: {}
-      inventory_source: {}
-      last_seen_at: {type: date}
-      match_basis: {}
+      observed_software_name: string
+      observed_vendor: string
+      installed_version: string
+      inventory_source: string
+      last_seen_at: date
+      match_basis: string
     proposal_policy:
       signals:
         software_product_match:
@@ -174,22 +196,18 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: asset_vulnerability_posture
-    description: >
-      Accepted current-truth judgment for an asset-vulnerability pair. The
-      status records whether the asset is exposed, mitigated, not affected,
-      or still unknown; exposed rows drive action queues.
-    from: Asset
-    to: Vulnerability
+  - asset_vulnerability_posture: Asset -> Vulnerability
+    description: |
+      Accepted current-truth judgment for an asset-vulnerability pair. The status records whether the asset is exposed, mitigated, not affected, or still unknown; exposed rows drive action queues.
     properties:
-      status: {enum_ref: vulnerability_posture_status}
-      priority: {enum_ref: criticality}
-      product_id: {}
-      installed_version: {}
-      affected_basis: {}
-      exposure_basis: {}
-      control_basis: {}
-      review_due_at: {type: date, optional: true}
+      status: enum vulnerability_posture_status
+      priority: enum criticality
+      product_id: string
+      installed_version: string
+      affected_basis: string
+      exposure_basis: string
+      control_basis: string
+      review_due_at: date
     proposal_policy:
       signals:
         product_version_evidence:
@@ -202,63 +220,49 @@ relationships:
           role: required
           always_review_on_unsure: true
 
-  - name: asset_patch_exception_for
-    description: >
-      Accepted judgment that a specific asset-vulnerability pair is covered
-      by an approved exception. The broader asset_has_exception edge only
-      says the asset has an exception.
-    from: Asset
-    to: Vulnerability
+  - asset_patch_exception_for: Asset -> Vulnerability
+    description: |
+      Accepted judgment that a specific asset-vulnerability pair is covered by an approved exception. The broader asset_has_exception edge only says the asset has an exception.
     properties:
-      exception_id: {}
-      review_due_at: {type: date}
-      scope_basis: {}
+      exception_id: string
+      review_due_at: date
+      scope_basis: string
     proposal_policy:
       signals:
         policy_review:
           role: required
 
-  - name: vulnerability_classified_as
-    description: >
-      Local-layer classification of a public vulnerability into an
-      operational category used by local controls and stress scenarios.
-    from: Vulnerability
-    to: VulnerabilityClass
+  - vulnerability_classified_as: Vulnerability -> VulnerabilityClass
+    description: |
+      Local-layer classification of a public vulnerability into an operational category used by local controls and stress scenarios.
     properties:
-      basis: {}
-      source: {}
+      basis: string
+      source: string
     proposal_policy:
       signals:
         vulnerability_classification:
           role: required
           always_review_on_unsure: true
 
-  - name: control_mitigates_class
-    description: >
-      Curated local control-coverage knowledge that says a compensating
-      control mitigates a vulnerability class. Operators maintain this as
-      deterministic local state; agents consume it when assessing posture
-      and should raise data/config corrections when it is missing or wrong.
-    from: CompensatingControl
-    to: VulnerabilityClass
+  - control_mitigates_class: CompensatingControl -> VulnerabilityClass
+    description: |
+      Curated local control-coverage knowledge that says a compensating control mitigates a vulnerability class. Operators maintain this as deterministic local state; agents consume it when assessing posture and should raise data/config corrections when it is missing or wrong.
     properties:
-      effect: {enum_ref: control_effect, optional: false}
-      validation_basis: {}
-      verified_at: {type: date, optional: true}
-      expires_at: {type: date, optional: true}
+      effect:
+        enum_ref: control_effect
+        optional: false
+      validation_basis: string
+      verified_at: date
+      expires_at: date
 
-  - name: asset_remediated_vulnerability
-    description: >
-      Verification or closure fact for an asset-vulnerability pair after
-      remediation, mitigation, exception approval, product mapping change,
-      or reference update. It is not a general remediation history log.
-    from: Asset
-    to: Vulnerability
+  - asset_remediated_vulnerability: Asset -> Vulnerability
+    description: |
+      Verification or closure fact for an asset-vulnerability pair after remediation, mitigation, exception approval, product mapping change, or reference update. It is not a general remediation history log.
     properties:
-      remediation_type: {enum_ref: remediation_type}
-      verified_at: {type: date, optional: true}
-      ticket_id: {optional: true}
-      verification_basis: {}
+      remediation_type: enum remediation_type
+      verified_at: date
+      ticket_id: string
+      verification_basis: string
     proposal_policy:
       signals:
         remediation_verification:
@@ -797,16 +801,15 @@ constraints: []
 # ─── Quality checks ──────────────────────────────────────────────────
 
 quality_checks:
-  - name: assets_have_one_owner
-    kind: cardinality
-    description: Every asset should have exactly one owner.
-    severity: warning
-    entity_type: Asset
-    relationship_type: asset_owned_by
-    direction: outgoing
-    min_count: 1
-    max_count: 1
-
+  - assets_have_one_owner:
+      cardinality:
+        entity: Asset
+        relationship: asset_owned_by
+        direction: out
+        min: 1
+        max: 1
+      description: "Every asset should have exactly one owner."
+      severity: warning
   - name: minimum_assets_loaded
     kind: bounds
     description: Sanity check that the CMDB load produced a non-trivial asset set.
@@ -814,7 +817,6 @@ quality_checks:
     target: entity_count
     entity_type: Asset
     min_count: 5
-
   - name: assets_have_hostname
     kind: property
     description: Every asset should have a non-empty hostname.
