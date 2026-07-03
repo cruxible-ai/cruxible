@@ -19,97 +19,88 @@ description: >
 enums:
   component_kind:
     values: [raw_material, part]
-    description: Non-assembly component role in the BOM.
+    description: "Non-assembly component role in the BOM."
   lifecycle_status:
     values: [active, deprecated, obsolete]
-    description: Catalog lifecycle state for components, assemblies, and products.
+    description: "Catalog lifecycle state for components, assemblies, and products."
   criticality:
     values: [critical, standard, low]
-    description: Internal materiality tier for component and assembly blast-radius context.
+    description: "Internal materiality tier for component and assembly blast-radius context."
   shipment_status:
     values: [in_flight, delivered, cancelled]
-    description: Operational shipment state used by shipment review workflows.
+    description: "Operational shipment state used by shipment review workflows."
   location_type:
     values: [plant, warehouse, supplier, in_transit]
-    description: Location category for inventory evidence.
+    description: "Location category for inventory evidence."
   inventory_item_type:
     values: [component, assembly, product]
-    description: Item type represented by an inventory position.
+    description: "Item type represented by an inventory position."
   buffer_item_type:
     values: [component, assembly]
-    description: Item type assessed for reusable buffer coverage.
+    description: "Item type assessed for reusable buffer coverage."
   rate_period:
     values: [day, week, month]
-    description: Time period denominator for consumption rates.
+    description: "Time period denominator for consumption rates."
   duration_unit:
     values: [days, weeks, months]
-    description: Time unit for coverage and planning horizons.
+    description: "Time unit for coverage and planning horizons."
   buffer_state:
     values: [no_buffer, partial_buffer, sufficient_buffer, unknown]
-    description: Inventory buffer conclusion used by product exposure assessment.
+    description: "Inventory buffer conclusion used by product exposure assessment."
   incident_severity:
     values: [critical, high, medium, low]
-    description: Incident severity band.
+    description: "Incident severity band."
   incident_scope_type:
     values: [supplier, geography]
-    description: Incident scope basis.
+    description: "Incident scope basis."
   incident_status:
     values: [open, monitoring, closed]
-    description: Incident lifecycle state.
+    description: "Incident lifecycle state."
   qualification_status:
     values: [qualified, conditional, expired, disqualified]
-    description: Supplier qualification posture for a supplied item.
+    description: "Supplier qualification posture for a supplied item."
   sourcing_role:
     values: [primary, secondary, tertiary, emergency, inactive]
-    description: Sourcing priority role for a supplied item.
+    description: "Sourcing priority role for a supplied item."
   activation_state:
     values: [active, standby, constrained, unavailable]
-    description: Operational availability state for a sourcing path.
+    description: "Operational availability state for a sourcing path."
   supplier_match_basis:
     values: [direct, geography]
-    description: How an incident scope matched a supplier.
+    description: "How an incident scope matched a supplier."
   alternate_state:
     values: [no_alternate, alternate_in_scope, alternate_viable]
-    description: Alternate sourcing coverage at cascade time.
+    description: "Alternate sourcing coverage at cascade time."
   bom_depth_bucket:
     values: [direct, tier_2, tier_3_plus]
-    description: Discretized BOM traversal depth.
+    description: "Discretized BOM traversal depth."
   proposal_verdict:
     values: [support, unsure, contradict]
-    description: Provider verdict mapped into governed proposal signals.
+    description: "Provider verdict mapped into governed proposal signals."
   product_exposure_basis:
     values: [component_bom_path, direct_assembly_bom_path, mixed_paths]
-    description: Dominant upstream evidence path for derived product exposure context.
+    description: "Dominant upstream evidence path for derived product exposure context."
 
 # ─── Entity types ────────────────────────────────────────────────────
 
 entity_types:
   Supplier:
-    description: External supplier of raw materials or discrete components.
+    description: "External supplier of raw materials or discrete components."
+    id: supplier_id
     properties:
-      supplier_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      primary_geography:
-        type: string
-        optional: true
+      name: string indexed
+      primary_geography: string
       tier_hint:
         type: string
         optional: true
-        description: Operator-supplied hint (tier-1, tier-2, tier-3); not authoritative — true tier is computed via BOM traversal.
+        description: "Operator-supplied hint (tier-1, tier-2, tier-3); not authoritative\
+          \ \u2014 true tier is computed via BOM traversal."
 
   Component:
-    description: A raw material or discrete part that rolls up into assemblies.
+    description: "A raw material or discrete part that rolls up into assemblies."
+    id: component_id
     properties:
-      component_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
+      name: string indexed
       component_kind:
         type: string
         enum_ref: component_kind
@@ -118,111 +109,55 @@ entity_types:
         type: string
         optional: true
         description: Component revision used by the seed BOM.
-      lifecycle_status:
-        type: string
-        optional: true
-        enum_ref: lifecycle_status
-      criticality:
-        type: string
-        optional: true
-        enum_ref: criticality
-      category:
-        type: string
-        optional: true
+      lifecycle_status: enum lifecycle_status
+      criticality: enum criticality
+      category: string
 
   Assembly:
-    description: A buildable subassembly or assembly composed of Components and/or lower-level Assemblies.
+    description: "A buildable subassembly or assembly composed of Components and/or lower-level Assemblies."
+    id: assembly_id
     properties:
-      assembly_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
+      name: string indexed
       revision:
         type: string
         optional: true
         description: Assembly revision used by the seed BOM.
-      lifecycle_status:
-        type: string
-        optional: true
-        enum_ref: lifecycle_status
-      criticality:
-        type: string
-        optional: true
-        enum_ref: criticality
-      category:
-        type: string
-        optional: true
+      lifecycle_status: enum lifecycle_status
+      criticality: enum criticality
+      category: string
 
   Product:
-    description: Finished good shipped to customers.
+    description: "Finished good shipped to customers."
+    id: product_id
     properties:
-      product_id:
-        type: string
-        primary_key: true
-      sku:
-        type: string
-        indexed: true
-      name:
-        type: string
-      lifecycle_status:
-        type: string
-        optional: true
-        enum_ref: lifecycle_status
+      sku: string indexed
+      name: string
+      lifecycle_status: enum lifecycle_status
 
   Shipment:
-    description: A specific outbound shipment of products to a customer.
+    description: "A specific outbound shipment of products to a customer."
+    id: shipment_id
     properties:
-      shipment_id:
-        type: string
-        primary_key: true
-      customer_id:
-        type: string
-        indexed: true
-      status:
-        type: string
-        optional: true
-        enum_ref: shipment_status
-      ship_date:
-        type: date
-        optional: true
-      eta:
-        type: date
-        optional: true
+      customer_id: string indexed
+      status: enum shipment_status
+      ship_date: date
+      eta: date
 
   Location:
-    description: Plant, warehouse, supplier, or in-transit location where inventory may sit.
+    description: "Plant, warehouse, supplier, or in-transit location where inventory may sit."
+    id: location_id
     properties:
-      location_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      location_type:
-        type: string
-        optional: true
-        enum_ref: location_type
-      geography:
-        type: string
-        optional: true
+      name: string indexed
+      location_type: enum location_type
+      geography: string
 
   InventoryPosition:
-    description: Time-stamped inventory evidence for a component, assembly, or product at a location.
+    description: "Time-stamped inventory evidence for a component, assembly, or product at a location."
+    id: inventory_position_id
     properties:
-      inventory_position_id:
-        type: string
-        primary_key: true
-      item_type:
-        type: string
-        enum_ref: inventory_item_type
-      item_id:
-        type: string
-        indexed: true
-      location_id:
-        type: string
-        indexed: true
+      item_type: enum inventory_item_type
+      item_id: string indexed
+      location_id: string indexed
       quantity_on_hand:
         type: float
         optional: true
@@ -232,31 +167,17 @@ entity_types:
       net_available:
         type: float
         optional: true
-      unit_of_measure:
-        type: string
-        optional: true
-      as_of:
-        type: date
-        optional: true
+      unit_of_measure: string
+      as_of: date
 
   BufferAssessment:
-    description: Reusable operational assessment of whether inventory covers expected demand for a component or assembly in a product/BOM context.
+    description: "Reusable operational assessment of whether inventory covers expected demand for a component or assembly in a product/BOM context."
+    id: buffer_assessment_id
     properties:
-      buffer_assessment_id:
-        type: string
-        primary_key: true
-      item_type:
-        type: string
-        enum_ref: buffer_item_type
-      item_id:
-        type: string
-        indexed: true
-      product_id:
-        type: string
-        indexed: true
-      bom_variant_id:
-        type: string
-        optional: true
+      item_type: enum buffer_item_type
+      item_id: string indexed
+      product_id: string indexed
+      bom_variant_id: string
       net_available:
         type: float
         optional: true
@@ -270,266 +191,133 @@ entity_types:
         type: float
         optional: true
         description: Expected consumption quantity per rate_period.
-      rate_period:
-        type: string
-        optional: true
-        enum_ref: rate_period
+      rate_period: enum rate_period
       coverage_duration:
         type: float
         optional: true
         description: Computed duration the net available inventory covers.
-      coverage_unit:
-        type: string
-        optional: true
-        enum_ref: duration_unit
+      coverage_unit: enum duration_unit
       horizon_duration:
         type: float
         optional: true
-      horizon_unit:
-        type: string
-        optional: true
-        enum_ref: duration_unit
-      buffer_state:
-        type: string
-        optional: true
-        enum_ref: buffer_state
-      unit_of_measure:
-        type: string
-        optional: true
-      as_of:
-        type: date
-        optional: true
-      rationale:
-        type: string
-        optional: true
+      horizon_unit: enum duration_unit
+      buffer_state: enum buffer_state
+      unit_of_measure: string
+      as_of: date
+      rationale: string
 
   Incident:
-    description: A supplier-side disruption or geography-level supply event.
+    description: "A supplier-side disruption or geography-level supply event."
+    id: incident_id
     properties:
-      incident_id:
-        type: string
-        primary_key: true
-      title:
-        type: string
-        indexed: true
-      severity:
-        type: string
-        optional: true
-        enum_ref: incident_severity
-      scope_type:
-        type: string
-        optional: true
-        enum_ref: incident_scope_type
+      title: string indexed
+      severity: enum incident_severity
+      scope_type: enum incident_scope_type
       scope_id:
         type: string
         optional: true
         description: Identifier of the in-scope supplier or geography string.
-      status:
-        type: string
-        optional: true
-        enum_ref: incident_status
-      reported_at:
-        type: date
-        optional: true
-      closed_at:
-        type: date
-        optional: true
-      summary:
-        type: string
-        optional: true
+      status: enum incident_status
+      reported_at: date
+      closed_at: date
+      summary: string
 
 # ─── Deterministic relationships ─────────────────────────────────────
 
 relationships:
-  - name: supplier_supplies_component
-    description: A supplier can provide a component. Properties capture qualification, sourcing posture, capacity, and timing.
-    from: Supplier
-    to: Component
+  - supplier_supplies_component: Supplier -> Component  # A supplier can provide a component. Properties capture qualification, sourcing posture, capacity, and timing.
     properties:
       lead_time_days:
         type: int
         optional: true
-      qualification_status:
-        type: string
-        optional: true
-        enum_ref: qualification_status
-      sourcing_role:
-        type: string
-        optional: true
-        enum_ref: sourcing_role
+      qualification_status: enum qualification_status
+      sourcing_role: enum sourcing_role
       priority_rank:
         type: int
         optional: true
       allocation_pct:
         type: float
         optional: true
-      activation_state:
-        type: string
-        optional: true
-        enum_ref: activation_state
+      activation_state: enum activation_state
       capacity_units_per_week:
         type: int
         optional: true
-      effective_from:
-        type: date
-        optional: true
-      effective_to:
-        type: date
-        optional: true
-      last_verified_at:
-        type: date
-        optional: true
+      effective_from: date
+      effective_to: date
+      last_verified_at: date
 
-  - name: supplier_supplies_assembly
-    description: A supplier can provide a buildable assembly directly. Properties capture qualification, sourcing posture, capacity, and timing.
-    from: Supplier
-    to: Assembly
+  - supplier_supplies_assembly: Supplier -> Assembly  # A supplier can provide a buildable assembly directly. Properties capture qualification, sourcing posture, capacity, and timing.
     properties:
       lead_time_days:
         type: int
         optional: true
-      qualification_status:
-        type: string
-        optional: true
-        enum_ref: qualification_status
-      sourcing_role:
-        type: string
-        optional: true
-        enum_ref: sourcing_role
+      qualification_status: enum qualification_status
+      sourcing_role: enum sourcing_role
       priority_rank:
         type: int
         optional: true
       allocation_pct:
         type: float
         optional: true
-      activation_state:
-        type: string
-        optional: true
-        enum_ref: activation_state
+      activation_state: enum activation_state
       capacity_units_per_week:
         type: int
         optional: true
-      effective_from:
-        type: date
-        optional: true
-      effective_to:
-        type: date
-        optional: true
-      last_verified_at:
-        type: date
-        optional: true
+      effective_from: date
+      effective_to: date
+      last_verified_at: date
 
-  - name: component_part_of_assembly
-    description: BOM edge linking a raw material or part into an assembly.
-    from: Component
-    to: Assembly
+  - component_part_of_assembly: Component -> Assembly  # BOM edge linking a raw material or part into an assembly.
     properties:
       quantity:
         type: int
         optional: true
-      bom_variant_id:
-        type: string
-        optional: true
-      plant_id:
-        type: string
-        optional: true
-      effective_from:
-        type: date
-        optional: true
-      effective_to:
-        type: date
-        optional: true
+      bom_variant_id: string
+      plant_id: string
+      effective_from: date
+      effective_to: date
 
-  - name: assembly_part_of_assembly
-    description: Recursive BOM edge linking a child assembly into a parent assembly.
-    from: Assembly
-    to: Assembly
+  - assembly_part_of_assembly: Assembly -> Assembly  # Recursive BOM edge linking a child assembly into a parent assembly.
     properties:
       quantity:
         type: int
         optional: true
-      bom_variant_id:
-        type: string
-        optional: true
-      plant_id:
-        type: string
-        optional: true
-      effective_from:
-        type: date
-        optional: true
-      effective_to:
-        type: date
-        optional: true
+      bom_variant_id: string
+      plant_id: string
+      effective_from: date
+      effective_to: date
 
-  - name: assembly_part_of_product
-    description: Top-level BOM edge linking an assembly into a finished product.
-    from: Assembly
-    to: Product
+  - assembly_part_of_product: Assembly -> Product  # Top-level BOM edge linking an assembly into a finished product.
     properties:
       quantity:
         type: int
         optional: true
-      bom_variant_id:
-        type: string
-        optional: true
-      plant_id:
-        type: string
-        optional: true
-      effective_from:
-        type: date
-        optional: true
-      effective_to:
-        type: date
-        optional: true
+      bom_variant_id: string
+      plant_id: string
+      effective_from: date
+      effective_to: date
 
-  - name: product_in_shipment
-    description: Fulfillment edge linking a product to shipments that contain it.
-    from: Product
-    to: Shipment
+  - product_in_shipment: Product -> Shipment  # Fulfillment edge linking a product to shipments that contain it.
     properties:
       qty:
         type: int
         optional: true
 
-  - name: component_inventory_position
-    description: Inventory evidence for a component.
-    from: Component
-    to: InventoryPosition
+  - component_inventory_position: Component -> InventoryPosition  # Inventory evidence for a component.
 
-  - name: assembly_inventory_position
-    description: Inventory evidence for an assembly.
-    from: Assembly
-    to: InventoryPosition
+  - assembly_inventory_position: Assembly -> InventoryPosition  # Inventory evidence for an assembly.
 
-  - name: product_inventory_position
-    description: Inventory evidence for a finished product.
-    from: Product
-    to: InventoryPosition
+  - product_inventory_position: Product -> InventoryPosition  # Inventory evidence for a finished product.
 
-  - name: inventory_position_location
-    description: Location where an inventory position was observed.
-    from: InventoryPosition
-    to: Location
+  - inventory_position_location: InventoryPosition -> Location  # Location where an inventory position was observed.
 
-  - name: component_buffer_assessment
-    description: Buffer coverage assessment for a component in a product/BOM context.
-    from: Component
-    to: BufferAssessment
+  - component_buffer_assessment: Component -> BufferAssessment  # Buffer coverage assessment for a component in a product/BOM context.
 
-  - name: assembly_buffer_assessment
-    description: Buffer coverage assessment for an assembly in a product/BOM context.
-    from: Assembly
-    to: BufferAssessment
+  - assembly_buffer_assessment: Assembly -> BufferAssessment  # Buffer coverage assessment for an assembly in a product/BOM context.
 
-  - name: product_buffer_assessment
-    description: Product context for a buffer assessment.
-    from: Product
-    to: BufferAssessment
+  - product_buffer_assessment: Product -> BufferAssessment  # Product context for a buffer assessment.
 
-  - name: buffer_assessment_inventory
-    description: Inventory evidence used by a buffer assessment.
-    from: BufferAssessment
-    to: InventoryPosition
+  - buffer_assessment_inventory: BufferAssessment -> InventoryPosition  # Inventory evidence used by a buffer assessment.
 
 # ─── Governed relationships ──────────────────────────────────────────
 #
@@ -542,19 +330,14 @@ relationships:
 # consumed signal sources, so trust accumulates on the configured proposal path
 # across many incidents — not per incident.
 
-  - name: incident_impacts_supplier
-    description: Governed judgment that an incident materially impacts a supplier.
-    from: Incident
-    to: Supplier
+  - incident_impacts_supplier: Incident -> Supplier  # Governed judgment that an incident materially impacts a supplier.
     properties:
       match_basis:
         type: string
         optional: true
         enum_ref: supplier_match_basis
         description: How the incident scope matched this supplier.
-      rationale:
-        type: string
-        optional: true
+      rationale: string
     proposal_policy:
       signals:
         incident_supplier_scope_match:
@@ -562,19 +345,14 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: incident_impacts_component
-    description: Governed judgment that an incident impacts a component via its impacted suppliers.
-    from: Incident
-    to: Component
+  - incident_impacts_component: Incident -> Component  # Governed judgment that an incident impacts a component via its impacted suppliers.
     properties:
       alternate_state:
         type: string
         optional: true
         enum_ref: alternate_state
         description: State of substitute supplier coverage at cascade time.
-      rationale:
-        type: string
-        optional: true
+      rationale: string
     proposal_policy:
       signals:
         incident_component_cascade:
@@ -582,10 +360,7 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: incident_impacts_assembly
-    description: Governed judgment that an incident impacts a directly supplied assembly via its impacted suppliers.
-    from: Incident
-    to: Assembly
+  - incident_impacts_assembly: Incident -> Assembly  # Governed judgment that an incident impacts a directly supplied assembly via its impacted suppliers.
     properties:
       impacted_supplier_id:
         type: string
@@ -596,9 +371,7 @@ relationships:
         optional: true
         enum_ref: alternate_state
         description: State of substitute supplier coverage at cascade time.
-      rationale:
-        type: string
-        optional: true
+      rationale: string
     proposal_policy:
       signals:
         incident_assembly_cascade:
@@ -919,24 +692,22 @@ named_queries:
 # ─── Quality checks ──────────────────────────────────────────────────
 
 quality_checks:
-  - name: components_have_supplier
-    kind: cardinality
-    description: Every component should have at least one supplier (orphan detector).
-    entity_type: Component
-    relationship_type: supplier_supplies_component
-    direction: incoming
-    min_count: 1
-    severity: warning
-
-  - name: critical_components_have_redundancy
-    kind: cardinality
-    description: Critical components should have at least two supplier options (single-source flag).
-    entity_type: Component
-    relationship_type: supplier_supplies_component
-    direction: incoming
-    min_count: 2
-    severity: warning
-
+  - components_have_supplier:
+      cardinality:
+        entity: Component
+        relationship: supplier_supplies_component
+        direction: in
+        min: 1
+      description: "Every component should have at least one supplier (orphan detector)."
+      severity: warning
+  - critical_components_have_redundancy:
+      cardinality:
+        entity: Component
+        relationship: supplier_supplies_component
+        direction: in
+        min: 2
+      description: "Critical components should have at least two supplier options (single-source flag)."
+      severity: warning
   - name: components_have_kind
     kind: property
     description: Every component should declare whether it is a raw material or part.
@@ -945,15 +716,15 @@ quality_checks:
     property: component_kind
     rule: required
     severity: error
+  - products_have_assembly_bom:
+      cardinality:
+        entity: Product
+        relationship: assembly_part_of_product
+        direction: in
+        min: 1
+      description: "Products should have at least one top-level assembly in their BOM."
+      severity: error
 
-  - name: products_have_assembly_bom
-    kind: cardinality
-    description: Products should have at least one top-level assembly in their BOM.
-    entity_type: Product
-    relationship_type: assembly_part_of_product
-    direction: incoming
-    min_count: 1
-    severity: error
 contracts:
   EmptyInput:
     fields: {}
