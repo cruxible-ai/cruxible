@@ -1,97 +1,60 @@
-# Case Law Monitoring Demo
+# Case-Law Monitoring Kit
 
-> **Status: in_progress.** The ontology, governed
-> relationships, named queries, and feedback/outcome loops are complete and
-> validated. The data-ingest and assessment providers are placeholders that raise
-> `NotImplementedError` — implement them or wire your own data before running the
-> workflows.
+Case-law domain overlay composed over the agent-operation base kit
+(`extends: ../agent-operation/config.yaml`).
 
-Single-layer Cruxible state model for legal monitoring alongside a specialized
-law agent. The kit is not trying to replace legal reasoning. It gives the agent
-and attorney a governed memory of what has been reviewed: holdings, citation
-treatment, matter statutory scope, argument impact, filing obligations, matter
-impact, and review obligations.
-
-The canonical layer is intentionally practical: opinions, courts, judges,
-statutes, legal issues, clients, firm matters, filings, deadlines, attorneys,
-arguments, and case outcomes. The governed layer captures legal judgments that
-should compound over time:
-
-`opinion/filing -> holding/treatment/scope -> issue/statute -> argument -> matter/client/deadline -> review item/outcome`
-
-The usage story is:
-
-> A new opinion or filing arrives. A legal agent proposes the legal judgment
-> edges it implies, attorney review converts accepted judgments into reusable
-> matter-context state, and later outcomes tell the kit which proposal paths
-> actually helped the firm.
+The corpus layer is **real public law**: opinions, courts, judges, statutes,
+and the citation graph, sourced from CourtListener metadata and digest-pinned
+as a seed bundle (the launch corpus is the Chevron-deference cluster). The
+firm layer is the practice: clients, matters, arguments, filings, deadlines,
+case outcomes. Governed edges carry the judgments an attorney actually
+reviews — holdings, statutory interpretations, citation treatment, argument
+support and risk, matter impact, filing obligations. The treatment edge
+(`opinion_treats_opinion`) is a governed, receipted citator entry: extraction
+proposes, an attorney resolves, trust accumulates per judgment surface.
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is regenerated
 from `config.yaml` by `cruxible config views`; treat those blocks as code-owned
-structural truth. Everything outside those marker blocks is authored explanation
-for humans and agents reading the kit.
+structural truth. Everything outside them is authored explanation.
 
-## Modeling Notes
+## Composition notes (no duplicated operating layer)
 
-This first pass intentionally avoids a reference state. CourtListener, PACER, or
-firm DMS providers can supply opinions and filings later, but this config is
-about the local legal-workflow layer: which authorities matter to this firm,
-which clients and matters they affect, which arguments they support or
-undermine, what filing obligations they create, and what review work follows.
+- **Attorneys are base Actors.** Matter accountability is
+  `matter_owned_by_actor` to a mint-materialized Actor. The corpus seed loads
+  matters unowned — Actors cannot be seeded — and onboarding assigns owners
+  after credentials are minted; the `matters_have_owner` check nags until
+  then, deliberately.
+- **Review obligations are base WorkItems**, created by the
+  analyze → apply → propose pipeline and attached through governed seam edges
+  (`opinion_creates_work_item`) plus the deterministic
+  `work_item_targets_matter`. A brief-update WorkItem closes through the base
+  review gate: attorney signoff *is* the ReviewRequest approval. Nothing
+  auto-closes work.
+- **Holdings are judgment-born.** The canonical apply step creates them as
+  inert records from the extractor payload; only the governed
+  `opinion_has_holding` edge makes them reviewed legal reasoning, and the
+  `holdings_belong_to_an_opinion` check flags orphaned extractions.
+- **Two-act corpus.** `build_corpus` loads the pinned act-one world (the
+  doctrine standing). `refresh_corpus` fetches the update — live from
+  CourtListener, or from the bundled act-two fixture when offline — and
+  `sync_corpus_update` applies it. Then the treatment and impact proposal
+  chain shows the law change propagating into firm state:
+  `supporting_authority_now_bad_law` is the alarm.
+- **LLM-outside.** Providers are deterministic heuristics over curated
+  metadata; anything smarter proposes through the same governed path with
+  tri-state signals and never writes accepted state.
 
-The important Cruxible distinction is that the agent can read broadly, but the
-firm should only rely on reviewed legal-judgment edges downstream. A rejected
-impact proposal still teaches the system: it narrows future matter-impact
-matching, citation-treatment routing, filing-obligation classification, and
-review-item generation.
-
-### Canonical ingest vs. governed proposals
-
-The kit has two kinds of workflow. **Canonical** workflows create the base
-anchors deterministically through a provider plus `make_entities` /
-`make_relationships`, rather than raw external writes:
-
-- `build_corpus` seeds opinions, courts, judges, statutes, issues, clients,
-  matters, attorneys, and arguments, with their deterministic canonical edges
-  (issuing court, deciding judge, citation graph, matter client / attorney /
-  jurisdiction, and argument context).
-- `ingest_docket` brings in filings and deadlines as they arrive.
-- `ingest_case_outcomes` records resolved case outcomes and their matter and
-  argument edges.
-- `refresh_stale_review_state` re-evaluates open review items and pending
-  deadlines and closes the stale ones, making the `stale_review_item` /
-  `stale_deadline` / `stale_response_obligation` outcome codes and the
-  ReviewItem / Deadline lifecycle `status` enums actionable.
-
-**Proposal** workflows then read that canonical state and propose the governed
-legal-judgment edges that go through attorney review.
-
-### Jurisdiction and judges are real structure
-
-`matter_in_jurisdiction` (Matter → Court) is created in `build_corpus` and read
-in two places, so it is no longer orphan structure: the
-`authorities_in_matter_jurisdiction` query (opinions issued by courts in a
-matter's jurisdiction) and the `assess_matter_impact` provider input, which now
-receives `opinion_from_court` and `matter_in_jurisdiction` edges so the
-`jurisdiction_overlap` advisory signal on `opinion_affects_matter` is
-graph-backed rather than a dangling signal name. `Judge` is created and edged via
-`opinion_decided_by_judge` in `build_corpus` and is queryable through
-`opinions_by_judge`, so it keeps a concrete role instead of being demoted.
-
-## Ontology Map
-
-Entity types and relationships, color-coded by layer. Solid blue lines are
-deterministic canonical state. Dashed red lines are governed proposal/review
-relationships.
+## Ontology
 
 <!-- CRUXIBLE:BEGIN ontology -->
 ```mermaid
 flowchart LR
   classDef canonicalEntity fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef governedEntity fill:#e67e22,stroke:#a0521c,color:#fff
+  classDef baseEntity fill:#e4e4e7,stroke:#a1a1aa,color:#3f3f46,stroke-dasharray: 4 3
 
+  entity_Actor["Actor"]
   entity_Argument["Argument"]
-  entity_Attorney["Attorney"]
   entity_CaseOutcome["Case Outcome"]
   entity_Client["Client"]
   entity_Court["Court"]
@@ -102,26 +65,28 @@ flowchart LR
   entity_LegalIssue["Legal Issue"]
   entity_Matter["Matter"]
   entity_Opinion["Opinion"]
-  entity_ReviewItem["Review Item"]
   entity_Statute["Statute"]
-  class entity_Argument,entity_Attorney,entity_CaseOutcome,entity_Client,entity_Court,entity_Deadline,entity_Filing,entity_Judge,entity_LegalIssue,entity_Matter,entity_Opinion,entity_Statute canonicalEntity
-  class entity_Holding,entity_ReviewItem governedEntity
+  entity_WorkItem["Work Item"]
+  class entity_Argument,entity_CaseOutcome,entity_Client,entity_Court,entity_Deadline,entity_Filing,entity_Judge,entity_LegalIssue,entity_Matter,entity_Opinion,entity_Statute canonicalEntity
+  class entity_Holding governedEntity
+  class entity_Actor,entity_WorkItem baseEntity
 
   %% Deterministic canonical relationships
   entity_Argument -- "Argument Cites Opinion" --> entity_Opinion
   entity_Argument -- "Argument In Matter" --> entity_Matter
   entity_Argument -- "Argument Raises Issue" --> entity_LegalIssue
   entity_Filing -- "Filing In Matter" --> entity_Matter
-  entity_Matter -- "Matter Assigned To Attorney" --> entity_Attorney
   entity_Matter -- "Matter For Client" --> entity_Client
   entity_Matter -- "Matter Has Deadline" --> entity_Deadline
   entity_Matter -- "Matter In Jurisdiction" --> entity_Court
+  entity_Matter -- "Matter Owned By Actor" --> entity_Actor
   entity_Opinion -- "Opinion Cites Opinion" --> entity_Opinion
   entity_Opinion -- "Opinion Decided By Judge" --> entity_Judge
   entity_Opinion -- "Opinion From Court" --> entity_Court
   entity_CaseOutcome -- "Outcome Of Matter" --> entity_Matter
   entity_CaseOutcome -- "Outcome Resolved Argument" --> entity_Argument
   entity_Statute -- "Statute Governs Issue" --> entity_LegalIssue
+  entity_WorkItem -- "Work Item Targets Matter" --> entity_Matter
 
   %% Governed proposal/review relationships
   entity_Filing -. "Filing Requires Response" .-> entity_Matter
@@ -131,24 +96,15 @@ flowchart LR
   entity_Holding -. "Holding Undermines Argument" .-> entity_Argument
   entity_Matter -. "Matter Turns On Statute" .-> entity_Statute
   entity_Opinion -. "Opinion Affects Matter" .-> entity_Matter
-  entity_Opinion -. "Opinion Creates Review Item" .-> entity_ReviewItem
+  entity_Opinion -. "Opinion Creates Work Item" .-> entity_WorkItem
   entity_Opinion -. "Opinion Has Holding" .-> entity_Holding
   entity_Opinion -. "Opinion Treats Opinion" .-> entity_Opinion
-  entity_ReviewItem -. "Review Item For Matter" .-> entity_Matter
-  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 14,15,16,17,18,19,20,21,22,23,24 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 15,16,17,18,19,20,21,22,23,24 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 
-**Legend:** Blue = canonical/deterministic state | Orange = governed-only
-judgment object | Solid blue lines = deterministic | Dashed red lines =
-governed proposal/review.
-
-## Workflow Summary
-
-The generated pipeline gives the stage order. The generated stage blocks
-underneath show which context each procedure reads, which relationship it
-proposes, and which provider source implements the behavior.
+## Workflows
 
 <!-- CRUXIBLE:BEGIN workflow-pipeline -->
 ```mermaid
@@ -156,25 +112,30 @@ flowchart LR
   classDef canonicalWorkflow fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef governedWorkflow fill:#e67e22,stroke:#a0521c,color:#fff
 
-  workflow_pipeline_build_corpus["1. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_ingest_case_outcomes["2. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_ingest_docket["3. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_refresh_stale_review_state["4. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_propose_argument_risk["5. Holding Undermines Argument<br/>Governed proposal"]
-  workflow_pipeline_propose_argument_support["6. Holding Supports Argument<br/>Governed proposal"]
-  workflow_pipeline_propose_filing_response["7. Filing Requires Response<br/>Governed proposal"]
-  workflow_pipeline_propose_holding_issue_links["8. Holding Addresses Issue<br/>Governed proposal"]
-  workflow_pipeline_propose_holdings_from_opinion["9. Opinion Has Holding<br/>Governed proposal"]
-  workflow_pipeline_propose_matter_impact["10. Opinion Affects Matter<br/>Governed proposal"]
-  workflow_pipeline_propose_matter_statutory_scope["11. Matter Turns On Statute<br/>Governed proposal"]
-  workflow_pipeline_propose_opinion_treatment["12. Opinion Treats Opinion<br/>Governed proposal"]
-  workflow_pipeline_propose_review_item_matter_links["13. Review Item For Matter<br/>Governed proposal"]
-  workflow_pipeline_propose_review_items["14. Opinion Creates Review Item<br/>Governed proposal"]
-  workflow_pipeline_propose_statute_interpretations["15. Holding Interprets Statute<br/>Governed proposal"]
+  workflow_pipeline_apply_candidate_holdings["1. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_apply_review_work_items["2. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_build_corpus["3. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_ingest_case_outcomes["4. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_ingest_docket["5. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_refresh_stale_deadlines["6. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_sync_corpus_update["7. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_propose_argument_risk["8. Holding Undermines Argument<br/>Governed proposal"]
+  workflow_pipeline_propose_argument_support["9. Holding Supports Argument<br/>Governed proposal"]
+  workflow_pipeline_propose_filing_response["10. Filing Requires Response<br/>Governed proposal"]
+  workflow_pipeline_propose_holding_issue_links["11. Holding Addresses Issue<br/>Governed proposal"]
+  workflow_pipeline_propose_holdings_from_opinion["12. Opinion Has Holding<br/>Governed proposal"]
+  workflow_pipeline_propose_matter_impact["13. Opinion Affects Matter<br/>Governed proposal"]
+  workflow_pipeline_propose_matter_statutory_scope["14. Matter Turns On Statute<br/>Governed proposal"]
+  workflow_pipeline_propose_opinion_treatment["15. Opinion Treats Opinion<br/>Governed proposal"]
+  workflow_pipeline_propose_opinion_work_links["16. Opinion Creates Work Item<br/>Governed proposal"]
+  workflow_pipeline_propose_statute_interpretations["17. Holding Interprets Statute<br/>Governed proposal"]
+  workflow_pipeline_apply_candidate_holdings --> workflow_pipeline_apply_review_work_items
+  workflow_pipeline_apply_review_work_items --> workflow_pipeline_build_corpus
   workflow_pipeline_build_corpus --> workflow_pipeline_ingest_case_outcomes
   workflow_pipeline_ingest_case_outcomes --> workflow_pipeline_ingest_docket
-  workflow_pipeline_ingest_docket --> workflow_pipeline_refresh_stale_review_state
-  workflow_pipeline_refresh_stale_review_state --> workflow_pipeline_propose_argument_risk
+  workflow_pipeline_ingest_docket --> workflow_pipeline_refresh_stale_deadlines
+  workflow_pipeline_refresh_stale_deadlines --> workflow_pipeline_sync_corpus_update
+  workflow_pipeline_sync_corpus_update --> workflow_pipeline_propose_argument_risk
   workflow_pipeline_propose_argument_risk --> workflow_pipeline_propose_argument_support
   workflow_pipeline_propose_argument_support --> workflow_pipeline_propose_filing_response
   workflow_pipeline_propose_filing_response --> workflow_pipeline_propose_holding_issue_links
@@ -182,16 +143,15 @@ flowchart LR
   workflow_pipeline_propose_holdings_from_opinion --> workflow_pipeline_propose_matter_impact
   workflow_pipeline_propose_matter_impact --> workflow_pipeline_propose_matter_statutory_scope
   workflow_pipeline_propose_matter_statutory_scope --> workflow_pipeline_propose_opinion_treatment
-  workflow_pipeline_propose_opinion_treatment --> workflow_pipeline_propose_review_item_matter_links
-  workflow_pipeline_propose_review_item_matter_links --> workflow_pipeline_propose_review_items
-  workflow_pipeline_propose_review_items --> workflow_pipeline_propose_statute_interpretations
-  class workflow_pipeline_build_corpus,workflow_pipeline_ingest_case_outcomes,workflow_pipeline_ingest_docket,workflow_pipeline_refresh_stale_review_state canonicalWorkflow
-  class workflow_pipeline_propose_argument_risk,workflow_pipeline_propose_argument_support,workflow_pipeline_propose_filing_response,workflow_pipeline_propose_holding_issue_links,workflow_pipeline_propose_holdings_from_opinion,workflow_pipeline_propose_matter_impact,workflow_pipeline_propose_matter_statutory_scope,workflow_pipeline_propose_opinion_treatment,workflow_pipeline_propose_review_item_matter_links,workflow_pipeline_propose_review_items,workflow_pipeline_propose_statute_interpretations governedWorkflow
+  workflow_pipeline_propose_opinion_treatment --> workflow_pipeline_propose_opinion_work_links
+  workflow_pipeline_propose_opinion_work_links --> workflow_pipeline_propose_statute_interpretations
+  class workflow_pipeline_apply_candidate_holdings,workflow_pipeline_apply_review_work_items,workflow_pipeline_build_corpus,workflow_pipeline_ingest_case_outcomes,workflow_pipeline_ingest_docket,workflow_pipeline_refresh_stale_deadlines,workflow_pipeline_sync_corpus_update canonicalWorkflow
+  class workflow_pipeline_propose_argument_risk,workflow_pipeline_propose_argument_support,workflow_pipeline_propose_filing_response,workflow_pipeline_propose_holding_issue_links,workflow_pipeline_propose_holdings_from_opinion,workflow_pipeline_propose_matter_impact,workflow_pipeline_propose_matter_statutory_scope,workflow_pipeline_propose_opinion_treatment,workflow_pipeline_propose_opinion_work_links,workflow_pipeline_propose_statute_interpretations governedWorkflow
 ```
 <!-- CRUXIBLE:END workflow-pipeline -->
 
 <!-- CRUXIBLE:BEGIN workflow-summary -->
-### 1. Build Corpus
+### 1. Apply Candidate Holdings
 
 **Role:** Canonical seed
 
@@ -199,13 +159,40 @@ flowchart LR
 - None (seeds canonical state)
 
 **Result**
-- Canonical entities: Argument, Attorney, Client, Court, Judge, Legal Issue, Matter, Opinion, Statute
-- Canonical relationships: Argument Cites Opinion, Argument In Matter, Argument Raises Issue, Matter Assigned To Attorney, Matter For Client, Matter In Jurisdiction, Opinion Cites Opinion, Opinion Decided By Judge, Opinion From Court, Statute Governs Issue
+- Canonical entities: Holding
 
 **Provider source**
-- Load Corpus Seed (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::load_corpus_seed`
+- -
 
-### 2. Ingest Case Outcomes
+### 2. Apply Review Work Items
+
+**Role:** Canonical seed
+
+**Input context**
+- None (seeds canonical state)
+
+**Result**
+- Canonical entities: Work Item
+- Canonical relationships: Work Item Targets Matter
+
+**Provider source**
+- -
+
+### 3. Build Corpus
+
+**Role:** Canonical seed
+
+**Input context**
+- None (seeds canonical state)
+
+**Result**
+- Canonical entities: Argument, Client, Court, Judge, Legal Issue, Matter, Opinion, Statute
+- Canonical relationships: Argument Cites Opinion, Argument In Matter, Argument Raises Issue, Matter For Client, Matter In Jurisdiction, Opinion Cites Opinion, Opinion Decided By Judge, Opinion From Court, Statute Governs Issue
+
+**Provider source**
+- Load Corpus Seed (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::load_corpus_seed`; artifact: Corpus Seed Bundle
+
+### 4. Ingest Case Outcomes
 
 **Role:** Canonical seed
 
@@ -217,9 +204,9 @@ flowchart LR
 - Canonical relationships: Outcome Of Matter, Outcome Resolved Argument
 
 **Provider source**
-- Load Case Outcome Feed (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::load_case_outcome_feed`
+- Load Case Outcome Feed (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::load_case_outcome_feed`; artifact: Corpus Seed Bundle
 
-### 3. Ingest Docket
+### 5. Ingest Docket
 
 **Role:** Canonical seed
 
@@ -231,22 +218,36 @@ flowchart LR
 - Canonical relationships: Filing In Matter, Matter Has Deadline
 
 **Provider source**
-- Load Docket Feed (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::load_docket_feed`
+- Load Docket Feed (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::load_docket_feed`; artifact: Corpus Seed Bundle
 
-### 4. Refresh Stale Review State
+### 6. Refresh Stale Deadlines
 
 **Role:** Canonical seed
 
 **Input context**
-- Query context: Deadline, Matter, Review Item, Matter Has Deadline, Review Item For Matter
+- Query context: Deadline, Matter, Matter Has Deadline
 
 **Result**
-- Canonical entities: Deadline, Review Item
+- Canonical entities: Deadline
 
 **Provider source**
-- Sweep Stale Review State (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::sweep_stale_review_state`
+- Sweep Stale Deadlines (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::sweep_stale_deadlines`
 
-### 5. Propose Argument Risk
+### 7. Sync Corpus Update
+
+**Role:** Canonical seed
+
+**Input context**
+- None (seeds canonical state)
+
+**Result**
+- Canonical entities: Court, Judge, Opinion
+- Canonical relationships: Opinion Cites Opinion, Opinion Decided By Judge, Opinion From Court
+
+**Provider source**
+- -
+
+### 8. Propose Argument Risk
 
 **Role:** Governed proposal
 
@@ -257,9 +258,9 @@ flowchart LR
 - Proposed relationships: Holding Undermines Argument
 
 **Provider source**
-- Assess Argument Impact (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::assess_argument_impact`; non-deterministic
+- Assess Argument Impact (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::assess_argument_impact`
 
-### 6. Propose Argument Support
+### 9. Propose Argument Support
 
 **Role:** Governed proposal
 
@@ -270,9 +271,9 @@ flowchart LR
 - Proposed relationships: Holding Supports Argument
 
 **Provider source**
-- Assess Argument Impact (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::assess_argument_impact`; non-deterministic
+- Assess Argument Impact (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::assess_argument_impact`
 
-### 7. Propose Filing Response
+### 10. Propose Filing Response
 
 **Role:** Governed proposal
 
@@ -283,9 +284,9 @@ flowchart LR
 - Proposed relationships: Filing Requires Response
 
 **Provider source**
-- Assess Filing Response Obligations (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::assess_filing_response_obligations`; non-deterministic
+- Assess Filing Response Obligations (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::assess_filing_response_obligations`
 
-### 8. Propose Holding Issue Links
+### 11. Propose Holding Issue Links
 
 **Role:** Governed proposal
 
@@ -296,22 +297,22 @@ flowchart LR
 - Proposed relationships: Holding Addresses Issue
 
 **Provider source**
-- Map Holdings To Issues (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::map_holdings_to_issues`; non-deterministic
+- Map Holdings To Issues (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::map_holdings_to_issues`
 
-### 9. Propose Holdings From Opinion
+### 12. Propose Holdings From Opinion
 
 **Role:** Governed proposal
 
 **Input context**
-- Query context: Opinion
+- None
 
 **Result**
 - Proposed relationships: Opinion Has Holding
 
 **Provider source**
-- Extract Holdings From Opinions (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::extract_holdings_from_opinions`; non-deterministic
+- -
 
-### 10. Propose Matter Impact
+### 13. Propose Matter Impact
 
 **Role:** Governed proposal
 
@@ -322,9 +323,9 @@ flowchart LR
 - Proposed relationships: Opinion Affects Matter
 
 **Provider source**
-- Assess Matter Impact (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::assess_matter_impact`; non-deterministic
+- Assess Matter Impact (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::assess_matter_impact`
 
-### 11. Propose Matter Statutory Scope
+### 14. Propose Matter Statutory Scope
 
 **Role:** Governed proposal
 
@@ -335,9 +336,9 @@ flowchart LR
 - Proposed relationships: Matter Turns On Statute
 
 **Provider source**
-- Scope Matters To Statutes (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::scope_matters_to_statutes`; non-deterministic
+- Scope Matters To Statutes (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::scope_matters_to_statutes`
 
-### 12. Propose Opinion Treatment
+### 15. Propose Opinion Treatment
 
 **Role:** Governed proposal
 
@@ -348,241 +349,286 @@ flowchart LR
 - Proposed relationships: Opinion Treats Opinion
 
 **Provider source**
-- Classify Opinion Treatment (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::classify_opinion_treatment`; non-deterministic
+- Classify Opinion Treatment (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::classify_opinion_treatment`
 
-### 13. Propose Review Item Matter Links
+### 16. Propose Opinion Work Links
 
 **Role:** Governed proposal
 
 **Input context**
-- Query context: Matter, Opinion, Opinion Affects Matter, Opinion Creates Review Item, Opinion Treats Opinion
+- None
 
 **Result**
-- Proposed relationships: Review Item For Matter
+- Proposed relationships: Opinion Creates Work Item
 
 **Provider source**
-- Route Review Items (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::route_review_items`; non-deterministic
+- -
 
-### 14. Propose Review Items
+### 17. Propose Statute Interpretations
 
 **Role:** Governed proposal
 
 **Input context**
-- Query context: Matter, Opinion, Opinion Affects Matter, Opinion Treats Opinion
-
-**Result**
-- Proposed relationships: Opinion Creates Review Item
-
-**Provider source**
-- Route Review Items (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::route_review_items`; non-deterministic
-
-### 15. Propose Statute Interpretations
-
-**Role:** Governed proposal
-
-**Input context**
-- Query context: Holding, Opinion, Statute, Opinion Has Holding
+- Query context: Holding, Statute, Opinion Has Holding
 
 **Result**
 - Proposed relationships: Holding Interprets Statute
 
 **Provider source**
-- Link Holdings To Statutes (Python Function, v0.1.0); source: `kit://providers/case_law_monitoring.py::link_holdings_to_statutes`; non-deterministic
+- Link Holdings To Statutes (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::link_holdings_to_statutes`
+
+### 18. Analyze Opinions For Holdings
+
+**Role:** Utility
+
+**Input context**
+- Query context: Opinion
+
+**Result**
+- Provider output: Extract Holdings From Opinions
+
+**Provider source**
+- Extract Holdings From Opinions (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::extract_holdings_from_opinions`
+
+### 19. Analyze Review Work
+
+**Role:** Utility
+
+**Input context**
+- Query context: Matter, Opinion, Opinion Affects Matter, Opinion Treats Opinion
+
+**Result**
+- Provider output: Route Review Work
+
+**Provider source**
+- Route Review Work (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::route_review_work`
+
+### 20. Refresh Corpus
+
+**Role:** Utility
+
+**Input context**
+- None
+
+**Result**
+- Provider output: Fetch Courtlistener Cluster
+
+**Provider source**
+- Fetch Courtlistener Cluster (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::fetch_courtlistener_cluster`; non-deterministic
 <!-- CRUXIBLE:END workflow-summary -->
 
-## Governed Relationships
-
-This table is generated from proposal policy, decision policy, feedback, and outcome
-profile config. It shows the reviewed legal-judgment layer the agent can use as
-durable context.
+## Governance
 
 <!-- CRUXIBLE:BEGIN governance-table -->
 | Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| Decision Affects Subject | Decision -> Subject Ref | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Answers Open Question | Decision -> Open Question | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Constrains Work Item | Decision -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Supersedes Decision | Decision -> Decision | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 | Filing Requires Response | Filing -> Matter | Workflow: Propose Filing Response | Attorney Review, Docket Matter Match, Filing Obligation Assessor | All Support; prior trust: Trusted Only | Require Review: Filing Obligations Require Review | 3 reason codes | Filing Response Resolution |
 | Holding Addresses Issue | Holding -> Legal Issue | Workflow: Propose Holding Issue Links | Attorney Review, Issue Mapper | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Holding Interprets Statute | Holding -> Statute | Workflow: Propose Statute Interpretations | Attorney Review, Statute Interpretation Extractor | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | - |
+| Holding Interprets Statute | Holding -> Statute | Workflow: Propose Statute Interpretations | Attorney Review, Statute Interpretation Extractor | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 | Holding Supports Argument | Holding -> Argument | Workflow: Propose Argument Support | Argument Impact Assessor, Attorney Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | Argument Support Resolution |
 | Holding Undermines Argument | Holding -> Argument | Workflow: Propose Argument Risk | Argument Impact Assessor, Attorney Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Argument Risk Resolution |
-| Matter Turns On Statute | Matter -> Statute | Workflow: Propose Matter Statutory Scope | Attorney Review, Matter Statute Match | All Support; prior trust: Trusted Only | Require Review: Matter Scope Requires Review | 3 reason codes | Matter Scope Resolution |
+| Matter Turns On Statute | Matter -> Statute | Workflow: Propose Matter Statutory Scope | Attorney Review, Matter Statute Match | All Support; prior trust: Trusted Only | Require Review: Matter Scope Requires Review | 2 reason codes | Matter Scope Resolution |
+| Open Question Blocks Decision | Open Question -> Decision | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Open Question Blocks Work Item | Open Question -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Open Question Concerns Subject | Open Question -> Subject Ref | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 | Opinion Affects Matter | Opinion -> Matter | Workflow: Propose Matter Impact | Attorney Review, Jurisdiction Overlap, Matter Impact Assessor | All Support; prior trust: Trusted Only | Require Review: Matter Impacts Require Review | 3 reason codes | Matter Impact Resolution |
-| Opinion Creates Review Item | Opinion -> Review Item | Workflow: Propose Review Items | Attorney Review, Review Item Router | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Opinion Creates Work Item | Opinion -> Work Item | Workflow: Propose Opinion Work Links | Attorney Review, Review Router | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 | Opinion Has Holding | Opinion -> Holding | Workflow: Propose Holdings From Opinion | Attorney Review, Holding Extractor | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | - |
 | Opinion Treats Opinion | Opinion -> Opinion | Workflow: Propose Opinion Treatment | Attorney Review, Citation Treatment Classifier | All Support; prior trust: Trusted Only | Require Review: Negative Treatment Requires Review | 3 reason codes | Treatment Resolution |
-| Review Item For Matter | Review Item -> Matter | Workflow: Propose Review Item Matter Links | Attorney Review, Review Item Router | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Risk Attaches To Subject | Risk -> Subject Ref | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Risk Blocks Work Item | Risk -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Answers Open Question | Work Item -> Open Question | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Depends On Work Item | Work Item -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Mitigates Risk | Work Item -> Risk | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Supersedes Work Item | Work Item -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 <!-- CRUXIBLE:END governance-table -->
-
-### Signal Policy Notes
-
-This catalog is generated from relationship-local signal policy and the
-governed relationships that consume each signal source.
 
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
 | Signal Source | Role | Review Unsure | Used By | Notes |
 | --- | --- | --- | --- | --- |
 | `argument_impact_assessor` | required | yes | Holding Supports Argument, Holding Undermines Argument | - |
-| `attorney_review` | advisory | yes | Filing Requires Response, Holding Addresses Issue, Holding Interprets Statute, Holding Supports Argument, Holding Undermines Argument, Matter Turns On Statute, Opinion Affects Matter, Opinion Creates Review Item, Opinion Has Holding, Opinion Treats Opinion, Review Item For Matter | - |
+| `attorney_review` | advisory | yes | Filing Requires Response, Holding Addresses Issue, Holding Interprets Statute, Holding Supports Argument, Holding Undermines Argument, Matter Turns On Statute, Opinion Affects Matter, Opinion Creates Work Item, Opinion Has Holding, Opinion Treats Opinion | - |
 | `citation_treatment_classifier` | required | yes | Opinion Treats Opinion | - |
 | `docket_matter_match` | required | yes | Filing Requires Response | - |
 | `filing_obligation_assessor` | required | yes | Filing Requires Response | - |
 | `holding_extractor` | required | yes | Opinion Has Holding | - |
 | `issue_mapper` | required | yes | Holding Addresses Issue | - |
 | `jurisdiction_overlap` | advisory | yes | Opinion Affects Matter | - |
+| `maintainer_judgment` | advisory | yes | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
 | `matter_impact_assessor` | required | yes | Opinion Affects Matter | - |
 | `matter_statute_match` | required | yes | Matter Turns On Statute | - |
-| `review_item_router` | required | yes | Opinion Creates Review Item, Review Item For Matter | - |
+| `review_router` | required | yes | Opinion Creates Work Item | - |
+| `source_evidence` | required | yes | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
 | `statute_interpretation_extractor` | required | yes | Holding Interprets Statute | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
 
-## Query Map
-
-Named queries are the main context surfaces for the legal agent. The map shows
-entry/return affordances; the catalog gives the traversal and intended use.
+## Queries
 
 <!-- CRUXIBLE:BEGIN query-map -->
 ```mermaid
 flowchart LR
   classDef queryEntity fill:#ecfdf5,stroke:#047857,color:#064e3b
 
+  query_entity_Actor["Actor"]
+  query_entity_AnyEntity["Any Entity"]
   query_entity_Argument["Argument"]
-  query_entity_Attorney["Attorney"]
   query_entity_CaseOutcome["Case Outcome"]
   query_entity_Client["Client"]
+  query_entity_Collection_query["Collection Query"]
   query_entity_Deadline["Deadline"]
+  query_entity_Decision["Decision"]
   query_entity_Filing["Filing"]
   query_entity_Judge["Judge"]
   query_entity_LegalIssue["Legal Issue"]
   query_entity_Matter["Matter"]
+  query_entity_OpenQuestion["Open Question"]
   query_entity_Opinion["Opinion"]
-  query_entity_ReviewItem["Review Item"]
+  query_entity_ReviewRequest["Review Request"]
+  query_entity_Risk["Risk"]
+  query_entity_StateNote["State Note"]
   query_entity_Statute["Statute"]
-  class query_entity_Argument,query_entity_Attorney,query_entity_CaseOutcome,query_entity_Client,query_entity_Deadline,query_entity_Filing,query_entity_Judge,query_entity_LegalIssue,query_entity_Matter,query_entity_Opinion,query_entity_ReviewItem,query_entity_Statute queryEntity
+  query_entity_SubjectRef["Subject Ref"]
+  query_entity_WorkItem["Work Item"]
+  class query_entity_Actor,query_entity_AnyEntity,query_entity_Argument,query_entity_CaseOutcome,query_entity_Client,query_entity_Collection_query,query_entity_Deadline,query_entity_Decision,query_entity_Filing,query_entity_Judge,query_entity_LegalIssue,query_entity_Matter,query_entity_OpenQuestion,query_entity_Opinion,query_entity_ReviewRequest,query_entity_Risk,query_entity_StateNote,query_entity_Statute,query_entity_SubjectRef,query_entity_WorkItem queryEntity
+  query_entity_Actor --> query_entity_Deadline
+  query_entity_Actor --> query_entity_WorkItem
   query_entity_Argument --> query_entity_CaseOutcome
-  query_entity_Attorney --> query_entity_Deadline
   query_entity_Client --> query_entity_Opinion
+  query_entity_Collection_query --> query_entity_Deadline
+  query_entity_Collection_query --> query_entity_Decision
+  query_entity_Collection_query --> query_entity_OpenQuestion
+  query_entity_Collection_query --> query_entity_ReviewRequest
+  query_entity_Collection_query --> query_entity_Risk
+  query_entity_Collection_query --> query_entity_StateNote
+  query_entity_Collection_query --> query_entity_WorkItem
   query_entity_Judge --> query_entity_Opinion
   query_entity_LegalIssue --> query_entity_Opinion
   query_entity_LegalIssue --> query_entity_Statute
+  query_entity_Matter --> query_entity_AnyEntity
   query_entity_Matter --> query_entity_CaseOutcome
   query_entity_Matter --> query_entity_Filing
   query_entity_Matter --> query_entity_Opinion
-  query_entity_Matter --> query_entity_ReviewItem
   query_entity_Matter --> query_entity_Statute
+  query_entity_Matter --> query_entity_WorkItem
+  query_entity_Opinion --> query_entity_AnyEntity
   query_entity_Opinion --> query_entity_Matter
-  query_entity_Opinion --> query_entity_ReviewItem
+  query_entity_Opinion --> query_entity_WorkItem
+  query_entity_ReviewRequest --> query_entity_StateNote
+  query_entity_StateNote --> query_entity_AnyEntity
+  query_entity_SubjectRef --> query_entity_AnyEntity
+  query_entity_WorkItem --> query_entity_AnyEntity
+  query_entity_WorkItem --> query_entity_ReviewRequest
+  query_entity_WorkItem --> query_entity_StateNote
+  query_entity_WorkItem --> query_entity_WorkItem
 ```
 <!-- CRUXIBLE:END query-map -->
 
 <!-- CRUXIBLE:BEGIN query-catalog -->
+### Actor
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Actor Work Queue | traversal | Work Item | reviewable | Work Item Owned By Actor (Incoming) | Work items owned by an actor with latest reviews, dependency counts, blockers, subjects. |
+| Deadline Watch | traversal | Deadline | live | Matter Owned By Actor (Incoming) -> Matter Has Deadline (Outgoing) | Deadlines across the matters this actor owns, soonest first. |
+
 ### Argument
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Argument Track Record | traversal | Case Outcome | live | Outcome Resolved Argument (Incoming) | Starting from an argument, find case outcomes where that argument was resolved or evaluated. |
-
-### Attorney
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| Deadline Watch | traversal | Deadline | live | Matter Assigned To Attorney (Incoming) -> Matter Has Deadline (Outgoing) | Starting from an attorney, find deadlines across assigned matters. |
+| Argument Track Record | traversal | Case Outcome | live | Outcome Resolved Argument (Incoming) | Case outcomes where this argument was resolved or evaluated. |
 
 ### Client
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Client Impact Watch | traversal | Opinion | live | Matter For Client (Incoming) -> Opinion Affects Matter (Incoming) | Starting from a client, find opinions judged to affect that client's matters. |
+| Client Impact Watch | traversal | Opinion | reviewable | Matter For Client (Incoming) -> Opinion Affects Matter (Incoming) | Opinions judged to affect a client's matters. |
+
+### Collection Query
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Active Risks | collection | Risk | live |  | Active operational risks. |
+| Blocked Work Items | collection | Work Item | reviewable |  | Work items marked blocked, with risk/open-question blocker context. |
+| Changes Requested Reviews | collection | Review Request | reviewable |  | Review requests sent back with changes requested -- the implementer's rework queue, distinct from the reviewer-facing review_queue. |
+| Open Questions Needing Review | collection | Open Question | live |  | Planned/active open questions needing review. |
+| Proposed Decisions | collection | Decision | live |  | Proposed decisions awaiting acceptance/rejection/deferral. |
+| Recent State Notes | collection | State Note | reviewable |  | Recent operation-state notes, corrections, rationale/implementation/review notes. |
+| Review Queue | collection | Review Request | reviewable |  | Review requests awaiting a reviewer -- requested or in review. Reviews sent back for rework live in changes_requested_reviews. |
+| Superseded Decisions | collection | Decision | not-live |  | Decision retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
+| Superseded Work Items | collection | Work Item | not-live |  | WorkItem retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
+| Upcoming Deadlines | collection | Deadline | live |  | All live deadlines still awaiting action, soonest first — the practice-wide docket view. |
 
 ### Judge
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Opinions By Judge | traversal | Opinion | live | Opinion Decided By Judge (Incoming) | Starting from a judge, find opinions that judge authored or joined. |
+| Opinions By Judge | traversal | Opinion | live | Opinion Decided By Judge (Incoming) | Opinions this judge authored or joined. |
 
 ### Legal Issue
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Precedent Chain For Issue | traversal | Opinion | live | Holding Addresses Issue (Incoming) -> Opinion Has Holding (Incoming) | Starting from a legal issue, find opinions with reviewed holdings that address the issue. |
-| Statutory Interpretations For Issue | traversal | Statute | live | Holding Addresses Issue (Incoming) -> Holding Interprets Statute (Outgoing) | Starting from a legal issue, find statutes interpreted by holdings addressing that issue. |
+| Precedent Chain For Issue | traversal | Opinion | reviewable | Holding Addresses Issue (Incoming) -> Opinion Has Holding (Incoming) | Opinions with reviewed holdings addressing this issue. |
+| Statutory Interpretations For Issue | traversal | Statute | reviewable | Holding Addresses Issue (Incoming) -> Holding Interprets Statute (Outgoing) | Statutes interpreted by holdings addressing this issue. |
 
 ### Matter
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Adverse Authority For Matter | traversal | Opinion | live | Argument In Matter (Incoming) -> Holding Undermines Argument (Incoming) -> Opinion Has Holding (Incoming) | Starting from a matter, find opinions whose holdings undermine arguments in that matter. |
-| Authorities In Matter Jurisdiction | traversal | Opinion | live | Matter In Jurisdiction (Outgoing) -> Opinion From Court (Incoming) | Starting from a matter, find opinions issued by courts in the matter's jurisdiction. |
-| Case Outcomes For Matter | traversal | Case Outcome | live | Outcome Of Matter (Incoming) | Starting from a matter, find case outcomes recorded for that matter. |
-| Filing Response Obligations For Matter | traversal | Filing | live | Filing Requires Response (Incoming) | Starting from a matter, find filings judged to require a response or deadline. |
-| Matter Statutory Scope | traversal | Statute | live | Matter Turns On Statute (Outgoing) | Starting from a matter, find statutes and doctrines accepted as within the matter's legal scope. |
-| Negative Treatment For Cited Authorities | traversal | Opinion | live | Argument In Matter (Incoming) -> Argument Cites Opinion (Outgoing) -> Opinion Treats Opinion (Incoming) | Starting from a matter, find new opinions that negatively treat authorities cited by matter arguments. |
-| Review Items For Matter | traversal | Review Item | live | Review Item For Matter (Incoming) | Starting from a matter, find open or historical review items created by monitored opinions. |
-| Statute Interpretations For Matter | traversal | Opinion | live | Matter Turns On Statute (Outgoing) -> Holding Interprets Statute (Incoming) -> Opinion Has Holding (Incoming) | Starting from a matter, follow its statutory scope to statutes, then find the holdings that interpret those statutes and the opinions that contain them. |
-| Supporting Authority For Matter | traversal | Opinion | live | Argument In Matter (Incoming) -> Holding Supports Argument (Incoming) -> Opinion Has Holding (Incoming) | Starting from a matter, find opinions whose holdings support arguments in that matter. |
-| Supporting Authority Now Bad Law | traversal | Opinion | live | Argument In Matter (Incoming) -> Holding Supports Argument (Incoming) -> Opinion Has Holding (Incoming) -> Opinion Treats Opinion (Incoming) | Starting from a matter, reach its supporting holdings and their opinions, then surface opinions that negatively treat those supporting authorities (overrules, abrogates, or limits) so a once-good authority that just went bad is flagged. |
+| Adverse Authority For Matter | traversal | Opinion | reviewable | Argument In Matter (Incoming) -> Holding Undermines Argument (Incoming) -> Opinion Has Holding (Incoming) | Opinions whose holdings undermine arguments in this matter. |
+| Authorities In Matter Jurisdiction | traversal | Opinion | live | Matter In Jurisdiction (Outgoing) -> Opinion From Court (Incoming) | Opinions issued by courts in the matter's jurisdiction. |
+| Case Outcomes For Matter | traversal | Case Outcome | live | Outcome Of Matter (Incoming) | Case outcomes recorded for this matter. |
+| Filing Response Obligations For Matter | traversal | Filing | reviewable | Filing Requires Response (Incoming) | Filings judged to require a response or deadline for this matter. |
+| Matter Context | traversal | Any Entity | reviewable | Filing In Matter \| Matter For Client \| Matter In Jurisdiction \| Matter Has Deadline \| Argument In Matter \| Outcome Of Matter \| Matter Owned By Actor \| Work Item Targets Matter \| Matter Turns On Statute \| Opinion Affects Matter \| Filing Requires Response (Both) | Everything attached to a matter: client, owner, arguments, scope, impacts, filings, deadlines, work, outcomes. all_adjacent expands against the composed config, so base seam edges are traversed too. |
+| Matter Statutory Scope | traversal | Statute | reviewable | Matter Turns On Statute (Outgoing) | Statutes and doctrines within the matter's accepted or proposed legal scope. |
+| Negative Treatment For Cited Authorities | traversal | Opinion | reviewable | Argument In Matter (Incoming) -> Argument Cites Opinion (Outgoing) -> Opinion Treats Opinion (Incoming) | New opinions that negatively treat authorities cited by this matter's arguments, newest treatment first. follows is not negative treatment. |
+| Statute Interpretations For Matter | traversal | Opinion | reviewable | Matter Turns On Statute (Outgoing) -> Holding Interprets Statute (Incoming) -> Opinion Has Holding (Incoming) | Opinions whose holdings interpret statutes in this matter's scope. |
+| Supporting Authority For Matter | traversal | Opinion | reviewable | Argument In Matter (Incoming) -> Holding Supports Argument (Incoming) -> Opinion Has Holding (Incoming) | Opinions whose holdings support arguments in this matter. |
+| Supporting Authority Now Bad Law | traversal | Opinion | reviewable | Argument In Matter (Incoming) -> Holding Supports Argument (Incoming) -> Opinion Has Holding (Incoming) -> Opinion Treats Opinion (Incoming) | The two-act alarm: reach the matter's supporting authorities, then surface opinions that overrule, abrogate, or limit them, newest first. |
+| Work Items For Matter | traversal | Work Item | reviewable | Work Item Targets Matter (Incoming) | Open review obligations and other work targeting this matter. |
 
 ### Opinion
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Matters Impacted By Opinion | traversal | Matter | live | Opinion Affects Matter (Outgoing) | Starting from an opinion, find matters judged affected by that opinion. |
-| Opinion Review Items | traversal | Review Item | live | Opinion Creates Review Item (Outgoing) | Starting from an opinion, find review items created by that opinion. |
+| Matters Impacted By Opinion | traversal | Matter | reviewable | Opinion Affects Matter (Outgoing) | Matters judged affected by an opinion, pending judgments visible. |
+| Opinion Context | traversal | Any Entity | reviewable | Opinion From Court \| Opinion Decided By Judge \| Opinion Cites Opinion \| Argument Cites Opinion \| Opinion Creates Work Item \| Opinion Has Holding \| Opinion Treats Opinion \| Opinion Affects Matter (Both) | Court, judges, citations, treatments, holdings, impacts, and created work for one opinion. |
+| Opinion Work Items | traversal | Work Item | reviewable | Opinion Creates Work Item (Outgoing) | Review obligations created by this opinion. |
+
+### Review Request
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| State Notes For Review Request | traversal | State Note | reviewable | State Note About Review Request (Incoming) | The review thread: verdict and finding notes attached to a review request, newest first. This is the read that replaces scrolling a notes blob. |
+
+### State Note
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| State Note Context | traversal | Any Entity | reviewable | State Note Authored By Actor \| State Note About Work Item \| State Note About Review Request \| State Note About Decision \| State Note About Risk \| State Note About Open Question \| State Note About Subject \| State Note About Actor \| State Note Supersedes State Note \| State Note Resolves State Note (Both) | Full context for a state note (targets, author, supersession). |
+
+### Subject Ref
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Subject Operation Context | traversal | Any Entity | reviewable | State Note About Subject \| Work Item Targets Subject \| Decision Affects Subject \| Risk Attaches To Subject \| Open Question Concerns Subject (Both) | Work, decisions, risks, open questions attached to a subject ref. |
+
+### Work Item
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Approved Reviews For Work Item | traversal | Review Request | live | Review Request For Work Item (Incoming) | Approved review requests for a work item. Used by the closed-transition guard. |
+| State Notes For Work Item | traversal | State Note | reviewable | State Note About Work Item (Incoming) | State notes attached to a work item, newest first. |
+| Work Item Context | traversal | Any Entity | reviewable | Work Item Owned By Actor \| Review Request For Work Item \| State Note About Work Item \| Work Item Depends On Work Item \| Work Item Part Of Work Item \| Work Item Spawned From Work Item \| Work Item Supersedes Work Item \| Risk Blocks Work Item \| Open Question Blocks Work Item \| Work Item Mitigates Risk \| Work Item Answers Open Question \| Decision Constrains Work Item \| Work Item Targets Subject \| Work Item Targets Matter \| Opinion Creates Work Item (Both) | From a work item, inspect dependencies, blockers, reviews, composition, lineage, decisions, owner, subjects. all_adjacent expands against the final composed config, so on a composed instance this query also traverses overlay seam edges (e.g. project-domain's roadmap, release, milestone, and area relationships). |
+| Work Item Lineage Context | traversal | Work Item | reviewable | Work Item Spawned From Work Item \| Work Item Supersedes Work Item (Both, depth=5) | Work item lineage/replacement context, excluding sequencing deps. |
+| Work Item Rollup Context | traversal | Work Item | reviewable | Work Item Part Of Work Item (Incoming, depth=5) | Child/descendant work items under a parent. |
 <!-- CRUXIBLE:END query-catalog -->
 
-## Schema Reference
-
-This README keeps schema detail at the diagram and table level so the kit
-remains usable as a drafting surface. The config remains the source of truth
-for full entity, relationship, and contract properties. For a generated
-Markdown schema catalog, run:
-
-```bash
-uv run cruxible config views --config kits/case-law-monitoring/config.yaml --runtime --view schema-catalog
-```
-
-
-
-## Compounding Knowledge Procedure
-
-1. Register matter portfolio anchors: clients, matters, attorneys, arguments,
-   deadlines, issues, cited authorities, courts, and statutes.
-2. Register new monitored opinions and filings from alerts, docket feeds,
-   research, or attorney review.
-3. Propose matter statutory scope, holdings, citation treatment, statute
-   interpretation, and issue mappings.
-4. Propose support/risk links between reviewed holdings and matter arguments.
-5. Propose matter-impact, filing-response, and review-item edges for attorney
-   review.
-6. Use named queries to supply the legal agent with reviewed adverse authority,
-   supporting authority, impacted clients/matters, deadline obligations, and
-   open review obligations.
-7. Record case outcomes and argument results as canonical matter history.
-8. Feed review feedback and later outcomes back into provider fixes, decision
-   policies, constraints, and trust calibration.
-
-## Usage Stories
-
-- **New opinion triage:** determine whether a monitored opinion affects active
-  matters or only belongs in background research.
-- **Client impact watch:** start from a client and surface opinions judged to
-  affect that client's matters.
-- **Filing obligation review:** determine whether a new filing creates a
-  response, deadline, or client-update obligation.
-- **Adverse authority check:** surface opinions that undermine arguments in a
-  matter before a filing or client update.
-- **Cited-authority health:** identify new negative treatment of opinions a
-  matter already relies on.
-- **Argument track record:** use resolved case outcomes to show how similar
-  arguments have performed across matters.
-- **Matter review queue:** create attorney-review items when authority changes
-  the risk posture of a matter.
-- **Practice memory:** preserve reviewed impact decisions so future opinions are
-  compared against firm-specific matter history, not generic legal memory.
-
-## Rules And Learning Loops
-
-These generated sections own the operational facts: constraints, quality
-checks, feedback vocabularies, and outcome vocabularies. Authored prose should
-explain how to use them, not restate the config.
+## Quality Rules
 
 <!-- CRUXIBLE:BEGIN quality-rules -->
 ### Constraints
@@ -595,13 +641,28 @@ No configured constraints.
 | --- | --- | --- | --- | --- |
 | `case_outcomes_have_matter` | Cardinality | Case Outcome -> Outcome Of Matter (out) | Error | min `1`, max `1` |
 | `deadlines_have_matter` | Cardinality | Deadline -> Matter Has Deadline (in) | Warning | min `1` |
-| `filing_responses_have_response_type` | Property | Filing Requires Response.response_type | Error | Required |
+| `decision_supersessions_have_basis` | Property | Decision Supersedes Decision.supersession_basis | Warning | Non Empty |
+| `decision_work_constraints_have_type` | Property | Decision Constrains Work Item.impact_type | Warning | Required |
+| `holdings_belong_to_an_opinion` | Cardinality | Holding -> Opinion Has Holding (in) | Warning | min `1` |
 | `matter_impacts_have_level` | Property | Opinion Affects Matter.impact_level | Error | Required |
 | `matters_have_one_client` | Cardinality | Matter -> Matter For Client (out) | Warning | min `1`, max `1` |
-| `matters_have_responsible_attorney` | Cardinality | Matter -> Matter Assigned To Attorney (out) | Warning | min `1` |
-| `opinion_treatments_have_treatment` | Property | Opinion Treats Opinion.treatment | Error | Required |
+| `matters_have_owner` | Cardinality | Matter -> Matter Owned By Actor (out) | Warning | min `1` |
+| `open_question_work_blockers_have_basis` | Property | Open Question Blocks Work Item.blocking_basis | Warning | Non Empty |
 | `opinions_have_court` | Cardinality | Opinion -> Opinion From Court (out) | Warning | min `1` |
+| `review_requests_review_work` | Cardinality | Review Request -> Review Request For Work Item (out) | Warning | min `1` |
+| `risk_work_blockers_have_basis` | Property | Risk Blocks Work Item.blocking_basis | Warning | Non Empty |
+| `scope_links_have_basis` | Property | Matter Turns On Statute.scope_basis | Warning | Non Empty |
+| `state_note_supersessions_have_basis` | Property | State Note Supersedes State Note.supersession_basis | Warning | Non Empty |
+| `state_notes_have_author` | Cardinality | State Note -> State Note Authored By Actor (out) | Warning | min `1` |
+| `treatments_have_rationale` | Property | Opinion Treats Opinion.rationale | Warning | Non Empty |
+| `work_dependencies_have_basis` | Property | Work Item Depends On Work Item.dependency_basis | Warning | Non Empty |
+| `work_item_part_of_single_parent` | Cardinality | Work Item -> Work Item Part Of Work Item (out) | Warning | max `1` |
+| `work_item_spawned_from_single_origin` | Cardinality | Work Item -> Work Item Spawned From Work Item (out) | Warning | max `1` |
+| `work_items_have_owner` | Cardinality | Work Item -> Work Item Owned By Actor (out) | Warning | min `1` |
+| `work_supersessions_have_basis` | Property | Work Item Supersedes Work Item.supersession_basis | Warning | Non Empty |
 <!-- CRUXIBLE:END quality-rules -->
+
+## Learning Loops
 
 <!-- CRUXIBLE:BEGIN learning-loops -->
 ### Feedback Profiles (Loop 1)
@@ -609,7 +670,7 @@ No configured constraints.
 #### `filing_requires_response`
 - Version: `1`
 - Reason codes:
-  - `deadline_extraction_error` (`provider_fix`): The filing response deadline was incorrectly extracted or normalized.
+  - `deadline_extraction_error` (`provider_fix`): The response deadline was incorrectly extracted or normalized.
   - `no_response_required` (`constraint`): This filing does not create a response obligation for the matter.
   - `wrong_matter_routing` (`quality_check`): The filing was routed to the wrong tracked matter.
 - Scope keys:
@@ -630,7 +691,6 @@ No configured constraints.
 #### `holding_interprets_statute`
 - Version: `1`
 - Reason codes:
-  - `scope_mismatch` (`constraint`): Interpretation applies only under a narrower procedural or factual scope.
   - `wrong_interpretation_type` (`provider_fix`): Interpretation type is wrong.
   - `wrong_statute` (`provider_fix`): Holding does not interpret this statute or rule.
 - Scope keys:
@@ -662,12 +722,10 @@ No configured constraints.
 #### `matter_turns_on_statute`
 - Version: `1`
 - Reason codes:
-  - `duplicate_scope` (`constraint`): This scope link duplicates an already accepted matter-scope entry.
-  - `issue_not_in_matter` (`quality_check`): The issue used to justify this statutory scope is not part of the matter.
-  - `wrong_statute_link` (`provider_fix`): The statute, rule, or doctrine is not relevant to this matter's legal issues.
+  - `issue_not_in_matter` (`quality_check`): The issue used to justify this scope is not part of the matter.
+  - `wrong_statute_link` (`provider_fix`): The statute or doctrine is not relevant to this matter's legal issues.
 - Scope keys:
   - `matter`: `FROM.matter_id`
-  - `scope_basis`: `EDGE.scope_basis`
   - `statute`: `TO.statute_id`
 
 #### `opinion_affects_matter`
@@ -678,19 +736,18 @@ No configured constraints.
   - `wrong_impact_level` (`decision_policy`): Impact level is overstated or understated.
 - Scope keys:
   - `impact_level`: `EDGE.impact_level`
-  - `impact_type`: `EDGE.impact_type`
   - `matter`: `TO.matter_id`
   - `opinion`: `FROM.opinion_id`
 
-#### `opinion_creates_review_item`
+#### `opinion_creates_work_item`
 - Version: `1`
 - Reason codes:
-  - `unnecessary_review` (`decision_policy`): Opinion does not create a review obligation.
-  - `wrong_obligation_type` (`provider_fix`): Review obligation type is incorrect.
+  - `unnecessary_review` (`decision_policy`): The opinion does not create a real review obligation.
+  - `wrong_obligation_type` (`provider_fix`): The obligation type is incorrect.
 - Scope keys:
   - `obligation_type`: `EDGE.obligation_type`
   - `opinion`: `FROM.opinion_id`
-  - `review_item`: `TO.review_item_id`
+  - `work_item`: `TO.work_item_id`
 
 #### `opinion_has_holding`
 - Version: `1`
@@ -706,23 +763,13 @@ No configured constraints.
 #### `opinion_treats_opinion`
 - Version: `1`
 - Reason codes:
-  - `citation_context_mismatch` (`constraint`): Treatment is accurate only in a different doctrinal or procedural context.
+  - `citation_context_mismatch` (`constraint`): Treatment holds only in a different doctrinal or procedural context.
   - `not_meaningful_treatment` (`provider_fix`): Citation does not meaningfully treat the cited authority.
   - `wrong_treatment_type` (`provider_fix`): Treatment type is incorrect.
 - Scope keys:
   - `cited_opinion`: `TO.opinion_id`
   - `source_opinion`: `FROM.opinion_id`
   - `treatment`: `EDGE.treatment`
-
-#### `review_item_for_matter`
-- Version: `1`
-- Reason codes:
-  - `duplicate_review_item` (`decision_policy`): Review item duplicates existing matter work.
-  - `wrong_matter` (`provider_fix`): Review item was routed to the wrong matter.
-- Scope keys:
-  - `assignment_basis`: `EDGE.assignment_basis`
-  - `matter`: `TO.matter_id`
-  - `review_item`: `FROM.review_item_id`
 
 ### Outcome Profiles (Loop 2)
 
@@ -732,9 +779,9 @@ No configured constraints.
 - Version: `1`
 - Target: Relationship `holding_undermines_argument`
 - Outcome codes:
-  - `missed_adverse_authority` (`require_review`): A holding that undermined the argument was missed by the workflow.
-  - `risk_materialized` (`unknown`): The adverse holding materialized as real risk and required a strategy change.
-  - `risk_overstated` (`trust_adjustment`): Later review found the holding was distinguishable and did not undermine the argument.
+  - `missed_adverse_authority` (`require_review`): A holding that undermined the argument was missed.
+  - `risk_materialized` (`unknown`): The adverse holding required a real strategy change.
+  - `risk_overstated` (`trust_adjustment`): The holding was distinguishable and did not undermine the argument.
 - Scope keys:
   - `relationship_type`: `RESOLUTION.relationship_type`
 
@@ -742,9 +789,9 @@ No configured constraints.
 - Version: `1`
 - Target: Relationship `holding_supports_argument`
 - Outcome codes:
-  - `missed_supporting_authority` (`require_review`): A holding that would have supported the argument was missed by the workflow.
-  - `support_held_up` (`unknown`): The holding-supports-argument link held up in briefing or argument and helped the matter.
-  - `support_overstated` (`trust_adjustment`): Later review found the supporting holding did not materially help the argument.
+  - `missed_supporting_authority` (`require_review`): A holding that would have supported the argument was missed.
+  - `support_held_up` (`unknown`): The supporting holding held up in briefing or argument.
+  - `support_overstated` (`trust_adjustment`): The holding did not materially help the argument.
 - Scope keys:
   - `relationship_type`: `RESOLUTION.relationship_type`
 
@@ -752,10 +799,9 @@ No configured constraints.
 - Version: `1`
 - Target: Relationship `filing_requires_response`
 - Outcome codes:
-  - `date_parse_error` (`provider_fix`): The filing date or response deadline was parsed incorrectly.
-  - `false_deadline` (`trust_adjustment`): The accepted response obligation or deadline was incorrect.
-  - `missed_deadline` (`require_review`): A real response obligation or deadline was missed.
-  - `response_obligation_confirmed` (`unknown`): Later matter activity confirmed that the response obligation applied.
+  - `false_deadline` (`trust_adjustment`): The accepted obligation or deadline was incorrect.
+  - `missed_deadline` (`require_review`): A real response obligation was missed.
+  - `response_obligation_confirmed` (`unknown`): Later matter activity confirmed the obligation applied.
 - Scope keys:
   - `relationship_type`: `RESOLUTION.relationship_type`
 
@@ -763,9 +809,9 @@ No configured constraints.
 - Version: `1`
 - Target: Relationship `opinion_affects_matter`
 - Outcome codes:
-  - `missed_matter` (`require_review`): A matter was later found to be affected but was missed by the workflow.
-  - `no_actual_impact` (`trust_adjustment`): Later review found the accepted impact did not change the matter.
-  - `strategy_updated` (`unknown`): Matter strategy, filing plan, or client advice changed because of this opinion.
+  - `missed_matter` (`require_review`): An affected matter was missed by the workflow.
+  - `no_actual_impact` (`trust_adjustment`): The accepted impact did not change the matter.
+  - `strategy_updated` (`unknown`): Matter strategy, filings, or client advice changed because of this opinion.
 - Scope keys:
   - `relationship_type`: `RESOLUTION.relationship_type`
 
@@ -773,9 +819,9 @@ No configured constraints.
 - Version: `1`
 - Target: Relationship `matter_turns_on_statute`
 - Outcome codes:
-  - `missed_core_statute` (`require_review`): A core statute, rule, or doctrine was missed during matter scoping.
+  - `missed_core_statute` (`require_review`): A core statute or doctrine was missed during scoping.
   - `scope_confirmed` (`unknown`): Later review confirmed the matter-scope link.
-  - `scope_too_broad` (`trust_adjustment`): The accepted matter-scope link was broader than the matter actually required.
+  - `scope_too_broad` (`trust_adjustment`): The accepted scope link was broader than the matter required.
 - Scope keys:
   - `relationship_type`: `RESOLUTION.relationship_type`
 
@@ -800,66 +846,21 @@ No configured constraints.
 - Scope keys:
   - `query`: `SURFACE.name`
 
+##### `bad_law_query`
+- Version: `1`
+- Target: Query `supporting_authority_now_bad_law`
+- Outcome codes:
+  - `false_bad_law` (`graph_fix`): The alarm fired on a treatment later judged not to reach the supporting holding.
+  - `missed_bad_law` (`graph_fix`): A supporting authority went bad and the alarm did not surface it.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
 ##### `client_impact_query`
 - Version: `1`
 - Target: Query `client_impact_watch`
 - Outcome codes:
-  - `false_client_impact` (`graph_fix`): Query returned an opinion later judged not material to the client's matters.
+  - `false_client_impact` (`graph_fix`): Query returned an opinion later judged not material.
   - `missed_client_impact` (`graph_fix`): Query omitted an opinion later judged material to the client's matters.
 - Scope keys:
   - `query`: `SURFACE.name`
-
-##### `filing_response_query`
-- Version: `1`
-- Target: Query `filing_response_obligations_for_matter`
-- Outcome codes:
-  - `missed_response_obligation` (`graph_fix`): Query omitted a filing that required response.
-  - `stale_response_obligation` (`graph_fix`): Query returned a filing obligation that no longer applied.
-- Scope keys:
-  - `query`: `SURFACE.name`
-
-##### `review_item_query`
-- Version: `1`
-- Target: Query `review_items_for_matter`
-- Outcome codes:
-  - `missed_review_item` (`graph_fix`): Query omitted a review item later needed for the matter.
-  - `stale_review_item` (`graph_fix`): Query returned a review item that should have been closed or superseded.
-- Scope keys:
-  - `query`: `SURFACE.name`
 <!-- CRUXIBLE:END learning-loops -->
-
-## Open Design Questions
-
-- Should `Holding` be registered as a lightweight entity by the agent before
-  relationship proposals, or should Cruxible add first-class governed entity
-  proposals?
-- Which parts of opinion metadata should eventually live in a reference layer
-  versus this local firm layer?
-- Should review-item routing be one workflow with multiple proposed
-  relationships, or remain split into explicit `opinion -> review item` and
-  `review item -> matter` proposals?
-- Which matter-impact edges should ever become trust-gated rather than always
-  attorney-reviewed?
-
-## Maintenance
-
-Regenerate the structural sections after changing ontology, workflows, governed
-relationships, or named queries:
-
-```bash
-uv run cruxible config views --config kits/case-law-monitoring/config.yaml --update-readme kits/case-law-monitoring/README.md
-```
-
-To inspect the same generated bundle without editing the README:
-
-```bash
-uv run cruxible config views --config kits/case-law-monitoring/config.yaml --view all
-```
-
-## Status
-
-This is a first-pass config and README. Provider refs are placeholders, no seed
-data is included, and the first real-usage iteration should focus on one
-end-to-end story: new opinion or filing, proposed treatment/scope/impact edges,
-attorney feedback, named-query context for the next agent recommendation, and a
-later outcome that teaches the next pass.

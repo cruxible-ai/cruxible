@@ -96,12 +96,8 @@ entity_types:
     id: eval_run_id
     properties:
       ran_at: datetime
-      # bool/number have no compact scalar shorthand; explicit mapping form.
-      passed:
-        type: bool
-      score:
-        type: number
-        optional: true
+      passed: bool
+      score: number?
       harness: string?
       summary: string?
       artifact_ref: string?

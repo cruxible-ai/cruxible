@@ -1,105 +1,72 @@
-"""Placeholder providers for the case-law monitoring kit."""
+"""Case-law monitoring kit providers.
 
-from __future__ import annotations
+Placeholders pending implementation: each raises NotImplementedError with the
+contract it must satisfy. Implementations must be deterministic heuristics
+over curated metadata (LLM-outside); fetch_courtlistener_cluster is the one
+network provider and must fall back to the bundled act-two fixture offline.
+"""
 
 from typing import Any, NoReturn
 
-from cruxible_core.provider.types import ProviderContext
 
-
-def extract_holdings_from_opinions(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    _raise_not_implemented("extract_holdings_from_opinions")
-
-
-def link_holdings_to_statutes(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    _raise_not_implemented("link_holdings_to_statutes")
-
-
-def map_holdings_to_issues(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    _raise_not_implemented("map_holdings_to_issues")
-
-
-def classify_opinion_treatment(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    _raise_not_implemented("classify_opinion_treatment")
-
-
-def assess_argument_impact(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    _raise_not_implemented("assess_argument_impact")
-
-
-def scope_matters_to_statutes(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    _raise_not_implemented("scope_matters_to_statutes")
-
-
-def assess_matter_impact(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    _raise_not_implemented("assess_matter_impact")
-
-
-def assess_filing_response_obligations(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    _raise_not_implemented("assess_filing_response_obligations")
-
-
-def route_review_items(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    _raise_not_implemented("route_review_items")
-
-
-def load_corpus_seed(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
+def load_corpus_seed(payload: dict[str, Any]) -> dict[str, Any]:
     _raise_not_implemented("load_corpus_seed")
 
 
-def load_docket_feed(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
+def fetch_courtlistener_cluster(payload: dict[str, Any]) -> dict[str, Any]:
+    _raise_not_implemented("fetch_courtlistener_cluster")
+
+
+def load_docket_feed(payload: dict[str, Any]) -> dict[str, Any]:
     _raise_not_implemented("load_docket_feed")
 
 
-def load_case_outcome_feed(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
+def load_case_outcome_feed(payload: dict[str, Any]) -> dict[str, Any]:
     _raise_not_implemented("load_case_outcome_feed")
 
 
-def sweep_stale_review_state(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    _raise_not_implemented("sweep_stale_review_state")
+def sweep_stale_deadlines(payload: dict[str, Any]) -> dict[str, Any]:
+    _raise_not_implemented("sweep_stale_deadlines")
+
+
+def extract_holdings_from_opinions(payload: dict[str, Any]) -> dict[str, Any]:
+    _raise_not_implemented("extract_holdings_from_opinions")
+
+
+def link_holdings_to_statutes(payload: dict[str, Any]) -> dict[str, Any]:
+    _raise_not_implemented("link_holdings_to_statutes")
+
+
+def map_holdings_to_issues(payload: dict[str, Any]) -> dict[str, Any]:
+    _raise_not_implemented("map_holdings_to_issues")
+
+
+def classify_opinion_treatment(payload: dict[str, Any]) -> dict[str, Any]:
+    _raise_not_implemented("classify_opinion_treatment")
+
+
+def assess_argument_impact(payload: dict[str, Any]) -> dict[str, Any]:
+    _raise_not_implemented("assess_argument_impact")
+
+
+def scope_matters_to_statutes(payload: dict[str, Any]) -> dict[str, Any]:
+    _raise_not_implemented("scope_matters_to_statutes")
+
+
+def assess_matter_impact(payload: dict[str, Any]) -> dict[str, Any]:
+    _raise_not_implemented("assess_matter_impact")
+
+
+def assess_filing_response_obligations(payload: dict[str, Any]) -> dict[str, Any]:
+    _raise_not_implemented("assess_filing_response_obligations")
+
+
+def route_review_work(payload: dict[str, Any]) -> dict[str, Any]:
+    _raise_not_implemented("route_review_work")
 
 
 def _raise_not_implemented(provider_name: str) -> NoReturn:
     raise NotImplementedError(
-        f"Case-law monitoring kit provider '{provider_name}' is a scaffold placeholder; "
-        "implement it or supply seed data before running this kit's workflows."
+        f"Provider '{provider_name}' is a placeholder. Implement it or wire "
+        "your own data source before running this workflow."
     )

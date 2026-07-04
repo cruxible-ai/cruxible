@@ -87,68 +87,32 @@ point of the kit.
 flowchart LR
   classDef canonicalEntity fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef governedEntity fill:#e67e22,stroke:#a0521c,color:#fff
+  classDef baseEntity fill:#e4e4e7,stroke:#a1a1aa,color:#3f3f46,stroke-dasharray: 4 3
 
   entity_Actor["Actor"]
   entity_AgentSystem["Agent System"]
   entity_AgentVersion["Agent Version"]
-  entity_Decision["Decision"]
   entity_EvalRun["Eval Run"]
   entity_EvalSuite["Eval Suite"]
-  entity_OpenQuestion["Open Question"]
-  entity_ReviewRequest["Review Request"]
   entity_Risk["Risk"]
-  entity_StateNote["State Note"]
-  entity_SubjectRef["Subject Ref"]
   entity_WorkItem["Work Item"]
-  class entity_Actor,entity_AgentSystem,entity_AgentVersion,entity_Decision,entity_EvalRun,entity_EvalSuite,entity_OpenQuestion,entity_ReviewRequest,entity_Risk,entity_StateNote,entity_SubjectRef,entity_WorkItem canonicalEntity
+  class entity_AgentSystem,entity_AgentVersion,entity_EvalRun,entity_EvalSuite canonicalEntity
+  class entity_Actor,entity_Risk,entity_WorkItem baseEntity
 
   %% Deterministic canonical relationships
   entity_AgentSystem -- "Agent System Owned By Actor" --> entity_Actor
   entity_AgentVersion -- "Agent Version Of System" --> entity_AgentSystem
-  entity_Decision -- "Decision Owned By Actor" --> entity_Actor
   entity_EvalRun -- "Eval Run Of Suite" --> entity_EvalSuite
   entity_EvalRun -- "Eval Run Scores Version" --> entity_AgentVersion
   entity_EvalSuite -- "Eval Suite Owned By Actor" --> entity_Actor
-  entity_OpenQuestion -- "Open Question Owned By Actor" --> entity_Actor
-  entity_ReviewRequest -- "Review Request Assigned To Actor" --> entity_Actor
-  entity_ReviewRequest -- "Review Request For Work Item" --> entity_WorkItem
-  entity_ReviewRequest -- "Review Request Requested By Actor" --> entity_Actor
-  entity_Risk -- "Risk Owned By Actor" --> entity_Actor
-  entity_StateNote -- "State Note About Actor" --> entity_Actor
-  entity_StateNote -- "State Note About Decision" --> entity_Decision
-  entity_StateNote -- "State Note About Open Question" --> entity_OpenQuestion
-  entity_StateNote -- "State Note About Review Request" --> entity_ReviewRequest
-  entity_StateNote -- "State Note About Risk" --> entity_Risk
-  entity_StateNote -- "State Note About Subject" --> entity_SubjectRef
-  entity_StateNote -- "State Note About Work Item" --> entity_WorkItem
-  entity_StateNote -- "State Note Authored By Actor" --> entity_Actor
-  entity_StateNote -- "State Note Resolves State Note" --> entity_StateNote
-  entity_StateNote -- "State Note Supersedes State Note" --> entity_StateNote
-  entity_WorkItem -- "Work Item Owned By Actor" --> entity_Actor
-  entity_WorkItem -- "Work Item Part Of Work Item" --> entity_WorkItem
-  entity_WorkItem -- "Work Item Spawned From Work Item" --> entity_WorkItem
   entity_WorkItem -- "Work Item Targets Agent Version" --> entity_AgentVersion
-  entity_WorkItem -- "Work Item Targets Subject" --> entity_SubjectRef
 
   %% Governed proposal/review relationships
   entity_AgentVersion -. "Agent Version Supersedes Version" .-> entity_AgentVersion
-  entity_Decision -. "Decision Affects Subject" .-> entity_SubjectRef
-  entity_Decision -. "Decision Answers Open Question" .-> entity_OpenQuestion
-  entity_Decision -. "Decision Constrains Work Item" .-> entity_WorkItem
-  entity_Decision -. "Decision Supersedes Decision" .-> entity_Decision
   entity_EvalRun -. "Eval Run Certifies Version" .-> entity_AgentVersion
-  entity_OpenQuestion -. "Open Question Blocks Decision" .-> entity_Decision
-  entity_OpenQuestion -. "Open Question Blocks Work Item" .-> entity_WorkItem
-  entity_OpenQuestion -. "Open Question Concerns Subject" .-> entity_SubjectRef
   entity_Risk -. "Risk Attaches To Agent System" .-> entity_AgentSystem
-  entity_Risk -. "Risk Attaches To Subject" .-> entity_SubjectRef
-  entity_Risk -. "Risk Blocks Work Item" .-> entity_WorkItem
-  entity_WorkItem -. "Work Item Answers Open Question" .-> entity_OpenQuestion
-  entity_WorkItem -. "Work Item Depends On Work Item" .-> entity_WorkItem
-  entity_WorkItem -. "Work Item Mitigates Risk" .-> entity_Risk
-  entity_WorkItem -. "Work Item Supersedes Work Item" .-> entity_WorkItem
-  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 6,7,8 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 

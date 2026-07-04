@@ -1,10 +1,12 @@
 schema_version: cruxible.kit.v1
 kit_id: case-law-monitoring
 version: 0.2.0
-role: standalone
+role: overlay
+target_state: agent-operation
 entry_config: config.yaml
 provider_paths:
   - providers
 copy_paths:
   - README.md
+  - data
 requires_extras: []

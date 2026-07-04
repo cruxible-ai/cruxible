@@ -1,42 +1,51 @@
-# Supply Chain Blast Radius Demo
+# Supply Chain Blast Radius Kit
 
-> **Status: in_progress.** The ontology, governed
-> relationships, named queries, and feedback/outcome loops are complete and
-> validated. The data-ingest and assessment providers are placeholders that raise
-> `NotImplementedError` — implement them or wire your own data before running the
-> workflows.
+Supply-chain incident blast-radius domain overlay composed over the
+agent-operation base kit (`extends: ../agent-operation/config.yaml`).
 
-Deterministic supply-chain state model that turns a supplier-side disruption into
-a bounded, reviewable blast radius. The stable canonical backbone is suppliers,
-components, assemblies, products, and shipments. Incidents arrive as governed
-trigger state and cascade through staged proposal workflows:
+The deterministic base world is suppliers, components, assemblies (recursive
+BOM), products, and shipments — the launch seed is a **real open-hardware
+BOM** (components carry `manufacturer`/`mpn` from the published design) with
+fictional suppliers placed in real geographies. Incidents arrive as entities
+and cascade through three staged governed workflows:
 
-`incident -> supplier -> component/direct assembly`
+`incident -> supplier -> component / direct assembly`
 
-Product and shipment risk are derived context surfaces over accepted upstream
-impacts, BOM structure, buffer assessments, and deterministic shipment state,
-not direct incident-to-product or incident-to-shipment edges.
-
-Governed edges are rule-centric: proposal bucket signatures carry `rule_id` and
-`rule_version`, not `incident_id`, so trust accumulates on reusable cascade rules
-across many incidents instead of starting fresh every time.
+Product and shipment risk are **derived context surfaces** over accepted
+upstream impacts, BOM structure, buffer assessments, and shipment state —
+never direct incident-to-product edges. Governed edges are rule-centric:
+bucket signatures carry the cascade rule, not the incident, so trust
+accumulates on reusable rules across many incidents and clean cascades
+auto-resolve on all-support while anything unsure stops for review.
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is regenerated
-from `config.yaml` by `cruxible config views`; treat those blocks as
-code-owned structural truth. Everything outside those marker blocks is authored
-explanation for humans and agents reading the kit.
+from `config.yaml` by `cruxible config views`; treat those blocks as code-owned
+structural truth. Everything outside them is authored explanation.
 
-## Ontology Map
+## Composition notes
 
-Entity types and relationships, color-coded by layer. Solid blue lines are
-deterministic canonical state. Dashed red lines are governed proposal/review
-relationships.
+- **Response work is base WorkItems** via the deterministic
+  `work_item_addresses_incident` seam; `incident_work_items` is the response
+  queue and work closes through the base review gate.
+- **Supplier risk is the governed seam** `risk_attaches_to_supplier` — the
+  base Risk entity attached through proposal review, so "we think this
+  supplier is shaky" is a reviewed judgment, not a vibe.
+- **Catalog lifecycle is its own vocabulary** (`catalog_status`:
+  active/deprecated/obsolete) because the base owns `lifecycle_status`.
+- **Contracts are deliberately thin** (`type: json` plus prose row
+  contracts); providers own and enforce their row shapes.
+- `fetch_inventory_positions` with `base_url: null` (the default) reads the
+  bundled inventory fixture — the offline/demo mode; point it at a real
+  inventory API to go live.
+
+## Ontology
 
 <!-- CRUXIBLE:BEGIN ontology -->
 ```mermaid
 flowchart LR
   classDef canonicalEntity fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef governedEntity fill:#e67e22,stroke:#a0521c,color:#fff
+  classDef baseEntity fill:#e4e4e7,stroke:#a1a1aa,color:#3f3f46,stroke-dasharray: 4 3
 
   entity_Assembly["Assembly"]
   entity_BufferAssessment["Buffer Assessment"]
@@ -45,10 +54,12 @@ flowchart LR
   entity_InventoryPosition["Inventory Position"]
   entity_Location["Location"]
   entity_Product["Product"]
+  entity_Risk["Risk"]
   entity_Shipment["Shipment"]
   entity_Supplier["Supplier"]
-  class entity_Assembly,entity_BufferAssessment,entity_Component,entity_InventoryPosition,entity_Location,entity_Product,entity_Shipment,entity_Supplier canonicalEntity
-  class entity_Incident governedEntity
+  entity_WorkItem["Work Item"]
+  class entity_Assembly,entity_BufferAssessment,entity_Component,entity_Incident,entity_InventoryPosition,entity_Location,entity_Product,entity_Shipment,entity_Supplier canonicalEntity
+  class entity_Risk,entity_WorkItem baseEntity
 
   %% Deterministic canonical relationships
   entity_Assembly -- "Assembly Buffer Assessment" --> entity_BufferAssessment
@@ -65,25 +76,19 @@ flowchart LR
   entity_Product -- "Product Inventory Position" --> entity_InventoryPosition
   entity_Supplier -- "Supplier Supplies Assembly" --> entity_Assembly
   entity_Supplier -- "Supplier Supplies Component" --> entity_Component
+  entity_WorkItem -- "Work Item Addresses Incident" --> entity_Incident
 
   %% Governed proposal/review relationships
   entity_Incident -. "Incident Impacts Assembly" .-> entity_Assembly
   entity_Incident -. "Incident Impacts Component" .-> entity_Component
   entity_Incident -. "Incident Impacts Supplier" .-> entity_Supplier
-  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 14,15,16 stroke:#e74c3c,stroke-width:2px
+  entity_Risk -. "Risk Attaches To Supplier" .-> entity_Supplier
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 15,16,17,18 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 
-**Legend:** Blue = canonical/deterministic state | Orange = governed-only
-trigger/judgment entity | Solid blue lines = deterministic | Dashed red lines =
-governed proposal/review.
-
-## Workflow Summary
-
-The generated pipeline gives the stage order. The generated stage blocks
-underneath keep long context and result lists readable without squeezing them
-into a wide table.
+## Workflows
 
 <!-- CRUXIBLE:BEGIN workflow-pipeline -->
 ```mermaid
@@ -135,7 +140,7 @@ flowchart LR
 - Canonical entities: Incident
 
 **Provider source**
-- Load Incident Feed (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::load_incident_feed`
+- Load Incident Feed (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::load_incident_feed`; artifact: Supply Chain Seed Bundle
 
 ### 3. Sync Inventory Positions
 
@@ -244,24 +249,29 @@ flowchart LR
 - Fetch Inventory Positions (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::fetch_inventory_positions`; non-deterministic
 <!-- CRUXIBLE:END workflow-summary -->
 
-## Governed Relationships
-
-This table is generated from existing proposal policy, decision policy, feedback, and
-outcome profile config. It distinguishes structural proposal mechanics from the
-authored explanation around them.
+## Governance
 
 <!-- CRUXIBLE:BEGIN governance-table -->
 | Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| Decision Affects Subject | Decision -> Subject Ref | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Answers Open Question | Decision -> Open Question | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Constrains Work Item | Decision -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Supersedes Decision | Decision -> Decision | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 | Incident Impacts Assembly | Incident -> Assembly | Workflow: Propose Incident Impacts Assembly | Incident Assembly Cascade | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Incident Assembly Resolution |
 | Incident Impacts Component | Incident -> Component | Workflow: Propose Incident Impacts Component | Incident Component Cascade | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Incident Component Resolution |
 | Incident Impacts Supplier | Incident -> Supplier | Workflow: Propose Incident Impacts Supplier | Incident Supplier Scope Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Incident Supplier Resolution |
+| Open Question Blocks Decision | Open Question -> Decision | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Open Question Blocks Work Item | Open Question -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Open Question Concerns Subject | Open Question -> Subject Ref | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Risk Attaches To Subject | Risk -> Subject Ref | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Risk Attaches To Supplier | Risk -> Supplier | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Risk Blocks Work Item | Risk -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Answers Open Question | Work Item -> Open Question | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Depends On Work Item | Work Item -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Mitigates Risk | Work Item -> Risk | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Supersedes Work Item | Work Item -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 <!-- CRUXIBLE:END governance-table -->
-
-### Signal Policy Notes
-
-This catalog is generated from relationship-local signal policy and the
-governed relationships that consume each signal source.
 
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
 | Signal Source | Role | Review Unsure | Used By | Notes |
@@ -269,132 +279,185 @@ governed relationships that consume each signal source.
 | `incident_assembly_cascade` | required | yes | Incident Impacts Assembly | - |
 | `incident_component_cascade` | required | yes | Incident Impacts Component | - |
 | `incident_supplier_scope_match` | required | yes | Incident Impacts Supplier | - |
+| `maintainer_judgment` | advisory | yes | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Attaches To Supplier, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
+| `source_evidence` | required | yes | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Attaches To Supplier, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
 
-## Query Map
-
-Named queries are graph-native read surfaces. The map intentionally shows only
-entity-to-entity affordances; query names and traversal details live in the
-catalog below.
+## Queries
 
 <!-- CRUXIBLE:BEGIN query-map -->
 ```mermaid
 flowchart LR
   classDef queryEntity fill:#ecfdf5,stroke:#047857,color:#064e3b
 
+  query_entity_Actor["Actor"]
+  query_entity_AnyEntity["Any Entity"]
   query_entity_Assembly["Assembly"]
   query_entity_BufferAssessment["Buffer Assessment"]
+  query_entity_Collection_query["Collection Query"]
   query_entity_Component["Component"]
+  query_entity_Decision["Decision"]
   query_entity_Incident["Incident"]
   query_entity_InventoryPosition["Inventory Position"]
+  query_entity_OpenQuestion["Open Question"]
   query_entity_Product["Product"]
+  query_entity_ReviewRequest["Review Request"]
+  query_entity_Risk["Risk"]
   query_entity_Shipment["Shipment"]
+  query_entity_StateNote["State Note"]
+  query_entity_SubjectRef["Subject Ref"]
   query_entity_Supplier["Supplier"]
-  class query_entity_Assembly,query_entity_BufferAssessment,query_entity_Component,query_entity_Incident,query_entity_InventoryPosition,query_entity_Product,query_entity_Shipment,query_entity_Supplier queryEntity
+  query_entity_WorkItem["Work Item"]
+  class query_entity_Actor,query_entity_AnyEntity,query_entity_Assembly,query_entity_BufferAssessment,query_entity_Collection_query,query_entity_Component,query_entity_Decision,query_entity_Incident,query_entity_InventoryPosition,query_entity_OpenQuestion,query_entity_Product,query_entity_ReviewRequest,query_entity_Risk,query_entity_Shipment,query_entity_StateNote,query_entity_SubjectRef,query_entity_Supplier,query_entity_WorkItem queryEntity
+  query_entity_Actor --> query_entity_WorkItem
   query_entity_Assembly --> query_entity_Assembly
   query_entity_Assembly --> query_entity_Component
   query_entity_Assembly --> query_entity_Incident
   query_entity_Assembly --> query_entity_InventoryPosition
+  query_entity_Collection_query --> query_entity_Decision
+  query_entity_Collection_query --> query_entity_OpenQuestion
+  query_entity_Collection_query --> query_entity_ReviewRequest
+  query_entity_Collection_query --> query_entity_Risk
+  query_entity_Collection_query --> query_entity_StateNote
+  query_entity_Collection_query --> query_entity_WorkItem
   query_entity_Component --> query_entity_Assembly
   query_entity_Component --> query_entity_InventoryPosition
+  query_entity_Incident --> query_entity_AnyEntity
   query_entity_Incident --> query_entity_Assembly
   query_entity_Incident --> query_entity_Component
   query_entity_Incident --> query_entity_Product
   query_entity_Incident --> query_entity_Shipment
   query_entity_Incident --> query_entity_Supplier
+  query_entity_Incident --> query_entity_WorkItem
   query_entity_Product --> query_entity_Assembly
   query_entity_Product --> query_entity_BufferAssessment
   query_entity_Product --> query_entity_Incident
   query_entity_Product --> query_entity_Shipment
+  query_entity_ReviewRequest --> query_entity_StateNote
   query_entity_Shipment --> query_entity_Product
+  query_entity_StateNote --> query_entity_AnyEntity
+  query_entity_SubjectRef --> query_entity_AnyEntity
+  query_entity_Supplier --> query_entity_AnyEntity
   query_entity_Supplier --> query_entity_Assembly
   query_entity_Supplier --> query_entity_Component
   query_entity_Supplier --> query_entity_Incident
+  query_entity_WorkItem --> query_entity_AnyEntity
+  query_entity_WorkItem --> query_entity_ReviewRequest
+  query_entity_WorkItem --> query_entity_StateNote
+  query_entity_WorkItem --> query_entity_WorkItem
 ```
 <!-- CRUXIBLE:END query-map -->
 
-## Query Catalog
-
-Use the catalog to understand what questions the kit exposes. Composition,
-presentation, and operator summaries should happen in the skill or agent
-harness, not by turning every useful traversal into a governed relationship.
-
 <!-- CRUXIBLE:BEGIN query-catalog -->
+### Actor
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Actor Work Queue | traversal | Work Item | reviewable | Work Item Owned By Actor (Incoming) | Work items owned by an actor with latest reviews, dependency counts, blockers, subjects. |
+
 ### Assembly
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Assembly Child Assemblies | traversal | Assembly | live | Assembly Part Of Assembly (Incoming) | Starting from an assembly, find direct child assemblies. |
-| Assembly Child Components | traversal | Component | live | Component Part Of Assembly (Incoming) | Starting from an assembly, find direct child components. |
-| Assembly Impacting Incidents | traversal | Incident | live | Incident Impacts Assembly (Incoming) | Starting from an assembly, find incidents judged to impact it directly. |
-| Assembly Inventory Positions | traversal | Inventory Position | live | Assembly Inventory Position (Outgoing) | Starting from an assembly, find inventory positions for that assembly. |
+| Assembly Child Assemblies | traversal | Assembly | live | Assembly Part Of Assembly (Incoming) | Direct child assemblies of this assembly. |
+| Assembly Child Components | traversal | Component | live | Component Part Of Assembly (Incoming) | Direct child components of this assembly. |
+| Assembly Impacting Incidents | traversal | Incident | reviewable | Incident Impacts Assembly (Incoming) | Incidents judged to impact this assembly directly. |
+| Assembly Inventory Positions | traversal | Inventory Position | live | Assembly Inventory Position (Outgoing) | Inventory positions for this assembly. |
+
+### Collection Query
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Active Risks | collection | Risk | live |  | Active operational risks. |
+| Blocked Work Items | collection | Work Item | reviewable |  | Work items marked blocked, with risk/open-question blocker context. |
+| Changes Requested Reviews | collection | Review Request | reviewable |  | Review requests sent back with changes requested -- the implementer's rework queue, distinct from the reviewer-facing review_queue. |
+| Open Questions Needing Review | collection | Open Question | live |  | Planned/active open questions needing review. |
+| Proposed Decisions | collection | Decision | live |  | Proposed decisions awaiting acceptance/rejection/deferral. |
+| Recent State Notes | collection | State Note | reviewable |  | Recent operation-state notes, corrections, rationale/implementation/review notes. |
+| Review Queue | collection | Review Request | reviewable |  | Review requests awaiting a reviewer -- requested or in review. Reviews sent back for rework live in changes_requested_reviews. |
+| Superseded Decisions | collection | Decision | not-live |  | Decision retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
+| Superseded Work Items | collection | Work Item | not-live |  | WorkItem retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
 
 ### Component
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Component Inventory Positions | traversal | Inventory Position | live | Component Inventory Position (Outgoing) | Starting from a component, find inventory positions for that component. |
-| Component Parent Assemblies | traversal | Assembly | live | Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) | Starting from a component, find direct and higher-level parent assemblies in the BOM hierarchy. |
+| Component Inventory Positions | traversal | Inventory Position | live | Component Inventory Position (Outgoing) | Inventory positions for this component. |
+| Component Parent Assemblies | traversal | Assembly | live | Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) | Direct and higher-level parent assemblies in the BOM. |
 
 ### Incident
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Incident Component Exposed Products | traversal | Product | live | Incident Impacts Component (Outgoing) -> Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted component impacts and the component/assembly BOM hierarchy. This is context for an agentic product or shipment judgment, not governed graph state. |
-| Incident Direct Assembly Exposed Products | traversal | Product | live | Incident Impacts Assembly (Outgoing) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted direct assembly impacts where the assembly is a top-level product assembly. |
-| Incident Exposed Assembly Context | traversal | Assembly | live | Incident Impacts Supplier \| Incident Impacts Component \| Incident Impacts Assembly (Outgoing) -> Supplier Supplies Assembly \| Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) | Starting from an incident, derive assembly context exposed by accepted supplier, component, or direct assembly impacts through supply and BOM structure. This is a query/view, not governed state. |
-| Incident Exposed Shipments | traversal | Shipment | live | Incident Impacts Component \| Incident Impacts Assembly (Outgoing) -> Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) -> Product In Shipment (Outgoing) | Starting from an incident, derive outbound shipments exposed through accepted component and direct assembly impacts, the component/assembly BOM hierarchy, exposed finished products, and the product_in_shipment fulfillment edge. This is the terminal (shipment) derived exposure surface — context for an agentic shipment judgment, not governed graph state. No direct incident-shipment edge is created. The BOM-up hop is required false so directly impacted top-level assemblies reach products and shipments without an intermediate BOM rollup. |
-| Incident Impacted Assemblies | traversal | Assembly | live | Incident Impacts Assembly (Outgoing) | Starting from an incident, find assemblies judged impacted via direct supplier-to-assembly cascade. |
-| Incident Impacted Components | traversal | Component | live | Incident Impacts Component (Outgoing) | Starting from an incident, find components judged impacted via the supplier cascade. |
-| Incident Impacted Suppliers | traversal | Supplier | live | Incident Impacts Supplier (Outgoing) | Starting from an incident, find suppliers judged impacted. |
-| Incident Nested Assembly Exposed Products | traversal | Product | live | Incident Impacts Assembly (Outgoing) -> Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted direct assembly impacts and higher-level parent assemblies. |
-| Single Source Assemblies For Incident | traversal | Assembly | live | Incident Impacts Assembly (Outgoing) | Starting from an incident, find impacted directly supplied assemblies that have only one viable supplier path. |
-| Single Source Components For Incident | traversal | Component | live | Incident Impacts Component (Outgoing) | Starting from an incident, find impacted components that have only one viable supplier path. Surfaces the "no viable alternate supplier" enrichment for the operator summary. |
+| Incident Component Exposed Products | traversal | Product | reviewable | Incident Impacts Component (Outgoing) -> Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted component impacts and the component/assembly BOM hierarchy. This is context for an agentic product or shipment judgment, not governed graph state. |
+| Incident Context | traversal | Any Entity | reviewable | Work Item Addresses Incident \| Incident Impacts Supplier \| Incident Impacts Component \| Incident Impacts Assembly (Both) | The incident war room — impacted suppliers/components/assemblies, response work, and anything else adjacent in the composed graph. |
+| Incident Direct Assembly Exposed Products | traversal | Product | reviewable | Incident Impacts Assembly (Outgoing) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted direct assembly impacts where the assembly is a top-level product assembly. |
+| Incident Exposed Assembly Context | traversal | Assembly | reviewable | Incident Impacts Supplier \| Incident Impacts Component \| Incident Impacts Assembly (Outgoing) -> Supplier Supplies Assembly \| Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) | Starting from an incident, derive assembly context exposed by accepted supplier, component, or direct assembly impacts through supply and BOM structure. This is a query/view, not governed state. The supply/BOM hop is required false so a directly impacted assembly is itself included even when it has no parent assembly (same pattern as incident_exposed_shipments). |
+| Incident Exposed Shipments | traversal | Shipment | reviewable | Incident Impacts Component \| Incident Impacts Assembly (Outgoing) -> Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) -> Product In Shipment (Outgoing) | Starting from an incident, derive outbound shipments exposed through accepted component and direct assembly impacts, the component/assembly BOM hierarchy, exposed finished products, and the product_in_shipment fulfillment edge. This is the terminal (shipment) derived exposure surface — context for an agentic shipment judgment, not governed graph state. No direct incident-shipment edge is created. The BOM-up hop is required false so directly impacted top-level assemblies reach products and shipments without an intermediate BOM rollup. |
+| Incident Impacted Assemblies | traversal | Assembly | reviewable | Incident Impacts Assembly (Outgoing) | Directly supplied assemblies judged impacted. |
+| Incident Impacted Components | traversal | Component | reviewable | Incident Impacts Component (Outgoing) | Components judged impacted via the supplier cascade. |
+| Incident Impacted Suppliers | traversal | Supplier | reviewable | Incident Impacts Supplier (Outgoing) | Suppliers judged impacted by this incident, pending judgments visible. |
+| Incident Nested Assembly Exposed Products | traversal | Product | reviewable | Incident Impacts Assembly (Outgoing) -> Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted direct assembly impacts and higher-level parent assemblies. |
+| Incident Work Items | traversal | Work Item | reviewable | Work Item Addresses Incident (Incoming) | Open response work addressing this incident. |
+| Single Source Assemblies For Incident | traversal | Assembly | reviewable | Incident Impacts Assembly (Outgoing) | Starting from an incident, find impacted directly supplied assemblies that have only one viable supplier path. |
+| Single Source Components For Incident | traversal | Component | reviewable | Incident Impacts Component (Outgoing) | Starting from an incident, find impacted components that have only one viable supplier path. Surfaces the "no viable alternate supplier" enrichment for the operator summary. |
 
 ### Product
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Product Buffer Assessments | traversal | Buffer Assessment | live | Product Buffer Assessment (Outgoing) | Starting from a product, find current buffer assessments used for product exposure context. |
-| Product Component Impacting Incidents | traversal | Incident | live | Assembly Part Of Product (Incoming) -> Assembly Part Of Assembly \| Component Part Of Assembly (Incoming, depth=8) -> Incident Impacts Component (Incoming) | Starting from a product, find incidents that impact components in its BOM. |
-| Product Direct Assembly Impacting Incidents | traversal | Incident | live | Assembly Part Of Product (Incoming) -> Incident Impacts Assembly (Incoming) | Starting from a product, find incidents that directly impact top-level assemblies in its BOM. |
-| Product Nested Assembly Impacting Incidents | traversal | Incident | live | Assembly Part Of Product (Incoming) -> Assembly Part Of Assembly (Incoming, depth=8) -> Incident Impacts Assembly (Incoming) | Starting from a product, find incidents that directly impact nested assemblies in its BOM. |
-| Product Shipments | traversal | Shipment | live | Product In Shipment (Outgoing) | Starting from a product, find shipments containing it. |
-| Product Top Level Assemblies | traversal | Assembly | live | Assembly Part Of Product (Incoming) | Starting from a product, find top-level assemblies in its BOM. |
+| Product Buffer Assessments | traversal | Buffer Assessment | live | Product Buffer Assessment (Outgoing) | Current buffer assessments in this product's context. |
+| Product Component Impacting Incidents | traversal | Incident | reviewable | Assembly Part Of Product (Incoming) -> Assembly Part Of Assembly \| Component Part Of Assembly (Incoming, depth=8) -> Incident Impacts Component (Incoming) | Starting from a product, find incidents that impact components in its BOM. |
+| Product Direct Assembly Impacting Incidents | traversal | Incident | reviewable | Assembly Part Of Product (Incoming) -> Incident Impacts Assembly (Incoming) | Starting from a product, find incidents that directly impact top-level assemblies in its BOM. |
+| Product Nested Assembly Impacting Incidents | traversal | Incident | reviewable | Assembly Part Of Product (Incoming) -> Assembly Part Of Assembly (Incoming, depth=8) -> Incident Impacts Assembly (Incoming) | Starting from a product, find incidents that directly impact nested assemblies in its BOM. |
+| Product Shipments | traversal | Shipment | live | Product In Shipment (Outgoing) | Shipments containing this product. |
+| Product Top Level Assemblies | traversal | Assembly | live | Assembly Part Of Product (Incoming) | Top-level assemblies in this product's BOM. |
+
+### Review Request
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| State Notes For Review Request | traversal | State Note | reviewable | State Note About Review Request (Incoming) | The review thread: verdict and finding notes attached to a review request, newest first. This is the read that replaces scrolling a notes blob. |
 
 ### Shipment
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Shipment Products | traversal | Product | live | Product In Shipment (Incoming) | Starting from a shipment, find products contained in it. |
+| Shipment Products | traversal | Product | live | Product In Shipment (Incoming) | Products contained in this shipment. |
+
+### State Note
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| State Note Context | traversal | Any Entity | reviewable | State Note Authored By Actor \| State Note About Work Item \| State Note About Review Request \| State Note About Decision \| State Note About Risk \| State Note About Open Question \| State Note About Subject \| State Note About Actor \| State Note Supersedes State Note \| State Note Resolves State Note (Both) | Full context for a state note (targets, author, supersession). |
+
+### Subject Ref
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Subject Operation Context | traversal | Any Entity | reviewable | State Note About Subject \| Work Item Targets Subject \| Decision Affects Subject \| Risk Attaches To Subject \| Open Question Concerns Subject (Both) | Work, decisions, risks, open questions attached to a subject ref. |
 
 ### Supplier
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Supplier Impacting Incidents | traversal | Incident | live | Incident Impacts Supplier (Incoming) | Starting from a supplier, find incidents judged to impact it. |
-| Supplier Supplied Assemblies | traversal | Assembly | live | Supplier Supplies Assembly (Outgoing) | Starting from a supplier, find directly supplied assemblies. |
-| Supplier Supplied Components | traversal | Component | live | Supplier Supplies Component (Outgoing) | Starting from a supplier, find directly supplied components. |
+| Supplier Context | traversal | Any Entity | reviewable | Supplier Supplies Component \| Supplier Supplies Assembly \| Risk Attaches To Supplier \| Incident Impacts Supplier (Both) | Everything attached to a supplier — supplied items, impacting incidents, attached risks. |
+| Supplier Impacting Incidents | traversal | Incident | reviewable | Incident Impacts Supplier (Incoming) | Incidents judged to impact this supplier. |
+| Supplier Supplied Assemblies | traversal | Assembly | live | Supplier Supplies Assembly (Outgoing) | Assemblies this supplier supplies directly. |
+| Supplier Supplied Components | traversal | Component | live | Supplier Supplies Component (Outgoing) | Components this supplier is qualified to supply. |
+
+### Work Item
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Approved Reviews For Work Item | traversal | Review Request | live | Review Request For Work Item (Incoming) | Approved review requests for a work item. Used by the closed-transition guard. |
+| State Notes For Work Item | traversal | State Note | reviewable | State Note About Work Item (Incoming) | State notes attached to a work item, newest first. |
+| Work Item Context | traversal | Any Entity | reviewable | Work Item Owned By Actor \| Review Request For Work Item \| State Note About Work Item \| Work Item Depends On Work Item \| Work Item Part Of Work Item \| Work Item Spawned From Work Item \| Work Item Supersedes Work Item \| Risk Blocks Work Item \| Open Question Blocks Work Item \| Work Item Mitigates Risk \| Work Item Answers Open Question \| Decision Constrains Work Item \| Work Item Targets Subject \| Work Item Addresses Incident (Both) | From a work item, inspect dependencies, blockers, reviews, composition, lineage, decisions, owner, subjects. all_adjacent expands against the final composed config, so on a composed instance this query also traverses overlay seam edges (e.g. project-domain's roadmap, release, milestone, and area relationships). |
+| Work Item Lineage Context | traversal | Work Item | reviewable | Work Item Spawned From Work Item \| Work Item Supersedes Work Item (Both, depth=5) | Work item lineage/replacement context, excluding sequencing deps. |
+| Work Item Rollup Context | traversal | Work Item | reviewable | Work Item Part Of Work Item (Incoming, depth=5) | Child/descendant work items under a parent. |
 <!-- CRUXIBLE:END query-catalog -->
 
-## Schema Reference
-
-This README keeps schema detail at the diagram and table level so the kit
-remains usable as a drafting surface. The config remains the source of truth
-for full entity, relationship, and contract properties. For a generated
-Markdown schema catalog, run:
-
-```bash
-uv run cruxible config views --config kits/supply-chain-blast-radius/config.yaml --runtime --view schema-catalog
-```
-
-
-
-## Rules And Learning Loops
-
-These generated sections own the operational facts: constraints, quality
-checks, feedback vocabularies, and outcome vocabularies. Authored prose should
-explain how to use them, not restate the config.
+## Quality Rules
 
 <!-- CRUXIBLE:BEGIN quality-rules -->
 ### Constraints
@@ -408,8 +471,23 @@ No configured constraints.
 | `components_have_kind` | Property | Component.component_kind | Error | Required |
 | `components_have_supplier` | Cardinality | Component -> Supplier Supplies Component (in) | Warning | min `1` |
 | `critical_components_have_redundancy` | Cardinality | Component -> Supplier Supplies Component (in) | Warning | min `2` |
+| `decision_supersessions_have_basis` | Property | Decision Supersedes Decision.supersession_basis | Warning | Non Empty |
+| `decision_work_constraints_have_type` | Property | Decision Constrains Work Item.impact_type | Warning | Required |
+| `open_question_work_blockers_have_basis` | Property | Open Question Blocks Work Item.blocking_basis | Warning | Non Empty |
 | `products_have_assembly_bom` | Cardinality | Product -> Assembly Part Of Product (in) | Error | min `1` |
+| `review_requests_review_work` | Cardinality | Review Request -> Review Request For Work Item (out) | Warning | min `1` |
+| `risk_work_blockers_have_basis` | Property | Risk Blocks Work Item.blocking_basis | Warning | Non Empty |
+| `state_note_supersessions_have_basis` | Property | State Note Supersedes State Note.supersession_basis | Warning | Non Empty |
+| `state_notes_have_author` | Cardinality | State Note -> State Note Authored By Actor (out) | Warning | min `1` |
+| `supplier_risk_attachments_have_basis` | Property | Risk Attaches To Supplier.impact_basis | Warning | Non Empty |
+| `work_dependencies_have_basis` | Property | Work Item Depends On Work Item.dependency_basis | Warning | Non Empty |
+| `work_item_part_of_single_parent` | Cardinality | Work Item -> Work Item Part Of Work Item (out) | Warning | max `1` |
+| `work_item_spawned_from_single_origin` | Cardinality | Work Item -> Work Item Spawned From Work Item (out) | Warning | max `1` |
+| `work_items_have_owner` | Cardinality | Work Item -> Work Item Owned By Actor (out) | Warning | min `1` |
+| `work_supersessions_have_basis` | Property | Work Item Supersedes Work Item.supersession_basis | Warning | Non Empty |
 <!-- CRUXIBLE:END quality-rules -->
+
+## Learning Loops
 
 <!-- CRUXIBLE:BEGIN learning-loops -->
 ### Feedback Profiles (Loop 1)
@@ -447,6 +525,15 @@ No configured constraints.
 - Scope keys:
   - `incident`: `FROM.incident_id`
   - `match_basis`: `EDGE.match_basis`
+  - `supplier`: `TO.supplier_id`
+
+#### `risk_attaches_to_supplier`
+- Version: `1`
+- Reason codes:
+  - `risk_not_material` (`decision_policy`): The risk does not materially threaten this supplier's deliveries.
+  - `wrong_supplier` (`quality_check`): The risk concerns a different supplier.
+- Scope keys:
+  - `risk`: `FROM.risk_id`
   - `supplier`: `TO.supplier_id`
 
 ### Outcome Profiles (Loop 2)
@@ -553,106 +640,3 @@ No configured constraints.
 - Scope keys:
   - `surface`: `SURFACE.name`
 <!-- CRUXIBLE:END learning-loops -->
-
-## Model Notes
-
-- `Assembly` is a canonical entity because the domain needs hierarchical BOM
-  structure, not just a loose component-to-product shortcut.
-- `component_part_of_assembly`, `assembly_part_of_assembly`, and
-  `assembly_part_of_product` preserve the product structure needed for
-  downstream blast-radius and tier-depth analysis. BOM edges carry variant,
-  plant, and effective-window properties so product exposure can be assessed
-  against the right build context.
-- `incident_impacts_assembly` is governed state only for directly supplied
-  assemblies. BOM rollup context remains query-derived.
-- `incident_impacted_assemblies` returns accepted direct assembly impacts;
-  `incident_exposed_assembly_context` derives BOM context for read surfaces.
-- `InventoryPosition` and `BufferAssessment` model operational signals without
-  tying them directly to incidents. The agent can fetch current inventory from a
-  kit-specific provider, sync reviewed inventory into graph state, calculate
-  buffer coverage with explicit rate and duration units, and then use those
-  assessments as context for derived product exposure.
-- Supplier sourcing and product catalog status use lifecycle, qualification,
-  sourcing role, activation state, priority, allocation, capacity, and
-  effective windows rather than coarse `active` booleans.
-- `product_in_shipment` points from `Product` to `Shipment`, so shipment risk is
-  downstream from derived product exposure context.
-- There is intentionally no governed `Incident -> Product` edge. Product and
-  shipment action should be an agentic decision over reviewed upstream edges,
-  BOM paths, buffer posture, and shipment state.
-
-## Compounding Knowledge Procedure
-
-1. Register canonical supply-chain anchors: suppliers, components, assemblies,
-   products, shipments, deterministic BOM edges, inventory positions, and
-   locations.
-2. Sync reviewed inventory evidence and buffer assessments from operational
-   sources, including demand context and time units for consumption and
-   coverage.
-3. Register supplier-side incidents as governed trigger state with known scope
-   such as supplier, geography, disruption type, lifecycle status, severity,
-   and timing.
-4. Propose incident-to-supplier impact using direct supplier and geography
-   matches.
-5. Cascade accepted supplier impacts to components and directly supplied
-   assemblies, accounting for viable alternates and criticality.
-6. Derive product exposure context from accepted component and direct assembly
-   impacts through the BOM, preserving depth, route, BOM variant, and buffer
-   state without writing an incident-product edge.
-7. Combine product exposure queries with product-shipment links to review
-   in-flight or committed shipments.
-8. Use named queries to give the agent reviewed context for supplier exposure,
-   single-source assemblies, assembly/product blast radius, buffer posture, and
-   shipment/customer action.
-9. Feed review feedback and later operational outcomes back into provider fixes,
-   decision policies, constraints, and trust calibration for future incidents.
-
-## Usage Stories
-
-- **Supplier disruption triage:** start from a fire, strike, cyber incident, or
-  regulatory event and identify suppliers that require review.
-- **BOM blast-radius analysis:** move from accepted supplier/component impact to
-  assemblies and products without flattening away the assembly hierarchy.
-- **Alternate-source review:** distinguish real product risk from component
-  impact that is buffered by viable alternate suppliers.
-- **Inventory buffer review:** combine current inventory, BOM quantity, demand
-  rate, and coverage horizon so the agent can explain whether stock meaningfully
-  mitigates an incident.
-- **Shipment risk review:** identify shipments containing impacted products so
-  operations agents can decide whether to hold, reroute, expedite, or notify
-  customers.
-- **Customer escalation context:** give an agent a reviewed path from incident
-  to affected product and shipment, rather than a generic incident summary.
-- **Operational memory:** preserve accepted and rejected cascade decisions so
-  future incidents reuse the organization's learned supply-chain judgment.
-
-## Debug Views
-
-Detailed mechanical Mermaid renderings are still available when needed:
-
-```bash
-uv run cruxible config views --config kits/supply-chain-blast-radius/config.yaml --view workflow-steps
-uv run cruxible config views --config kits/supply-chain-blast-radius/config.yaml --view queries
-```
-
-## Maintenance
-
-Regenerate the structural sections after changing ontology, workflows, governed
-relationships, or named queries:
-
-```bash
-uv run cruxible config views --config kits/supply-chain-blast-radius/config.yaml --update-readme kits/supply-chain-blast-radius/README.md
-```
-
-To inspect the same generated bundle without editing the README:
-
-```bash
-uv run cruxible config views --config kits/supply-chain-blast-radius/config.yaml --view all
-```
-
-## Status
-
-This is a scaffold: the config, workflows, named queries, feedback profiles,
-outcome profiles, and decision policies are in place and validate cleanly. The
-kit provider refs currently resolve to explicit placeholder implementations;
-real seed data and cascade provider behavior land in a follow-up.

@@ -1,10 +1,12 @@
 schema_version: cruxible.kit.v1
 kit_id: supply-chain-blast-radius
 version: 0.2.0
-role: standalone
+role: overlay
+target_state: agent-operation
 entry_config: config.yaml
 provider_paths:
   - providers
 copy_paths:
+  - data
   - README.md
 requires_extras: []

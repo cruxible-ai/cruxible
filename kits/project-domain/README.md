@@ -39,6 +39,7 @@ structural truth. Everything outside those marker blocks is authored explanation
 flowchart LR
   classDef canonicalEntity fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef governedEntity fill:#e67e22,stroke:#a0521c,color:#fff
+  classDef baseEntity fill:#e4e4e7,stroke:#a1a1aa,color:#3f3f46,stroke-dasharray: 4 3
 
   entity_Actor["Actor"]
   entity_Capability["Capability"]
@@ -50,71 +51,37 @@ flowchart LR
   entity_ReviewRequest["Review Request"]
   entity_Risk["Risk"]
   entity_RoadmapItem["Roadmap Item"]
-  entity_StateNote["State Note"]
-  entity_SubjectRef["Subject Ref"]
   entity_WorkItem["Work Item"]
-  class entity_Actor,entity_Capability,entity_Decision,entity_Milestone,entity_OpenQuestion,entity_ProductArea,entity_ReleaseLine,entity_ReviewRequest,entity_Risk,entity_RoadmapItem,entity_StateNote,entity_SubjectRef,entity_WorkItem canonicalEntity
+  class entity_Capability,entity_Milestone,entity_ProductArea,entity_ReleaseLine,entity_RoadmapItem canonicalEntity
+  class entity_Actor,entity_Decision,entity_OpenQuestion,entity_ReviewRequest,entity_Risk,entity_WorkItem baseEntity
 
   %% Deterministic canonical relationships
   entity_Capability -- "Capability In Area" --> entity_ProductArea
   entity_Capability -- "Capability Owned By Actor" --> entity_Actor
-  entity_Decision -- "Decision Owned By Actor" --> entity_Actor
   entity_Milestone -- "Milestone In Release" --> entity_ReleaseLine
-  entity_OpenQuestion -- "Open Question Owned By Actor" --> entity_Actor
   entity_ProductArea -- "Product Area Owned By Actor" --> entity_Actor
-  entity_ReviewRequest -- "Review Request Assigned To Actor" --> entity_Actor
-  entity_ReviewRequest -- "Review Request For Work Item" --> entity_WorkItem
   entity_ReviewRequest -- "Review Request In Milestone" --> entity_Milestone
   entity_ReviewRequest -- "Review Request In Release" --> entity_ReleaseLine
-  entity_ReviewRequest -- "Review Request Requested By Actor" --> entity_Actor
-  entity_Risk -- "Risk Owned By Actor" --> entity_Actor
   entity_RoadmapItem -- "Roadmap Item In Milestone" --> entity_Milestone
   entity_RoadmapItem -- "Roadmap Item In Release" --> entity_ReleaseLine
   entity_RoadmapItem -- "Roadmap Item Owned By Actor" --> entity_Actor
   entity_RoadmapItem -- "Roadmap Item Targets Area" --> entity_ProductArea
   entity_RoadmapItem -- "Roadmap Item Targets Capability" --> entity_Capability
-  entity_StateNote -- "State Note About Actor" --> entity_Actor
-  entity_StateNote -- "State Note About Decision" --> entity_Decision
-  entity_StateNote -- "State Note About Open Question" --> entity_OpenQuestion
-  entity_StateNote -- "State Note About Review Request" --> entity_ReviewRequest
-  entity_StateNote -- "State Note About Risk" --> entity_Risk
-  entity_StateNote -- "State Note About Subject" --> entity_SubjectRef
-  entity_StateNote -- "State Note About Work Item" --> entity_WorkItem
-  entity_StateNote -- "State Note Authored By Actor" --> entity_Actor
-  entity_StateNote -- "State Note Resolves State Note" --> entity_StateNote
-  entity_StateNote -- "State Note Supersedes State Note" --> entity_StateNote
   entity_WorkItem -- "Work Item Implements Roadmap Item" --> entity_RoadmapItem
   entity_WorkItem -- "Work Item In Milestone" --> entity_Milestone
   entity_WorkItem -- "Work Item In Release" --> entity_ReleaseLine
-  entity_WorkItem -- "Work Item Owned By Actor" --> entity_Actor
-  entity_WorkItem -- "Work Item Part Of Work Item" --> entity_WorkItem
-  entity_WorkItem -- "Work Item Spawned From Work Item" --> entity_WorkItem
   entity_WorkItem -- "Work Item Targets Area" --> entity_ProductArea
-  entity_WorkItem -- "Work Item Targets Subject" --> entity_SubjectRef
 
   %% Governed proposal/review relationships
   entity_Decision -. "Decision Affects Area" .-> entity_ProductArea
   entity_Decision -. "Decision Affects Capability" .-> entity_Capability
   entity_Decision -. "Decision Affects Roadmap Item" .-> entity_RoadmapItem
-  entity_Decision -. "Decision Affects Subject" .-> entity_SubjectRef
-  entity_Decision -. "Decision Answers Open Question" .-> entity_OpenQuestion
-  entity_Decision -. "Decision Constrains Work Item" .-> entity_WorkItem
-  entity_Decision -. "Decision Supersedes Decision" .-> entity_Decision
-  entity_OpenQuestion -. "Open Question Blocks Decision" .-> entity_Decision
   entity_OpenQuestion -. "Open Question Blocks Roadmap Item" .-> entity_RoadmapItem
-  entity_OpenQuestion -. "Open Question Blocks Work Item" .-> entity_WorkItem
-  entity_OpenQuestion -. "Open Question Concerns Subject" .-> entity_SubjectRef
   entity_Risk -. "Risk Attaches To Area" .-> entity_ProductArea
-  entity_Risk -. "Risk Attaches To Subject" .-> entity_SubjectRef
   entity_Risk -. "Risk Blocks Roadmap Item" .-> entity_RoadmapItem
-  entity_Risk -. "Risk Blocks Work Item" .-> entity_WorkItem
   entity_RoadmapItem -. "Roadmap Item Depends On Roadmap Item" .-> entity_RoadmapItem
-  entity_WorkItem -. "Work Item Answers Open Question" .-> entity_OpenQuestion
-  entity_WorkItem -. "Work Item Depends On Work Item" .-> entity_WorkItem
-  entity_WorkItem -. "Work Item Mitigates Risk" .-> entity_Risk
-  entity_WorkItem -. "Work Item Supersedes Work Item" .-> entity_WorkItem
-  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 15,16,17,18,19,20,21 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 
