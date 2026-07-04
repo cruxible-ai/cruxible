@@ -359,7 +359,7 @@ def _expand_relationships(
         _reject_unknown_keys(
             f"relationship '{name}'",
             item,
-            {name, "proposal_policy", "basis", "description", "properties"},
+            {name, "proposal_policy", "basis", "description", "properties", "write_policy"},
         )
 
         match = _SIG_RE.match(sig)
@@ -419,6 +419,9 @@ def _expand_relationships(
                     f"or inline mapping"
                 )
 
+        if "write_policy" in item:
+            rel["write_policy"] = item["write_policy"]
+
         out.append(rel)
         index[name] = RelInfo(name=name, from_entity=from_entity, to_entity=to_entity)
 
@@ -433,7 +436,7 @@ def _find_signature(item: dict[str, Any]) -> tuple[str, str]:
     structured fields and are skipped -- so a block ``description`` whose text
     contains ``->`` is not mistaken for a second signature.
     """
-    structured = {"proposal_policy", "basis", "description", "properties"}
+    structured = {"proposal_policy", "basis", "description", "properties", "write_policy"}
     candidates = [
         (key, value)
         for key, value in item.items()

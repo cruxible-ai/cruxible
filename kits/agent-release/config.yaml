@@ -1,0 +1,420 @@
+version: "1.0"
+name: agent_release
+extends: ../agent-operation/config.yaml
+description: >
+  Agent release domain overlay composed over the agent-operation base kit.
+  The base supplies the operating layer (Actor, WorkItem, ReviewRequest,
+  Decision, Risk, OpenQuestion, StateNote plus their ownership, review-gate,
+  work-axis, and governed-judgment relationships, queries, guards, and checks).
+  This overlay adds the agent release DOMAIN: agent systems, their versions,
+  eval suites, and receipted eval runs — and one hard gate: an AgentVersion
+  cannot be promoted to live without an accepted, passing, certifying EvalRun.
+
+  Scope discipline:
+  - The kit does NOT run evals. The eval harness stays outside (LLM-outside);
+    this state layer governs receipted eval CLAIMS. An EvalRun is a durable
+    record the operator or agent writes after their own harness runs, with an
+    artifact_ref pointing at the report evidence.
+  - The kit does NOT assume deployment infrastructure. Promotion is the
+    AgentVersion.status transition to live — a hobbyist local bot qualifies
+    the moment its owner distinguishes "the version I run" from "the version
+    I'm working on". There is no Deployment entity in v1; promotion is the
+    status flip, audited via entity history and gated by the mutation guard.
+
+  Notes on the overlay vs the agent-operation base (same constraints as
+  project-domain):
+  - An overlay cannot add properties to base entities or redeclare base enums,
+    so version status is an overlay-owned enum (agent_version_status) and
+    ownership stays edge-based through the base Actor entity.
+  - EvalRun and the certification edge are split on purpose:
+    eval_run_scores_version is the deterministic fact that a run measured a
+    version; eval_run_certifies_version is the governed judgment that the run
+    is valid, current, and covers that version for promotion. Only the
+    governed edge feeds the gate, and the gate reads it at relationship_state
+    live — a pending certification does not unlock promotion.
+
+presets:
+  policies:
+    standard_release:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+enums:
+  agent_version_status:
+    values: [draft, candidate, live, rolled_back, retired]
+    description: >
+      Release lifecycle for an agent version. draft = being built; candidate =
+      built and awaiting certification; live = the promoted version (gated);
+      rolled_back = demoted after promotion; retired = permanently out of use.
+
+entity_types:
+  AgentSystem:
+    description: >
+      Durable agent, bot, pipeline, or assistant being versioned and released.
+      The stable identity that versions belong to.
+    id: agent_system_id
+    properties:
+      name: string indexed
+      description: string?
+
+  AgentVersion:
+    description: >
+      A specific released or releasable state of an agent system: a prompt
+      revision, model swap, tool change, or code build. change_ref points at
+      the change evidence (git sha, config digest, prompt file hash) — the
+      version record does not embed the change itself.
+    id: agent_version_id
+    properties:
+      label: string indexed
+      summary: string?
+      status: enum agent_version_status = draft
+      change_ref: string?
+      created_at: datetime?
+
+  EvalSuite:
+    description: >
+      Named evaluation suite an agent system is judged against. pass_criteria
+      records the human-readable bar (e.g. "grade >= 0.9 on 40 held-out
+      tasks"); the suite definition itself lives with the eval harness, not
+      in state.
+    id: eval_suite_id
+    properties:
+      name: string indexed
+      description: string?
+      pass_criteria: string?
+
+  EvalRun:
+    description: >
+      Receipted claim that an eval suite was run against an agent version.
+      Written by the operator or agent after their own harness runs — the kit
+      never executes evals. artifact_ref points at the report/log evidence.
+    id: eval_run_id
+    properties:
+      ran_at: datetime
+      # bool/number have no compact scalar shorthand; explicit mapping form.
+      passed:
+        type: bool
+      score:
+        type: number
+        optional: true
+      harness: string?
+      summary: string?
+      artifact_ref: string?
+
+relationships:
+  # --- Deterministic release structure ---
+  - agent_version_of_system: AgentVersion -> AgentSystem  # Version belongs to exactly one agent system.
+  - eval_run_scores_version: EvalRun -> AgentVersion      # Deterministic fact: this run measured this version.
+  - eval_run_of_suite: EvalRun -> EvalSuite               # Run executed this eval suite.
+
+  # --- Ownership / accountability (mirrors the base *_owned_by_actor edges;
+  # ownership is an edge to a mint-materialized Actor, never a string property) ---
+  - agent_system_owned_by_actor: AgentSystem -> Actor     # Actor accountable for the agent system.
+  - eval_suite_owned_by_actor: EvalSuite -> Actor         # Actor accountable for the eval suite's bar.
+
+  # --- Governed release judgments ---
+  - eval_run_certifies_version: EvalRun -> AgentVersion   # Governed: this passing run is valid, current, and certifies this version for promotion.
+    proposal_policy: standard_release
+    basis: certification_basis
+    # The promotion gate reads this edge, so it must not be direct-writable:
+    # certification enters only via proposal review (or --pending + resolve).
+    write_policy: proposal_only
+  - agent_version_supersedes_version: AgentVersion -> AgentVersion  # Governed: one version replaces another.
+    proposal_policy: standard_release
+    basis: supersession_basis
+
+  # --- Seam edges into the operation layer ---
+  - work_item_targets_agent_version: WorkItem -> AgentVersion  # Work item builds or changes an agent version.
+  - risk_attaches_to_agent_system: Risk -> AgentSystem         # Governed: a risk attaches to an agent system.
+    proposal_policy: standard_release
+    basis: impact_basis
+
+named_queries:
+  certifying_eval_runs_for_version:
+    mode: traversal
+    entry_point: AgentVersion
+    returns: EvalRun
+    relationship_state: live
+    max_paths: 100
+    max_paths_per_result: 25
+    description: >-
+      Accepted, passing eval runs that certify an agent version. Used by the
+      promotion guard: reads at relationship_state live, so pending
+      certification proposals do not unlock promotion.
+    traverse:
+      - relationship: eval_run_certifies_version
+        as: certifying_run
+        where: {passed: {eq: true}}
+
+  agent_version_context:
+    mode: traversal
+    entry_point: AgentVersion
+    returns: AnyEntity
+    relationship_state: reviewable
+    description: >-
+      From an agent version, inspect its system, scoring and certifying eval
+      runs, targeting work items, and supersession context. all_adjacent
+      expands against the final composed config, so operation seam edges are
+      traversed too.
+    include: all_adjacent
+    select:
+      properties: [agent_version_id, label, status]
+
+  agent_system_release_context:
+    mode: traversal
+    entry_point: AgentSystem
+    returns: AgentVersion
+    relationship_state: reviewable
+    result_shape: path
+    max_paths: 500
+    max_paths_per_result: 25
+    description: >-
+      From an agent system, the version line with certification and risk
+      context: per version, counts of scoring runs, certifying runs, and
+      targeting work items.
+    traverse:
+      - relationship: agent_version_of_system
+        as: version
+        where: {status: {not_in: [retired]}}
+    include:
+      risks:
+        from: $entry
+        relationship: risk_attaches_to_agent_system
+        direction: incoming
+      owner:
+        from: $entry
+        relationship: agent_system_owned_by_actor
+        direction: outgoing
+        limit: 1
+    select:
+      properties: [agent_version_id, label, status, change_ref]
+      counts:
+        scoring_run: eval_run_scores_version
+        certifying_run: eval_run_certifies_version
+        targeting_work_item: work_item_targets_agent_version
+
+  promotion_candidates:
+    mode: collection
+    returns: AgentVersion
+    relationship_state: reviewable
+    description: >-
+      Versions awaiting promotion (status candidate) with their certification
+      posture: a candidate with zero certifying runs is not promotable yet.
+    where: {status: {eq: candidate}}
+    select:
+      properties: [agent_version_id, label, summary, change_ref]
+      counts:
+        scoring_run: eval_run_scores_version
+        certifying_run: eval_run_certifies_version
+        targeting_work_item: work_item_targets_agent_version
+
+  live_agent_versions:
+    mode: collection
+    returns: AgentVersion
+    relationship_state: reviewable
+    description: Currently live versions with their certification counts.
+    where: {status: {eq: live}}
+    select:
+      properties: [agent_version_id, label, change_ref]
+      counts:
+        certifying_run: eval_run_certifies_version
+      items:
+        systems: agent_version_of_system
+
+  eval_suite_run_history:
+    mode: traversal
+    entry_point: EvalSuite
+    returns: EvalRun
+    relationship_state: reviewable
+    max_paths: 200
+    description: Eval runs recorded against a suite, newest first.
+    traverse:
+      - relationship: eval_run_of_suite
+        as: run
+    select:
+      properties: [eval_run_id, ran_at, passed, score, artifact_ref]
+    order: ran_at desc datetime
+
+mutation_guards:
+  - agent_version_live_requires_certifying_eval:
+      when: AgentVersion.status -> live
+      require:
+        query: certifying_eval_runs_for_version
+        params: {agent_version_id: $entity.entity_id}
+        min_count: 1
+      message: >-
+        An AgentVersion cannot be promoted to live without at least one
+        accepted, passing EvalRun certifying it (eval_run_certifies_version at
+        relationship_state live). Record the eval run, get the certification
+        accepted through review, then promote.
+
+quality_checks:
+  - agent_versions_belong_to_one_system:
+      cardinality:
+        entity: AgentVersion
+        relationship: agent_version_of_system
+        direction: out
+        min: 1
+        max: 1
+      description: Every version belongs to exactly one agent system.
+      severity: error
+  - eval_runs_score_one_version:
+      cardinality:
+        entity: EvalRun
+        relationship: eval_run_scores_version
+        direction: out
+        min: 1
+        max: 1
+      description: Every eval run measures exactly one agent version.
+      severity: error
+  - eval_runs_belong_to_suite:
+      cardinality:
+        entity: EvalRun
+        relationship: eval_run_of_suite
+        direction: out
+        min: 1
+      description: Every eval run should name the suite it executed.
+  - agent_systems_have_owner:
+      cardinality:
+        entity: AgentSystem
+        relationship: agent_system_owned_by_actor
+        direction: out
+        min: 1
+      description: Agent systems should have an accountable actor.
+  - certifications_have_basis:
+      property: eval_run_certifies_version.certification_basis
+      rule: non_empty
+      description: Certification judgments should say why the run is valid and current for the version.
+  - version_supersessions_have_basis:
+      property: agent_version_supersedes_version.supersession_basis
+      rule: non_empty
+  - risk_attachments_have_basis:
+      property: risk_attaches_to_agent_system.impact_basis
+      rule: non_empty
+
+constraints: []
+
+# ─── Feedback profiles (Loop 1) ──────────────────────────────────────
+#
+# Reviewer-correction vocabulary at/before resolution. Certifications are
+# agent-proposed (no batch provider), so remediation hints lean on
+# quality_check / decision_policy / constraint rather than provider_fix.
+
+feedback_profiles:
+  eval_run_certifies_version:
+    version: 1
+    reason_codes:
+      stale_run:
+        description: The run predates changes to the version and no longer certifies what would ship.
+        remediation_hint: constraint
+        required_scope_keys: [version]
+      build_mismatch:
+        description: The run measured a different build than the version's change_ref claims.
+        remediation_hint: quality_check
+        required_scope_keys: [version, run]
+      insufficient_coverage:
+        description: The suite passed but does not cover the surface this version changed.
+        remediation_hint: decision_policy
+        required_scope_keys: [version]
+      unverifiable_artifact:
+        description: The claimed report evidence (artifact_ref) is missing, unreadable, or does not support the pass claim.
+        remediation_hint: quality_check
+        required_scope_keys: [run]
+    scope_keys:
+      run: FROM.eval_run_id
+      version: TO.agent_version_id
+      basis: EDGE.certification_basis
+
+  agent_version_supersedes_version:
+    version: 1
+    reason_codes:
+      not_a_replacement:
+        description: The versions are parallel variants, not a supersession.
+        remediation_hint: decision_policy
+        required_scope_keys: [superseding]
+      wrong_direction:
+        description: The supersession edge points the wrong way.
+        remediation_hint: quality_check
+        required_scope_keys: [superseding, superseded]
+    scope_keys:
+      superseding: FROM.agent_version_id
+      superseded: TO.agent_version_id
+
+  risk_attaches_to_agent_system:
+    version: 1
+    reason_codes:
+      wrong_system:
+        description: The risk concerns a different agent system.
+        remediation_hint: quality_check
+        required_scope_keys: [system]
+      risk_not_material:
+        description: The risk does not materially threaten this system's releases.
+        remediation_hint: decision_policy
+        required_scope_keys: [system]
+    scope_keys:
+      risk: FROM.risk_id
+      system: TO.agent_system_id
+
+# ─── Outcome profiles (Loop 2) ───────────────────────────────────────
+#
+# Post-resolution reality checks. These are the labeled examples a future
+# calibration layer trains on: did certified promotions actually hold up?
+
+outcome_profiles:
+  certification_resolution:
+    anchor_type: resolution
+    relationship_type: eval_run_certifies_version
+    version: 1
+    outcome_codes:
+      promotion_held_up:
+        description: The certified version performed as the eval claimed after promotion.
+        remediation_hint: unknown
+        required_scope_keys: [relationship_type]
+      regression_after_promotion:
+        description: The certified version regressed in real use despite the passing certifying run.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+      premature_certification:
+        description: The certification was accepted but the run was later shown stale, mismatched, or unsupported by its artifact.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  supersession_resolution:
+    anchor_type: resolution
+    relationship_type: agent_version_supersedes_version
+    version: 1
+    outcome_codes:
+      supersession_confirmed:
+        description: The superseding version durably replaced the old one.
+        remediation_hint: unknown
+        required_scope_keys: [relationship_type]
+      rollback_to_superseded:
+        description: The superseded version had to come back after the replacement failed.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  certifying_runs_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: certifying_eval_runs_for_version
+    version: 1
+    outcome_codes:
+      false_certifying_run:
+        description: The guard surface counted a certifying run later shown invalid for the version.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      missed_certifying_run:
+        description: A valid certifying run existed but was not visible to the guard surface at promotion time.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name

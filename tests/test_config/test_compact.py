@@ -361,6 +361,29 @@ def test_relationship_omitted_policy_is_ungoverned() -> None:
     assert "proposal_policy" not in config["relationships"][0]
 
 
+def test_relationship_write_policy_passes_through() -> None:
+    config = _expand(
+        _REL_HEADER,
+        """
+        relationships:
+          - work_item_owned_by_actor: WorkItem -> Actor
+            write_policy: proposal_only
+        """,
+    )
+    assert config["relationships"][0]["write_policy"] == "proposal_only"
+
+
+def test_relationship_omitted_write_policy_absent() -> None:
+    config = _expand(
+        _REL_HEADER,
+        """
+        relationships:
+          - work_item_owned_by_actor: WorkItem -> Actor
+        """,
+    )
+    assert "write_policy" not in config["relationships"][0]
+
+
 def test_relationship_explicit_properties_block() -> None:
     config = _expand(
         _REL_HEADER,
