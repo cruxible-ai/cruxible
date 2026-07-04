@@ -41,6 +41,7 @@ relationships.
 flowchart LR
   classDef canonicalEntity fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef governedEntity fill:#e67e22,stroke:#a0521c,color:#fff
+  classDef baseEntity fill:#e4e4e7,stroke:#a1a1aa,color:#3f3f46,stroke-dasharray: 4 3
 
   entity_Asset["Asset"]
   entity_BusinessService["Business Service"]
@@ -49,10 +50,10 @@ flowchart LR
   entity_Owner["Owner"]
   entity_PatchWindow["Patch Window"]
   entity_Product["Product"]
-  entity_Vendor["Vendor"]
   entity_Vulnerability["Vulnerability"]
   entity_VulnerabilityClass["Vulnerability Class"]
-  class entity_Asset,entity_BusinessService,entity_CompensatingControl,entity_Exception,entity_Owner,entity_PatchWindow,entity_Product,entity_Vendor,entity_Vulnerability,entity_VulnerabilityClass canonicalEntity
+  class entity_Asset,entity_BusinessService,entity_CompensatingControl,entity_Exception,entity_Owner,entity_PatchWindow,entity_VulnerabilityClass canonicalEntity
+  class entity_Product,entity_Vulnerability baseEntity
 
   %% Deterministic canonical relationships
   entity_Asset -- "Asset Has Control" --> entity_CompensatingControl
@@ -60,9 +61,7 @@ flowchart LR
   entity_Asset -- "Asset Owned By" --> entity_Owner
   entity_Asset -- "Asset Patch Window" --> entity_PatchWindow
   entity_CompensatingControl -- "Control Mitigates Class" --> entity_VulnerabilityClass
-  entity_Product -- "Product From Vendor" --> entity_Vendor
   entity_BusinessService -- "Service Depends On Asset" --> entity_Asset
-  entity_Vulnerability -- "Vulnerability Affects Product" --> entity_Product
 
   %% Governed proposal/review relationships
   entity_Asset -. "Asset Patch Exception For" .-> entity_Vulnerability
@@ -70,8 +69,8 @@ flowchart LR
   entity_Asset -. "Asset Runs Product" .-> entity_Product
   entity_Asset -. "Asset Vulnerability Posture" .-> entity_Vulnerability
   entity_Vulnerability -. "Vulnerability Classified As" .-> entity_VulnerabilityClass
-  linkStyle 0,1,2,3,4,5,6,7 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 8,9,10,11,12 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 6,7,8,9,10 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 
@@ -190,6 +189,10 @@ signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 | Asset Vulnerability Posture | Asset -> Vulnerability | Workflow: Propose Asset Exposure | Control Effectiveness, Exploitability Signal, Product Version Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Asset Vulnerability Posture Resolution |
 | Vulnerability Classified As | Vulnerability -> Vulnerability Class | Workflow: Propose Vulnerability Classification | Vulnerability Classification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 <!-- CRUXIBLE:END governance-table -->
+
+<!-- CRUXIBLE:BEGIN mutation-guards -->
+No mutation guards declared.
+<!-- CRUXIBLE:END mutation-guards -->
 
 ### Signal Policy Notes
 

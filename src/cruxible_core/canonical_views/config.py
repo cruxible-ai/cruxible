@@ -18,6 +18,7 @@ from cruxible_core.canonical_views import (
     build_workflow_view,
     render_governed_relationship_table_markdown,
     render_learning_loops_markdown,
+    render_mutation_guards_markdown,
     render_ontology_mermaid,
     render_overview_markdown,
     render_quality_rules_markdown,
@@ -46,6 +47,8 @@ class ViewSpec:
     render: Callable[[CoreConfig], str]
     fenced: bool = True
     render_readme: Callable[[CoreConfig], str] | None = None
+    # Overlay-scoped variant, preferred when an OverlayScope is in play.
+    render_scoped: Callable[[CoreConfig, OverlayScope], str] | None = None
 
 
 class MissingReadmeMarkersError(ValueError):
@@ -88,6 +91,7 @@ def resolve_overlay_scope(config_path: Path) -> OverlayScope | None:
     return OverlayScope(
         own_entities=frozenset(own.entity_types),
         own_relationships=frozenset(rel.name for rel in own.relationships),
+        own_guards=frozenset(guard.name for guard in own.mutation_guards),
     )
 
 
@@ -109,6 +113,18 @@ def _render_workflow_table(config: CoreConfig) -> str:
 
 def _render_governance_table(config: CoreConfig) -> str:
     return _as_rendered_text(render_governed_relationship_table_markdown(config))
+
+
+def _render_governance_table_scoped(config: CoreConfig, overlay_scope: OverlayScope) -> str:
+    return _as_rendered_text(render_governed_relationship_table_markdown(config, overlay_scope))
+
+
+def _render_mutation_guards(config: CoreConfig) -> str:
+    return _as_rendered_text(render_mutation_guards_markdown(config))
+
+
+def _render_mutation_guards_scoped(config: CoreConfig, overlay_scope: OverlayScope) -> str:
+    return _as_rendered_text(render_mutation_guards_markdown(config, overlay_scope))
 
 
 def _render_signal_policy_catalog(config: CoreConfig) -> str:
@@ -183,7 +199,9 @@ def _render_overview(config: CoreConfig) -> str:
 
 
 VIEW_SPECS: dict[str, ViewSpec] = {
-    "ontology": ViewSpec("ontology", "Ontology", _render_ontology),
+    "ontology": ViewSpec(
+        "ontology", "Ontology", _render_ontology, render_scoped=_render_ontology_scoped
+    ),
     "workflow-story": ViewSpec(
         "workflow-story",
         "Workflow Story",
@@ -211,6 +229,14 @@ VIEW_SPECS: dict[str, ViewSpec] = {
         "Governed Relationships",
         _render_governance_table,
         fenced=False,
+        render_scoped=_render_governance_table_scoped,
+    ),
+    "mutation-guards": ViewSpec(
+        "mutation-guards",
+        "Mutation Guards",
+        _render_mutation_guards,
+        fenced=False,
+        render_scoped=_render_mutation_guards_scoped,
     ),
     "signal-policy-catalog": ViewSpec(
         "signal-policy-catalog",
@@ -267,6 +293,7 @@ DEFAULT_VIEW_ORDER = (
     "workflow-pipeline",
     "workflow-summary",
     "governance-table",
+    "mutation-guards",
     "signal-policy-catalog",
     "query-map",
     "query-catalog",
@@ -380,8 +407,8 @@ def _render_readme_block(
 ) -> str:
     if spec.render_readme is not None:
         return spec.render_readme(config)
-    if spec.key == "ontology" and overlay_scope is not None:
-        body = _render_ontology_scoped(config, overlay_scope)
+    if overlay_scope is not None and spec.render_scoped is not None:
+        body = spec.render_scoped(config, overlay_scope)
     else:
         body = spec.render(config)
     if not spec.fenced:
@@ -403,8 +430,8 @@ def _render_section(
     bare: bool,
     overlay_scope: OverlayScope | None = None,
 ) -> str:
-    if spec.key == "ontology" and overlay_scope is not None:
-        body = _render_ontology_scoped(config, overlay_scope)
+    if overlay_scope is not None and spec.render_scoped is not None:
+        body = spec.render_scoped(config, overlay_scope)
     else:
         body = spec.render(config)
     if bare:

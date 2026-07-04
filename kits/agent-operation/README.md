@@ -40,6 +40,7 @@ related item as a blocker.
 flowchart LR
   classDef canonicalEntity fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef governedEntity fill:#e67e22,stroke:#a0521c,color:#fff
+  classDef baseEntity fill:#e4e4e7,stroke:#a1a1aa,color:#3f3f46,stroke-dasharray: 4 3
 
   entity_Actor["Actor"]
   entity_Decision["Decision"]
@@ -133,6 +134,14 @@ evidence-backed when proposed by agents.
 | Work Item Mitigates Risk | Work Item -> Risk | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 | Work Item Supersedes Work Item | Work Item -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 <!-- CRUXIBLE:END governance-table -->
+
+<!-- CRUXIBLE:BEGIN mutation-guards -->
+| Guard | Fires On | Refused Unless | Message |
+| --- | --- | --- | --- |
+| `review_request_approval_requires_authorized_actor` | `ReviewRequest.status` -> `approved` | authenticated actor in: authorized-reviewer | ReviewRequest approvals require the authenticated reviewer actor (not a writer credential or spoofed body actor). |
+| `review_verdict_requires_rationale_note` | `ReviewRequest.status` -> `changes_requested, approved, withdrawn` | same write creates `StateNote` (kind=review_note) linked via `state_note_about_review_request` | A ReviewRequest verdict must co-write a new StateNote(kind=review_note) linked via state_note_about_review_request in the same write. Status can't advance without recording why. |
+| `work_item_closed_requires_approved_review` | `WorkItem.status` -> `closed` | query `approved_reviews_for_work_item` returns >= 1 result(s) | Work items cannot be closed until an approved ReviewRequest reviews them. |
+<!-- CRUXIBLE:END mutation-guards -->
 
 ### Signal Policy Notes
 

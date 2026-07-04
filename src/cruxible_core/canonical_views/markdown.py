@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from cruxible_core.canonical_views.labels import (
     humanize_label,
     humanize_list_or_dash,
@@ -13,6 +15,7 @@ from cruxible_core.canonical_views.mermaid import (
 )
 from cruxible_core.canonical_views.mermaid_utils import MermaidLegendItem, render_mermaid_legend
 from cruxible_core.canonical_views.models import (
+    OverlayScope,
     GovernanceView,
     OntologyEnumView,
     OntologyView,
@@ -236,12 +239,20 @@ def render_query_markdown(view: QueryView) -> str:
     return "\n".join(lines)
 
 
-def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
-    """Render governed relationship policies from config structure."""
+def render_governed_relationship_table_markdown(
+    config: CoreConfig,
+    overlay_scope: OverlayScope | None = None,
+) -> str:
+    """Render governed relationship policies from config structure.
+
+    With ``overlay_scope``, only the rendered layer's own governed
+    relationships appear (overlay READMEs stop restating the base).
+    """
     governed_relationships = [
         relationship
         for relationship in sorted(config.relationships, key=lambda item: item.name)
         if relationship.proposal_policy is not None
+        and (overlay_scope is None or relationship.name in overlay_scope.own_relationships)
     ]
     creation_paths = _governed_relationship_creation_paths(config)
     rows: list[tuple[str, ...]] = []
@@ -265,7 +276,11 @@ def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
                 humanize_label(relationship.name),
                 f"{humanize_label(relationship.from_entity)} -> "
                 f"{humanize_label(relationship.to_entity)}",
-                _creation_path_label(creation_paths.get(relationship.name, [])),
+                (
+                    "Proposal only (direct write refused)"
+                    if relationship.write_policy == "proposal_only"
+                    else _creation_path_label(creation_paths.get(relationship.name, []))
+                ),
                 humanize_list_or_dash(sorted(proposal_policy.signals)),
                 _matching_policy_label(
                     proposal_policy.auto_resolve_when,
@@ -287,6 +302,69 @@ def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
             "Feedback",
             "Outcomes",
         ),
+        rows,
+    )
+
+
+def _guard_fires_on_label(guard: Any) -> str:
+    if guard.entity_type is not None:
+        values = guard.new_value if isinstance(guard.new_value, list) else [guard.new_value]
+        rendered = ", ".join(str(value) for value in values)
+        return f"`{guard.entity_type}.{guard.property}` -> `{rendered}`"
+    return f"writes to `{guard.relationship_type}`"
+
+
+def _guard_requirement_label(guard: Any) -> str:
+    condition = guard.condition
+    kind = condition.type
+    if kind == "query":
+        bounds = []
+        if condition.min_count is not None:
+            bounds.append(f">= {condition.min_count}")
+        if condition.max_count is not None:
+            bounds.append(f"<= {condition.max_count}")
+        return f"query `{condition.query_name}` returns {' and '.join(bounds)} result(s)"
+    if kind == "actor":
+        actors = ", ".join(condition.allowed_actor_ids)
+        return f"authenticated actor in: {actors}"
+    if kind == "co_write":
+        requires = condition.requires
+        kind_note = f"(kind={requires.kind}) " if requires.kind else ""
+        return (
+            f"same write creates `{requires.entity_type}` {kind_note}"
+            f"linked via `{requires.via_relationship}`"
+        )
+    if kind == "evidence":
+        return f">= {condition.min_count} source evidence ref(s)"
+    return kind
+
+
+def render_mutation_guards_markdown(
+    config: CoreConfig,
+    overlay_scope: OverlayScope | None = None,
+) -> str:
+    """Render mutation guards as a table: the write-time gates of this config.
+
+    Guards are the hardest promises a kit makes (e.g. an eval-gated promotion
+    or a review-gated close), so they get a first-class generated block
+    instead of living only in authored prose.
+    """
+    guards = list(config.mutation_guards)
+    if overlay_scope is not None:
+        guards = [guard for guard in guards if guard.name in overlay_scope.own_guards]
+    if not guards:
+        return "No mutation guards declared."
+    rows = [
+        (
+            f"`{guard.name}`",
+            _guard_fires_on_label(guard),
+            _guard_requirement_label(guard),
+            guard.message or "",
+        )
+        for guard in sorted(guards, key=lambda item: item.name)
+    ]
+    return _markdown_table(
+        ("Guard", "Fires On", "Refused Unless", "Message"),
         rows,
     )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from textwrap import dedent
 
 from cruxible_core.canonical_views.config import (
     DEFAULT_VIEW_ORDER,
@@ -70,6 +71,8 @@ def test_update_readme_default_sections_are_comprehension_views(
         "<!-- CRUXIBLE:END workflow-summary -->\n\n"
         "<!-- CRUXIBLE:BEGIN governance-table -->\n"
         "<!-- CRUXIBLE:END governance-table -->\n\n"
+        "<!-- CRUXIBLE:BEGIN mutation-guards -->\n"
+        "<!-- CRUXIBLE:END mutation-guards -->\n\n"
         "<!-- CRUXIBLE:BEGIN signal-policy-catalog -->\n"
         "<!-- CRUXIBLE:END signal-policy-catalog -->\n\n"
         "<!-- CRUXIBLE:BEGIN query-map -->\n"
@@ -608,3 +611,43 @@ def test_overlay_scoped_ontology_ghosts_base_entities(tmp_path: Path) -> None:
     # Base-internal edge omitted; overlay seam edge present.
     assert "Work Item Owned By Actor" not in rendered
     assert "Work Item Targets Widget" in rendered
+
+
+def test_mutation_guards_view_renders_conditions() -> None:
+    config = load_config_from_string(
+        dedent(
+            """
+            version: "1.0"
+            name: guards_kit
+            entity_types:
+              WorkItem:
+                id: work_item_id
+                properties:
+                  title: string
+                  status:
+                    type: string
+                    enum: [open, closed]
+            relationships: []
+            named_queries:
+              open_items:
+                explicit: true
+                mode: collection
+                returns: WorkItem
+                result_shape: entity
+            mutation_guards:
+              - closed_requires_check:
+                  when: WorkItem.status -> closed
+                  require:
+                    query: open_items
+                    min_count: 1
+                  message: Cannot close without the check.
+            """
+        )
+    )
+    from cruxible_core.canonical_views.markdown import render_mutation_guards_markdown
+
+    rendered = render_mutation_guards_markdown(config)
+    assert "`closed_requires_check`" in rendered
+    assert "`WorkItem.status` -> `closed`" in rendered
+    assert "query `open_items` returns >= 1 result(s)" in rendered
+    assert "Cannot close without the check." in rendered

@@ -40,6 +40,7 @@ class OverlayScope:
 
     own_entities: frozenset[str]
     own_relationships: frozenset[str]
+    own_guards: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

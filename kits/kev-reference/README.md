@@ -13,6 +13,7 @@ Use this kit with `cruxible init --kit kev-reference`, then run the canonical
 flowchart LR
   classDef canonicalEntity fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef governedEntity fill:#e67e22,stroke:#a0521c,color:#fff
+  classDef baseEntity fill:#e4e4e7,stroke:#a1a1aa,color:#3f3f46,stroke-dasharray: 4 3
 
   entity_Product["Product"]
   entity_Vendor["Vendor"]
@@ -58,6 +59,10 @@ flowchart LR
 | Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 <!-- CRUXIBLE:END governance-table -->
+
+<!-- CRUXIBLE:BEGIN mutation-guards -->
+No mutation guards declared.
+<!-- CRUXIBLE:END mutation-guards -->
 
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
 No configured proposal signal sources.

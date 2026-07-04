@@ -11,6 +11,7 @@ from cruxible_core.canonical_views.builders import (
 from cruxible_core.canonical_views.markdown import (
     render_governance_markdown,
     render_governed_relationship_table_markdown,
+    render_mutation_guards_markdown,
     render_learning_loops_markdown,
     render_ontology_markdown,
     render_overview_markdown,
@@ -84,6 +85,7 @@ __all__ = [
     "canonical_view_payload",
     "render_governance_markdown",
     "render_governed_relationship_table_markdown",
+    "render_mutation_guards_markdown",
     "render_learning_loops_markdown",
     "render_ontology_markdown",
     "render_ontology_mermaid",
