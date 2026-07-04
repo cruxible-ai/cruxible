@@ -75,6 +75,10 @@ The agent should:
 - run validation, lock, workflow preview, proposal, and query tools
 - explain receipts, traces, pending groups, and resolution choices to humans
 - collect human decisions and apply them through Cruxible surfaces
+- write prose properties (note bodies, descriptions, rationale) as Markdown —
+  GFM renders in UIs, so use headings, lists, and tables for structure instead
+  of ad-hoc separators; property descriptions in the schema say which fields
+  render this way
 
 The agent should not:
 

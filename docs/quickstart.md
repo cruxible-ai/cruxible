@@ -47,15 +47,16 @@ The daemon binds locally by default. For a simple local hardening layer, start
 it with:
 
 ```bash
-CRUXIBLE_SERVER_AUTH=true
-CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once
+CRUXIBLE_SERVER_AUTH=true \
+CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once \
 CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
 ```
 
-Claim the bootstrap secret to create an admin runtime credential, then use that
-runtime credential as `CRUXIBLE_SERVER_BEARER_TOKEN` for authenticated CLI or
-client calls. See [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md)
-for the full bootstrap and agent-role flow.
+Claim the bootstrap secret with `cruxible credential claim-bootstrap` to create
+an admin runtime credential, then use that runtime credential as
+`CRUXIBLE_SERVER_BEARER_TOKEN` for authenticated CLI or client calls. See
+[Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md) for the full
+bootstrap and agent-role flow.
 
 Use `cruxible-client` in a separate agent environment when the agent should not
 import the runtime directly:
@@ -74,11 +75,10 @@ cruxible --server-url http://127.0.0.1:8100 init --kit kev-reference
 ```
 
 Keep the returned `instance_id`; every server-backed command after init uses it.
-
-Then lock and preview the canonical reference refresh:
+Kit init installs the kit's pinned workflow lock automatically, so you can
+preview the canonical reference refresh right away:
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> lock
 cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> run \
   --workflow build_public_kev_reference \
   --save-preview kev-reference-preview.json
@@ -122,11 +122,10 @@ source checkout before published OCI reference states are available, publish the
 reference instance to a local `file://` transport and pass `--transport-ref`
 instead of `--state-ref`.
 
-The command returns a new overlay `instance_id`. Lock the overlay, preview the
-local canonical state refresh, and apply it:
+The command returns a new overlay `instance_id` and locks the overlay as part
+of creation. Preview the local canonical state refresh and apply it:
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> lock
 cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> run \
   --workflow build_local_state \
   --save-preview kev-local-preview.json

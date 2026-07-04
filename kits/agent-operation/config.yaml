@@ -62,8 +62,8 @@ entity_types:
     properties:
       title: string indexed
       summary: string?
-      description: string?
-      rationale: string?
+      description: {type: string, optional: true, description: "Markdown (GFM) renders in UIs — headings, lists, tables; single newlines are hard breaks."}
+      rationale: {type: string, optional: true, description: "Markdown (GFM) renders in UIs — headings, lists, tables; single newlines are hard breaks."}
       type: enum work_item_type
       status: enum lifecycle_status
       priority: enum priority
@@ -88,7 +88,7 @@ entity_types:
     properties:
       title: string indexed
       summary: string?
-      rationale: string?
+      rationale: {type: string, optional: true, description: "Markdown (GFM) renders in UIs — headings, lists, tables; single newlines are hard breaks."}
       status: enum decision_status
       decided_at: date?
 
@@ -120,7 +120,7 @@ entity_types:
       kind: enum state_note_kind
       title: string indexed
       summary: string
-      body: string
+      body: {type: string, description: "Markdown (GFM) renders in UIs — headings, lists, tables; single newlines are hard breaks."}
       created_at: datetime
 
 relationships:
