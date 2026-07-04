@@ -72,6 +72,16 @@ def make_entity_set(
         raise QueryExecutionError(
             f"Workflow step '{step_id}' references unknown entity type '{spec.entity_type}'"
         )
+    # `properties: auto` maps every declared property from $item.<name>; rows
+    # must carry every declared key (null for unset optional properties).
+    properties_spec: dict[str, Any]
+    if spec.properties == "auto":
+        properties_spec = {
+            prop_name: f"$item.{prop_name}"
+            for prop_name in config.entity_types[spec.entity_type].properties
+        }
+    else:
+        properties_spec = spec.properties
     items = resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[str, dict[str, Any]] = {}
     entities: list[EntityInstance] = []
@@ -89,7 +99,7 @@ def make_entity_set(
             )
         )
         properties = resolve_value(
-            spec.properties,
+            properties_spec,
             input_payload,
             step_outputs,
             item_payload=item,
@@ -150,6 +160,15 @@ def make_relationship_set(
         raise QueryExecutionError(
             f"Workflow step '{step_id}' references unknown relationship '{spec.relationship_type}'"
         )
+    # `properties: auto` mirrors make_entities: every declared edge property
+    # maps from $item.<name>.
+    rel_properties_spec: dict[str, Any]
+    if spec.properties == "auto":
+        rel_properties_spec = {
+            prop_name: f"$item.{prop_name}" for prop_name in rel_schema.properties
+        }
+    else:
+        rel_properties_spec = spec.properties
     items = resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
     relationships: list[RelationshipInstance] = []
@@ -216,7 +235,7 @@ def make_relationship_set(
                     allow_item=True,
                 ),
                 "properties": resolve_value(
-                    spec.properties,
+                    rel_properties_spec,
                     input_payload,
                     step_outputs,
                     item_payload=item,

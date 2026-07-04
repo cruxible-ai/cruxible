@@ -75,6 +75,16 @@ def make_candidate_set(
             f"Workflow step '{step_id}' references unknown relationship '{relationship_type}'"
         )
 
+    # `properties: auto` mirrors make_relationships: every declared edge
+    # property maps from $item.<name>.
+    candidate_properties_spec: dict[str, Any]
+    if spec.properties == "auto":
+        candidate_properties_spec = {
+            prop_name: f"$item.{prop_name}" for prop_name in rel_schema.properties
+        }
+    else:
+        candidate_properties_spec = spec.properties
+
     items = resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     source_metadata = source_read_metadata(spec.items, step_outputs)
@@ -138,7 +148,7 @@ def make_candidate_set(
                     allow_item=True,
                 ),
                 "properties": resolve_value(
-                    spec.properties,
+                    candidate_properties_spec,
                     input_payload,
                     step_outputs,
                     item_payload=item,

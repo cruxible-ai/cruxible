@@ -1849,3 +1849,127 @@ def test_looks_compact_distinguishes_compact_from_explicit() -> None:
         ],
     }
     assert looks_compact(explicit) is False
+
+
+# ---------------------------------------------------------------------------
+# Grammar v2 fixes (2026-07-04): scalar coverage, optional token, chained
+# traverse inference, entity property checks
+# ---------------------------------------------------------------------------
+
+
+def test_property_scalar_covers_all_property_types() -> None:
+    config = _expand(
+        _REL_HEADER,
+        """
+        entity_types:
+          Thing:
+            id: thing_id
+            properties:
+              flag: bool
+              score: number?
+              count: int
+              ratio: float
+              blob: json?
+        """,
+    )
+    props = config["entity_types"]["Thing"]["properties"]
+    assert props["flag"] == {"type": "bool"}
+    assert props["score"] == {"type": "number", "optional": True}
+    assert props["count"] == {"type": "int"}
+    assert props["ratio"] == {"type": "float"}
+    assert props["blob"] == {"type": "json", "optional": True}
+
+
+def test_optional_token_is_flow_map_safe() -> None:
+    config = _expand(
+        _REL_HEADER,
+        """
+        enums:
+          judge_role: [author, dissent]
+        entity_types:
+          Thing:
+            id: thing_id
+            properties: {role: enum judge_role optional, note: string optional}
+        """,
+    )
+    props = config["entity_types"]["Thing"]["properties"]
+    assert props["role"] == {"type": "string", "enum_ref": "judge_role", "optional": True}
+    assert props["note"] == {"type": "string", "optional": True}
+
+
+def test_traverse_direction_chains_through_hops() -> None:
+    config = _expand(
+        "",
+        """
+        entity_types:
+          Client: {id: client_id, properties: {name: string}}
+          Matter: {id: matter_id, properties: {name: string}}
+          Opinion: {id: opinion_id, properties: {name: string}}
+        relationships:
+          - matter_for_client: Matter -> Client
+          - opinion_affects_matter: Opinion -> Matter
+        named_queries:
+          client_impact:
+            mode: traversal
+            entry_point: Client
+            returns: Opinion
+            traverse:
+              - relationship: matter_for_client
+                as: client_matter
+              - relationship: opinion_affects_matter
+                as: impacting_opinion
+        """,
+    )
+    steps = config["named_queries"]["client_impact"]["traversal"]
+    assert steps[0]["direction"] == "incoming"
+    # Second hop anchors on Matter (hop 1's landing), not on Client.
+    assert steps[1]["direction"] == "incoming"
+
+
+def test_traverse_ambiguous_landing_requires_direction() -> None:
+    import pytest
+
+    with pytest.raises(CompactExpansionError, match="direction cannot be inferred"):
+        _expand(
+            "",
+            """
+            entity_types:
+              A: {id: a_id, properties: {name: string}}
+              B: {id: b_id, properties: {name: string}}
+              C: {id: c_id, properties: {name: string}}
+            relationships:
+              - a_to_b: A -> B
+              - b_to_b: B -> B
+              - b_to_c: B -> C
+            named_queries:
+              chained:
+                mode: traversal
+                entry_point: A
+                returns: C
+                traverse:
+                  - relationship: [a_to_b, b_to_b]
+                    direction: outgoing
+                    as: fan
+                  - relationship: b_to_c
+                    as: landing
+            """,
+        )
+
+
+def test_entity_property_check_expands_to_entity_target() -> None:
+    config = _expand(
+        _REL_HEADER,
+        """
+        quality_checks:
+          - things_have_kind:
+              property: WorkItem.title
+              rule: required
+              severity: error
+        """,
+    )
+    check = config["quality_checks"][0]
+    assert check["kind"] == "property"
+    assert check["target"] == "entity"
+    assert check["entity_type"] == "WorkItem"
+    assert check["property"] == "title"
+    assert check["rule"] == "required"

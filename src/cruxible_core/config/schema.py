@@ -1709,7 +1709,11 @@ class CandidateEvidenceSpec(BaseModel):
 
 
 class MakeCandidatesSpec(BaseModel):
-    """Build a relationship candidate set from list-shaped workflow data."""
+    """Build a relationship candidate set from list-shaped workflow data.
+
+    ``properties: auto`` maps every property declared on the relationship type
+    from ``$item.<property_name>``, mirroring MakeRelationshipsSpec.
+    """
 
     relationship_type: str
     items: Any
@@ -1717,7 +1721,7 @@ class MakeCandidatesSpec(BaseModel):
     from_id: Any
     to_type: Any
     to_id: Any
-    properties: dict[str, Any] = Field(default_factory=dict)
+    properties: dict[str, Any] | Literal["auto"] = Field(default_factory=dict)
     evidence: CandidateEvidenceSpec | None = None
 
     model_config = {"extra": "forbid"}
@@ -1796,18 +1800,27 @@ class ProposeRelationshipGroupSpec(BaseModel):
 
 
 class MakeEntitiesSpec(BaseModel):
-    """Build an entity set from list-shaped workflow data."""
+    """Build an entity set from list-shaped workflow data.
+
+    ``properties: auto`` maps every property declared on the entity type from
+    ``$item.<property_name>`` — the 1:1 boilerplate case. Rows must then carry
+    every declared key (null for unset optional properties).
+    """
 
     entity_type: str
     items: Any
     entity_id: Any
-    properties: dict[str, Any] = Field(default_factory=dict)
+    properties: dict[str, Any] | Literal["auto"] = Field(default_factory=dict)
 
     model_config = {"extra": "forbid"}
 
 
 class MakeRelationshipsSpec(BaseModel):
-    """Build a relationship set from list-shaped workflow data."""
+    """Build a relationship set from list-shaped workflow data.
+
+    ``properties: auto`` maps every property declared on the relationship type
+    from ``$item.<property_name>``, mirroring MakeEntitiesSpec.
+    """
 
     relationship_type: str
     items: Any
@@ -1815,7 +1828,7 @@ class MakeRelationshipsSpec(BaseModel):
     from_id: Any
     to_type: Any
     to_id: Any
-    properties: dict[str, Any] = Field(default_factory=dict)
+    properties: dict[str, Any] | Literal["auto"] = Field(default_factory=dict)
     evidence: CandidateEvidenceSpec | None = None
 
     model_config = {"extra": "forbid"}

@@ -51,7 +51,7 @@ _DEFAULT_MAX_PATHS = 500
 _DEFAULT_MAX_PATHS_PER_RESULT = 50
 _DEFAULT_LIMIT = 100
 
-_SCALAR_TYPES = {"string", "date", "datetime"}
+_SCALAR_TYPES = {"string", "date", "datetime", "int", "integer", "float", "number", "bool", "json"}
 
 
 class CompactExpansionError(ValueError):
@@ -183,8 +183,12 @@ def _expand_property_scalar(name: str, spec: str) -> dict[str, Any]:
     """Expand one compact entity/relationship property string.
 
     Grammar (intentional string mini-language #2):
-        ``string`` / ``date`` / ``datetime``  -> {type: <t>}
+        ``string`` / ``int`` / ``float`` / ``number`` / ``bool`` / ``json`` /
+        ``date`` / ``datetime``               -> {type: <t>}
         trailing ``?``                         -> optional: true
+        ``optional``                           -> optional: true (flow-map-safe
+                                                  spelling: a bare ``?`` is YAML
+                                                  syntax inside ``{...}``)
         ``indexed``                            -> indexed: true
         ``enum <ref>``                         -> {type: string, enum_ref: <ref>}
         ``= <v>``                              -> default: <v>
@@ -230,7 +234,7 @@ def _expand_property_scalar(name: str, spec: str) -> dict[str, Any]:
         if token == "indexed":
             result["indexed"] = True
             i += 1
-        elif token == "?":
+        elif token in ("?", "optional"):
             optional = True
             i += 1
         elif token == "=":
@@ -1029,8 +1033,15 @@ def _expand_named_query(
     traversal_steps: list[dict[str, Any]] = []
     if is_traversal:
         if traverse is not None:
+            # Direction inference walks the chain: each hop anchors on the
+            # previous hop's landing entity, so only genuinely ambiguous hops
+            # (relationship lists, direction both, external relationships)
+            # need an explicit direction.
+            hop_anchor: str | None = anchor
             for step in traverse:
-                traversal_steps.append(_expand_traverse_step(step, anchor, rel_index, name))
+                expanded_step = _expand_traverse_step(step, hop_anchor, rel_index, name)
+                traversal_steps.append(expanded_step)
+                hop_anchor = _traverse_landing_entity(expanded_step, rel_index)
         elif body.get("traverse_all") is not None:
             traversal_steps.append(_expand_traverse_all_step(body, anchor, rel_index, name))
         elif is_all_adjacent:
@@ -1298,6 +1309,29 @@ def _canonical_relationship_name(
     return name
 
 
+def _traverse_landing_entity(
+    expanded_step: dict[str, Any],
+    rel_index: dict[str, RelInfo],
+) -> str | None:
+    """Entity type an expanded traverse step lands on, for chained inference.
+
+    Returns None when the landing is ambiguous: relationship lists, direction
+    'both', or relationships not defined in this layer (external/base refs).
+    """
+    rel = expanded_step.get("relationship")
+    direction = expanded_step.get("direction")
+    if not isinstance(rel, str):
+        return None
+    info = rel_index.get(rel)
+    if info is None:
+        return None
+    if direction == "outgoing":
+        return info.to_entity
+    if direction == "incoming":
+        return info.from_entity
+    return None
+
+
 def _expand_traverse_step(
     step: dict[str, Any],
     anchor: str | None,
@@ -1352,6 +1386,13 @@ def _expand_traverse_step(
         )
         direction = direction_override
     else:
+        if not anchor:
+            raise CompactExpansionError(
+                f"query '{query_name}' traverse step: direction cannot be inferred — "
+                f"the previous hop's landing entity is ambiguous (relationship list, "
+                f"direction 'both', or an external relationship); add an explicit "
+                f"'direction:' to this step"
+            )
         rel_name, direction = _resolve_direction(
             rel_ref, anchor or "", rel_index, context=f"query '{query_name}' traverse"
         )
@@ -1628,7 +1669,8 @@ def _expand_quality_checks(raw_checks: list[Any]) -> list[dict[str, Any]]:
 
     Property::
 
-        property: <relationship>.<field>
+        property: <relationship>.<field>   (snake_case -> relationship target)
+        property: <EntityType>.<field>     (CapWords -> entity target)
         rule: non_empty|required
     """
     out: list[dict[str, Any]] = []
@@ -1699,18 +1741,30 @@ def _expand_property_check(name: str, body: dict[str, Any]) -> dict[str, Any]:
     property_path = body["property"]
     if "." not in property_path:
         raise CompactExpansionError(
-            f"quality check '{name}': property must be '<relationship>.<field>', "
-            f"got '{property_path}'"
+            f"quality check '{name}': property must be '<relationship>.<field>' or "
+            f"'<EntityType>.<field>', got '{property_path}'"
         )
-    relationship, field = property_path.split(".", 1)
-    check: dict[str, Any] = {
-        "name": name,
-        "kind": "property",
-        "target": "relationship",
-        "relationship_type": relationship,
-        "property": field,
-        "rule": body["rule"],
-    }
+    subject, field = property_path.split(".", 1)
+    # Entity types are CapWords, relationship types are snake_case — the
+    # casing convention is load-bearing here and everywhere in kit configs.
+    if subject[:1].isupper():
+        check: dict[str, Any] = {
+            "name": name,
+            "kind": "property",
+            "target": "entity",
+            "entity_type": subject,
+            "property": field,
+            "rule": body["rule"],
+        }
+    else:
+        check = {
+            "name": name,
+            "kind": "property",
+            "target": "relationship",
+            "relationship_type": subject,
+            "property": field,
+            "rule": body["rule"],
+        }
     if "description" in body:
         check["description"] = body["description"]
     if "severity" in body:
