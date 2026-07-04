@@ -12,6 +12,7 @@ from cruxible_core.canonical_views.config import (
     available_view_keys,
     load_config_for_rendering,
     render_config_views,
+    resolve_overlay_scope,
     selected_view_keys,
     update_readme_file,
 )
@@ -48,8 +49,15 @@ from cruxible_core.cli.main import handle_errors
     is_flag=True,
     help=(
         "Compose extends overlays as a runtime composed view. This includes inherited "
-        "ontology/query surfaces but strips upstream build-only workflows."
+        "ontology/query surfaces but strips upstream build-only workflows. The "
+        "ontology view renders overlay-scoped (own structure + ghost base seam "
+        "endpoints); use --composed-ontology for the full composed diagram."
     ),
+)
+@click.option(
+    "--composed-ontology",
+    is_flag=True,
+    help="With --runtime on an extends config: render the full composed ontology instead of the overlay-scoped view.",
 )
 @handle_errors
 def config_views_cmd(
@@ -58,14 +66,18 @@ def config_views_cmd(
     bare: bool,
     update_readme: Path | None,
     runtime: bool,
+    composed_ontology: bool,
 ) -> None:
     """Render canonical Mermaid/Markdown views for a Cruxible config."""
     config = load_config_for_rendering(config_path, runtime=runtime)
+    overlay_scope = None
+    if runtime and not composed_ontology:
+        overlay_scope = resolve_overlay_scope(config_path)
 
     selected_keys = selected_view_keys(view)
     if update_readme is not None:
         try:
-            update_readme_file(update_readme, config, selected_keys)
+            update_readme_file(update_readme, config, selected_keys, overlay_scope)
         except MissingReadmeMarkersError as exc:
             raise click.UsageError(str(exc)) from exc
         click.echo(f"Updated {update_readme}")
@@ -77,6 +89,7 @@ def config_views_cmd(
             view=view,
             source=config_path,
             bare=bare,
+            overlay_scope=overlay_scope,
         )
     )
 

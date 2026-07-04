@@ -12,6 +12,9 @@ class OntologyEntityView:
     primary_key: str | None
     property_count: int
     description: str | None
+    # "own" = defined by the rendered layer; "base" = upstream entity shown
+    # only because an owned relationship touches it (overlay-scoped views).
+    origin: str = "own"
 
 
 @dataclass(frozen=True)
@@ -24,6 +27,19 @@ class OntologyRelationshipView:
     reverse_name: str | None
     description: str | None
     instance_count: int | None = None
+
+
+@dataclass(frozen=True)
+class OverlayScope:
+    """Names owned by the rendered layer, for overlay-scoped views.
+
+    Built from the overlay's own (uncomposed) layer: entities/relationships it
+    declares. Base entities touched by owned relationships render as ghost
+    seam endpoints; base-internal structure is omitted entirely.
+    """
+
+    own_entities: frozenset[str]
+    own_relationships: frozenset[str]
 
 
 @dataclass(frozen=True)

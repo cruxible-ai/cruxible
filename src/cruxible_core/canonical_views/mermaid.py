@@ -46,17 +46,22 @@ def render_ontology_mermaid(view: OntologyView) -> str:
     governed_edge_indexes: list[int] = []
     edge_index = 0
 
+    base_nodes: list[str] = []
     lines = [
         "flowchart LR",
         "  classDef canonicalEntity fill:#4a90d9,stroke:#2c5f8a,color:#fff",
         "  classDef governedEntity fill:#e67e22,stroke:#a0521c,color:#fff",
+        "  classDef baseEntity fill:#e4e4e7,stroke:#a1a1aa,color:#3f3f46,stroke-dasharray: 4 3",
         "",
     ]
     for entity in view.entity_types:
         node_id = _mermaid_id(f"entity_{entity.name}")
         label = _escape_mermaid_label(humanize_label(entity.name))
         lines.append(f'  {node_id}["{label}"]')
-        if entity.name in governed_entities and entity.name not in deterministic_entities:
+        if entity.origin == "base":
+            # Ghost seam endpoint from the base layer (overlay-scoped views).
+            base_nodes.append(node_id)
+        elif entity.name in governed_entities and entity.name not in deterministic_entities:
             governed_nodes.append(node_id)
         else:
             canonical_nodes.append(node_id)
@@ -65,6 +70,8 @@ def render_ontology_mermaid(view: OntologyView) -> str:
         lines.append(f"  class {','.join(canonical_nodes)} canonicalEntity")
     if governed_nodes:
         lines.append(f"  class {','.join(governed_nodes)} governedEntity")
+    if base_nodes:
+        lines.append(f"  class {','.join(base_nodes)} baseEntity")
 
     if deterministic_relationships:
         lines.extend(["", "  %% Deterministic canonical relationships"])

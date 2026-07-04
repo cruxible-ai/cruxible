@@ -35,6 +35,7 @@ from cruxible_core.canonical_views import (
     render_workflow_summary_markdown,
     render_workflow_table_markdown,
 )
+from cruxible_core.canonical_views.models import OverlayScope
 from cruxible_core.config.schema import CoreConfig
 
 
@@ -62,6 +63,32 @@ def _as_rendered_text(value: object) -> str:
 
 def _render_ontology(config: CoreConfig) -> str:
     return _as_rendered_text(render_ontology_mermaid(build_ontology_view(config)))
+
+
+def _render_ontology_scoped(config: CoreConfig, overlay_scope: OverlayScope) -> str:
+    return _as_rendered_text(
+        render_ontology_mermaid(build_ontology_view(config, overlay_scope=overlay_scope))
+    )
+
+
+def resolve_overlay_scope(config_path: Path) -> OverlayScope | None:
+    """Layer scope for an extends config: the overlay's own declared names.
+
+    Returns None for single-layer configs. Used by overlay-scoped views so an
+    overlay kit's ontology renders its own structure plus ghost seam
+    endpoints instead of the entire composed base.
+    """
+    loader = import_module("cruxible_core.config.loader")
+    composer = import_module("cruxible_core.config.composer")
+    config = loader.load_config(config_path)
+    layers = composer.resolve_config_layers(config, config_path=config_path.resolve())
+    if len(layers) < 2:
+        return None
+    own = layers[-1].config
+    return OverlayScope(
+        own_entities=frozenset(own.entity_types),
+        own_relationships=frozenset(rel.name for rel in own.relationships),
+    )
 
 
 def _render_workflow_story(config: CoreConfig) -> str:
@@ -285,6 +312,7 @@ def render_config_views(
     view: str = "all",
     source: str | Path | None = None,
     bare: bool = False,
+    overlay_scope: OverlayScope | None = None,
 ) -> str:
     """Render one or more config views as Markdown/Mermaid text."""
     selected_keys = selected_view_keys(view)
@@ -293,6 +321,7 @@ def render_config_views(
             spec=VIEW_SPECS[key],
             config=config,
             bare=bare and view != "all",
+            overlay_scope=overlay_scope,
         )
         for key in selected_keys
     ]
@@ -310,6 +339,7 @@ def render_readme_update(
     readme_text: str,
     config: CoreConfig,
     selected_keys: tuple[str, ...],
+    overlay_scope: OverlayScope | None = None,
 ) -> str:
     """Render updated README text by replacing existing CRUXIBLE marker blocks."""
     updated = readme_text
@@ -317,7 +347,7 @@ def render_readme_update(
     for key in selected_keys:
         begin = BEGIN_MARKER.format(key=key)
         end = END_MARKER.format(key=key)
-        block = _render_readme_block(spec=VIEW_SPECS[key], config=config)
+        block = _render_readme_block(spec=VIEW_SPECS[key], config=config, overlay_scope=overlay_scope)
         pattern = re.compile(
             rf"{re.escape(begin)}\n.*?{re.escape(end)}",
             flags=re.DOTALL,
@@ -337,15 +367,23 @@ def update_readme_file(
     readme_path: Path,
     config: CoreConfig,
     selected_keys: tuple[str, ...],
+    overlay_scope: OverlayScope | None = None,
 ) -> None:
     """Replace CRUXIBLE marker blocks in a README file."""
-    readme_path.write_text(render_readme_update(readme_path.read_text(), config, selected_keys))
+    readme_path.write_text(
+        render_readme_update(readme_path.read_text(), config, selected_keys, overlay_scope)
+    )
 
 
-def _render_readme_block(*, spec: ViewSpec, config: CoreConfig) -> str:
+def _render_readme_block(
+    *, spec: ViewSpec, config: CoreConfig, overlay_scope: OverlayScope | None = None
+) -> str:
     if spec.render_readme is not None:
         return spec.render_readme(config)
-    body = spec.render(config)
+    if spec.key == "ontology" and overlay_scope is not None:
+        body = _render_ontology_scoped(config, overlay_scope)
+    else:
+        body = spec.render(config)
     if not spec.fenced:
         return body
     return f"```mermaid\n{body}\n```"
@@ -358,8 +396,17 @@ def _render_titled_mermaid_blocks(blocks: list[tuple[str, str]]) -> str:
     return "\n\n".join(sections)
 
 
-def _render_section(*, spec: ViewSpec, config: CoreConfig, bare: bool) -> str:
-    body = spec.render(config)
+def _render_section(
+    *,
+    spec: ViewSpec,
+    config: CoreConfig,
+    bare: bool,
+    overlay_scope: OverlayScope | None = None,
+) -> str:
+    if spec.key == "ontology" and overlay_scope is not None:
+        body = _render_ontology_scoped(config, overlay_scope)
+    else:
+        body = spec.render(config)
     if bare:
         return body
     if not spec.fenced:

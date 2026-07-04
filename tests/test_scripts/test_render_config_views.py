@@ -558,3 +558,53 @@ workflows:
     assert sorted(composed.entity_types) == ["Asset", "Product"]
     assert sorted(composed.workflows) == ["build_overlay"]
     assert "load_reference" not in composed.providers
+
+
+def test_overlay_scoped_ontology_ghosts_base_entities(tmp_path: Path) -> None:
+    """--runtime ontology renders the overlay's own structure with ghost seam
+    endpoints; base-internal edges are omitted (wi-generated-readme-overlay-views)."""
+    from textwrap import dedent
+    base = tmp_path / "base.yaml"
+    base.write_text(
+        dedent(
+            """
+            version: "1.0"
+            name: base_kit
+            entity_types:
+              Actor: {id: actor_id, properties: {name: string}}
+              WorkItem: {id: work_item_id, properties: {title: string}}
+            relationships:
+              - work_item_owned_by_actor: WorkItem -> Actor
+            """
+        )
+    )
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text(
+        dedent(
+            """
+            version: "1.0"
+            name: overlay_kit
+            extends: ./base.yaml
+            entity_types:
+              Widget: {id: widget_id, properties: {name: string}}
+            relationships:
+              - work_item_targets_widget: WorkItem -> Widget
+            """
+        )
+    )
+    from cruxible_core.canonical_views.config import resolve_overlay_scope
+
+    config = load_config_for_rendering(overlay, runtime=True)
+    scope = resolve_overlay_scope(overlay)
+    assert scope is not None
+    rendered = render_config_views(
+        config, view="ontology", bare=True, overlay_scope=scope
+    )
+    # Own entity solid, seam base entity ghosted, non-seam base entity absent.
+    assert "entity_Widget" in rendered
+    assert "baseEntity" in rendered
+    assert "entity_WorkItem" in rendered
+    assert "entity_Actor" not in rendered
+    # Base-internal edge omitted; overlay seam edge present.
+    assert "Work Item Owned By Actor" not in rendered
+    assert "Work Item Targets Widget" in rendered

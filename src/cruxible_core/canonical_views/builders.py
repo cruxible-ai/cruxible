@@ -11,6 +11,7 @@ from cruxible_core.canonical_views.models import (
     OntologyEnumView,
     OntologyRelationshipView,
     OntologyView,
+    OverlayScope,
     OverviewView,
     PendingBucketView,
     PropertySchemaView,
@@ -33,16 +34,45 @@ def build_ontology_view(
     config: CoreConfig,
     *,
     relationship_counts: dict[str, int] | None = None,
+    overlay_scope: OverlayScope | None = None,
 ) -> OntologyView:
-    """Build an ontology view from config and optional live edge counts."""
+    """Build an ontology view from config and optional live edge counts.
+
+    With ``overlay_scope``, the view is layer-scoped: only the layer's own
+    relationships are included, its own entities render as "own", and base
+    entities appear only when an owned relationship touches them (origin
+    "base"). Base-internal structure is omitted.
+    """
+    relationships = sorted(config.relationships, key=lambda item: item.name)
+    if overlay_scope is not None:
+        relationships = [
+            rel for rel in relationships if rel.name in overlay_scope.own_relationships
+        ]
+        seam_entities = {rel.from_entity for rel in relationships} | {
+            rel.to_entity for rel in relationships
+        }
+        visible_entities = set(overlay_scope.own_entities) | seam_entities
+        entity_items = [
+            (name, schema)
+            for name, schema in sorted(config.entity_types.items())
+            if name in visible_entities
+        ]
+    else:
+        entity_items = sorted(config.entity_types.items())
+
     entity_views = [
         OntologyEntityView(
             name=name,
             primary_key=schema.get_primary_key(),
             property_count=len(schema.properties),
             description=schema.description,
+            origin=(
+                "base"
+                if overlay_scope is not None and name not in overlay_scope.own_entities
+                else "own"
+            ),
         )
-        for name, schema in sorted(config.entity_types.items())
+        for name, schema in entity_items
     ]
     rel_views = [
         OntologyRelationshipView(
@@ -55,7 +85,7 @@ def build_ontology_view(
             description=rel.description,
             instance_count=(relationship_counts or {}).get(rel.name),
         )
-        for rel in sorted(config.relationships, key=lambda item: item.name)
+        for rel in relationships
     ]
     governed_count = sum(1 for rel in rel_views if rel.mode == "governed")
     return OntologyView(
