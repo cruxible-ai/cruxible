@@ -199,9 +199,9 @@ def apply_entity(
     if policy == "mint_only" and source != TOKEN_MINT_SOURCE:
         # mint_only is exclusive to token_mint: refuse EVERY other source,
         # including the governed verbs that proposal_only would have admitted.
-        raise DirectWriteRefusedError("entity", entity_type, source)
+        raise DirectWriteRefusedError("entity", entity_type, source, policy=policy)
     if not is_governed_source(source) and policy == "proposal_only":
-        raise DirectWriteRefusedError("entity", entity_type, source)
+        raise DirectWriteRefusedError("entity", entity_type, source, policy=policy)
 
     if validated.is_update:
         graph.update_entity_properties(
@@ -304,12 +304,11 @@ def apply_relationship(
     )
 
     rel = validated.relationship
-    if (
-        not is_governed_source(source)
-        and not pending
-        and effective_relationship_write_policy(config, rel.relationship_type) == "proposal_only"
-    ):
-        raise DirectWriteRefusedError("relationship", rel.relationship_type, source)
+    policy = effective_relationship_write_policy(config, rel.relationship_type)
+    if not is_governed_source(source) and not pending and policy == "proposal_only":
+        raise DirectWriteRefusedError(
+            "relationship", rel.relationship_type, source, policy=policy
+        )
     if validated.is_update:
         incoming_evidence = rel.metadata.evidence
         existing_rel = graph.get_relationship(

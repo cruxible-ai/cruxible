@@ -365,20 +365,36 @@ class PermissionDeniedError(CoreError):
 
 
 class DirectWriteRefusedError(CoreError):
-    """Direct graph write refused because the target is governed proposal_only.
+    """Direct graph write refused because the target policy disallows the source.
 
     A HARD governance constraint, independent of permission tier (even
     ``CRUXIBLE_MODE=admin`` is refused). State for a ``proposal_only`` type may
     only enter through the governed proposal/workflow path; relationship writes
-    may also be staged with ``pending=true``.
+    may also be staged with ``pending=true``. State for a ``mint_only`` type may
+    only enter through runtime credential minting.
     """
 
     error_code = "direct_write_refused"
 
-    def __init__(self, kind: str, type_name: str, source: str):
+    def __init__(
+        self,
+        kind: str,
+        type_name: str,
+        source: str,
+        *,
+        policy: str = "proposal_only",
+    ):
         self.kind = kind
         self.type_name = type_name
         self.source = source
+        self.policy = policy
+        if policy == "mint_only":
+            super().__init__(
+                f"Direct write to {kind} '{type_name}' is refused "
+                f"(write_policy=mint_only). This auth-managed type is writable "
+                f"only via credential mint (`cruxible credential mint`)."
+            )
+            return
         if kind == "relationship":
             forward = (
                 "Use 'group propose' to stage a governed proposal, or pass "

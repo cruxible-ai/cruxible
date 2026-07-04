@@ -685,6 +685,10 @@ def test_mint_only_direct_entity_add_refused(mint_only_instance: CruxibleInstanc
         service_add_entity_inputs(mint_only_instance, [_token_entity()])
     assert exc.value.kind == "entity"
     assert exc.value.type_name == "Token"
+    message = str(exc.value)
+    assert "mint_only" in message
+    assert "credential mint" in message
+    assert "proposal_only" not in message
 
 
 def test_mint_only_batch_entity_write_refused(mint_only_instance: CruxibleInstance) -> None:
