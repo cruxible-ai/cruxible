@@ -47,6 +47,14 @@ class CreatedRuntimeCredential:
     token: str
 
 
+class RuntimeCredentialRecoveryBusyError(RuntimeError):
+    """Raised when offline credential recovery cannot lock the credentials DB."""
+
+
+class RuntimeCredentialRecoveryError(RuntimeError):
+    """Raised when offline credential recovery cannot safely target an instance."""
+
+
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -76,13 +84,14 @@ def _validate_governed_instance_id(instance_id: str) -> None:
 class RuntimeCredentialStore:
     """SQLite-backed store for instance-scoped runtime bearer credentials."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, initialize: bool = True) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+        if initialize:
+            self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+    def _connect(self, *, timeout: float = 5.0) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=timeout)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -134,6 +143,7 @@ class RuntimeCredentialStore:
                 )
                 """
             )
+            self._ensure_recovery_events_table_conn(conn)
 
     def prepare_credential(
         self,
@@ -185,6 +195,87 @@ class RuntimeCredentialStore:
             created_by=created_by,
         )
         return self.commit_prepared_credential(created)
+
+    def recover_admin_credential(
+        self,
+        *,
+        instance_id: str,
+        label: str,
+        uid: int,
+        hostname: str,
+    ) -> CreatedRuntimeCredential:
+        """Create a local offline ADMIN recovery credential plus audit row.
+
+        This path intentionally does not call the instance registry. Offline
+        recovery is rooted in local ownership of the server state directory and
+        runtime credentials DB while the daemon is stopped, so the credentials DB
+        itself is the targeting source of truth. Token generation, hashing, auth
+        state, and credential insertion still use the same store helpers as the
+        normal mint path.
+        """
+        created = self._new_created_credential(
+            instance_id=instance_id,
+            label=label,
+            permission_mode=PermissionMode.ADMIN,
+            created_by="local_recovery",
+        )
+        conn = self._connect(timeout=0.0)
+        try:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                if _is_sqlite_busy(exc):
+                    raise RuntimeCredentialRecoveryBusyError(
+                        "Runtime credentials DB is locked. Stop the Cruxible daemon "
+                        "serving this state dir before running recover-admin."
+                    ) from exc
+                raise
+
+            self._validate_recovery_target_conn(conn, instance_id)
+            self._ensure_recovery_events_table_conn(conn)
+            self._mark_auth_required_conn(
+                conn,
+                updated_at=created.record.created_at,
+                reason="runtime_credential_recovered",
+            )
+            self._insert_credential_conn(conn, created.record)
+            conn.execute(
+                """
+                INSERT INTO runtime_recovery_events(
+                    created_at,
+                    instance_id,
+                    credential_id,
+                    uid,
+                    hostname
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    created.record.created_at,
+                    created.record.instance_id,
+                    created.record.credential_id,
+                    uid,
+                    hostname,
+                ),
+            )
+            created_row = self._fetch_record_row(
+                conn,
+                created.record.instance_id,
+                created.record.credential_id,
+            )
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        assert created_row is not None
+        return CreatedRuntimeCredential(
+            record=self._row_to_record(created_row),
+            token=created.token,
+        )
 
     def prepare_bootstrap_credential(
         self,
@@ -618,6 +709,39 @@ class RuntimeCredentialStore:
         )
 
     @staticmethod
+    def _validate_recovery_target_conn(
+        conn: sqlite3.Connection,
+        instance_id: str,
+    ) -> None:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM runtime_credentials
+            WHERE instance_id = ? AND permission_mode = ?
+            LIMIT 1
+            """,
+            (instance_id, _serialize_permission_mode(PermissionMode.ADMIN)),
+        ).fetchone()
+        if row is None:
+            raise RuntimeCredentialRecoveryError(
+                f"No ADMIN runtime credential exists for instance_id {instance_id!r}."
+            )
+
+    @staticmethod
+    def _ensure_recovery_events_table_conn(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runtime_recovery_events (
+                created_at TEXT NOT NULL,
+                instance_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL,
+                uid INTEGER NOT NULL,
+                hostname TEXT NOT NULL
+            )
+            """
+        )
+
+    @staticmethod
     def _fetch_record_row(
         conn: sqlite3.Connection,
         instance_id: str,
@@ -672,3 +796,8 @@ def reset_runtime_credential_store() -> None:
     """Clear the process-global runtime credential store cache. Used by tests."""
     global _runtime_credential_store
     _runtime_credential_store = None
+
+
+def _is_sqlite_busy(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "database is locked" in message or "database is busy" in message
