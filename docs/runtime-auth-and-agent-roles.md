@@ -183,19 +183,32 @@ multiple role tokens, it can choose any of those roles. Cruxible will still
 record which credential acted, reject request-body identity spoofing, and apply
 permission checks, but it cannot make readable bearer secrets unusable.
 
-## Recovery
+## Recovering Access
 
-If the bootstrap secret has been claimed and every admin runtime credential is
-lost, the daemon has no clean in-band way to recover. That protects hosted
-identity integrity.
+If every admin runtime token for a local server state directory is lost, stop the
+daemon before attempting recovery. Local recovery treats filesystem ownership of
+the server state directory and its `runtime_credentials.db` as the root of trust.
+It is not a network operation and does not weaken server auth.
 
-Recovery must come from an external authority:
+Run recovery directly against the stopped daemon's state dir:
 
-- another active admin runtime credential;
-- a hosted control-plane or operator recovery path;
-- local operator intervention for local-only instances.
+```bash
+cruxible credential recover-admin --state-dir "$HOME/.cruxible/server"
+```
 
-A future local recovery command should run offline while the daemon is stopped,
-insert a new hashed admin runtime credential into the server credential store,
-print the plaintext token once, and preserve the auth-required state. It should
-not downgrade the daemon to unauthenticated mode.
+The command verifies that the invoking uid owns both the state dir and
+`runtime_credentials.db`, takes a SQLite `BEGIN IMMEDIATE` lock, mints one new
+`ADMIN` credential, records a recovery audit event, and prints the plaintext
+token once.
+
+Stop the daemon yourself before running recovery. The lock check is
+best-effort only: it refuses when another connection is mid-write, but a
+running daemon that is idle holds no SQLite lock and will NOT be detected.
+Recovery against a live daemon does not corrupt state (credentials are read
+fresh on every request), but the operator — not the lock — is the guarantee
+that nothing else is serving the state dir.
+
+After recovery, restart the daemon with auth enabled and use the new admin token
+to mint, rotate, or revoke credentials. Existing admin credentials are not
+revoked automatically; if the old token should no longer work, revoke it after
+you regain access.

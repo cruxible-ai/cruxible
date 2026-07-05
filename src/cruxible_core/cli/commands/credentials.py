@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import socket
+import sqlite3
+import stat
 from pathlib import Path
 from typing import cast
 
@@ -11,6 +14,12 @@ import click
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.server.credentials import (
+    RuntimeCredentialRecord,
+    RuntimeCredentialRecoveryBusyError,
+    RuntimeCredentialRecoveryError,
+    RuntimeCredentialStore,
+)
 
 _PERMISSION_MODES: tuple[contracts.RuntimeCredentialPermissionMode, ...] = (
     "admin",
@@ -48,6 +57,23 @@ def _read_bootstrap_secret(secret_file: str | None) -> str:
             "Provide --secret-file or set CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET."
         )
     return secret
+
+
+def _credential_metadata_from_record(
+    record: RuntimeCredentialRecord,
+) -> contracts.RuntimeCredentialMetadata:
+    return contracts.RuntimeCredentialMetadata(
+        credential_id=record.credential_id,
+        instance_id=record.instance_id,
+        label=record.label,
+        permission_mode=cast(
+            contracts.RuntimeCredentialPermissionMode,
+            record.permission_mode.name.lower(),
+        ),
+        created_at=record.created_at,
+        created_by=record.created_by,
+        revoked_at=record.revoked_at,
+    )
 
 
 def _echo_credential_metadata(credential: contracts.RuntimeCredentialMetadata) -> None:
@@ -136,9 +162,168 @@ def list_cmd() -> None:
                     status,
                     credential.label,
                     credential.created_at,
+                    credential.created_by or "",
                 ]
             )
         )
+
+
+def _refuse_recover_admin_server_mode() -> None:
+    obj = _common._root_ctx_obj()
+    if obj.get("server_url") or obj.get("server_socket") or obj.get("require_server"):
+        raise click.UsageError(
+            "credential recover-admin is local-only; unset --server-url/--server-socket "
+            "and run it directly against --state-dir with the daemon stopped."
+        )
+
+
+def _require_owned_path(path: Path, *, description: str, uid: int, directory: bool) -> None:
+    try:
+        stat_result = os.stat(path)
+    except FileNotFoundError as exc:
+        raise click.UsageError(f"{description} does not exist: {path}") from exc
+    except OSError as exc:
+        raise click.UsageError(f"Could not inspect {description} {path}: {exc}") from exc
+
+    if directory and not stat.S_ISDIR(stat_result.st_mode):
+        raise click.UsageError(f"{description} is not a directory: {path}")
+    if not directory and not stat.S_ISREG(stat_result.st_mode):
+        raise click.UsageError(f"{description} is not a regular file: {path}")
+    if stat_result.st_uid != uid:
+        raise click.UsageError(
+            f"{description} must be owned by invoking uid {uid}; "
+            f"{path} is owned by uid {stat_result.st_uid}."
+        )
+
+
+def _select_recovery_instance_id(db_path: Path, instance_id: str | None) -> str:
+    try:
+        with sqlite3.connect(db_path, timeout=0.0) as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT instance_id
+                FROM runtime_credentials
+                ORDER BY instance_id
+                """
+            ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if _sqlite_busy(exc):
+            raise click.UsageError(
+                "Runtime credentials DB is locked. Stop the Cruxible daemon serving "
+                "this state dir before running recover-admin."
+            ) from exc
+        raise click.UsageError(f"Could not read runtime credentials DB {db_path}: {exc}") from exc
+
+    instance_ids = [str(row[0]) for row in rows]
+    if not instance_ids:
+        raise click.UsageError(f"No runtime credentials found in {db_path}.")
+    if instance_id is not None:
+        if instance_id not in instance_ids:
+            raise click.UsageError(
+                f"Instance ID {instance_id!r} was not found in credentials DB. "
+                f"Found: {', '.join(instance_ids)}"
+            )
+        return instance_id
+    if len(instance_ids) == 1:
+        return instance_ids[0]
+    raise click.UsageError(
+        "Credentials DB contains multiple instance IDs; pass --instance-id. "
+        f"Found: {', '.join(instance_ids)}"
+    )
+
+
+def _sqlite_busy(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "database is locked" in message or "database is busy" in message
+
+
+@credential_group.command("recover-admin")
+@click.option(
+    "--state-dir",
+    required=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Server state directory containing runtime_credentials.db. Stop the daemon "
+        "first; the lock check only refuses a writer caught mid-transaction and "
+        "does not detect an idle running daemon."
+    ),
+)
+@click.option(
+    "--instance-id",
+    default=None,
+    help="Target instance ID when the credentials DB contains multiple instances.",
+)
+@click.option(
+    "--label",
+    default="recovered-admin",
+    show_default=True,
+    help="Human-readable label for the recovered ADMIN credential.",
+)
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
+@handle_errors
+def recover_admin_cmd(
+    state_dir: Path,
+    instance_id: str | None,
+    label: str,
+    output_json: bool,
+) -> None:
+    """Recover an ADMIN token by local filesystem ownership of server state.
+
+    Trust model: this local-only command never contacts a Cruxible server. It
+    treats ownership of --state-dir and its runtime_credentials.db by the
+    invoking uid as authority to mint one new ADMIN runtime credential directly
+    in that DB. Stop the daemon first: the BEGIN IMMEDIATE check refuses a
+    writer caught mid-transaction but cannot detect an idle running daemon,
+    so operator discipline is the real guarantee.
+    Existing credentials are not revoked automatically.
+    """
+    _refuse_recover_admin_server_mode()
+    resolved_state_dir = state_dir.expanduser().resolve()
+    db_path = resolved_state_dir / "runtime_credentials.db"
+    uid = os.getuid()
+    _require_owned_path(resolved_state_dir, description="State dir", uid=uid, directory=True)
+    _require_owned_path(db_path, description="Runtime credentials DB", uid=uid, directory=False)
+    resolved_instance_id = _select_recovery_instance_id(db_path, instance_id)
+
+    store = RuntimeCredentialStore(db_path, initialize=False)
+    try:
+        result = store.recover_admin_credential(
+            instance_id=resolved_instance_id,
+            label=label,
+            uid=uid,
+            hostname=socket.gethostname(),
+        )
+    except RuntimeCredentialRecoveryBusyError as exc:
+        raise click.UsageError(str(exc)) from exc
+    except RuntimeCredentialRecoveryError as exc:
+        raise click.UsageError(str(exc)) from exc
+    except sqlite3.OperationalError as exc:
+        raise click.UsageError(
+            f"Could not write runtime credentials DB at {db_path}: {exc}"
+        ) from exc
+
+    credential = _credential_metadata_from_record(result.record)
+    if output_json:
+        _common._emit_json(
+            {
+                "credential": credential.model_dump(mode="json"),
+                "token": result.token,
+                "existing_credentials_revoked": False,
+                "next_step": (
+                    "Restart the daemon with auth enabled. Revoke old admin credentials "
+                    "after recovery if desired."
+                ),
+            }
+        )
+        return
+
+    click.echo("Admin credential recovered.")
+    _echo_credential_metadata(credential)
+    _echo_token_once(result.token, label="Admin token")
+    click.echo(
+        "Existing admin credentials were not revoked. Restart the daemon with auth "
+        "enabled, then revoke old admin credentials if desired."
+    )
 
 
 @credential_group.command("revoke")
