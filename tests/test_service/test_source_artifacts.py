@@ -321,3 +321,57 @@ def test_explicit_allowed_root_rejects_relative_entry(
     monkeypatch.setenv("CRUXIBLE_ALLOWED_ROOTS", "relative/dir")
     with pytest.raises(ConfigError, match="contains relative path"):
         service_register_source_artifact(instance, source_path=str(evidence.resolve()))
+
+
+def test_register_with_caller_supplied_id_roundtrips(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "opinion.md"
+    source_path.write_text("# Holding\n\nChevron is overruled.\n")
+
+    registered = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_artifact_id="opinion_text_op_loper_bright",
+    )
+    assert registered.source_artifact_id == "opinion_text_op_loper_bright"
+
+    paragraph = next(chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1")
+    dereferenced = service_dereference_source_evidence(
+        instance,
+        source_artifact_id="opinion_text_op_loper_bright",
+        chunk_id=paragraph.chunk_id,
+    )
+    assert dereferenced.status == "available"
+    assert dereferenced.body == "Chevron is overruled."
+
+
+def test_register_refuses_invalid_caller_supplied_id(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Doc\n\nBody.\n")
+
+    for bad in ("ab", ".starts-with-dot", "has space", "x" * 65, "path/../traversal"):
+        with pytest.raises(ConfigError, match="source_artifact_id must be"):
+            service_register_source_artifact(
+                instance,
+                source_path=str(source_path),
+                source_artifact_id=bad,
+            )
+
+
+def test_register_refuses_duplicate_caller_supplied_id(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Doc\n\nBody.\n")
+
+    service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_artifact_id="pinned_evidence",
+    )
+    with pytest.raises(ConfigError, match="already registered"):
+        service_register_source_artifact(
+            instance,
+            source_path=str(source_path),
+            source_artifact_id="pinned_evidence",
+        )

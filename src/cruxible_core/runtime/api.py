@@ -2937,6 +2937,7 @@ def register_source_artifact(
     original_uri: str | None = None,
     label: str | None = None,
     actor_context: Any | None = None,
+    source_artifact_id: str | None = None,
 ) -> contracts.RegisterSourceArtifactResult:
     """Register a local source artifact for source-backed proposal evidence.
 
@@ -2975,6 +2976,7 @@ def register_source_artifact(
         label=label,
         actor_context=actor,
         allowed_source_roots=[workspace_root],
+        source_artifact_id=source_artifact_id,
     )
     return contracts.RegisterSourceArtifactResult.model_validate(result.model_dump(mode="json"))
 

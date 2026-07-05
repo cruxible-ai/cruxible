@@ -2481,3 +2481,35 @@ def test_feedback_omits_source_receipt_by_default():
 
     assert result.applied is True
     assert captured["payload"]["receipt_id"] is None
+
+
+def test_register_source_artifact_sends_caller_supplied_id():
+    captured: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content.decode()))
+        return httpx.Response(
+            200,
+            json={
+                "source_artifact_id": "opinion_text_op_loper_bright",
+                "source_kind": "markdown",
+                "source_retention": "manifest_only",
+                "original_uri": None,
+                "label": None,
+                "content_hash": "sha256:abc",
+                "byte_count": 3,
+                "parser_version": "markdown_chunks_v1",
+                "archived": False,
+                "archive_content_hash": None,
+                "chunks": [],
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.register_source_artifact(
+        "inst_1",
+        source_path="docs/opinion.md",
+        source_artifact_id="opinion_text_op_loper_bright",
+    )
+    assert result.source_artifact_id == "opinion_text_op_loper_bright"
+    assert captured[0]["source_artifact_id"] == "opinion_text_op_loper_bright"

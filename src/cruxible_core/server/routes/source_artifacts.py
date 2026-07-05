@@ -31,6 +31,7 @@ async def register_source_artifact(
         source_retention=req.source_retention,
         original_uri=req.original_uri,
         label=req.label,
+        source_artifact_id=req.source_artifact_id,
         actor_context=req.actor_context,
     )
 

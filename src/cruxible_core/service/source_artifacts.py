@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import hashlib
 import os
 from collections.abc import Mapping, Sequence
@@ -31,6 +33,9 @@ from cruxible_core.source_artifacts.types import (
 from cruxible_core.temporal import format_datetime, utc_now
 
 
+_SOURCE_ARTIFACT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}")
+
+
 def service_register_source_artifact(
     instance: InstanceProtocol,
     *,
@@ -42,6 +47,7 @@ def service_register_source_artifact(
     parser_version: str = MARKDOWN_CHUNKS_V1,
     actor_context: GovernedActorContext | None = None,
     allowed_source_roots: Sequence[str | Path] | None = None,
+    source_artifact_id: str | None = None,
 ) -> RegisterSourceArtifactResult:
     """Register a local source document as proposal evidence.
 
@@ -67,7 +73,20 @@ def service_register_source_artifact(
     except UnicodeDecodeError as exc:
         raise ConfigError("Only UTF-8 Markdown source artifacts are supported") from exc
     content_hash = _sha256_bytes(content)
-    source_artifact_id = new_id("SRC")
+    if source_artifact_id is not None:
+        # Caller-supplied ids let digest-pinned seed evidence reference
+        # artifacts deterministically (e.g. opinion_text_op_loper_bright).
+        if not _SOURCE_ARTIFACT_ID_RE.fullmatch(source_artifact_id):
+            raise ConfigError(
+                "source_artifact_id must be 3-64 chars of [A-Za-z0-9._-] "
+                "starting with an alphanumeric"
+            )
+        if instance.get_source_artifact_store().get_artifact(source_artifact_id) is not None:
+            raise ConfigError(
+                f"Source artifact '{source_artifact_id}' is already registered"
+            )
+    else:
+        source_artifact_id = new_id("SRC")
     chunks = parse_markdown_chunks(
         source_artifact_id=source_artifact_id,
         content=content,
