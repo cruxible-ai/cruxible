@@ -449,10 +449,10 @@ def test_server_mode_init_sends_kit(
     captured: dict[str, object] = {}
 
     class StubClient:
-        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None, kit=None):
+        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None, kits=None):
             captured["root_dir"] = root_dir
             captured["config_yaml"] = config_yaml
-            captured["kit"] = kit
+            captured["kits"] = kits
             return contracts.InitResult(instance_id="inst_abc123", status="initialized")
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -470,7 +470,7 @@ def test_server_mode_init_sends_kit(
     assert result.exit_code == 0
     assert captured["root_dir"] == str(tmp_path)
     assert captured["config_yaml"] is None
-    assert captured["kit"] == "kev-reference"
+    assert captured["kits"] == ["kev-reference"]
 
 
 def test_context_commands_persist_and_show_governed_context(

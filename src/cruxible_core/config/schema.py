@@ -33,7 +33,14 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any, Literal, get_args
 
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PrivateAttr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_core.config.auth_managed import AUTH_MANAGED_CREDENTIAL_PROPERTY_NAMES
 from cruxible_core.config.predicates import StructuredPredicateSpec
@@ -2135,10 +2142,26 @@ class CoreConfig(BaseModel):
 
     model_config = {"extra": "forbid"}
 
+    def _is_partial_layer(self, info: ValidationInfo) -> bool:
+        """Return whether this config is one layer of a composition, not a full config.
+
+        A partial layer may reference names owned by an earlier layer, so
+        cross-reference checks are deferred to post-compose validation. A layer
+        is partial when it declares ``extends`` or when the loader marks it as an
+        overlay kit entry config (extends-less overlay kits resolve their base
+        layer from the manifest's ``target_state``).
+        """
+        if self.extends is not None:
+            return True
+        context = info.context or {}
+        return bool(context.get("partial_layer"))
+
     @model_validator(mode="after")
-    def validate_root_config_minimums(self) -> CoreConfig:
-        if self.extends is None and not self.entity_types:
-            raise ValueError("entity_types must not be empty unless extends is set")
+    def validate_root_config_minimums(self, info: ValidationInfo) -> CoreConfig:
+        if not self._is_partial_layer(info) and not self.entity_types:
+            raise ValueError(
+                "entity_types must not be empty unless the config extends a base layer"
+            )
         return self
 
     @model_validator(mode="after")
@@ -2173,13 +2196,14 @@ class CoreConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_query_related_exclusions(self) -> CoreConfig:
+    def validate_query_related_exclusions(self, info: ValidationInfo) -> CoreConfig:
         """Check that related-edge predicate specs use declared canonical relationships."""
+        partial_layer = self._is_partial_layer(info)
         declared_relationships = {rel.name for rel in self.relationships}
         for query_name, query in self.named_queries.items():
             for include_alias, include in query.include.items():
                 if self.resolve_relationship_reference(include.relationship) is None:
-                    if self.extends is not None:
+                    if partial_layer:
                         continue
                     msg = (
                         f"Named query '{query_name}' include '{include_alias}' "
@@ -2192,7 +2216,7 @@ class CoreConfig(BaseModel):
                 ):
                     for related in related_specs:
                         if related.relationship not in declared_relationships:
-                            if self.extends is not None:
+                            if partial_layer:
                                 continue
                             msg = (
                                 f"Named query '{query_name}' include '{include_alias}' "
@@ -2203,7 +2227,7 @@ class CoreConfig(BaseModel):
             for step_index, step in enumerate(query.traversal):
                 for exclusion in step.exclude_if_related:
                     if exclusion.relationship not in declared_relationships:
-                        if self.extends is not None:
+                        if partial_layer:
                             continue
                         msg = (
                             f"Named query '{query_name}' traversal step {step_index} "
@@ -2217,7 +2241,7 @@ class CoreConfig(BaseModel):
                 ):
                     for related in related_specs:
                         if related.relationship not in declared_relationships:
-                            if self.extends is not None:
+                            if partial_layer:
                                 continue
                             msg = (
                                 f"Named query '{query_name}' traversal step {step_index} "
@@ -2228,8 +2252,9 @@ class CoreConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_mutation_guard_related_exclusions(self) -> CoreConfig:
+    def validate_mutation_guard_related_exclusions(self, info: ValidationInfo) -> CoreConfig:
         """Check that mutation-guard related-edge specs use declared relationships."""
+        partial_layer = self._is_partial_layer(info)
         declared_relationships = {rel.name for rel in self.relationships}
         for guard in self.mutation_guards:
             for field_name, related_specs in (
@@ -2238,7 +2263,7 @@ class CoreConfig(BaseModel):
             ):
                 for related in related_specs:
                     if related.relationship not in declared_relationships:
-                        if self.extends is not None:
+                        if partial_layer:
                             continue
                         msg = (
                             f"Mutation guard '{guard.name}' references unknown "
@@ -2248,7 +2273,7 @@ class CoreConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_mint_only_entity_writes(self) -> CoreConfig:
+    def validate_mint_only_entity_writes(self, info: ValidationInfo) -> CoreConfig:
         """Reject config-declared entity writes targeting a ``mint_only`` type.
 
         A ``mint_only`` entity type may be written ONLY by the ``token_mint``
@@ -2277,7 +2302,7 @@ class CoreConfig(BaseModel):
                     continue
                 t = step.make_entities.entity_type
                 if t in mint_only_types:
-                    if self.extends is not None:
+                    if self._is_partial_layer(info):
                         continue
                     msg = (
                         f"Workflow '{wf}' step {i} make_entities targets mint_only "
@@ -2287,7 +2312,7 @@ class CoreConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_auth_managed_entity_writes(self) -> CoreConfig:
+    def validate_auth_managed_entity_writes(self, info: ValidationInfo) -> CoreConfig:
         """Reject non-token config authorship for auth-managed entity types.
 
         ``auth_managed`` means the runtime credential store is the identity source
@@ -2305,7 +2330,7 @@ class CoreConfig(BaseModel):
         if not auth_managed_types:
             return self
 
-        if self.extends is None:
+        if not self._is_partial_layer(info):
             for entity_type in sorted(auth_managed_types):
                 schema = self.entity_types[entity_type]
                 if schema.write_policy != "mint_only":
@@ -2337,7 +2362,7 @@ class CoreConfig(BaseModel):
                     continue
                 entity_type = step.make_entities.entity_type
                 if entity_type in auth_managed_types:
-                    if self.extends is not None:
+                    if self._is_partial_layer(info):
                         continue
                     msg = (
                         f"Workflow '{workflow_name}' step {index} make_entities "
@@ -2376,13 +2401,14 @@ class CoreConfig(BaseModel):
             raise ValueError(msg)
 
     @model_validator(mode="after")
-    def validate_relationship_query_returns(self) -> CoreConfig:
+    def validate_relationship_query_returns(self, info: ValidationInfo) -> CoreConfig:
         """Check collection/traversal query return declarations."""
+        partial_layer = self._is_partial_layer(info)
         for query_name, query in self.named_queries.items():
             if query.mode == "collection" and query.result_shape == "entity":
                 entity_type = _normalize_query_entity_returns(query.returns)
                 if entity_type not in self.entity_types:
-                    if self.extends is not None:
+                    if partial_layer:
                         continue
                     msg = (
                         f"Named query '{query_name}' with collection entity "
@@ -2394,7 +2420,7 @@ class CoreConfig(BaseModel):
             if query.mode == "collection":
                 resolved = self.resolve_relationship_reference(query.returns)
                 if resolved is None:
-                    if self.extends is not None:
+                    if partial_layer:
                         continue
                     msg = (
                         f"Named query '{query_name}' with collection relationship "

@@ -1465,7 +1465,7 @@ findings.
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | no | `` | text | Path to config YAML file. |
-| `--kit` | no | `` | text | Standalone kit alias or ref to materialize. |
+| `--kit` | no | `` | text | Kit alias or ref to materialize; repeatable. Order is composition order: a standalone base kit first, overlay kits after. |
 | `--root-dir` | no | `` | text | Workspace root for config/artifact provenance (defaults to current directory). |
 | `--data-dir` | no | `` | text | Directory for data files. |
 | `--bootstrap` | no | `False` | boolean | Use hosted kit init authorized by the runtime bootstrap bearer. Requires `--kit`. |

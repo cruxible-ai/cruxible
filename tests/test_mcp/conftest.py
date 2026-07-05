@@ -102,14 +102,14 @@ class GovernedLocalClient:
         config_path: str | None = None,
         config_yaml: str | None = None,
         data_dir: str | None = None,
-        kit: str | None = None,
+        kits: list[str] | None = None,
     ):
         return api.init_governed(
             root_dir=root_dir,
             config_path=config_path,
             config_yaml=config_yaml,
             data_dir=data_dir,
-            kit=kit,
+            kits=kits,
         )
 
     def validate(self, config_path: str | None = None, config_yaml: str | None = None):

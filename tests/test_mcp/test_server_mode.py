@@ -160,21 +160,21 @@ def test_init_handler_delegates_kit_to_client(monkeypatch: pytest.MonkeyPatch):
     captured: dict[str, str | None] = {}
 
     class StubClient:
-        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None, kit=None):
+        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None, kits=None):
             captured["root_dir"] = root_dir
             captured["config_yaml"] = config_yaml
-            captured["kit"] = kit
+            captured["kits"] = kits
             return contracts.InitResult(instance_id="inst_123", status="initialized")
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
 
-    result = handlers.handle_init("/srv/project", kit="kev-reference")
+    result = handlers.handle_init("/srv/project", kits=["kev-reference"])
 
     assert result.instance_id == "inst_123"
     assert captured == {
         "root_dir": "/srv/project",
         "config_yaml": None,
-        "kit": "kev-reference",
+        "kits": ["kev-reference"],
     }
 
 

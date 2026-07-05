@@ -289,9 +289,9 @@ def _reconcile_credential_actor_context(
 def _has_init_config(
     config_path: str | None,
     config_yaml: str | None,
-    kit: str | None,
+    kits: list[str] | None,
 ) -> bool:
-    return config_path is not None or config_yaml is not None or kit is not None
+    return config_path is not None or config_yaml is not None or bool(kits)
 
 
 def _check_init_permissions(root_dir: str, *, has_config: bool) -> None:
@@ -337,10 +337,10 @@ def init_local(
     config_path: str | None = None,
     config_yaml: str | None = None,
     data_dir: str | None = None,
-    kit: str | None = None,
+    kits: list[str] | None = None,
 ) -> contracts.InitResult:
     """Initialize a new cruxible instance, or reload an existing one."""
-    has_config = _has_init_config(config_path, config_yaml, kit)
+    has_config = _has_init_config(config_path, config_yaml, kits)
     _check_init_permissions(root_dir, has_config=has_config)
     root = Path(root_dir)
     return _load_or_initialize_instance(
@@ -358,7 +358,7 @@ def init_local(
             config_path=config_path,
             config_yaml=config_yaml,
             data_dir=data_dir,
-            kit=kit,
+            kits=kits,
         ),
         include_initialized_warnings=False,
     )
@@ -369,7 +369,7 @@ def init_governed(
     config_path: str | None = None,
     config_yaml: str | None = None,
     data_dir: str | None = None,
-    kit: str | None = None,
+    kits: list[str] | None = None,
 ) -> contracts.InitResult:
     """Initialize or reload a daemon-owned governed instance."""
     check_permission(
@@ -377,7 +377,7 @@ def init_governed(
         instance_id=root_dir,
         enforce_instance_scope=False,
     )
-    has_config = _has_init_config(config_path, config_yaml, kit)
+    has_config = _has_init_config(config_path, config_yaml, kits)
     _check_init_permissions(root_dir, has_config=has_config)
 
     registry = get_registry()
@@ -397,7 +397,7 @@ def init_governed(
                 workspace_root=root_dir,
                 config_yaml=config_yaml,
                 data_dir=data_dir,
-                kit=kit,
+                kits=kits,
             )
 
         return _load_or_initialize_instance(
@@ -427,7 +427,7 @@ def init_governed(
             workspace_root=root_dir,
             config_yaml=config_yaml,
             data_dir=data_dir,
-            kit=kit,
+            kits=kits,
         )
 
     try:
@@ -448,7 +448,7 @@ def init_hosted_instance(
     *,
     instance_id: str | None = None,
     source_type: contracts.HostedInstanceSourceType,
-    kit_ref: str | None = None,
+    kit_refs: list[str] | None = None,
     transport_ref: str | None = None,
     state_ref: str | None = None,
     overlay_kit_ref: str | None = None,
@@ -460,20 +460,20 @@ def init_hosted_instance(
     check_permission("cruxible_hosted_instance_init", instance_id=selected_instance_id)
     _validate_hosted_init_inputs(
         source_type=source_type,
-        kit_ref=kit_ref,
+        kit_refs=kit_refs,
         transport_ref=transport_ref,
         state_ref=state_ref,
         overlay_kit_ref=overlay_kit_ref,
         no_overlay_kit=no_overlay_kit,
     )
-    kit_ref = (kit_ref or "").strip() or None
+    kit_refs = [value.strip() for value in (kit_refs or []) if value.strip()] or None
     transport_ref = (transport_ref or "").strip() or None
     state_ref = (state_ref or "").strip() or None
     overlay_kit_ref = (overlay_kit_ref or "").strip() or None
 
     source_payload = _hosted_init_source_payload(
         source_type=source_type,
-        kit_ref=kit_ref,
+        kit_refs=kit_refs,
         transport_ref=transport_ref,
         state_ref=state_ref,
         overlay_kit_ref=overlay_kit_ref,
@@ -496,10 +496,10 @@ def init_hosted_instance(
 
     try:
         if source_type == "kit":
-            assert kit_ref is not None
+            assert kit_refs is not None
             init_result = service_init(
                 root_dir=instance_root,
-                kit=kit_ref,
+                kits=kit_refs,
                 instance_mode=CruxibleInstance.GOVERNED_MODE,
             )
             instance = init_result.instance
@@ -547,15 +547,16 @@ def init_hosted_instance(
 def _validate_hosted_init_inputs(
     *,
     source_type: contracts.HostedInstanceSourceType,
-    kit_ref: str | None,
+    kit_refs: list[str] | None,
     transport_ref: str | None,
     state_ref: str | None,
     overlay_kit_ref: str | None,
     no_overlay_kit: bool,
 ) -> None:
+    normalized_kit_refs = [value.strip() for value in (kit_refs or []) if value.strip()]
     if source_type == "kit":
-        if not (kit_ref or "").strip():
-            raise ConfigError("kit_ref is required when source_type=kit")
+        if not normalized_kit_refs:
+            raise ConfigError("kit_refs is required when source_type=kit")
         if any((value or "").strip() for value in (transport_ref, state_ref, overlay_kit_ref)):
             raise ConfigError(
                 "transport_ref, state_ref, and overlay_kit_ref require source_type=reference_model"
@@ -572,8 +573,8 @@ def _validate_hosted_init_inputs(
         )
     if (overlay_kit_ref or "").strip() and no_overlay_kit:
         raise ConfigError("Provide overlay_kit_ref or no_overlay_kit, not both")
-    if (kit_ref or "").strip():
-        raise ConfigError("kit_ref requires source_type=kit")
+    if normalized_kit_refs:
+        raise ConfigError("kit_refs requires source_type=kit")
 
 
 def _load_hosted_instance_idempotently(
@@ -603,7 +604,7 @@ def _load_hosted_instance_idempotently(
 def _hosted_init_source_payload(
     *,
     source_type: contracts.HostedInstanceSourceType,
-    kit_ref: str | None,
+    kit_refs: list[str] | None,
     transport_ref: str | None,
     state_ref: str | None,
     overlay_kit_ref: str | None,
@@ -612,7 +613,7 @@ def _hosted_init_source_payload(
     if source_type == "kit":
         return {
             "source_type": source_type,
-            "kit_ref": kit_ref,
+            "kit_refs": kit_refs,
         }
     return {
         "source_type": source_type,
@@ -683,7 +684,10 @@ def _hosted_init_result_from_metadata(
         raise ConfigError("Hosted init metadata source_type is invalid")
     source_type = cast(contracts.HostedInstanceSourceType, source_type_raw)
     if source_type == "kit":
-        source_ref = str(source.get("kit_ref") or "")
+        kit_refs_value = source.get("kit_refs")
+        if not isinstance(kit_refs_value, list):
+            raise ConfigError("Hosted init metadata kit_refs must be a list")
+        source_ref = " ".join(str(value) for value in kit_refs_value)
         overlay_kit_ref = None
     else:
         source_ref = str(source.get("state_ref") or source.get("transport_ref") or "")

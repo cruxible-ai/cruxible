@@ -56,10 +56,10 @@ def test_init_serializes_kit():
         )
 
     client = _build_client(handler)
-    result = client.init("/srv/project", kit="kev-reference")
+    result = client.init("/srv/project", kits=["kev-reference"])
 
     assert result.instance_id == "inst_123"
-    assert captured["payload"]["kit"] == "kev-reference"
+    assert captured["payload"]["kits"] == ["kev-reference"]
     assert captured["payload"]["config_yaml"] is None
 
 
@@ -2237,7 +2237,7 @@ def test_init_hosted_instance_uses_expected_route_and_contract():
     assert captured["payload"] == {
         "instance_id": "inst_hosted",
         "source_type": "reference_model",
-        "kit_ref": None,
+        "kit_refs": None,
         "transport_ref": None,
         "state_ref": "kev-reference@v1",
         "overlay_kit_ref": "kev-triage",

@@ -118,7 +118,7 @@ class TestAuthManagedRefusalAtInit:
         write_lock(build_lock(kit_config, source), source / "cruxible.lock.yaml")
 
         with pytest.raises(ConfigError) as exc:
-            service_init(tmp_path / "inst", kit=f"file://{source}")
+            service_init(tmp_path / "inst", kits=[f"file://{source}"])
         message = str(exc.value)
         assert "Actor" in message
         # Refused BEFORE kit materialization: nothing was copied into the root.

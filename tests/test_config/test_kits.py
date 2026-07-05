@@ -18,6 +18,7 @@ from cruxible_core.kits import (
     get_kit_catalog,
     load_kit_provider_module,
     materialize_kit,
+    namespace_kit_provider_ref,
     resolve_kit_provider_ref,
     resolve_kit_ref,
     write_materialized_kit_metadata,
@@ -252,6 +253,82 @@ def test_materialized_metadata_records_bundle_and_runtime_digest(tmp_path: Path)
     payload = json.loads((tmp_path / ".cruxible" / "kit.json").read_text())
     assert payload["bundle_digest"] == "sha256:bundle"
     assert payload["runtime_digest"].startswith("sha256:")
+
+
+def test_namespace_kit_provider_ref_is_idempotent() -> None:
+    ref = "kit://providers/main.py::run"
+    namespaced = namespace_kit_provider_ref(ref, "demo")
+    assert namespaced == "kit://demo/providers/main.py::run"
+    assert namespace_kit_provider_ref(namespaced, "demo") == namespaced
+
+
+def test_namespaced_kit_provider_ref_resolves_under_instance_kits_dir(tmp_path: Path) -> None:
+    instance_root = tmp_path / "instance"
+    kit_root = instance_root / "kits" / "demo"
+    kit_root.mkdir(parents=True)
+    _write_minimal_kit(kit_root, role="standalone")
+    providers = kit_root / "providers"
+    providers.mkdir()
+    (providers / "main.py").write_text("def run(_input, _context):\n    return {}\n")
+    write_materialized_kit_metadata(kit_root)
+    config_base = instance_root / ".cruxible" / "configs"
+    config_base.mkdir(parents=True)
+
+    path, attr, resolved_root = resolve_kit_provider_ref(
+        "kit://demo/providers/main.py::run",
+        config_base,
+    )
+
+    assert attr == "run"
+    assert resolved_root == kit_root.resolve()
+    assert path == kit_root.resolve() / "providers" / "main.py"
+
+
+def test_namespaced_kit_provider_ref_rejects_kit_id_mismatch(tmp_path: Path) -> None:
+    instance_root = tmp_path / "instance"
+    kit_root = instance_root / "kits" / "other-id"
+    kit_root.mkdir(parents=True)
+    _write_minimal_kit(kit_root, role="standalone")  # manifest kit_id is 'demo'
+    (kit_root / "providers").mkdir()
+    (kit_root / "providers" / "main.py").write_text("def run(_i, _c):\n    return {}\n")
+    write_materialized_kit_metadata(kit_root)
+
+    with pytest.raises(ConfigError, match="declares kit_id 'demo', not 'other-id'"):
+        resolve_kit_provider_ref("kit://other-id/providers/main.py::run", instance_root)
+
+
+def test_kit_provider_ref_refuses_flat_and_namespaced_ambiguity(tmp_path: Path) -> None:
+    flat_root = tmp_path / "flat"
+    flat_root.mkdir()
+    _write_minimal_kit(flat_root, role="standalone")
+    (flat_root / "providers").mkdir()
+    (flat_root / "providers" / "main.py").write_text("def run(_i, _c):\n    return {}\n")
+    write_materialized_kit_metadata(flat_root)
+
+    scoped_root = flat_root / "kits" / "demo"
+    scoped_root.mkdir(parents=True)
+    _write_minimal_kit(scoped_root, role="standalone")
+    (scoped_root / "providers").mkdir()
+    (scoped_root / "providers" / "main.py").write_text("def run(_i, _c):\n    return {}\n")
+    write_materialized_kit_metadata(scoped_root)
+
+    with pytest.raises(ConfigError, match="ambiguous"):
+        resolve_kit_provider_ref("kit://demo/providers/main.py::run", flat_root)
+
+
+def test_rewrite_extends_inserts_when_missing_and_replaces_when_present(tmp_path: Path) -> None:
+    from cruxible_core.kits import _rewrite_extends
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("version: '1.0'\nname: demo\n")
+    _rewrite_extends(config_path, ".cruxible/upstream/current/config.yaml")
+    lines = config_path.read_text().splitlines()
+    assert lines[0] == "extends: .cruxible/upstream/current/config.yaml"
+
+    _rewrite_extends(config_path, "other/upstream.yaml")
+    updated = config_path.read_text().splitlines()
+    assert updated.count("extends: other/upstream.yaml") == 1
+    assert not any(line.startswith("extends: .cruxible") for line in updated)
 
 
 def _write_minimal_kit(

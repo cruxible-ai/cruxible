@@ -72,13 +72,15 @@ def resolve_config_layers(
         else (resolved_path.parent if resolved_path is not None else None)
     )
     if config.extends is None:
-        return [
-            ResolvedConfigLayer(
-                config=config,
-                config_path=resolved_path,
-                config_dir=resolved_dir,
-            )
-        ]
+        layer = ResolvedConfigLayer(
+            config=config,
+            config_path=resolved_path,
+            config_dir=resolved_dir,
+        )
+        base_layer = resolve_overlay_kit_base_layer(config_path=resolved_path)
+        if base_layer is None:
+            return [layer]
+        return [base_layer, layer]
 
     base_path = Path(config.extends)
     if not base_path.is_absolute():
@@ -97,6 +99,56 @@ def resolve_config_layers(
             config_dir=resolved_dir,
         ),
     ]
+
+
+def resolve_overlay_kit_base_layer(
+    *,
+    config_path: Path | None = None,
+    config_dir: Path | None = None,
+) -> ResolvedConfigLayer | None:
+    """Resolve an extends-less overlay kit entry config's base layer.
+
+    Overlay kit configs carry no ``extends`` line; the base layer is declared by
+    the kit manifest's ``target_state``. When the config being lowered is the
+    entry config of an overlay kit directory (``config_path``) or raw content
+    uploaded from an overlay kit workspace (``config_dir``), resolve the base
+    kit — a sibling ``<target_state>/`` kit directory first (materialized
+    instances and source checkouts), the kit catalog otherwise — and prepend it
+    as the base layer. ``config_dir`` is caller-asserted: pass it only for
+    content known to be the kit's own layer, never for already-composed configs
+    that merely sit next to a copied kit manifest.
+    """
+    from cruxible_core.kits import KIT_MANIFEST_FILE, load_kit_manifest, resolve_kit_ref
+
+    kit_dir = config_path.parent if config_path is not None else config_dir
+    if kit_dir is None or not (kit_dir / KIT_MANIFEST_FILE).exists():
+        return None
+    manifest = load_kit_manifest(kit_dir)
+    if manifest.role != "overlay":
+        return None
+    if config_path is not None and (kit_dir / manifest.entry_config) != config_path:
+        return None
+    target_state = manifest.target_state
+    assert target_state is not None
+
+    sibling_root = kit_dir.parent / target_state
+    if (sibling_root / KIT_MANIFEST_FILE).exists():
+        sibling_manifest = load_kit_manifest(sibling_root)
+        if sibling_manifest.kit_id != target_state:
+            raise ConfigError(
+                f"Kit directory {sibling_root} declares kit_id "
+                f"'{sibling_manifest.kit_id}', not '{target_state}'"
+            )
+        base_path = (sibling_root / sibling_manifest.entry_config).resolve()
+    else:
+        bundle = resolve_kit_ref(target_state)
+        base_path = (bundle.root / bundle.manifest.entry_config).resolve()
+    if not base_path.exists():
+        raise ConfigError(
+            f"Overlay kit '{manifest.kit_id}' targets state '{target_state}', but its "
+            f"base config was not found at {base_path}"
+        )
+    return ResolvedConfigLayer(config=load_config(base_path), config_path=base_path)
 
 
 def compose_config_sequence(
@@ -417,7 +469,7 @@ def _rebase_artifact_uris(data: dict[str, Any], config_dir: Path) -> dict[str, A
         if not isinstance(uri, str):
             rebased_artifacts[artifact_name] = artifact_value
             continue
-        rebased_uri = _rebase_artifact_uri(uri, config_dir)
+        rebased_uri = rebase_artifact_uri(uri, config_dir)
         if rebased_uri == uri:
             rebased_artifacts[artifact_name] = artifact_value
             continue
@@ -434,7 +486,8 @@ def _rebase_artifact_uris(data: dict[str, Any], config_dir: Path) -> dict[str, A
     return rebased
 
 
-def _rebase_artifact_uri(uri: str, config_dir: Path) -> str:
+def rebase_artifact_uri(uri: str, config_dir: Path) -> str:
+    """Resolve a relative local artifact URI against a config directory."""
     parsed = urlparse(uri)
     if parsed.scheme not in {"", "file"}:
         return uri

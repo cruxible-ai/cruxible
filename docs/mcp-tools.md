@@ -77,7 +77,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `config_path` | no | string | null |  |
 | `config_yaml` | no | string | null |  |
 | `data_dir` | no | string | null |  |
-| `kit` | no | string | null |  |
+| `kits` | no | array | null | Ordered kit refs: standalone base first, overlay kits after. |
 
 **Returns:** Top-level fields: `instance_id`, `status`, `warnings`
 

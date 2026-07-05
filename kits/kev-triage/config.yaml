@@ -1,6 +1,5 @@
 version: "1.0"
 name: kev_triage
-extends: ../kev-reference/config.yaml
 description: >
   Local of the KEV reference world model for internal vulnerability triage.
   The reference layer (Vendor, Product, Vulnerability) comes from public

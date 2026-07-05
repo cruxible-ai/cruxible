@@ -164,7 +164,7 @@ def _init_instance(
     )
     payload = {"root_dir": str(root)}
     if kit is not None:
-        payload["kit"] = kit
+        payload["kits"] = [kit]
     else:
         payload["config_yaml"] = resolved_config_yaml
     response = client.post(
