@@ -97,7 +97,13 @@ def _apply_previews_from_receipt(receipt: Receipt) -> dict[str, Any]:
         node.node_id: node.detail.get("step_id")
         for node in receipt.nodes
         if node.node_type == "plan_step"
-        and node.detail.get("kind") in {"apply_entities", "apply_relationships", "apply_all"}
+        and node.detail.get("kind")
+        in {
+            "register_source_artifacts",
+            "apply_entities",
+            "apply_relationships",
+            "apply_all",
+        }
         and isinstance(node.detail.get("step_id"), str)
     }
     for edge in receipt.edges:

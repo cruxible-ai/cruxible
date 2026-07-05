@@ -703,6 +703,8 @@ def _workflow_step_kind(step: WorkflowStepSchema) -> str:
         return "make_entities"
     if step.make_relationships is not None:
         return "make_relationships"
+    if step.register_source_artifacts is not None:
+        return "register_source_artifacts"
     if step.apply_entities is not None:
         return "apply_entities"
     if step.apply_relationships is not None:
@@ -739,6 +741,8 @@ def _workflow_step_summary(
         detail = step.make_entities.entity_type
     elif step_kind == "make_relationships" and step.make_relationships is not None:
         detail = step.make_relationships.relationship_type
+    elif step_kind == "register_source_artifacts" and step.register_source_artifacts is not None:
+        detail = step.register_source_artifacts.kind
     elif step_kind == "apply_entities" and step.apply_entities is not None:
         detail = step.apply_entities.entities_from
     elif step_kind == "apply_relationships" and step.apply_relationships is not None:

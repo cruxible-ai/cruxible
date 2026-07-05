@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Protocol, get_args
 
 from cruxible_core.config.schema import StepKind
+from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.workflow.apply import (
@@ -28,6 +30,7 @@ from cruxible_core.workflow.proposals import (
     map_signal_batch,
     signal_mapping_snapshot,
 )
+from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.step_helpers import SOURCE_METADATA_KEY, resolve_step_items
 from cruxible_core.workflow.transforms import (
     aggregate_items,
@@ -405,6 +408,211 @@ def execute_make_relationships_handler(
     )
 
 
+def execute_register_source_artifacts_handler(
+    context: WorkflowExecutionContext,
+    compiled_step: CompiledPlanStep,
+) -> None:
+    """Register source artifacts from in-memory workflow row data.
+
+    Security boundary: this handler only resolves workflow data expressions and
+    passes resolved string content to the source-artifact service. It never reads
+    files, paths, or URLs; ``original_uri`` is stored as metadata only.
+    """
+    from cruxible_core.service.source_artifacts import service_register_source_artifact
+
+    assert compiled_step.register_source_artifacts_spec is not None
+    spec = compiled_step.register_source_artifacts_spec
+    items = resolve_step_items(
+        spec.items,
+        context.plan.input_payload,
+        context.step_outputs,
+    )
+    step_node = context.receipt_builder.record_plan_step(
+        compiled_step.step_id,
+        "register_source_artifacts",
+        detail={
+            "item_count": len(items),
+            "kind": spec.kind,
+            "retention": spec.retention or "manifest_only",
+        },
+    )
+
+    registered = 0
+    noops = 0
+    artifact_ids: set[str] = set()
+    planned_digests: dict[str, str] = {}
+    store = context.instance.get_source_artifact_store()
+
+    for index, item in enumerate(items):
+        artifact_id = _resolve_artifact_id(
+            spec.artifact_id,
+            context.plan.input_payload,
+            context.step_outputs,
+            item,
+            index,
+        )
+        artifact_ids.add(artifact_id)
+        content = _resolve_source_content(
+            spec.content,
+            context.plan.input_payload,
+            context.step_outputs,
+            item,
+            index,
+            artifact_id,
+        )
+        content_hash = _sha256_text(content)
+
+        existing = store.get_artifact(artifact_id)
+        if existing is not None:
+            if existing.content_hash != content_hash:
+                raise QueryExecutionError(
+                    "register_source_artifacts row "
+                    f"{index} artifact_id '{artifact_id}' already exists with "
+                    "different content digest"
+                )
+            noops += 1
+            continue
+
+        planned_hash = planned_digests.get(artifact_id)
+        if planned_hash is not None:
+            if planned_hash != content_hash:
+                raise QueryExecutionError(
+                    "register_source_artifacts row "
+                    f"{index} artifact_id '{artifact_id}' duplicates an earlier row "
+                    "with different content digest"
+                )
+            noops += 1
+            continue
+
+        label = _resolve_optional_string(
+            "label",
+            spec.label,
+            context.plan.input_payload,
+            context.step_outputs,
+            item,
+            index,
+            artifact_id,
+        )
+        original_uri = _resolve_optional_string(
+            "original_uri",
+            spec.original_uri,
+            context.plan.input_payload,
+            context.step_outputs,
+            item,
+            index,
+            artifact_id,
+        )
+        try:
+            result = service_register_source_artifact(
+                context.instance,
+                source_content=content,
+                source_kind=spec.kind,
+                source_retention=spec.retention or "manifest_only",
+                original_uri=original_uri,
+                label=label,
+                actor_context=context.actor_context,
+                source_artifact_id=artifact_id,
+                persist=context.execution_action == "apply",
+            )
+        except ConfigError as exc:
+            raise QueryExecutionError(
+                f"register_source_artifacts row {index} artifact_id '{artifact_id}' failed: {exc}"
+            ) from exc
+        planned_digests[artifact_id] = result.content_hash
+        registered += 1
+
+    output = {
+        "registered": registered,
+        "noops": noops,
+        "artifact_ids": sorted(artifact_ids),
+    }
+    context.set_step_output(compiled_step, output)
+    context.apply_previews[compiled_step.step_id] = output
+    context.receipt_builder.record_validation(True, detail=output, parent_id=step_node)
+
+
+def _resolve_artifact_id(
+    template: Any,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+    item: Any,
+    index: int,
+) -> str:
+    value = resolve_value(
+        template,
+        input_payload,
+        step_outputs,
+        item_payload=item,
+        allow_item=True,
+    )
+    from cruxible_core.service.source_artifacts import _SOURCE_ARTIFACT_ID_RE
+
+    if not isinstance(value, str) or not _SOURCE_ARTIFACT_ID_RE.fullmatch(value):
+        raise QueryExecutionError(
+            "register_source_artifacts row "
+            f"{index} invalid artifact_id {value!r}: source_artifact_id must be "
+            "3-64 chars of [A-Za-z0-9._-] starting with an alphanumeric"
+        )
+    return value
+
+
+def _resolve_source_content(
+    template: Any,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+    item: Any,
+    index: int,
+    artifact_id: str,
+) -> str:
+    value = resolve_value(
+        template,
+        input_payload,
+        step_outputs,
+        item_payload=item,
+        allow_item=True,
+    )
+    if not isinstance(value, str) or value == "":
+        raise QueryExecutionError(
+            "register_source_artifacts row "
+            f"{index} artifact_id '{artifact_id}' content must resolve to a "
+            "non-empty string"
+        )
+    return value
+
+
+def _resolve_optional_string(
+    field_name: str,
+    template: Any,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+    item: Any,
+    index: int,
+    artifact_id: str,
+) -> str | None:
+    if template is None:
+        return None
+    value = resolve_value(
+        template,
+        input_payload,
+        step_outputs,
+        item_payload=item,
+        allow_item=True,
+    )
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise QueryExecutionError(
+            "register_source_artifacts row "
+            f"{index} artifact_id '{artifact_id}' {field_name} must resolve to "
+            "a string or null"
+        )
+    return value
+
+
+def _sha256_text(value: str) -> str:
+    return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
+
+
 def execute_apply_entities_handler(
     context: WorkflowExecutionContext,
     compiled_step: CompiledPlanStep,
@@ -654,6 +862,7 @@ DEFAULT_STEP_HANDLER_REGISTRY = WorkflowStepRegistry(
         ("propose_relationship_group", execute_propose_relationship_group_handler),
         ("make_entities", execute_make_entities_handler),
         ("make_relationships", execute_make_relationships_handler),
+        ("register_source_artifacts", execute_register_source_artifacts_handler),
         ("apply_entities", execute_apply_entities_handler),
         ("apply_relationships", execute_apply_relationships_handler),
         ("apply_all", execute_apply_all_handler),
