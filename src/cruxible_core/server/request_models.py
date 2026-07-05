@@ -178,6 +178,7 @@ class UpdateTrustStatusRequest(BaseModel):
 
 class RegisterSourceArtifactRequest(BaseModel):
     source_path: str
+    source_artifact_id: str | None = None
     source_kind: contracts.SourceKind = "markdown"
     source_retention: contracts.SourceRetention = "manifest_only"
     original_uri: str | None = None

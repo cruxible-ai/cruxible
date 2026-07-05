@@ -1197,6 +1197,7 @@ class CruxibleClient:
         original_uri: str | None = None,
         label: str | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+        source_artifact_id: str | None = None,
     ) -> contracts.RegisterSourceArtifactResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/source-artifacts/register",
@@ -1207,6 +1208,11 @@ class CruxibleClient:
                     "source_retention": source_retention,
                     "original_uri": original_uri,
                     "label": label,
+                    **(
+                        {"source_artifact_id": source_artifact_id}
+                        if source_artifact_id is not None
+                        else {}
+                    ),
                 },
                 actor_context,
             ),

@@ -44,6 +44,13 @@ def source_group() -> None:
 )
 @click.option("--original-uri", default=None, help="Optional display-safe source URI.")
 @click.option("--label", default=None, help="Optional display label.")
+@click.option(
+    "--id",
+    "source_artifact_id",
+    default=None,
+    help="Caller-supplied artifact id so pinned evidence locators can reference "
+    "it deterministically; server-generated when omitted.",
+)
 @json_option
 @handle_errors
 def register_source_artifact(
@@ -52,6 +59,7 @@ def register_source_artifact(
     source_retention: str,
     original_uri: str | None,
     label: str | None,
+    source_artifact_id: str | None,
     output_json: bool,
 ) -> None:
     """Register a source artifact for proposal evidence."""
@@ -65,6 +73,7 @@ def register_source_artifact(
             source_retention=source_retention_value,
             original_uri=original_uri,
             label=label,
+            source_artifact_id=source_artifact_id,
         ),
         lambda instance: service_register_source_artifact(
             instance,
@@ -73,6 +82,7 @@ def register_source_artifact(
             source_retention=source_retention_value,
             original_uri=original_uri,
             label=label,
+            source_artifact_id=source_artifact_id,
         ),
         allow_local=True,
         command_name="source register",
