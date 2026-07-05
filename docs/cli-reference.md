@@ -776,6 +776,7 @@ shared_evidence:
 - `cruxible credential list` - List runtime bearer credentials for the active instance.
 - `cruxible credential revoke` - Revoke a runtime bearer credential.
 - `cruxible credential rotate` - Rotate a runtime bearer credential and print the replacement token once.
+- `cruxible credential recover-admin` - Recover an ADMIN token by local filesystem ownership of server state.
 
 **Output And Side Effects:**
 - Server-mode only. Uses the remembered CLI context or `--instance-id` for the target instance.
@@ -877,6 +878,29 @@ shared_evidence:
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Credential ID not found for the active instance.
+
+## cruxible credential recover-admin
+
+**Usage:** `cruxible credential recover-admin [OPTIONS]`
+
+**Purpose:** Recover an ADMIN runtime token by local filesystem ownership of server state. Local-only: refuses to run with any resolved server connection, never contacts a daemon, and treats invoking-uid ownership of `--state-dir` and its `runtime_credentials.db` as the recovery authority.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--state-dir` | yes | `Sentinel.UNSET` | path | Server state directory containing `runtime_credentials.db`. Stop the daemon first; the lock check only refuses a writer caught mid-transaction and does not detect an idle running daemon. |
+| `--instance-id` | no | `None` | text | Target instance ID when the credentials DB contains multiple instances. |
+| `--label` | no | `recovered-admin` | text | Human-readable label for the recovered ADMIN credential. |
+| `--json` | no | `False` | flag | Output as JSON. |
+
+**Output And Side Effects:**
+- Mints one new ADMIN credential (`created_by: local_recovery`), records a recovery audit event in the same transaction, and prints the plaintext token once. Existing credentials are not revoked automatically.
+
+**Common Errors:**
+- Refused in server mode: unset `--server-url`/`--server-socket` (and their environment variables) and run locally.
+- State dir or credentials DB not owned by the invoking uid.
+- Credentials DB locked by an active writer, or no ADMIN credential record exists for the target instance.
 
 ## cruxible decision-record
 

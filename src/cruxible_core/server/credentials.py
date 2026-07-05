@@ -229,7 +229,9 @@ class RuntimeCredentialStore:
                         "Runtime credentials DB is locked. Stop the Cruxible daemon "
                         "serving this state dir before running recover-admin."
                     ) from exc
-                raise
+                raise RuntimeCredentialRecoveryError(
+                    f"Could not write runtime credentials DB at {self.db_path}: {exc}"
+                ) from exc
 
             self._validate_recovery_target_conn(conn, instance_id)
             self._ensure_recovery_events_table_conn(conn)
@@ -796,6 +798,33 @@ def reset_runtime_credential_store() -> None:
     """Clear the process-global runtime credential store cache. Used by tests."""
     global _runtime_credential_store
     _runtime_credential_store = None
+
+
+def list_runtime_credential_instance_ids(db_path: Path) -> list[str]:
+    """List distinct instance ids present in a runtime credentials DB.
+
+    Read-only helper for local recovery target selection; raises the
+    recovery error types so callers never handle sqlite exceptions.
+    """
+    try:
+        with sqlite3.connect(db_path, timeout=0.0) as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT instance_id
+                FROM runtime_credentials
+                ORDER BY instance_id
+                """
+            ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if _is_sqlite_busy(exc):
+            raise RuntimeCredentialRecoveryBusyError(
+                "Runtime credentials DB is locked. Stop the Cruxible daemon serving "
+                "this state dir before running recover-admin."
+            ) from exc
+        raise RuntimeCredentialRecoveryError(
+            f"Could not read runtime credentials DB {db_path}: {exc}"
+        ) from exc
+    return [str(row[0]) for row in rows]
 
 
 def _is_sqlite_busy(exc: sqlite3.OperationalError) -> bool:

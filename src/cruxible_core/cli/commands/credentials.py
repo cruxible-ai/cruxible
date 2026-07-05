@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import socket
-import sqlite3
 import stat
 from pathlib import Path
 from typing import cast
@@ -19,6 +18,7 @@ from cruxible_core.server.credentials import (
     RuntimeCredentialRecoveryBusyError,
     RuntimeCredentialRecoveryError,
     RuntimeCredentialStore,
+    list_runtime_credential_instance_ids,
 )
 
 _PERMISSION_MODES: tuple[contracts.RuntimeCredentialPermissionMode, ...] = (
@@ -198,23 +198,9 @@ def _require_owned_path(path: Path, *, description: str, uid: int, directory: bo
 
 def _select_recovery_instance_id(db_path: Path, instance_id: str | None) -> str:
     try:
-        with sqlite3.connect(db_path, timeout=0.0) as conn:
-            rows = conn.execute(
-                """
-                SELECT DISTINCT instance_id
-                FROM runtime_credentials
-                ORDER BY instance_id
-                """
-            ).fetchall()
-    except sqlite3.OperationalError as exc:
-        if _sqlite_busy(exc):
-            raise click.UsageError(
-                "Runtime credentials DB is locked. Stop the Cruxible daemon serving "
-                "this state dir before running recover-admin."
-            ) from exc
-        raise click.UsageError(f"Could not read runtime credentials DB {db_path}: {exc}") from exc
-
-    instance_ids = [str(row[0]) for row in rows]
+        instance_ids = list_runtime_credential_instance_ids(db_path)
+    except (RuntimeCredentialRecoveryBusyError, RuntimeCredentialRecoveryError) as exc:
+        raise click.UsageError(str(exc)) from exc
     if not instance_ids:
         raise click.UsageError(f"No runtime credentials found in {db_path}.")
     if instance_id is not None:
@@ -230,11 +216,6 @@ def _select_recovery_instance_id(db_path: Path, instance_id: str | None) -> str:
         "Credentials DB contains multiple instance IDs; pass --instance-id. "
         f"Found: {', '.join(instance_ids)}"
     )
-
-
-def _sqlite_busy(exc: sqlite3.OperationalError) -> bool:
-    message = str(exc).lower()
-    return "database is locked" in message or "database is busy" in message
 
 
 @credential_group.command("recover-admin")
@@ -297,10 +278,6 @@ def recover_admin_cmd(
         raise click.UsageError(str(exc)) from exc
     except RuntimeCredentialRecoveryError as exc:
         raise click.UsageError(str(exc)) from exc
-    except sqlite3.OperationalError as exc:
-        raise click.UsageError(
-            f"Could not write runtime credentials DB at {db_path}: {exc}"
-        ) from exc
 
     credential = _credential_metadata_from_record(result.record)
     if output_json:
