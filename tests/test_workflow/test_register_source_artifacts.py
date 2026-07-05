@@ -10,7 +10,11 @@ from tests.support.workflow_helpers import write_lock_for_instance
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, QueryExecutionError
-from cruxible_core.service import service_register_source_artifact
+from cruxible_core.service import (
+    service_apply_workflow,
+    service_register_source_artifact,
+    service_run,
+)
 from cruxible_core.workflow import build_lock, compile_workflow, execute_workflow
 
 _DEFAULT_ROWS_YAML = """- source_artifact_id: opinion_text_op_zeta
@@ -78,6 +82,38 @@ workflows:
     return instance
 
 
+def _list_source_artifacts(instance: CruxibleInstance):
+    store = instance.get_source_artifact_store()
+    try:
+        return store.list_artifacts()
+    finally:
+        store.close()
+
+
+def _get_source_artifact(instance: CruxibleInstance, artifact_id: str):
+    store = instance.get_source_artifact_store()
+    try:
+        return store.get_artifact(artifact_id)
+    finally:
+        store.close()
+
+
+def _workflow_receipts(instance: CruxibleInstance):
+    store = instance.get_receipt_store()
+    try:
+        summaries = store.list_receipts(
+            query_name="pin_sources",
+            operation_type="workflow",
+        )
+        return [
+            store.get_receipt(summary["receipt_id"])
+            for summary in summaries
+            if isinstance(summary.get("receipt_id"), str)
+        ]
+    finally:
+        store.close()
+
+
 def test_compile_refuses_register_source_artifacts_in_utility_workflow(
     tmp_path: Path,
 ) -> None:
@@ -95,6 +131,102 @@ def test_compile_refuses_register_source_artifacts_in_utility_workflow(
             {},
             config_base_path=instance.get_config_path().parent,
         )
+
+
+def test_register_source_artifacts_service_preview_reports_plan_without_persisting(
+    tmp_path: Path,
+) -> None:
+    instance = _register_instance(tmp_path)
+
+    preview = service_run(instance, "pin_sources", {})
+
+    assert preview.mode == "preview"
+    assert preview.workflow_type == "canonical"
+    assert preview.apply_digest is not None
+    assert preview.output == {
+        "registered": 2,
+        "noops": 0,
+        "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
+    }
+    assert preview.apply_previews["pin_texts"] == preview.output
+    assert _list_source_artifacts(instance) == []
+
+
+def test_register_source_artifacts_service_apply_with_preview_digest_registers_artifacts_and_receipts(
+    tmp_path: Path,
+) -> None:
+    instance = _register_instance(tmp_path)
+    preview = service_run(instance, "pin_sources", {})
+    assert preview.apply_digest is not None
+
+    applied = service_apply_workflow(
+        instance,
+        "pin_sources",
+        {},
+        expected_apply_digest=preview.apply_digest,
+        expected_head_snapshot_id=preview.head_snapshot_id,
+    )
+
+    assert applied.mode == "apply"
+    assert applied.workflow_type == "canonical"
+    assert applied.committed_snapshot_id is not None
+    assert applied.output == {
+        "registered": 2,
+        "noops": 0,
+        "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
+    }
+    assert set(applied.output) == {"registered", "noops", "artifact_ids"}
+    assert applied.apply_previews["pin_texts"] == applied.output
+
+    artifacts = sorted(
+        _list_source_artifacts(instance),
+        key=lambda artifact: artifact.source_artifact_id,
+    )
+    assert [artifact.source_artifact_id for artifact in artifacts] == [
+        "opinion_text_op_alpha",
+        "opinion_text_op_zeta",
+    ]
+    for artifact in artifacts:
+        assert artifact.source_kind == "markdown"
+        assert artifact.local_path is None
+
+    receipts = {
+        receipt.receipt_id: receipt
+        for receipt in _workflow_receipts(instance)
+        if receipt is not None
+    }
+    assert preview.receipt_id in receipts
+    assert applied.receipt_id in receipts
+    assert receipts[preview.receipt_id].workflow_mode == "preview"
+    assert receipts[applied.receipt_id].workflow_mode == "apply"
+    assert receipts[applied.receipt_id].committed is True
+
+
+def test_register_source_artifacts_service_apply_rejects_stale_preview_after_conflicting_artifact(
+    tmp_path: Path,
+) -> None:
+    instance = _register_instance(tmp_path)
+    preview = service_run(instance, "pin_sources", {})
+    assert preview.apply_digest is not None
+
+    service_register_source_artifact(
+        instance,
+        source_content="# Alpha\n\nConflicting text.\n",
+        source_artifact_id="opinion_text_op_alpha",
+    )
+
+    with pytest.raises(QueryExecutionError, match="already exists with different content digest"):
+        service_apply_workflow(
+            instance,
+            "pin_sources",
+            {},
+            expected_apply_digest=preview.apply_digest,
+            expected_head_snapshot_id=preview.head_snapshot_id,
+        )
+
+    artifacts = _list_source_artifacts(instance)
+    assert [artifact.source_artifact_id for artifact in artifacts] == ["opinion_text_op_alpha"]
+    assert _get_source_artifact(instance, "opinion_text_op_zeta") is None
 
 
 def test_register_source_artifacts_happy_path_outputs_and_chunks(
@@ -151,6 +283,45 @@ def test_register_source_artifacts_rerun_is_idempotent(
         assert stored_ids == {"opinion_text_op_alpha", "opinion_text_op_zeta"}
     finally:
         store.close()
+
+
+def test_register_source_artifacts_metadata_drift_noop_preserves_original_metadata(
+    tmp_path: Path,
+) -> None:
+    instance = _register_instance(tmp_path)
+    first = execute_workflow(instance, instance.load_config(), "pin_sources", {}, mode="apply")
+    assert first.output["registered"] == 2
+    before = _get_source_artifact(instance, "opinion_text_op_alpha")
+    assert before is not None
+    assert before.label == "OP-ALPHA"
+    assert before.original_uri == "https://example.invalid/alpha"
+    assert before.source_retention == "manifest_only"
+    assert before.archived is False
+
+    config = instance.load_config()
+    step = config.workflows["pin_sources"].steps[0]
+    assert step.register_source_artifacts is not None
+    step.register_source_artifacts.label = "Changed Label"
+    step.register_source_artifacts.original_uri = "https://example.invalid/changed"
+    step.register_source_artifacts.retention = "archive"
+    instance.save_config(config)
+    write_lock_for_instance(instance)
+
+    second = execute_workflow(instance, instance.load_config(), "pin_sources", {}, mode="apply")
+
+    assert second.output == {
+        "registered": 0,
+        "noops": 2,
+        "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
+    }
+    after = _get_source_artifact(instance, "opinion_text_op_alpha")
+    assert after is not None
+    assert after.label == before.label
+    assert after.original_uri == before.original_uri
+    assert after.source_retention == before.source_retention
+    assert after.archived == before.archived
+    assert after.archive_content_hash == before.archive_content_hash
+    assert after.created_at == before.created_at
 
 
 def test_register_source_artifacts_digest_conflict_errors(

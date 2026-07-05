@@ -416,7 +416,10 @@ def execute_register_source_artifacts_handler(
 
     Security boundary: this handler only resolves workflow data expressions and
     passes resolved string content to the source-artifact service. It never reads
-    files, paths, or URLs; ``original_uri`` is stored as metadata only.
+    files, paths, or URLs; ``original_uri`` is stored as metadata only. If an
+    artifact already exists with identical content, registration is a noop;
+    differing label/original_uri/retention are NOT applied. Re-register under a
+    new id to change retention.
     """
     from cruxible_core.service.source_artifacts import service_register_source_artifact
 
@@ -443,83 +446,86 @@ def execute_register_source_artifacts_handler(
     planned_digests: dict[str, str] = {}
     store = context.instance.get_source_artifact_store()
 
-    for index, item in enumerate(items):
-        artifact_id = _resolve_artifact_id(
-            spec.artifact_id,
-            context.plan.input_payload,
-            context.step_outputs,
-            item,
-            index,
-        )
-        artifact_ids.add(artifact_id)
-        content = _resolve_source_content(
-            spec.content,
-            context.plan.input_payload,
-            context.step_outputs,
-            item,
-            index,
-            artifact_id,
-        )
-        content_hash = _sha256_text(content)
-
-        existing = store.get_artifact(artifact_id)
-        if existing is not None:
-            if existing.content_hash != content_hash:
-                raise QueryExecutionError(
-                    "register_source_artifacts row "
-                    f"{index} artifact_id '{artifact_id}' already exists with "
-                    "different content digest"
-                )
-            noops += 1
-            continue
-
-        planned_hash = planned_digests.get(artifact_id)
-        if planned_hash is not None:
-            if planned_hash != content_hash:
-                raise QueryExecutionError(
-                    "register_source_artifacts row "
-                    f"{index} artifact_id '{artifact_id}' duplicates an earlier row "
-                    "with different content digest"
-                )
-            noops += 1
-            continue
-
-        label = _resolve_optional_string(
-            "label",
-            spec.label,
-            context.plan.input_payload,
-            context.step_outputs,
-            item,
-            index,
-            artifact_id,
-        )
-        original_uri = _resolve_optional_string(
-            "original_uri",
-            spec.original_uri,
-            context.plan.input_payload,
-            context.step_outputs,
-            item,
-            index,
-            artifact_id,
-        )
-        try:
-            result = service_register_source_artifact(
-                context.instance,
-                source_content=content,
-                source_kind=spec.kind,
-                source_retention=spec.retention or "manifest_only",
-                original_uri=original_uri,
-                label=label,
-                actor_context=context.actor_context,
-                source_artifact_id=artifact_id,
-                persist=context.execution_action == "apply",
+    try:
+        for index, item in enumerate(items):
+            artifact_id = _resolve_artifact_id(
+                spec.artifact_id,
+                context.plan.input_payload,
+                context.step_outputs,
+                item,
+                index,
             )
-        except ConfigError as exc:
-            raise QueryExecutionError(
-                f"register_source_artifacts row {index} artifact_id '{artifact_id}' failed: {exc}"
-            ) from exc
-        planned_digests[artifact_id] = result.content_hash
-        registered += 1
+            artifact_ids.add(artifact_id)
+            content = _resolve_source_content(
+                spec.content,
+                context.plan.input_payload,
+                context.step_outputs,
+                item,
+                index,
+                artifact_id,
+            )
+            content_hash = _sha256_text(content)
+
+            existing = store.get_artifact(artifact_id)
+            if existing is not None:
+                if existing.content_hash != content_hash:
+                    raise QueryExecutionError(
+                        "register_source_artifacts row "
+                        f"{index} artifact_id '{artifact_id}' already exists with "
+                        "different content digest"
+                    )
+                noops += 1
+                continue
+
+            planned_hash = planned_digests.get(artifact_id)
+            if planned_hash is not None:
+                if planned_hash != content_hash:
+                    raise QueryExecutionError(
+                        "register_source_artifacts row "
+                        f"{index} artifact_id '{artifact_id}' duplicates an earlier row "
+                        "with different content digest"
+                    )
+                noops += 1
+                continue
+
+            label = _resolve_optional_string(
+                "label",
+                spec.label,
+                context.plan.input_payload,
+                context.step_outputs,
+                item,
+                index,
+                artifact_id,
+            )
+            original_uri = _resolve_optional_string(
+                "original_uri",
+                spec.original_uri,
+                context.plan.input_payload,
+                context.step_outputs,
+                item,
+                index,
+                artifact_id,
+            )
+            try:
+                result = service_register_source_artifact(
+                    context.instance,
+                    source_content=content,
+                    source_kind=spec.kind,
+                    source_retention=spec.retention or "manifest_only",
+                    original_uri=original_uri,
+                    label=label,
+                    actor_context=context.actor_context,
+                    source_artifact_id=artifact_id,
+                    persist=context.execution_action == "apply",
+                )
+            except ConfigError as exc:
+                raise QueryExecutionError(
+                    f"register_source_artifacts row {index} artifact_id '{artifact_id}' failed: {exc}"
+                ) from exc
+            planned_digests[artifact_id] = result.content_hash
+            registered += 1
+    finally:
+        store.close()
 
     output = {
         "registered": registered,

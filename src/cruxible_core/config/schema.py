@@ -1851,7 +1851,14 @@ class RegisterSourceArtifactsSpec(BaseModel):
     kind: Literal["markdown"]
     label: Any | None = None
     original_uri: Any | None = None
-    retention: Literal["manifest_only", "archive"] | None = None
+    retention: Literal["manifest_only", "archive"] | None = Field(
+        default=None,
+        description=(
+            "An existing artifact with identical content is a noop; differing "
+            "label/original_uri/retention are NOT applied. Re-register under a "
+            "new id to change retention."
+        ),
+    )
 
     model_config = {"extra": "forbid"}
 

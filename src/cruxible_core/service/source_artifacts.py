@@ -99,7 +99,12 @@ def service_register_source_artifact(
                 "source_artifact_id must be 3-64 chars of [A-Za-z0-9._-] "
                 "starting with an alphanumeric"
             )
-        if instance.get_source_artifact_store().get_artifact(source_artifact_id) is not None:
+        store = instance.get_source_artifact_store()
+        try:
+            existing_artifact = store.get_artifact(source_artifact_id)
+        finally:
+            store.close()
+        if existing_artifact is not None:
             raise ConfigError(f"Source artifact '{source_artifact_id}' is already registered")
     else:
         source_artifact_id = new_id("SRC")
