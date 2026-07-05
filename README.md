@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://cruxible.ai">
-    <img src="assets/cruxible_logo.png" alt="Cruxible" width="400">
+    <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible-core/main/assets/cruxible_logo.png" alt="Cruxible" width="400">
   </a>
 </p>
 
@@ -115,8 +115,8 @@ agent-operation, refuse to load with an error naming exactly which config
 keys to remove, rather than silently degrading.
 
 For the full bootstrap flow, permission tiers, and hardening, see the
-[Quickstart](docs/quickstart.md) and
-[Runtime Auth And Agent Roles](docs/runtime-auth-and-agent-roles.md).
+[Quickstart](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/quickstart.md) and
+[Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/runtime-auth-and-agent-roles.md).
 
 ## What A Governed Domain Looks Like
 
@@ -430,31 +430,31 @@ MCP example:
 Local permission modes are a practical hardening layer, not full sandboxing. If
 trust levels matter, keep the daemon state outside the agent workspace and
 expose only the client, HTTP, or MCP surface. See
-[Isolated Deployment](docs/isolated-deployment.md).
+[Isolated Deployment](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/isolated-deployment.md).
 
 ## Documentation
 
 **Getting started**
-- [Quickstart](docs/quickstart.md) — install to first query
-- [Concepts](docs/concepts.md) — architecture and primitives
+- [Quickstart](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/quickstart.md) — install to first query
+- [Concepts](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/concepts.md) — architecture and primitives
 
 **Modeling and authoring**
-- [Modeling State](docs/modeling-state.md) — designing an ontology (entities, relationships, gates vs flags)
-- [Config Reference](docs/config-reference.md) — the YAML config schema
-- [Kit Authoring](docs/kit-authoring.md) — kit manifest, structure, and packaging
-- [Kit Walkthroughs](docs/kit-walkthroughs.md) — building standalone and overlay kits
+- [Modeling State](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/modeling-state.md) — designing an ontology (entities, relationships, gates vs flags)
+- [Config Reference](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/config-reference.md) — the YAML config schema
+- [Kit Authoring](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/kit-authoring.md) — kit manifest, structure, and packaging
+- [Kit Walkthroughs](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/kit-walkthroughs.md) — building standalone and overlay kits
 - [Common Providers And Dataflow Steps](docs/common-providers.md) — provider and workflow building blocks
 
 **Reference**
-- [CLI Reference](docs/cli-reference.md) — terminal commands
-- [MCP Tools Reference](docs/mcp-tools.md) — agent tool surface
-- [AI Agent Guide](docs/for-ai-agents.md) — orchestration patterns
+- [CLI Reference](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/cli-reference.md) — terminal commands
+- [MCP Tools Reference](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/mcp-tools.md) — agent tool surface
+- [AI Agent Guide](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/for-ai-agents.md) — orchestration patterns
 
 **Operating and deploying**
-- [Local State And Backups](docs/local-state-and-backups.md) — SQLite, daemon state, and portability
-- [Runtime Auth And Agent Roles](docs/runtime-auth-and-agent-roles.md) — credentials, permission tiers, and bootstrap
-- [State Resolution And Maintenance](docs/state-resolution-and-maintenance.md) — proposal resolution, trust grading, and maintenance signals
-- [Isolated Deployment](docs/isolated-deployment.md) — running the daemon with only the client/MCP surface exposed
+- [Local State And Backups](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/local-state-and-backups.md) — SQLite, daemon state, and portability
+- [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/runtime-auth-and-agent-roles.md) — credentials, permission tiers, and bootstrap
+- [State Resolution And Maintenance](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/state-resolution-and-maintenance.md) — proposal resolution, trust grading, and maintenance signals
+- [Isolated Deployment](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/isolated-deployment.md) — running the daemon with only the client/MCP surface exposed
 - [Hosted Runtime Image](docs/hosted-runtime-image.md) — the runtime container image
 
 **Guides**

@@ -1603,6 +1603,7 @@ Each step must define exactly one of these operations:
 | `apply_entities` | Apply a built entity set to graph state | `apply_entities: {entities_from}`, `as` |
 | `apply_relationships` | Apply a built relationship set to graph state | `apply_relationships: {relationships_from}`, `as` |
 | `apply_all` | Apply explicit entity sets, then relationship sets | `apply_all: {entities_from, relationships_from}`, `as` |
+| `register_source_artifacts` | Register source artifacts from workflow row data (canonical only; content is workflow data, never files or URLs; identical-content re-runs noop, conflicting content errors) | `register_source_artifacts: {items, artifact_id, content, kind, label?, original_uri?, retention?}`, `as` |
 | `make_candidates` | Build relationship candidates for governed proposals | `make_candidates: {relationship_type, items, from_type, from_id, to_type, to_id, properties, evidence?}`, `as` |
 | `map_signals` | Convert provider output to tri-state signal-source evidence | `map_signals: {signal_source, items, from_id, to_id, evidence?, evidence_refs?, score/enum}`, `as` |
 | `propose_relationship_group` | Assemble a governed group proposal from candidates + signals | `propose_relationship_group: {relationship_type, candidates_from, signals_from, on_empty?}`, `as` |
