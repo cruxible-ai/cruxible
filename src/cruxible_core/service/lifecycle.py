@@ -185,12 +185,14 @@ def service_init(
                     raise ConfigError(
                         f"Kit directory already exists at {kit_dir}; refusing to overwrite"
                     )
+                # Recorded before materialization so a partial copy is swept on
+                # failure; otherwise the leftover dir blocks every retry.
+                materialized_kit_dirs.append((kit_id, kit_dir))
                 entry_config = materialize_kit(
                     kit=kit_ref,
                     root=kit_dir,
                     expected_role=bundle.manifest.role,
                 )
-                materialized_kit_dirs.append((kit_id, kit_dir))
                 layer_config = load_config(entry_config)
                 _namespace_config_kit_provider_refs(layer_config, kit_id)
                 layers.append(ResolvedConfigLayer(config=layer_config, config_path=entry_config))
