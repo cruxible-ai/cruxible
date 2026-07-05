@@ -8,6 +8,7 @@ from cruxible_core.errors import QueryExecutionError
 from cruxible_core.workflow.refs import resolve_value
 
 MAX_DUPLICATE_EXAMPLES = 10
+SOURCE_METADATA_KEY = "source_metadata"
 
 READ_METADATA_KEYS = (
     "total_results",
@@ -70,7 +71,7 @@ def attach_source_metadata(
 ) -> dict[str, Any]:
     """Attach source read metadata when a transform derives from read output."""
     if metadata:
-        output["source_metadata"] = metadata
+        output[SOURCE_METADATA_KEY] = metadata
     return output
 
 
@@ -142,7 +143,7 @@ def extract_read_metadata(step_output: Any) -> dict[str, Any]:
     direct = {key: step_output[key] for key in READ_METADATA_KEYS if key in step_output}
     if direct:
         return direct
-    source_metadata = step_output.get("source_metadata")
+    source_metadata = step_output.get(SOURCE_METADATA_KEY)
     if isinstance(source_metadata, dict):
         return dict(source_metadata)
     return {}

@@ -28,7 +28,7 @@ from cruxible_core.workflow.proposals import (
     map_signal_batch,
     signal_mapping_snapshot,
 )
-from cruxible_core.workflow.step_helpers import resolve_step_items
+from cruxible_core.workflow.step_helpers import SOURCE_METADATA_KEY, resolve_step_items
 from cruxible_core.workflow.transforms import (
     aggregate_items,
     dedupe_items,
@@ -221,7 +221,7 @@ def execute_aggregate_items_handler(
                 name: measure.operation
                 for name, measure in compiled_step.aggregate_items_spec.measures.items()
             },
-            "source_metadata": aggregated_items.get("source_metadata", {}),
+            SOURCE_METADATA_KEY: aggregated_items.get(SOURCE_METADATA_KEY, {}),
         },
     )
 
