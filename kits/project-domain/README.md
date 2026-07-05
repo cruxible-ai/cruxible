@@ -134,10 +134,10 @@ No mutation guards declared.
 <!-- CRUXIBLE:END mutation-guards -->
 
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
-| Signal Source | Role | Review Unsure | Used By | Notes |
-| --- | --- | --- | --- | --- |
-| `maintainer_judgment` | advisory | yes | Decision Affects Area, Decision Affects Capability, Decision Affects Roadmap Item, Open Question Blocks Roadmap Item, Risk Attaches To Area, Risk Blocks Roadmap Item, Roadmap Item Depends On Roadmap Item, + 13 base relationships | - |
-| `source_evidence` | required | yes | Decision Affects Area, Decision Affects Capability, Decision Affects Roadmap Item, Open Question Blocks Roadmap Item, Risk Attaches To Area, Risk Blocks Roadmap Item, Roadmap Item Depends On Roadmap Item, + 13 base relationships | - |
+| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `maintainer_judgment` | advisory | yes | no | Decision Affects Area, Decision Affects Capability, Decision Affects Roadmap Item, Open Question Blocks Roadmap Item, Risk Attaches To Area, Risk Blocks Roadmap Item, Roadmap Item Depends On Roadmap Item, + 13 base relationships | - |
+| `source_evidence` | required | yes | no | Decision Affects Area, Decision Affects Capability, Decision Affects Roadmap Item, Open Question Blocks Roadmap Item, Risk Attaches To Area, Risk Blocks Roadmap Item, Roadmap Item Depends On Roadmap Item, + 13 base relationships | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Queries

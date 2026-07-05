@@ -313,15 +313,15 @@ KEV keeps proposal signal policy directly on governed relationships, so the gove
 above is the source of truth for required/advisory signal labels.
 
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
-| Signal Source | Role | Review Unsure | Used By | Notes |
-| --- | --- | --- | --- | --- |
-| `control_effectiveness` | required | yes | Asset Vulnerability Posture | - |
-| `exploitability_signal` | required | yes | Asset Vulnerability Posture | - |
-| `policy_review` | required | no | Asset Patch Exception For | - |
-| `product_version_evidence` | required | yes | Asset Vulnerability Posture | - |
-| `remediation_verification` | required | yes | Asset Remediated Vulnerability | - |
-| `software_product_match` | required | yes | Asset Runs Product | - |
-| `vulnerability_classification` | required | yes | Vulnerability Classified As | - |
+| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `control_effectiveness` | required | yes | no | Asset Vulnerability Posture | - |
+| `exploitability_signal` | required | yes | no | Asset Vulnerability Posture | - |
+| `policy_review` | required | no | no | Asset Patch Exception For | - |
+| `product_version_evidence` | required | yes | no | Asset Vulnerability Posture | - |
+| `remediation_verification` | required | yes | no | Asset Remediated Vulnerability | - |
+| `software_product_match` | required | yes | no | Asset Runs Product | - |
+| `vulnerability_classification` | required | yes | no | Vulnerability Classified As | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Query Catalog

@@ -1,6 +1,5 @@
 version: "1.0"
 name: case_law_monitoring
-extends: ../agent-operation/config.yaml
 description: >
   Case-law monitoring domain overlay composed over the agent-operation base.
   The corpus layer is real public law: opinions, courts, judges, statutes, and
@@ -31,41 +30,41 @@ presets:
     # accumulates per judgment type; attorney_review is the shared advisory.
     holdings:
       signals:
-        holding_extractor: {role: required, always_review_on_unsure: true}
+        holding_extractor: {role: required, always_review_on_unsure: true, require_evidence_on_support: true}
         attorney_review: {role: advisory, always_review_on_unsure: true}
     interpretations:
       signals:
-        statute_interpretation_extractor: {role: required, always_review_on_unsure: true}
+        statute_interpretation_extractor: {role: required, always_review_on_unsure: true, require_evidence_on_support: true}
         attorney_review: {role: advisory, always_review_on_unsure: true}
     issue_links:
       signals:
-        issue_mapper: {role: required, always_review_on_unsure: true}
+        issue_mapper: {role: required, always_review_on_unsure: true, require_evidence_on_support: true}
         attorney_review: {role: advisory, always_review_on_unsure: true}
     treatments:
       signals:
-        citation_treatment_classifier: {role: required, always_review_on_unsure: true}
+        citation_treatment_classifier: {role: required, always_review_on_unsure: true, require_evidence_on_support: true}
         attorney_review: {role: advisory, always_review_on_unsure: true}
     argument_impacts:
       signals:
-        argument_impact_assessor: {role: required, always_review_on_unsure: true}
+        argument_impact_assessor: {role: required, always_review_on_unsure: true, require_evidence_on_support: true}
         attorney_review: {role: advisory, always_review_on_unsure: true}
     matter_scope:
       signals:
-        matter_statute_match: {role: required, always_review_on_unsure: true}
+        matter_statute_match: {role: required, always_review_on_unsure: true, require_evidence_on_support: true}
         attorney_review: {role: advisory, always_review_on_unsure: true}
     matter_impacts:
       signals:
-        matter_impact_assessor: {role: required, always_review_on_unsure: true}
+        matter_impact_assessor: {role: required, always_review_on_unsure: true, require_evidence_on_support: true}
         jurisdiction_overlap: {role: advisory, always_review_on_unsure: true}
         attorney_review: {role: advisory, always_review_on_unsure: true}
     filing_obligations:
       signals:
-        filing_obligation_assessor: {role: required, always_review_on_unsure: true}
-        docket_matter_match: {role: required, always_review_on_unsure: true}
+        filing_obligation_assessor: {role: required, always_review_on_unsure: true, require_evidence_on_support: true}
+        docket_matter_match: {role: required, always_review_on_unsure: true, require_evidence_on_support: true}
         attorney_review: {role: advisory, always_review_on_unsure: true}
     work_routing:
       signals:
-        review_router: {role: required, always_review_on_unsure: true}
+        review_router: {role: required, always_review_on_unsure: true, require_evidence_on_support: true}
         attorney_review: {role: advisory, always_review_on_unsure: true}
 
 enums:
@@ -699,12 +698,11 @@ contracts:
     description: >
       Extractor output shared by the canonical apply step and the governed
       proposal: one row per candidate holding with opinion_id, holding_id,
-      summary, holding_type, scope, locator, rationale, verdict.
-      source_metadata carries the analyze pass's fetch provenance and rides
-      along so analyze output pipes into apply/propose unchanged.
+      summary, holding_type, scope, locator, rationale, verdict. Utility
+      analyze output pipes into apply/propose unchanged: core strips its own
+      source_metadata envelope at workflow-input validation.
     fields:
       items: {type: json}
-      source_metadata: {type: json, optional: true}
 
   StatuteInterpretationInput:
     fields:
@@ -771,11 +769,11 @@ contracts:
       Router output shared by the canonical apply step and the two governed
       link proposals: one row per suggested obligation with work_item_id,
       title, work_item_type (base enum value), priority, opinion_id,
-      matter_id, obligation_type, rationale, verdict. source_metadata carries
-      the engine's utility-output envelope so analyze output pipes unchanged.
+      matter_id, obligation_type, rationale, verdict. Utility analyze output
+      pipes unchanged: core strips its own source_metadata envelope at
+      workflow-input validation.
     fields:
       items: {type: json}
-      source_metadata: {type: json, optional: true}
 
   JudgmentItems:
     description: Generic tri-state judgment rows produced by an assessor provider.
@@ -786,7 +784,7 @@ artifacts:
   corpus_seed_bundle:
     kind: directory
     uri: ./data/seed
-    digest: sha256:7b7197010057fcfa4974389673ec468d8b3d83edf1a156daa3dc7991fd3bf5a5
+    digest: sha256:31445cd96d47f74667d0719c754125d03f4c37e0851b547a7c45be9b86fd198f
     metadata:
       description: >
         Digest-pinned two-act corpus: real public opinions (CourtListener

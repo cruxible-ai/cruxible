@@ -1,7 +1,7 @@
 # Case-Law Monitoring Kit
 
 Case-law domain overlay composed over the agent-operation base kit
-(`extends: ../agent-operation/config.yaml`).
+(declared via the kit manifest's `target_state: agent-operation`).
 
 The corpus layer is **real public law**: opinions, courts, judges, statutes,
 and the citation graph, sourced from CourtListener metadata and digest-pinned
@@ -35,9 +35,9 @@ structural truth. Everything outside them is authored explanation.
   `opinion_has_holding` edge makes them reviewed legal reasoning, and the
   `holdings_belong_to_an_opinion` check flags orphaned extractions.
 - **Two-act corpus.** `build_corpus` loads the pinned act-one world (the
-  doctrine standing). `refresh_corpus` fetches the update — live from
-  CourtListener, or from the bundled act-two fixture when offline — and
-  `sync_corpus_update` applies it. Then the treatment and impact proposal
+  doctrine standing). `refresh_corpus` loads the bundled act-two fixture
+  (fresh opinions arrive via `scripts/fetch_courtlistener.py`, outside the
+  workflow boundary) and `sync_corpus_update` applies the reviewed rows. Then the treatment and impact proposal
   chain shows the law change propagating into firm state:
   `supporting_authority_now_bad_law` is the alarm.
 - **LLM-outside.** Providers are deterministic heuristics over curated
@@ -744,20 +744,20 @@ No mutation guards declared.
 <!-- CRUXIBLE:END mutation-guards -->
 
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
-| Signal Source | Role | Review Unsure | Used By | Notes |
-| --- | --- | --- | --- | --- |
-| `argument_impact_assessor` | required | yes | Holding Supports Argument, Holding Undermines Argument | - |
-| `attorney_review` | advisory | yes | Filing Requires Response, Holding Addresses Issue, Holding Interprets Statute, Holding Supports Argument, Holding Undermines Argument, Matter Turns On Statute, Opinion Affects Matter, Opinion Creates Work Item, Opinion Has Holding, Opinion Treats Opinion | - |
-| `citation_treatment_classifier` | required | yes | Opinion Treats Opinion | - |
-| `docket_matter_match` | required | yes | Filing Requires Response | - |
-| `filing_obligation_assessor` | required | yes | Filing Requires Response | - |
-| `holding_extractor` | required | yes | Opinion Has Holding | - |
-| `issue_mapper` | required | yes | Holding Addresses Issue | - |
-| `jurisdiction_overlap` | advisory | yes | Opinion Affects Matter | - |
-| `matter_impact_assessor` | required | yes | Opinion Affects Matter | - |
-| `matter_statute_match` | required | yes | Matter Turns On Statute | - |
-| `review_router` | required | yes | Opinion Creates Work Item | - |
-| `statute_interpretation_extractor` | required | yes | Holding Interprets Statute | - |
+| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `argument_impact_assessor` | required | yes | yes | Holding Supports Argument, Holding Undermines Argument | - |
+| `attorney_review` | advisory | yes | no | Filing Requires Response, Holding Addresses Issue, Holding Interprets Statute, Holding Supports Argument, Holding Undermines Argument, Matter Turns On Statute, Opinion Affects Matter, Opinion Creates Work Item, Opinion Has Holding, Opinion Treats Opinion | - |
+| `citation_treatment_classifier` | required | yes | yes | Opinion Treats Opinion | - |
+| `docket_matter_match` | required | yes | yes | Filing Requires Response | - |
+| `filing_obligation_assessor` | required | yes | yes | Filing Requires Response | - |
+| `holding_extractor` | required | yes | yes | Opinion Has Holding | - |
+| `issue_mapper` | required | yes | yes | Holding Addresses Issue | - |
+| `jurisdiction_overlap` | advisory | yes | no | Opinion Affects Matter | - |
+| `matter_impact_assessor` | required | yes | yes | Opinion Affects Matter | - |
+| `matter_statute_match` | required | yes | yes | Matter Turns On Statute | - |
+| `review_router` | required | yes | yes | Opinion Creates Work Item | - |
+| `statute_interpretation_extractor` | required | yes | yes | Holding Interprets Statute | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Queries

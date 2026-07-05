@@ -387,7 +387,7 @@ def render_signal_policy_catalog_markdown(
     """
     own_used_by: dict[str, set[str]] = {}
     base_used_by: dict[str, set[str]] = {}
-    policy_rows: dict[str, tuple[str, str, str]] = {}
+    policy_rows: dict[str, tuple[str, str, str, str]] = {}
     for relationship in config.relationships:
         if relationship.proposal_policy is None:
             continue
@@ -400,6 +400,7 @@ def render_signal_policy_catalog_markdown(
                     (
                         policy.role,
                         "yes" if policy.always_review_on_unsure else "no",
+                        "yes" if policy.require_evidence_on_support else "no",
                         policy.note.strip() or "-",
                     ),
                 )
@@ -416,16 +417,17 @@ def render_signal_policy_catalog_markdown(
             f"`{name}`",
             role,
             always_review,
+            require_evidence,
             _signal_used_by_label(
                 sorted(own_used_by.get(name, set())),
                 len(base_used_by.get(name, set())),
             ),
             note,
         )
-        for name, (role, always_review, note) in sorted(policy_rows.items())
+        for name, (role, always_review, require_evidence, note) in sorted(policy_rows.items())
     ]
     return _markdown_table(
-        ("Signal Source", "Role", "Review Unsure", "Used By", "Notes"),
+        ("Signal Source", "Role", "Review Unsure", "Evidence on Support", "Used By", "Notes"),
         rows,
     )
 

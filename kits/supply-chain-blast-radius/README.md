@@ -1,7 +1,8 @@
 # Supply Chain Blast Radius Kit
 
 Supply-chain incident blast-radius domain overlay composed over the
-agent-operation base kit (`extends: ../agent-operation/config.yaml`).
+agent-operation base kit (declared via the kit manifest's
+`target_state: agent-operation`).
 
 The deterministic base world is suppliers, components, assemblies (recursive
 BOM), products, and shipments — the launch seed is a **real open-hardware
@@ -496,13 +497,13 @@ No mutation guards declared.
 <!-- CRUXIBLE:END mutation-guards -->
 
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
-| Signal Source | Role | Review Unsure | Used By | Notes |
-| --- | --- | --- | --- | --- |
-| `incident_assembly_cascade` | required | yes | Incident Impacts Assembly | - |
-| `incident_component_cascade` | required | yes | Incident Impacts Component | - |
-| `incident_supplier_scope_match` | required | yes | Incident Impacts Supplier | - |
-| `maintainer_judgment` | advisory | yes | Risk Attaches To Supplier, + 13 base relationships | - |
-| `source_evidence` | required | yes | Risk Attaches To Supplier, + 13 base relationships | - |
+| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `incident_assembly_cascade` | required | yes | yes | Incident Impacts Assembly | - |
+| `incident_component_cascade` | required | yes | yes | Incident Impacts Component | - |
+| `incident_supplier_scope_match` | required | yes | yes | Incident Impacts Supplier | - |
+| `maintainer_judgment` | advisory | yes | no | Risk Attaches To Supplier, + 13 base relationships | - |
+| `source_evidence` | required | yes | yes | Risk Attaches To Supplier, + 13 base relationships | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Queries

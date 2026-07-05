@@ -51,8 +51,8 @@
         "char_end": 105535,
         "text_sha256": "sha256:240de878af2bcdbc50bf6b58a615891cc88dd10901af15b47917f4610680c621",
         "source_artifact_id": "opinion_text_op_loper_bright",
-        "chunk_id": "mdchunk_e430db4f4d3e0714",
-        "expected_content_hash": "sha256:623253925d9beb5dc3e14d96eebd03c3e367a871db8974697ed1faa29c86a9df",
+        "chunk_id": "mdchunk_931bfd48067be795",
+        "expected_content_hash": "sha256:c99ee8f5ba6f7e7356a485208a237f0839c57c9a6d2d5aa4ad22fb0196d44899",
         "path": "opinions/op_loper_bright.txt"
       }
     },
@@ -67,8 +67,8 @@
         "char_end": 75771,
         "text_sha256": "sha256:240de878af2bcdbc50bf6b58a615891cc88dd10901af15b47917f4610680c621",
         "source_artifact_id": "opinion_text_op_loper_bright",
-        "chunk_id": "mdchunk_c8f425552b321dbf",
-        "expected_content_hash": "sha256:77b6a919c9d2e3778ac2a2f4b4e5048fd5b602836ad16b4f5b7e328fd0e04899",
+        "chunk_id": "mdchunk_87c2861596a1bc92",
+        "expected_content_hash": "sha256:a843e49c017ac69bbb821677c4f912c693bcb156e03f18ea39ee4190a76cbd42",
         "path": "opinions/op_loper_bright.txt"
       }
     },

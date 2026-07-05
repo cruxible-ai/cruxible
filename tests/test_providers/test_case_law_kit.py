@@ -867,3 +867,56 @@ def _assert_rows_have_keys(
     for row in rows:
         missing = expected - set(row)
         assert not missing, f"{label} row missing keys: {sorted(missing)}"
+
+
+def test_seed_evidence_chunk_pins_match_recomputed_chunks() -> None:
+    """Every seed evidence locator must pin a real chunk of its pinned text.
+
+    Chunk ids are recomputed with the same parser the artifact store uses;
+    the pinned chunk must anchor the quote (whitespace-normalized; the chunk
+    containing the quote's opening for quotes that span block boundaries)
+    and expected_content_hash must equal that chunk's current content hash,
+    so any drift between quotes, chunk pins, and opinion texts fails here.
+    """
+    import re
+
+    from cruxible_core.source_artifacts.markdown import parse_markdown_chunks
+
+    def norm(value: str) -> str:
+        return re.sub(r"\s+", " ", value).strip()
+
+    def evidence_objects():
+        holdings = json.loads((SEED_PATH / "holdings.json").read_text(encoding="utf-8"))
+        for row in holdings["curated_holdings"]:
+            if row.get("evidence"):
+                yield row["holding_id"], row["evidence"]
+        act2 = json.loads((SEED_PATH / "act2_update.json").read_text(encoding="utf-8"))
+        for row in act2["opinion_cites_opinion_edges"]:
+            if row.get("evidence"):
+                yield f"{row['source_opinion_id']}->{row['cited_opinion_id']}", row["evidence"]
+
+    checked = 0
+    for key, evidence in evidence_objects():
+        content = (SEED_PATH / evidence["path"]).read_bytes()
+        chunks = {
+            chunk.chunk_id: chunk
+            for chunk in parse_markdown_chunks(
+                source_artifact_id=evidence["source_artifact_id"],
+                content=content,
+            )
+        }
+        chunk = chunks.get(evidence["chunk_id"])
+        assert chunk is not None, f"{key}: pinned chunk_id not produced by the parser"
+        lines = (
+            content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").splitlines()
+        )
+        body = norm(
+            "\n".join(lines[max(chunk.line_start - 1, 0) : max(chunk.line_end, chunk.line_start)])
+        )
+        quote = norm(evidence["quote"])
+        assert quote in body or quote[:30] in body, f"{key}: quote not anchored in pinned chunk"
+        assert evidence["expected_content_hash"] == chunk.content_hash, (
+            f"{key}: expected_content_hash drifted from pinned chunk content"
+        )
+        checked += 1
+    assert checked >= 14

@@ -9,7 +9,7 @@ Data-file digest (README excluded), reproducible with
 `find . \( -name '*.json' -o -name '*.txt' \) -type f | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256`
 in this directory:
 
-`sha256:d732560f8df5dc8937743311fa777b1a93ced0bba377ee69168dea9d4bfedf1f`
+`sha256:cfd38ea7df0dcb26fe7253d3c9abeb43200dfdc9e3e1a8b6f93911f1200b7714`
 
 The digest of record is the workflow lock's full directory artifact digest,
 which also covers this README; the command above is for quick human

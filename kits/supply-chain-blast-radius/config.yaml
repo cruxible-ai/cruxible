@@ -1,6 +1,5 @@
 version: "1.0"
 name: supply_chain_blast_radius
-extends: ../agent-operation/config.yaml
 description: >
   Supply-chain incident blast-radius domain overlay composed over the
   agent-operation base. Deterministic base world of suppliers, components,
@@ -19,7 +18,7 @@ presets:
   policies:
     standard_supply:
       signals:
-        source_evidence: {role: required, always_review_on_unsure: true}
+        source_evidence: {role: required, always_review_on_unsure: true, require_evidence_on_support: true}
         maintainer_judgment: {role: advisory, always_review_on_unsure: true}
 
 enums:
@@ -235,6 +234,7 @@ relationships:
         incident_supplier_scope_match:
           role: required
           always_review_on_unsure: true
+          require_evidence_on_support: true
       auto_resolve_when: all_support
   - incident_impacts_component: Incident -> Component  # Governed: the incident impacts this component via impacted suppliers.
     properties:
@@ -245,6 +245,7 @@ relationships:
         incident_component_cascade:
           role: required
           always_review_on_unsure: true
+          require_evidence_on_support: true
       auto_resolve_when: all_support
   - incident_impacts_assembly: Incident -> Assembly  # Governed: the incident impacts this directly supplied assembly.
     properties:
@@ -256,6 +257,7 @@ relationships:
         incident_assembly_cascade:
           role: required
           always_review_on_unsure: true
+          require_evidence_on_support: true
       auto_resolve_when: all_support
 
 named_queries:

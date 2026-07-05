@@ -1,12 +1,12 @@
 version: '1'
-config_digest: sha256:7c6e1b30f39ce6378ad9f4e7a37b4ae6838d431bd49b766a28f36c4b5e3dcda2
-lock_digest: sha256:fe14c444bebb8e1d91a10741c34d9fe76d9bb839118795b0b51a2b4989973e4d
-generated_at: 2026-07-05 19:06:55.175181+00:00
+config_digest: sha256:796c7a4025b1d149fc6af3dacfb55668b8a7d36052dd85e835a826d627317cf3
+lock_digest: sha256:30cc81c26070ccfdf8d8f5ef207cbe397564b3885bca7ae1c8aa520962c5d12c
+generated_at: 2026-07-05 20:07:56.063740+00:00
 artifacts:
   corpus_seed_bundle:
     kind: directory
     uri: ./data/seed
-    digest: sha256:7b7197010057fcfa4974389673ec468d8b3d83edf1a156daa3dc7991fd3bf5a5
+    digest: sha256:31445cd96d47f74667d0719c754125d03f4c37e0851b547a7c45be9b86fd198f
     metadata:
       description: 'Digest-pinned two-act corpus: real public opinions (CourtListener
         metadata, Chevron-deference cluster) plus the synthetic firm layer. Act two
