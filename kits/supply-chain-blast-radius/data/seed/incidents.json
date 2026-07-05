@@ -1,0 +1,48 @@
+{
+  "incidents": [
+    {
+      "incident_id": "INC-GD-STEPPER-2026-07",
+      "title": "Guangdong industrial power curtailment disrupts stepper motor and electronics output",
+      "severity": "critical",
+      "scope_type": "geography",
+      "scope_id": "Guangdong, China",
+      "status": "open",
+      "reported_at": "2026-07-01",
+      "closed_at": null,
+      "summary": "Regional load-shedding has reduced motor winding, electronics final test, harness, and extrusion operations in Guangdong. LDO/Moons-class stepper supply is the primary modeled shortage."
+    },
+    {
+      "incident_id": "INC-TW-RAIL-2026-07",
+      "title": "Taichung linear rail coating line slowdown",
+      "severity": "medium",
+      "scope_type": "supplier",
+      "scope_id": "S-TW-RAIL",
+      "status": "open",
+      "reported_at": "2026-07-02",
+      "closed_at": null,
+      "summary": "A coating-line maintenance issue constrains Hiwin/LDO rail output. A conditional US distributor path exists, so downstream proposals should remain reviewable."
+    },
+    {
+      "incident_id": "INC-SH-TOOLHEAD-2026-07",
+      "title": "Shanghai toolhead assembly cell quarantine",
+      "severity": "high",
+      "scope_type": "supplier",
+      "scope_id": "S-CN-TOOLHEAD",
+      "status": "open",
+      "reported_at": "2026-07-03",
+      "closed_at": null,
+      "summary": "A cell-level quarantine interrupts direct Stealthburner toolhead assembly output for one week."
+    },
+    {
+      "incident_id": "INC-UK-HOTEND-2026-06",
+      "title": "UK hotend dispatch backlog cleared",
+      "severity": "low",
+      "scope_type": "supplier",
+      "scope_id": "S-UK-HOTEND",
+      "status": "closed",
+      "reported_at": "2026-06-10",
+      "closed_at": "2026-06-24",
+      "summary": "A small carrier backlog affected Revo Voron dispatches and has been cleared."
+    }
+  ]
+}

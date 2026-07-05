@@ -16,7 +16,9 @@ upstream impacts, BOM structure, buffer assessments, and shipment state —
 never direct incident-to-product edges. Governed edges are rule-centric:
 bucket signatures carry the cascade rule, not the incident, so trust
 accumulates on reusable rules across many incidents and clean cascades
-auto-resolve on all-support while anything unsure stops for review.
+can auto-resolve on all-support only after the rule has prior trusted
+resolution. First-run support groups still require operator review, and
+anything unsure stops for review.
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is regenerated
 from `config.yaml` by `cruxible config views`; treat those blocks as code-owned
@@ -30,13 +32,18 @@ structural truth. Everything outside them is authored explanation.
 - **Supplier risk is the governed seam** `risk_attaches_to_supplier` — the
   base Risk entity attached through proposal review, so "we think this
   supplier is shaky" is a reviewed judgment, not a vibe.
+- **Operations routing ships as workflows**:
+  `analyze_operations_routing -> apply_operations_routing ->
+  propose_risk_attaches_to_supplier` creates response work, applies base risks,
+  and proposes reviewed supplier-risk attachments.
 - **Catalog lifecycle is its own vocabulary** (`catalog_status`:
   active/deprecated/obsolete) because the base owns `lifecycle_status`.
 - **Contracts are deliberately thin** (`type: json` plus prose row
   contracts); providers own and enforce their row shapes.
-- `fetch_inventory_positions` with `base_url: null` (the default) reads the
-  bundled inventory fixture — the offline/demo mode; point it at a real
-  inventory API to go live.
+- **Acquisition lives outside the workflow boundary**:
+  `load_inventory_positions` reads the pinned fixture; for live positions,
+  `scripts/fetch_inventory.py` owns the API call and auth, and the reviewed
+  JSON feeds the sync workflow. Providers never fetch.
 
 ## Ontology
 
@@ -86,7 +93,41 @@ flowchart LR
   linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14 stroke:#2c5f8a,stroke-width:2px
   linkStyle 15,16,17,18 stroke:#e74c3c,stroke-width:2px
 ```
+
+**Diagram legend:** blue node = canonical entity (deterministic writes); dashed grey node = base-kit entity shown for seam context; solid edge = deterministic relationship; dotted edge = governed relationship.
 <!-- CRUXIBLE:END ontology -->
+
+<!-- CRUXIBLE:BEGIN schema-catalog -->
+| Entity | Properties | Description |
+| --- | --- | --- |
+| `Assembly` | `assembly_id: string (pk)`, `name: string?`, `revision: string?`, `lifecycle_status: catalog_status?`, `criticality: criticality?`, `category: string?` | Buildable subassembly or assembly composed of components and lower-level assemblies. |
+| `BufferAssessment` | `buffer_assessment_id: string (pk)`, `item_type: buffer_item_type?`, `item_id: string?`, `product_id: string?`, `bom_variant_id: string?`, `net_available: float?`, `required_per_unit: float?`, `open_demand_units: float?`, `estimated_consumption_rate: float?`, `rate_period: rate_period?`, `coverage_duration: float?`, `coverage_unit: duration_unit?`, `horizon_duration: float?`, `horizon_unit: duration_unit?`, `buffer_state: buffer_state?`, `unit_of_measure: string?`, `as_of: date?`, `rationale: string?` | Reusable coverage assessment of whether inventory covers expected demand for an item in a product/BOM context. |
+| `Component` | `component_id: string (pk)`, `name: string?`, `component_kind: component_kind?`, `manufacturer: string?`, `mpn: string?`, `revision: string?`, `lifecycle_status: catalog_status?`, `criticality: criticality?`, `category: string?` | Raw material or discrete part that rolls up into assemblies. manufacturer/mpn carry the real-world part identity from open-hardware BOMs; the Supplier edge carries who we buy it from. |
+| `Incident` | `incident_id: string (pk)`, `title: string?`, `severity: incident_severity?`, `scope_type: incident_scope_type?`, `scope_id: string?`, `status: incident_status?`, `reported_at: date?`, `closed_at: date?`, `summary: string?` | Supplier-side disruption or geography-level supply event. |
+| `InventoryPosition` | `inventory_position_id: string (pk)`, `item_type: inventory_item_type?`, `item_id: string?`, `location_id: string?`, `quantity_on_hand: float?`, `quantity_allocated: float?`, `net_available: float?`, `unit_of_measure: string?`, `as_of: date?` | Time-stamped inventory evidence for an item at a location. |
+| `Location` | `location_id: string (pk)`, `name: string?`, `location_type: location_type?`, `geography: string?` | Plant, warehouse, supplier, or in-transit location holding inventory. |
+| `Product` | `product_id: string (pk)`, `sku: string?`, `name: string?`, `lifecycle_status: catalog_status?` | Finished good shipped to customers. |
+| `Shipment` | `shipment_id: string (pk)`, `customer_id: string?`, `status: shipment_status?`, `ship_date: date?`, `eta: date?` | Outbound shipment of products to a customer. |
+| `Supplier` | `supplier_id: string (pk)`, `name: string?`, `primary_geography: string?`, `tier_hint: string?` | External supplier of raw materials, parts, or assemblies. |
+
+### Enums
+
+| Enum | Values |
+| --- | --- |
+| `buffer_item_type` | component, assembly |
+| `buffer_state` | no_buffer, partial_buffer, sufficient_buffer, unknown |
+| `catalog_status` | active, deprecated, obsolete |
+| `component_kind` | raw_material, part |
+| `criticality` | critical, standard, low |
+| `duration_unit` | days, weeks, months |
+| `incident_scope_type` | supplier, geography |
+| `incident_severity` | critical, high, medium, low |
+| `incident_status` | open, monitoring, closed |
+| `inventory_item_type` | component, assembly, product |
+| `location_type` | plant, warehouse, supplier, in_transit |
+| `rate_period` | day, week, month |
+| `shipment_status` | in_flight, delivered, cancelled |
+<!-- CRUXIBLE:END schema-catalog -->
 
 ## Workflows
 
@@ -96,26 +137,44 @@ flowchart LR
   classDef canonicalWorkflow fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef governedWorkflow fill:#e67e22,stroke:#a0521c,color:#fff
 
-  workflow_pipeline_build_seed_state["1. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_ingest_incidents["2. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_sync_inventory_positions["3. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_sync_product_buffer_assessments["4. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_propose_incident_impacts_assembly["5. Incident Impacts Assembly<br/>Governed proposal"]
-  workflow_pipeline_propose_incident_impacts_component["6. Incident Impacts Component<br/>Governed proposal"]
-  workflow_pipeline_propose_incident_impacts_supplier["7. Incident Impacts Supplier<br/>Governed proposal"]
+  workflow_pipeline_apply_operations_routing["1. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_build_seed_state["2. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_ingest_incidents["3. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_sync_inventory_positions["4. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_sync_product_buffer_assessments["5. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_propose_incident_impacts_assembly["6. Incident Impacts Assembly<br/>Governed proposal"]
+  workflow_pipeline_propose_incident_impacts_component["7. Incident Impacts Component<br/>Governed proposal"]
+  workflow_pipeline_propose_incident_impacts_supplier["8. Incident Impacts Supplier<br/>Governed proposal"]
+  workflow_pipeline_propose_risk_attaches_to_supplier["9. Risk Attaches To Supplier<br/>Governed proposal"]
+  workflow_pipeline_apply_operations_routing --> workflow_pipeline_build_seed_state
   workflow_pipeline_build_seed_state --> workflow_pipeline_ingest_incidents
   workflow_pipeline_ingest_incidents --> workflow_pipeline_sync_inventory_positions
   workflow_pipeline_sync_inventory_positions --> workflow_pipeline_sync_product_buffer_assessments
   workflow_pipeline_sync_product_buffer_assessments --> workflow_pipeline_propose_incident_impacts_assembly
   workflow_pipeline_propose_incident_impacts_assembly --> workflow_pipeline_propose_incident_impacts_component
   workflow_pipeline_propose_incident_impacts_component --> workflow_pipeline_propose_incident_impacts_supplier
-  class workflow_pipeline_build_seed_state,workflow_pipeline_ingest_incidents,workflow_pipeline_sync_inventory_positions,workflow_pipeline_sync_product_buffer_assessments canonicalWorkflow
-  class workflow_pipeline_propose_incident_impacts_assembly,workflow_pipeline_propose_incident_impacts_component,workflow_pipeline_propose_incident_impacts_supplier governedWorkflow
+  workflow_pipeline_propose_incident_impacts_supplier --> workflow_pipeline_propose_risk_attaches_to_supplier
+  class workflow_pipeline_apply_operations_routing,workflow_pipeline_build_seed_state,workflow_pipeline_ingest_incidents,workflow_pipeline_sync_inventory_positions,workflow_pipeline_sync_product_buffer_assessments canonicalWorkflow
+  class workflow_pipeline_propose_incident_impacts_assembly,workflow_pipeline_propose_incident_impacts_component,workflow_pipeline_propose_incident_impacts_supplier,workflow_pipeline_propose_risk_attaches_to_supplier governedWorkflow
 ```
 <!-- CRUXIBLE:END workflow-pipeline -->
 
 <!-- CRUXIBLE:BEGIN workflow-summary -->
-### 1. Build Seed State
+### 1. Apply Operations Routing
+
+**Role:** Canonical seed
+
+**Input context**
+- None (seeds canonical state)
+
+**Result**
+- Canonical entities: Risk, Work Item
+- Canonical relationships: Work Item Addresses Incident
+
+**Provider source**
+- -
+
+### 2. Build Seed State
 
 **Role:** Canonical seed
 
@@ -129,7 +188,7 @@ flowchart LR
 **Provider source**
 - Load Supply Chain Seed Data (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::load_seed_data`; artifact: Supply Chain Seed Bundle
 
-### 2. Ingest Incidents
+### 3. Ingest Incidents
 
 **Role:** Canonical seed
 
@@ -142,7 +201,7 @@ flowchart LR
 **Provider source**
 - Load Incident Feed (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::load_incident_feed`; artifact: Supply Chain Seed Bundle
 
-### 3. Sync Inventory Positions
+### 4. Sync Inventory Positions
 
 **Role:** Canonical seed
 
@@ -156,7 +215,7 @@ flowchart LR
 **Provider source**
 - -
 
-### 4. Sync Product Buffer Assessments
+### 5. Sync Product Buffer Assessments
 
 **Role:** Canonical seed
 
@@ -170,7 +229,7 @@ flowchart LR
 **Provider source**
 - -
 
-### 5. Propose Incident Impacts Assembly
+### 6. Propose Incident Impacts Assembly
 
 **Role:** Governed proposal
 
@@ -183,7 +242,7 @@ flowchart LR
 **Provider source**
 - Assess Incident Assembly Cascade (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_incident_assembly_cascade`
 
-### 6. Propose Incident Impacts Component
+### 7. Propose Incident Impacts Component
 
 **Role:** Governed proposal
 
@@ -196,7 +255,7 @@ flowchart LR
 **Provider source**
 - Assess Incident Component Cascade (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_incident_component_cascade`
 
-### 7. Propose Incident Impacts Supplier
+### 8. Propose Incident Impacts Supplier
 
 **Role:** Governed proposal
 
@@ -209,7 +268,33 @@ flowchart LR
 **Provider source**
 - Assess Incident Supplier Scope (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_incident_supplier_scope`
 
-### 8. Assess Incident Product Exposure
+### 9. Propose Risk Attaches To Supplier
+
+**Role:** Governed proposal
+
+**Input context**
+- Query context: Incident, Risk, Supplier, Incident Impacts Assembly, Incident Impacts Component, Incident Impacts Supplier
+
+**Result**
+- Proposed relationships: Risk Attaches To Supplier
+
+**Provider source**
+- Assess Supplier Risk Attachments (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_supplier_risk_attachments`; artifact: Supply Chain Seed Bundle
+
+### 10. Analyze Operations Routing
+
+**Role:** Utility
+
+**Input context**
+- None
+
+**Result**
+- Provider output: Analyze Operations Routing
+
+**Provider source**
+- Analyze Operations Routing (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::analyze_operations_routing`; artifact: Supply Chain Seed Bundle
+
+### 11. Assess Incident Product Exposure
 
 **Role:** Utility
 
@@ -222,7 +307,7 @@ flowchart LR
 **Provider source**
 - Assess Incident Product Exposure (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_incident_product_exposure`
 
-### 9. Refresh Buffer Assessments
+### 12. Refresh Buffer Assessments
 
 **Role:** Utility
 
@@ -233,9 +318,9 @@ flowchart LR
 - Provider output: Assess Buffer Coverage
 
 **Provider source**
-- Assess Buffer Coverage (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_buffer_coverage`
+- Assess Buffer Coverage (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_buffer_coverage`; artifact: Supply Chain Seed Bundle
 
-### 10. Refresh Inventory Positions
+### 13. Refresh Inventory Positions
 
 **Role:** Utility
 
@@ -243,11 +328,157 @@ flowchart LR
 - None
 
 **Result**
-- Provider output: Fetch Inventory Positions
+- Provider output: Load Inventory Positions
 
 **Provider source**
-- Fetch Inventory Positions (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::fetch_inventory_positions`; non-deterministic
+- Load Inventory Positions (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::load_inventory_positions`; artifact: Supply Chain Seed Bundle
 <!-- CRUXIBLE:END workflow-summary -->
+
+<!-- CRUXIBLE:BEGIN provider-contracts -->
+### `analyze_operations_routing` (deterministic)
+
+- Ref: `kit://providers/supply_chain_blast_radius.py::analyze_operations_routing`
+- Reads artifact: `supply_chain_seed_bundle` (`kits/supply-chain-blast-radius/data/seed`)
+- Purpose: Load deterministic base WorkItem/Risk routing rows from the bundled operations fixture.
+
+Called by workflow `analyze_operations_routing`, step `routing`:
+
+- Input: none (empty payload).
+
+### `assess_buffer_coverage` (deterministic)
+
+- Ref: `kit://providers/supply_chain_blast_radius.py::assess_buffer_coverage`
+- Reads artifact: `supply_chain_seed_bundle` (`kits/supply-chain-blast-radius/data/seed`)
+- Purpose: Compute reusable buffer coverage assessments from inventory, BOM, and demand context.
+
+Called by workflow `refresh_buffer_assessments`, step `assessments`:
+
+- Input `components` <- query step `components` (`results`)
+- Input `assemblies` <- query step `assemblies` (`results`)
+- Input `products` <- query step `products` (`results`)
+- Input `inventory_positions` <- query step `inventory_positions` (`results`)
+- Input `component_inventory_position_edges` <- query step `component_inventory` (`results`)
+- Input `assembly_inventory_position_edges` <- query step `assembly_inventory` (`results`)
+- Input `component_part_of_assembly_edges` <- query step `component_assembly` (`results`)
+- Input `assembly_part_of_assembly_edges` <- query step `assembly_recursive` (`results`)
+- Input `assembly_part_of_product_edges` <- query step `assembly_product` (`results`)
+- Input `demand_context` <- workflow input `demand_context`
+
+### `assess_incident_assembly_cascade` (deterministic)
+
+- Ref: `kit://providers/supply_chain_blast_radius.py::assess_incident_assembly_cascade`
+- Purpose: Cascade impacted suppliers to directly supplied assemblies, downgrading where viable alternate sourcing exists.
+
+Called by workflow `propose_incident_impacts_assembly`, step `assessments`:
+
+- Input `impacted_supplier_edges` <- query step `impacted_supplier_edges` (`results`)
+- Input `supplier_supplies_assembly_edges` <- query step `assembly_supply_edges` (`results`)
+- Input `assemblies` <- query step `assemblies` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`incident_impacts_assembly`): required row keys: `incident_id` (from id), `assembly_id` (to id), `impacted_supplier_id`, `alternate_state`, `rationale`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `assess_incident_component_cascade` (deterministic)
+
+- Ref: `kit://providers/supply_chain_blast_radius.py::assess_incident_component_cascade`
+- Purpose: Cascade impacted suppliers to components, downgrading where viable alternate sourcing exists.
+
+Called by workflow `propose_incident_impacts_component`, step `assessments`:
+
+- Input `impacted_supplier_edges` <- query step `impacted_supplier_edges` (`results`)
+- Input `supplier_supplies_component_edges` <- query step `supplies_edges` (`results`)
+- Input `components` <- query step `components` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`incident_impacts_component`): required row keys: `incident_id` (from id), `component_id` (to id), `alternate_state`, `rationale`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `assess_incident_product_exposure` (deterministic)
+
+- Ref: `kit://providers/supply_chain_blast_radius.py::assess_incident_product_exposure`
+- Purpose: Roll accepted impacts through the BOM hierarchy to derived product exposure context.
+
+Called by workflow `assess_incident_product_exposure`, step `assessments`:
+
+- Input `impacted_component_edges` <- query step `impacted_component_edges` (`results`)
+- Input `impacted_assembly_edges` <- query step `impacted_assembly_edges` (`results`)
+- Input `component_part_of_assembly_edges` <- query step `component_assembly` (`results`)
+- Input `assembly_part_of_assembly_edges` <- query step `assembly_recursive` (`results`)
+- Input `assembly_part_of_product_edges` <- query step `assembly_product` (`results`)
+- Input `buffer_assessments` <- query step `buffer_assessments` (`results`)
+- Input `component_buffer_assessment_edges` <- query step `component_buffers` (`results`)
+- Input `assembly_buffer_assessment_edges` <- query step `assembly_buffers` (`results`)
+- Input `product_buffer_assessment_edges` <- query step `product_buffers` (`results`)
+- Input `assemblies` <- query step `assemblies` (`results`)
+- Input `products` <- query step `products` (`results`)
+
+### `assess_incident_supplier_scope` (deterministic)
+
+- Ref: `kit://providers/supply_chain_blast_radius.py::assess_incident_supplier_scope`
+- Purpose: Match each open incident's scope to suppliers via direct or geography basis.
+
+Called by workflow `propose_incident_impacts_supplier`, step `assessments`:
+
+- Input `incidents` <- query step `incidents` (`results`)
+- Input `suppliers` <- query step `suppliers` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`incident_impacts_supplier`): required row keys: `incident_id` (from id), `supplier_id` (to id), `match_basis`, `rationale`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `assess_supplier_risk_attachments` (deterministic)
+
+- Ref: `kit://providers/supply_chain_blast_radius.py::assess_supplier_risk_attachments`
+- Reads artifact: `supply_chain_seed_bundle` (`kits/supply-chain-blast-radius/data/seed`)
+- Purpose: Propose governed supplier-risk attachments from routed risks and incident cascade evidence.
+
+Called by workflow `propose_risk_attaches_to_supplier`, step `assessments`:
+
+- Input `incidents` <- query step `incidents` (`results`)
+- Input `suppliers` <- query step `suppliers` (`results`)
+- Input `risks` <- query step `risks` (`results`)
+- Input `impacted_supplier_edges` <- query step `impacted_supplier_edges` (`results`)
+- Input `impacted_component_edges` <- query step `impacted_component_edges` (`results`)
+- Input `impacted_assembly_edges` <- query step `impacted_assembly_edges` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`risk_attaches_to_supplier`): required row keys: `risk_id` (from id), `supplier_id` (to id), `impact_basis`.
+
+### `load_incident_feed` (deterministic)
+
+- Ref: `kit://providers/supply_chain_blast_radius.py::load_incident_feed`
+- Reads artifact: `supply_chain_seed_bundle` (`kits/supply-chain-blast-radius/data/seed`)
+- Purpose: Load incident records from the bundled feed for ingestion as Incident entities.
+
+Called by workflow `ingest_incidents`, step `feed`:
+
+- Input: none (empty payload).
+- Output rows -> `make_entities` step `incidents` (`Incident`): required row keys: `incident_id` (entity id), `title`, `severity`, `scope_type`, `scope_id`, `status`, `reported_at`, `closed_at`, `summary`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `load_inventory_positions` (deterministic)
+
+- Ref: `kit://providers/supply_chain_blast_radius.py::load_inventory_positions`
+- Reads artifact: `supply_chain_seed_bundle` (`kits/supply-chain-blast-radius/data/seed`)
+- Purpose: Load the pinned inventory fixture with the requested filters applied. Live acquisition deliberately lives outside the workflow boundary: pull positions with scripts/fetch_inventory.py (which owns API auth) and apply the reviewed rows through the sync workflow.
+
+Called by workflow `refresh_inventory_positions`, step `inventory`:
+
+- Input `item_ids` <- workflow input `item_ids`
+- Input `item_types` <- workflow input `item_types`
+- Input `location_ids` <- workflow input `location_ids`
+- Input `as_of` <- workflow input `as_of`
+
+### `load_supply_chain_seed_data` (deterministic)
+
+- Ref: `kit://providers/supply_chain_blast_radius.py::load_seed_data`
+- Reads artifact: `supply_chain_seed_bundle` (`kits/supply-chain-blast-radius/data/seed`)
+- Purpose: Load base-world entities and deterministic edges from the seed bundle.
+
+Called by workflow `build_seed_state`, step `seed`:
+
+- Input: none (empty payload).
+- Output rows -> `make_entities` step `suppliers` (`Supplier`): required row keys: `supplier_id` (entity id), `name`, `primary_geography`, `tier_hint`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `components` (`Component`): required row keys: `component_id` (entity id), `name`, `component_kind`, `manufacturer`, `mpn`, `revision`, `lifecycle_status`, `criticality`, `category`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `assemblies` (`Assembly`): required row keys: `assembly_id` (entity id), `name`, `revision`, `lifecycle_status`, `criticality`, `category`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `products` (`Product`): required row keys: `product_id` (entity id), `sku`, `name`, `lifecycle_status`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `shipments` (`Shipment`): required row keys: `shipment_id` (entity id), `customer_id`, `status`, `ship_date`, `eta`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `supplies_edges` (`supplier_supplies_component`): required row keys: `supplier_id` (from id), `component_id` (to id), `lead_time_days`, `qualification_status`, `sourcing_role`, `priority_rank`, `allocation_pct`, `activation_state`, `capacity_units_per_week`, `effective_from`, `effective_to`, `last_verified_at`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `assembly_supply_edges` (`supplier_supplies_assembly`): required row keys: `supplier_id` (from id), `assembly_id` (to id), `lead_time_days`, `qualification_status`, `sourcing_role`, `priority_rank`, `allocation_pct`, `activation_state`, `capacity_units_per_week`, `effective_from`, `effective_to`, `last_verified_at`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `component_assembly_edges` (`component_part_of_assembly`): required row keys: `component_id` (from id), `assembly_id` (to id), `quantity`, `bom_variant_id`, `plant_id`, `effective_from`, `effective_to`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `assembly_recursive_edges` (`assembly_part_of_assembly`): required row keys: `child_assembly_id` (from id), `parent_assembly_id` (to id), `quantity`, `bom_variant_id`, `plant_id`, `effective_from`, `effective_to`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `assembly_product_edges` (`assembly_part_of_product`): required row keys: `assembly_id` (from id), `product_id` (to id), `quantity`, `bom_variant_id`, `plant_id`, `effective_from`, `effective_to`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `shipment_edges` (`product_in_shipment`): required row keys: `product_id` (from id), `shipment_id` (to id), `qty`. `properties: auto` — rows must carry every key; null for unset optionals.
+<!-- CRUXIBLE:END provider-contracts -->
 
 ## Governance
 
@@ -257,7 +488,7 @@ flowchart LR
 | Incident Impacts Assembly | Incident -> Assembly | Workflow: Propose Incident Impacts Assembly | Incident Assembly Cascade | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Incident Assembly Resolution |
 | Incident Impacts Component | Incident -> Component | Workflow: Propose Incident Impacts Component | Incident Component Cascade | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Incident Component Resolution |
 | Incident Impacts Supplier | Incident -> Supplier | Workflow: Propose Incident Impacts Supplier | Incident Supplier Scope Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Incident Supplier Resolution |
-| Risk Attaches To Supplier | Risk -> Supplier | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Risk Attaches To Supplier | Risk -> Supplier | Workflow: Propose Risk Attaches To Supplier | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 <!-- CRUXIBLE:END governance-table -->
 
 <!-- CRUXIBLE:BEGIN mutation-guards -->
@@ -270,82 +501,14 @@ No mutation guards declared.
 | `incident_assembly_cascade` | required | yes | Incident Impacts Assembly | - |
 | `incident_component_cascade` | required | yes | Incident Impacts Component | - |
 | `incident_supplier_scope_match` | required | yes | Incident Impacts Supplier | - |
-| `maintainer_judgment` | advisory | yes | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Attaches To Supplier, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
-| `source_evidence` | required | yes | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Attaches To Supplier, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
+| `maintainer_judgment` | advisory | yes | Risk Attaches To Supplier, + 13 base relationships | - |
+| `source_evidence` | required | yes | Risk Attaches To Supplier, + 13 base relationships | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Queries
 
-<!-- CRUXIBLE:BEGIN query-map -->
-```mermaid
-flowchart LR
-  classDef queryEntity fill:#ecfdf5,stroke:#047857,color:#064e3b
-
-  query_entity_Actor["Actor"]
-  query_entity_AnyEntity["Any Entity"]
-  query_entity_Assembly["Assembly"]
-  query_entity_BufferAssessment["Buffer Assessment"]
-  query_entity_Collection_query["Collection Query"]
-  query_entity_Component["Component"]
-  query_entity_Decision["Decision"]
-  query_entity_Incident["Incident"]
-  query_entity_InventoryPosition["Inventory Position"]
-  query_entity_OpenQuestion["Open Question"]
-  query_entity_Product["Product"]
-  query_entity_ReviewRequest["Review Request"]
-  query_entity_Risk["Risk"]
-  query_entity_Shipment["Shipment"]
-  query_entity_StateNote["State Note"]
-  query_entity_SubjectRef["Subject Ref"]
-  query_entity_Supplier["Supplier"]
-  query_entity_WorkItem["Work Item"]
-  class query_entity_Actor,query_entity_AnyEntity,query_entity_Assembly,query_entity_BufferAssessment,query_entity_Collection_query,query_entity_Component,query_entity_Decision,query_entity_Incident,query_entity_InventoryPosition,query_entity_OpenQuestion,query_entity_Product,query_entity_ReviewRequest,query_entity_Risk,query_entity_Shipment,query_entity_StateNote,query_entity_SubjectRef,query_entity_Supplier,query_entity_WorkItem queryEntity
-  query_entity_Actor --> query_entity_WorkItem
-  query_entity_Assembly --> query_entity_Assembly
-  query_entity_Assembly --> query_entity_Component
-  query_entity_Assembly --> query_entity_Incident
-  query_entity_Assembly --> query_entity_InventoryPosition
-  query_entity_Collection_query --> query_entity_Decision
-  query_entity_Collection_query --> query_entity_OpenQuestion
-  query_entity_Collection_query --> query_entity_ReviewRequest
-  query_entity_Collection_query --> query_entity_Risk
-  query_entity_Collection_query --> query_entity_StateNote
-  query_entity_Collection_query --> query_entity_WorkItem
-  query_entity_Component --> query_entity_Assembly
-  query_entity_Component --> query_entity_InventoryPosition
-  query_entity_Incident --> query_entity_AnyEntity
-  query_entity_Incident --> query_entity_Assembly
-  query_entity_Incident --> query_entity_Component
-  query_entity_Incident --> query_entity_Product
-  query_entity_Incident --> query_entity_Shipment
-  query_entity_Incident --> query_entity_Supplier
-  query_entity_Incident --> query_entity_WorkItem
-  query_entity_Product --> query_entity_Assembly
-  query_entity_Product --> query_entity_BufferAssessment
-  query_entity_Product --> query_entity_Incident
-  query_entity_Product --> query_entity_Shipment
-  query_entity_ReviewRequest --> query_entity_StateNote
-  query_entity_Shipment --> query_entity_Product
-  query_entity_StateNote --> query_entity_AnyEntity
-  query_entity_SubjectRef --> query_entity_AnyEntity
-  query_entity_Supplier --> query_entity_AnyEntity
-  query_entity_Supplier --> query_entity_Assembly
-  query_entity_Supplier --> query_entity_Component
-  query_entity_Supplier --> query_entity_Incident
-  query_entity_WorkItem --> query_entity_AnyEntity
-  query_entity_WorkItem --> query_entity_ReviewRequest
-  query_entity_WorkItem --> query_entity_StateNote
-  query_entity_WorkItem --> query_entity_WorkItem
-```
-<!-- CRUXIBLE:END query-map -->
 
 <!-- CRUXIBLE:BEGIN query-catalog -->
-### Actor
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| Actor Work Queue | traversal | Work Item | reviewable | Work Item Owned By Actor (Incoming) | Work items owned by an actor with latest reviews, dependency counts, blockers, subjects. |
-
 ### Assembly
 
 | Query | Mode | Returns | State | Traversal | Purpose |
@@ -354,20 +517,6 @@ flowchart LR
 | Assembly Child Components | traversal | Component | live | Component Part Of Assembly (Incoming) | Direct child components of this assembly. |
 | Assembly Impacting Incidents | traversal | Incident | reviewable | Incident Impacts Assembly (Incoming) | Incidents judged to impact this assembly directly. |
 | Assembly Inventory Positions | traversal | Inventory Position | live | Assembly Inventory Position (Outgoing) | Inventory positions for this assembly. |
-
-### Collection Query
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| Active Risks | collection | Risk | live |  | Active operational risks. |
-| Blocked Work Items | collection | Work Item | reviewable |  | Work items marked blocked, with risk/open-question blocker context. |
-| Changes Requested Reviews | collection | Review Request | reviewable |  | Review requests sent back with changes requested -- the implementer's rework queue, distinct from the reviewer-facing review_queue. |
-| Open Questions Needing Review | collection | Open Question | live |  | Planned/active open questions needing review. |
-| Proposed Decisions | collection | Decision | live |  | Proposed decisions awaiting acceptance/rejection/deferral. |
-| Recent State Notes | collection | State Note | reviewable |  | Recent operation-state notes, corrections, rationale/implementation/review notes. |
-| Review Queue | collection | Review Request | reviewable |  | Review requests awaiting a reviewer -- requested or in review. Reviews sent back for rework live in changes_requested_reviews. |
-| Superseded Decisions | collection | Decision | not-live |  | Decision retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
-| Superseded Work Items | collection | Work Item | not-live |  | WorkItem retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
 
 ### Component
 
@@ -404,29 +553,11 @@ flowchart LR
 | Product Shipments | traversal | Shipment | live | Product In Shipment (Outgoing) | Shipments containing this product. |
 | Product Top Level Assemblies | traversal | Assembly | live | Assembly Part Of Product (Incoming) | Top-level assemblies in this product's BOM. |
 
-### Review Request
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| State Notes For Review Request | traversal | State Note | reviewable | State Note About Review Request (Incoming) | The review thread: verdict and finding notes attached to a review request, newest first. This is the read that replaces scrolling a notes blob. |
-
 ### Shipment
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Shipment Products | traversal | Product | live | Product In Shipment (Incoming) | Products contained in this shipment. |
-
-### State Note
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| State Note Context | traversal | Any Entity | reviewable | State Note Authored By Actor \| State Note About Work Item \| State Note About Review Request \| State Note About Decision \| State Note About Risk \| State Note About Open Question \| State Note About Subject \| State Note About Actor \| State Note Supersedes State Note \| State Note Resolves State Note (Both) | Full context for a state note (targets, author, supersession). |
-
-### Subject Ref
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| Subject Operation Context | traversal | Any Entity | reviewable | State Note About Subject \| Work Item Targets Subject \| Decision Affects Subject \| Risk Attaches To Subject \| Open Question Concerns Subject (Both) | Work, decisions, risks, open questions attached to a subject ref. |
 
 ### Supplier
 
@@ -437,15 +568,7 @@ flowchart LR
 | Supplier Supplied Assemblies | traversal | Assembly | live | Supplier Supplies Assembly (Outgoing) | Assemblies this supplier supplies directly. |
 | Supplier Supplied Components | traversal | Component | live | Supplier Supplies Component (Outgoing) | Components this supplier is qualified to supply. |
 
-### Work Item
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| Approved Reviews For Work Item | traversal | Review Request | live | Review Request For Work Item (Incoming) | Approved review requests for a work item. Used by the closed-transition guard. |
-| State Notes For Work Item | traversal | State Note | reviewable | State Note About Work Item (Incoming) | State notes attached to a work item, newest first. |
-| Work Item Context | traversal | Any Entity | reviewable | Work Item Owned By Actor \| Review Request For Work Item \| State Note About Work Item \| Work Item Depends On Work Item \| Work Item Part Of Work Item \| Work Item Spawned From Work Item \| Work Item Supersedes Work Item \| Risk Blocks Work Item \| Open Question Blocks Work Item \| Work Item Mitigates Risk \| Work Item Answers Open Question \| Decision Constrains Work Item \| Work Item Targets Subject \| Work Item Addresses Incident (Both) | From a work item, inspect dependencies, blockers, reviews, composition, lineage, decisions, owner, subjects. all_adjacent expands against the final composed config, so on a composed instance this query also traverses overlay seam edges (e.g. project-domain's roadmap, release, milestone, and area relationships). |
-| Work Item Lineage Context | traversal | Work Item | reviewable | Work Item Spawned From Work Item \| Work Item Supersedes Work Item (Both, depth=5) | Work item lineage/replacement context, excluding sequencing deps. |
-| Work Item Rollup Context | traversal | Work Item | reviewable | Work Item Part Of Work Item (Incoming, depth=5) | Child/descendant work items under a parent. |
+Plus 18 queries inherited from the base kit — see its README.
 <!-- CRUXIBLE:END query-catalog -->
 
 ## Quality Rules
@@ -462,20 +585,10 @@ No configured constraints.
 | `components_have_kind` | Property | Component.component_kind | Error | Required |
 | `components_have_supplier` | Cardinality | Component -> Supplier Supplies Component (in) | Warning | min `1` |
 | `critical_components_have_redundancy` | Cardinality | Component -> Supplier Supplies Component (in) | Warning | min `2` |
-| `decision_supersessions_have_basis` | Property | Decision Supersedes Decision.supersession_basis | Warning | Non Empty |
-| `decision_work_constraints_have_type` | Property | Decision Constrains Work Item.impact_type | Warning | Required |
-| `open_question_work_blockers_have_basis` | Property | Open Question Blocks Work Item.blocking_basis | Warning | Non Empty |
 | `products_have_assembly_bom` | Cardinality | Product -> Assembly Part Of Product (in) | Error | min `1` |
-| `review_requests_review_work` | Cardinality | Review Request -> Review Request For Work Item (out) | Warning | min `1` |
-| `risk_work_blockers_have_basis` | Property | Risk Blocks Work Item.blocking_basis | Warning | Non Empty |
-| `state_note_supersessions_have_basis` | Property | State Note Supersedes State Note.supersession_basis | Warning | Non Empty |
-| `state_notes_have_author` | Cardinality | State Note -> State Note Authored By Actor (out) | Warning | min `1` |
 | `supplier_risk_attachments_have_basis` | Property | Risk Attaches To Supplier.impact_basis | Warning | Non Empty |
-| `work_dependencies_have_basis` | Property | Work Item Depends On Work Item.dependency_basis | Warning | Non Empty |
-| `work_item_part_of_single_parent` | Cardinality | Work Item -> Work Item Part Of Work Item (out) | Warning | max `1` |
-| `work_item_spawned_from_single_origin` | Cardinality | Work Item -> Work Item Spawned From Work Item (out) | Warning | max `1` |
-| `work_items_have_owner` | Cardinality | Work Item -> Work Item Owned By Actor (out) | Warning | min `1` |
-| `work_supersessions_have_basis` | Property | Work Item Supersedes Work Item.supersession_basis | Warning | Non Empty |
+
+Plus 12 quality checks inherited from the base kit — see its README.
 <!-- CRUXIBLE:END quality-rules -->
 
 ## Learning Loops

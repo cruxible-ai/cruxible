@@ -1,0 +1,26 @@
+{
+  "as_of": "2026-07-01",
+  "bom_variant_id": "voron-2.4-r2-350-ldo",
+  "product_bom_variant_ids": {
+    "PRD-V24R2-300-LITE": "voron-2.4-r2-300-lite",
+    "PRD-V24R2-350-HIW": "voron-2.4-r2-350-hiwin",
+    "PRD-V24R2-350-LDO": "voron-2.4-r2-350-ldo"
+  },
+  "horizon_duration": 14,
+  "horizon_unit": "days",
+  "product_open_demand_units": {
+    "PRD-V24R2-300-LITE": 6,
+    "PRD-V24R2-350-HIW": 8,
+    "PRD-V24R2-350-LDO": 18
+  },
+  "item_consumption_rates": {
+    "component:C-MOTOR-LDO-42STH40-1684AC": {"rate": 5.15, "period": "day"},
+    "component:C-MOTOR-LDO-42STH48-2004MAH": {"rate": 2.6, "period": "day"},
+    "component:C-MOTOR-LDO-36STH20-1004AHG": {"rate": 1.3, "period": "day"},
+    "component:C-BOARD-BTT-OCTOPUS-V11": {"rate": 1.25, "period": "day"},
+    "component:C-RAIL-HIWIN-MGN12H-350": {"rate": 2.0, "period": "day"},
+    "component:C-RAIL-HIWIN-MGN9H-350": {"rate": 1.0, "period": "day"},
+    "assembly:A-V24-TOOLHEAD": {"rate": 1.25, "period": "day"},
+    "assembly:A-V24-WIRING": {"rate": 1.25, "period": "day"}
+  }
+}

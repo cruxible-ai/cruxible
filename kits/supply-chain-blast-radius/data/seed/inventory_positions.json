@@ -1,0 +1,74 @@
+{
+  "locations": [
+    {
+      "location_id": "L-LAX-INTRANSIT",
+      "name": "In-transit ocean container LAX-4481",
+      "location_type": "in_transit",
+      "geography": "Pacific ocean to Los Angeles, United States"
+    },
+    {
+      "location_id": "L-SEA-FINAL",
+      "name": "Aurora Additive final assembly",
+      "location_type": "plant",
+      "geography": "Seattle, Washington, United States"
+    },
+    {
+      "location_id": "L-SEA-WH",
+      "name": "Aurora Additive component warehouse",
+      "location_type": "warehouse",
+      "geography": "Kent, Washington, United States"
+    },
+    {
+      "location_id": "L-SZX-ORIGIN",
+      "name": "Shenzhen origin consolidation",
+      "location_type": "supplier",
+      "geography": "Shenzhen, Guangdong, China"
+    }
+  ],
+  "inventory_positions": [
+    {"inventory_position_id": "INV-C-MOTOR-LDO-Z-SEA-20260701", "item_type": "component", "item_id": "C-MOTOR-LDO-42STH40-1684AC", "location_id": "L-SEA-WH", "quantity_on_hand": 14.0, "quantity_allocated": 8.0, "net_available": 6.0, "unit_of_measure": "ea", "as_of": "2026-07-01"},
+    {"inventory_position_id": "INV-C-MOTOR-LDO-Z-LAX-20260701", "item_type": "component", "item_id": "C-MOTOR-LDO-42STH40-1684AC", "location_id": "L-LAX-INTRANSIT", "quantity_on_hand": 16.0, "quantity_allocated": 12.0, "net_available": 4.0, "unit_of_measure": "ea", "as_of": "2026-07-01"},
+    {"inventory_position_id": "INV-C-MOTOR-LDO-XY-SEA-20260701", "item_type": "component", "item_id": "C-MOTOR-LDO-42STH48-2004MAH", "location_id": "L-SEA-WH", "quantity_on_hand": 22.0, "quantity_allocated": 10.0, "net_available": 12.0, "unit_of_measure": "ea", "as_of": "2026-07-01"},
+    {"inventory_position_id": "INV-C-MOTOR-LDO-EXT-SEA-20260701", "item_type": "component", "item_id": "C-MOTOR-LDO-36STH20-1004AHG", "location_id": "L-SEA-WH", "quantity_on_hand": 8.0, "quantity_allocated": 5.0, "net_available": 3.0, "unit_of_measure": "ea", "as_of": "2026-07-01"},
+    {"inventory_position_id": "INV-C-BOARD-OCTO-SEA-20260701", "item_type": "component", "item_id": "C-BOARD-BTT-OCTOPUS-V11", "location_id": "L-SEA-WH", "quantity_on_hand": 36.0, "quantity_allocated": 12.0, "net_available": 24.0, "unit_of_measure": "ea", "as_of": "2026-07-01"},
+    {"inventory_position_id": "INV-C-RAIL-HIWIN-MGN12-SEA-20260701", "item_type": "component", "item_id": "C-RAIL-HIWIN-MGN12H-350", "location_id": "L-SEA-WH", "quantity_on_hand": 28.0, "quantity_allocated": 8.0, "net_available": 20.0, "unit_of_measure": "ea", "as_of": "2026-07-01"},
+    {"inventory_position_id": "INV-C-RAIL-HIWIN-MGN9-SEA-20260701", "item_type": "component", "item_id": "C-RAIL-HIWIN-MGN9H-350", "location_id": "L-SEA-WH", "quantity_on_hand": 20.0, "quantity_allocated": 6.0, "net_available": 14.0, "unit_of_measure": "ea", "as_of": "2026-07-01"},
+    {"inventory_position_id": "INV-C-HOTEND-PHAETUS-SEA-20260701", "item_type": "component", "item_id": "C-HOTEND-PHAETUS-DRAGON-HF", "location_id": "L-SEA-WH", "quantity_on_hand": 9.0, "quantity_allocated": 6.0, "net_available": 3.0, "unit_of_measure": "ea", "as_of": "2026-07-01"},
+    {"inventory_position_id": "INV-A-TOOLHEAD-SEA-20260701", "item_type": "assembly", "item_id": "A-V24-TOOLHEAD", "location_id": "L-SEA-FINAL", "quantity_on_hand": 5.0, "quantity_allocated": 4.0, "net_available": 1.0, "unit_of_measure": "ea", "as_of": "2026-07-01"},
+    {"inventory_position_id": "INV-A-WIRING-SEA-20260701", "item_type": "assembly", "item_id": "A-V24-WIRING", "location_id": "L-SEA-FINAL", "quantity_on_hand": 18.0, "quantity_allocated": 10.0, "net_available": 8.0, "unit_of_measure": "ea", "as_of": "2026-07-01"},
+    {"inventory_position_id": "INV-P-LDO-SEA-20260701", "item_type": "product", "item_id": "PRD-V24R2-350-LDO", "location_id": "L-SEA-FINAL", "quantity_on_hand": 2.0, "quantity_allocated": 2.0, "net_available": 0.0, "unit_of_measure": "ea", "as_of": "2026-07-01"},
+    {"inventory_position_id": "INV-P-HIW-SEA-20260701", "item_type": "product", "item_id": "PRD-V24R2-350-HIW", "location_id": "L-SEA-FINAL", "quantity_on_hand": 1.0, "quantity_allocated": 0.0, "net_available": 1.0, "unit_of_measure": "ea", "as_of": "2026-07-01"}
+  ],
+  "component_inventory_positions": [
+    {"component_id": "C-MOTOR-LDO-42STH40-1684AC", "inventory_position_id": "INV-C-MOTOR-LDO-Z-SEA-20260701"},
+    {"component_id": "C-MOTOR-LDO-42STH40-1684AC", "inventory_position_id": "INV-C-MOTOR-LDO-Z-LAX-20260701"},
+    {"component_id": "C-MOTOR-LDO-42STH48-2004MAH", "inventory_position_id": "INV-C-MOTOR-LDO-XY-SEA-20260701"},
+    {"component_id": "C-MOTOR-LDO-36STH20-1004AHG", "inventory_position_id": "INV-C-MOTOR-LDO-EXT-SEA-20260701"},
+    {"component_id": "C-BOARD-BTT-OCTOPUS-V11", "inventory_position_id": "INV-C-BOARD-OCTO-SEA-20260701"},
+    {"component_id": "C-RAIL-HIWIN-MGN12H-350", "inventory_position_id": "INV-C-RAIL-HIWIN-MGN12-SEA-20260701"},
+    {"component_id": "C-RAIL-HIWIN-MGN9H-350", "inventory_position_id": "INV-C-RAIL-HIWIN-MGN9-SEA-20260701"},
+    {"component_id": "C-HOTEND-PHAETUS-DRAGON-HF", "inventory_position_id": "INV-C-HOTEND-PHAETUS-SEA-20260701"}
+  ],
+  "assembly_inventory_positions": [
+    {"assembly_id": "A-V24-TOOLHEAD", "inventory_position_id": "INV-A-TOOLHEAD-SEA-20260701"},
+    {"assembly_id": "A-V24-WIRING", "inventory_position_id": "INV-A-WIRING-SEA-20260701"}
+  ],
+  "product_inventory_positions": [
+    {"product_id": "PRD-V24R2-350-LDO", "inventory_position_id": "INV-P-LDO-SEA-20260701"},
+    {"product_id": "PRD-V24R2-350-HIW", "inventory_position_id": "INV-P-HIW-SEA-20260701"}
+  ],
+  "inventory_position_locations": [
+    {"inventory_position_id": "INV-C-MOTOR-LDO-Z-SEA-20260701", "location_id": "L-SEA-WH"},
+    {"inventory_position_id": "INV-C-MOTOR-LDO-Z-LAX-20260701", "location_id": "L-LAX-INTRANSIT"},
+    {"inventory_position_id": "INV-C-MOTOR-LDO-XY-SEA-20260701", "location_id": "L-SEA-WH"},
+    {"inventory_position_id": "INV-C-MOTOR-LDO-EXT-SEA-20260701", "location_id": "L-SEA-WH"},
+    {"inventory_position_id": "INV-C-BOARD-OCTO-SEA-20260701", "location_id": "L-SEA-WH"},
+    {"inventory_position_id": "INV-C-RAIL-HIWIN-MGN12-SEA-20260701", "location_id": "L-SEA-WH"},
+    {"inventory_position_id": "INV-C-RAIL-HIWIN-MGN9-SEA-20260701", "location_id": "L-SEA-WH"},
+    {"inventory_position_id": "INV-C-HOTEND-PHAETUS-SEA-20260701", "location_id": "L-SEA-WH"},
+    {"inventory_position_id": "INV-A-TOOLHEAD-SEA-20260701", "location_id": "L-SEA-FINAL"},
+    {"inventory_position_id": "INV-A-WIRING-SEA-20260701", "location_id": "L-SEA-FINAL"},
+    {"inventory_position_id": "INV-P-LDO-SEA-20260701", "location_id": "L-SEA-FINAL"},
+    {"inventory_position_id": "INV-P-HIW-SEA-20260701", "location_id": "L-SEA-FINAL"}
+  ]
+}

@@ -1,0 +1,2226 @@
+{
+  "bundle_id": "voron-2.4-r2-open-hardware-seed-2026-07",
+  "source_basis": [
+    "Pinned public Voron Design V2.4 README and sourcing documentation under data/seed/bom/",
+    "Component rows marked provenance=voron_bom retain only generic public BOM/build claims visible in those artifacts",
+    "Demo-specific manufacturer/MPN identities, suppliers, incidents, demand, inventory, routing, OEM, and product SKUs are synthetic by design"
+  ],
+  "suppliers": [
+    {
+      "supplier_id": "S-CN-DG-HARNESS",
+      "name": "Dongguan Harness Works",
+      "primary_geography": "Dongguan, Guangdong, China",
+      "tier_hint": "tier-2"
+    },
+    {
+      "supplier_id": "S-CN-FRAME",
+      "name": "Foshan Extrusion & Panel",
+      "primary_geography": "Foshan, Guangdong, China",
+      "tier_hint": "tier-2"
+    },
+    {
+      "supplier_id": "S-CN-GD-STEPPER",
+      "name": "Dragon Motion Components",
+      "primary_geography": "Shenzhen, Guangdong, China",
+      "tier_hint": "tier-2"
+    },
+    {
+      "supplier_id": "S-CN-SZ-ELECTRONICS",
+      "name": "Pearl Delta Control Systems",
+      "primary_geography": "Shenzhen, Guangdong, China",
+      "tier_hint": "tier-1"
+    },
+    {
+      "supplier_id": "S-CN-TOOLHEAD",
+      "name": "Shanghai Toolhead Assembly",
+      "primary_geography": "Shanghai, China",
+      "tier_hint": "tier-1"
+    },
+    {
+      "supplier_id": "S-EU-FASTENER",
+      "name": "Baltic Fastener House",
+      "primary_geography": "Kaunas, Lithuania",
+      "tier_hint": "tier-2"
+    },
+    {
+      "supplier_id": "S-EU-HOTEND",
+      "name": "Rhine Additive Components",
+      "primary_geography": "Stuttgart, Germany",
+      "tier_hint": "tier-1"
+    },
+    {
+      "supplier_id": "S-JP-BEARING",
+      "name": "Osaka Bearing Works",
+      "primary_geography": "Osaka, Japan",
+      "tier_hint": "tier-2"
+    },
+    {
+      "supplier_id": "S-TW-RAIL",
+      "name": "Formosa Motion Rail",
+      "primary_geography": "Taichung, Taiwan",
+      "tier_hint": "tier-2"
+    },
+    {
+      "supplier_id": "S-UK-HOTEND",
+      "name": "Thames Thermal Systems",
+      "primary_geography": "Oxford, United Kingdom",
+      "tier_hint": "tier-2"
+    },
+    {
+      "supplier_id": "S-US-DIST-MOTION",
+      "name": "Rainshadow Motion Distribution",
+      "primary_geography": "Portland, Oregon, United States",
+      "tier_hint": "tier-1"
+    },
+    {
+      "supplier_id": "S-US-KIT-OPS",
+      "name": "Rainier Kit Kitting",
+      "primary_geography": "Seattle, Washington, United States",
+      "tier_hint": "tier-1"
+    },
+    {
+      "supplier_id": "S-US-PANEL",
+      "name": "Great Lakes Panel Supply",
+      "primary_geography": "Cleveland, Ohio, United States",
+      "tier_hint": "tier-2"
+    }
+  ],
+  "assemblies": [
+    {
+      "assembly_id": "A-V24-BED",
+      "name": "VORON 2.4 heated bed stack",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "bed"
+    },
+    {
+      "assembly_id": "A-V24-ELECTRONICS",
+      "name": "VORON 2.4 electronics bay",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "electronics"
+    },
+    {
+      "assembly_id": "A-V24-ENCLOSURE",
+      "name": "VORON 2.4 enclosure",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "enclosure"
+    },
+    {
+      "assembly_id": "A-V24-EXTRUDER",
+      "name": "VORON Clockwork/Stealthburner extruder",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "toolhead"
+    },
+    {
+      "assembly_id": "A-V24-FASTENERS",
+      "name": "VORON 2.4 fastener and printed-part kit",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "hardware"
+    },
+    {
+      "assembly_id": "A-V24-FRAME",
+      "name": "VORON 2.4 frame",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "frame"
+    },
+    {
+      "assembly_id": "A-V24-GANTRY",
+      "name": "VORON 2.4 CoreXY gantry",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "motion"
+    },
+    {
+      "assembly_id": "A-V24-HOTEND",
+      "name": "VORON hotend thermal stack",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "toolhead"
+    },
+    {
+      "assembly_id": "A-V24-PANELS",
+      "name": "VORON 2.4 panel set",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "panels"
+    },
+    {
+      "assembly_id": "A-V24-TOOLHEAD",
+      "name": "VORON Stealthburner toolhead",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "toolhead"
+    },
+    {
+      "assembly_id": "A-V24-WIRING",
+      "name": "VORON 2.4 wiring harness",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "wiring"
+    },
+    {
+      "assembly_id": "A-V24-XY-MOTION",
+      "name": "VORON 2.4 XY motion system",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "motion"
+    },
+    {
+      "assembly_id": "A-V24-Z-DRIVE",
+      "name": "VORON 2.4 quad-Z drive",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "motion"
+    }
+  ],
+  "products": [
+    {
+      "product_id": "PRD-V24R2-300-LITE",
+      "sku": "AUR-V24R2-300-MAKER",
+      "name": "Aurora VORON 2.4 R2 300 Maker Spec",
+      "lifecycle_status": "active"
+    },
+    {
+      "product_id": "PRD-V24R2-350-HIW",
+      "sku": "AUR-V24R2-350-HIWIN",
+      "name": "Aurora VORON 2.4 R2 350 Hiwin Motion Spec",
+      "lifecycle_status": "active"
+    },
+    {
+      "product_id": "PRD-V24R2-350-LDO",
+      "sku": "AUR-V24R2-350-LDO",
+      "name": "Aurora VORON 2.4 R2 350 LDO Motion Spec",
+      "lifecycle_status": "active"
+    }
+  ],
+  "shipments": [
+    {
+      "shipment_id": "SHIP-2026-0708-MAKERLAB",
+      "customer_id": "CUST-MAKERLAB",
+      "status": "in_flight",
+      "ship_date": "2026-07-02",
+      "eta": "2026-07-08"
+    },
+    {
+      "shipment_id": "SHIP-2026-0710-EDU",
+      "customer_id": "CUST-EDU-FAB",
+      "status": "in_flight",
+      "ship_date": "2026-07-03",
+      "eta": "2026-07-10"
+    },
+    {
+      "shipment_id": "SHIP-2026-0712-PRINTFARM",
+      "customer_id": "CUST-PRINTFARM",
+      "status": "in_flight",
+      "ship_date": "2026-07-05",
+      "eta": "2026-07-12"
+    },
+    {
+      "shipment_id": "SHIP-2026-0715-RESELLER",
+      "customer_id": "CUST-RESELLER-WEST",
+      "status": "delivered",
+      "ship_date": "2026-06-27",
+      "eta": "2026-07-03"
+    },
+    {
+      "shipment_id": "SHIP-2026-0718-PROSUMER",
+      "customer_id": "CUST-PROSUMER-BATCH",
+      "status": "in_flight",
+      "ship_date": "2026-07-06",
+      "eta": "2026-07-18"
+    },
+    {
+      "shipment_id": "SHIP-2026-0721-SPARES",
+      "customer_id": "CUST-SPARES",
+      "status": "cancelled",
+      "ship_date": "2026-07-01",
+      "eta": "2026-07-21"
+    }
+  ],
+  "components": [
+    {
+      "component_id": "C-BELT-GATES-LL-2GT-6",
+      "name": "Gates PowerGrip LL-2GT 6 mm belt",
+      "component_kind": "part",
+      "manufacturer": "Gates",
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "belt",
+      "assembly_id": "A-V24-XY-MOTION",
+      "quantity": 2,
+      "provenance": "voron_bom"
+    },
+    {
+      "component_id": "C-BELT-GATES-LL-2GT-9",
+      "name": "Gates PowerGrip LL-2GT 9 mm belt",
+      "component_kind": "part",
+      "manufacturer": "Gates",
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "belt",
+      "assembly_id": "A-V24-Z-DRIVE",
+      "quantity": 4,
+      "provenance": "voron_bom"
+    },
+    {
+      "component_id": "C-BOARD-BTT-EBB36-V12",
+      "name": "BigTreeTech EBB36 CAN toolhead board v1.2",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": "v1.2",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "controller",
+      "assembly_id": "A-V24-TOOLHEAD",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-BOARD-BTT-OCTOPUS-V11",
+      "name": "BigTreeTech Octopus V1.1 controller",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": "v1.1",
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "controller",
+      "assembly_id": "A-V24-ELECTRONICS",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-CABLECHAIN-IGUS-E2-10-10-028",
+      "name": "igus E2 micro cable carrier 10x10",
+      "component_kind": "part",
+      "manufacturer": "igus",
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "wiring",
+      "assembly_id": "A-V24-WIRING",
+      "quantity": 2,
+      "provenance": "voron_bom"
+    },
+    {
+      "component_id": "C-ENDSTOP-OMRON-D2F-5L",
+      "name": "Omron D2F-5L microswitch",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "sensor",
+      "assembly_id": "A-V24-XY-MOTION",
+      "quantity": 2,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-EXTRUDER-BONDTECH-LGX-LITE",
+      "name": "Bondtech LGX Lite extruder",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "extruder",
+      "assembly_id": "A-V24-EXTRUDER",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-FAN-DELTA-BFB0524HH",
+      "name": "Delta BFB0524HH 24 V blower",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "fan",
+      "assembly_id": "A-V24-TOOLHEAD",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-FAN-SUNON-MF50151VX",
+      "name": "Sunon MF50151VX 5015 blower",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "fan",
+      "assembly_id": "A-V24-TOOLHEAD",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-HEATER-KEENOVO-AC-350",
+      "name": "Keenovo 350 mm AC silicone bed heater",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "bed",
+      "assembly_id": "A-V24-BED",
+      "bom_variant_id": "voron-2.4-r2-350",
+      "quantity": 1,
+      "provenance": "voron_bom"
+    },
+    {
+      "component_id": "C-HEATER-KEENOVO-AC-300",
+      "name": "Keenovo 300 mm AC silicone bed heater",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "bed",
+      "assembly_id": "A-V24-BED",
+      "bom_variant_id": "voron-2.4-r2-300",
+      "quantity": 1,
+      "provenance": "voron_bom"
+    },
+    {
+      "component_id": "C-HOTEND-E3D-REVO-VORON",
+      "name": "E3D Revo Voron hotend",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "hotend",
+      "assembly_id": "A-V24-HOTEND",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-HOTEND-PHAETUS-DRAGON-HF",
+      "name": "Phaetus Dragon High Flow hotend",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "hotend",
+      "assembly_id": "A-V24-HOTEND",
+      "quantity": 1,
+      "provenance": "voron_bom"
+    },
+    {
+      "component_id": "C-IEC-SCHURTER-4304-6090",
+      "name": "Schurter IEC C14 fused inlet",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "safety",
+      "assembly_id": "A-V24-ELECTRONICS",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-LED-BTF-WS2812B-5V",
+      "name": "BTF-Lighting WS2812B 5 V LED strip",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "low",
+      "category": "lighting",
+      "assembly_id": "A-V24-ENCLOSURE",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-MOTOR-LDO-36STH20-1004AHG",
+      "name": "LDO 36STH20-1004AHG pancake extruder stepper",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "motor",
+      "assembly_id": "A-V24-EXTRUDER",
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-MOTOR-LDO-42STH48-2004MAH",
+      "name": "LDO 42STH48-2004MAH A/B stepper motor",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "motor",
+      "assembly_id": "A-V24-XY-MOTION",
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "quantity": 2,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-MOTOR-LDO-42STH40-1684AC",
+      "name": "LDO 42STH40-1684AC belted-Z stepper motor",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "motor",
+      "assembly_id": "A-V24-Z-DRIVE",
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "quantity": 4,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-MOTOR-MOONS-MS17HD6P420I-04",
+      "name": "Moons MS17HD6P420I-04 stepper motor",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "motor",
+      "bom_edges": [
+        {
+          "assembly_id": "A-V24-XY-MOTION",
+          "quantity": 2,
+          "bom_variant_id": "voron-2.4-r2-350-hiwin"
+        },
+        {
+          "assembly_id": "A-V24-Z-DRIVE",
+          "quantity": 4,
+          "bom_variant_id": "voron-2.4-r2-350-hiwin"
+        },
+        {
+          "assembly_id": "A-V24-EXTRUDER",
+          "quantity": 1,
+          "bom_variant_id": "voron-2.4-r2-350-hiwin"
+        },
+        {
+          "assembly_id": "A-V24-XY-MOTION",
+          "quantity": 2,
+          "bom_variant_id": "voron-2.4-r2-300-lite"
+        },
+        {
+          "assembly_id": "A-V24-Z-DRIVE",
+          "quantity": 4,
+          "bom_variant_id": "voron-2.4-r2-300-lite"
+        },
+        {
+          "assembly_id": "A-V24-EXTRUDER",
+          "quantity": 1,
+          "bom_variant_id": "voron-2.4-r2-300-lite"
+        }
+      ],
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-PROBE-OMRON-TL-Q5MC2-Z",
+      "name": "Omron TL-Q5MC2-Z inductive probe",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "sensor",
+      "assembly_id": "A-V24-TOOLHEAD",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-PSU-MEANWELL-LRS-350-24",
+      "name": "Mean Well LRS-350-24 power supply",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "power",
+      "assembly_id": "A-V24-ELECTRONICS",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-PSU-MEANWELL-RS-25-5",
+      "name": "Mean Well RS-25-5 5 V power supply",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "power",
+      "assembly_id": "A-V24-ELECTRONICS",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-RAIL-HIWIN-MGN12H-350",
+      "name": "Hiwin MGN12H 350 mm linear rail",
+      "component_kind": "part",
+      "manufacturer": "Hiwin",
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "rail",
+      "assembly_id": "A-V24-XY-MOTION",
+      "bom_variant_id": "voron-2.4-r2-350-hiwin",
+      "quantity": 1,
+      "provenance": "voron_bom"
+    },
+    {
+      "component_id": "C-RAIL-HIWIN-MGN9H-350",
+      "name": "Hiwin MGN9H 350 mm linear rail",
+      "component_kind": "part",
+      "manufacturer": "Hiwin",
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "rail",
+      "assembly_id": "A-V24-Z-DRIVE",
+      "bom_variant_id": "voron-2.4-r2-350-hiwin",
+      "quantity": 4,
+      "provenance": "voron_bom"
+    },
+    {
+      "component_id": "C-RAIL-HIWIN-MGN12H-300",
+      "name": "Hiwin MGN12H 300 mm linear rail",
+      "component_kind": "part",
+      "manufacturer": "Hiwin",
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "rail",
+      "assembly_id": "A-V24-XY-MOTION",
+      "bom_variant_id": "voron-2.4-r2-300-lite",
+      "quantity": 1,
+      "provenance": "voron_bom"
+    },
+    {
+      "component_id": "C-RAIL-HIWIN-MGN9H-300",
+      "name": "Hiwin MGN9H 300 mm linear rail",
+      "component_kind": "part",
+      "manufacturer": "Hiwin",
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "rail",
+      "assembly_id": "A-V24-Z-DRIVE",
+      "bom_variant_id": "voron-2.4-r2-300-lite",
+      "quantity": 4,
+      "provenance": "voron_bom"
+    },
+    {
+      "component_id": "C-RAIL-LDO-MGN12H-350",
+      "name": "LDO MGN12H 350 mm linear rail",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "rail",
+      "assembly_id": "A-V24-XY-MOTION",
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-RAIL-LDO-MGN9H-350",
+      "name": "LDO MGN9H 350 mm linear rail",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "rail",
+      "assembly_id": "A-V24-Z-DRIVE",
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "quantity": 4,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-SBC-RPI-4B-2GB",
+      "name": "Raspberry Pi 4 Model B 2GB",
+      "component_kind": "part",
+      "manufacturer": "Raspberry Pi",
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "sbc",
+      "assembly_id": "A-V24-ELECTRONICS",
+      "quantity": 1,
+      "provenance": "voron_bom"
+    },
+    {
+      "component_id": "C-SSR-OMRON-G3NB-210B-1",
+      "name": "Omron G3NB-210B-1 solid state relay",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "safety",
+      "assembly_id": "A-V24-ELECTRONICS",
+      "quantity": 1,
+      "provenance": "synthetic"
+    },
+    {
+      "component_id": "C-THERMISTOR-SEMITEC-104NT-4-R025H42G",
+      "name": "Semitec 104NT-4-R025H42G thermistor",
+      "component_kind": "part",
+      "manufacturer": null,
+      "mpn": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "sensor",
+      "assembly_id": "A-V24-HOTEND",
+      "quantity": 1,
+      "provenance": "synthetic"
+    }
+  ],
+  "component_groups": [
+    {
+      "group_id": "frame_extrusions",
+      "component_id_template": "C-FRAME-EXTRUSION-{nn}",
+      "name_template": "Misumi HFSB5 2020 aluminum extrusion cut member {nn}",
+      "count": 16,
+      "component_kind": "part",
+      "manufacturer": "Misumi",
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "frame",
+      "assembly_id": "A-V24-FRAME",
+      "bom_variant_id": "voron-2.4-r2-350",
+      "quantity": 1,
+      "provenance": "voron_bom"
+    },
+    {
+      "group_id": "frame_extrusions_300",
+      "component_id_template": "C-FRAME-300-EXTRUSION-{nn}",
+      "name_template": "Misumi HFSB5 2020 aluminum extrusion 300 mm cut member {nn}",
+      "count": 16,
+      "component_kind": "part",
+      "manufacturer": "Misumi",
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "critical",
+      "category": "frame",
+      "assembly_id": "A-V24-FRAME",
+      "bom_variant_id": "voron-2.4-r2-300",
+      "quantity": 1,
+      "provenance": "voron_bom"
+    },
+    {
+      "group_id": "panel_set",
+      "component_id_template": "C-PANEL-{nn}",
+      "name_template": "VORON 2.4 350 mm enclosure panel {nn}",
+      "count": 12,
+      "component_kind": "part",
+      "manufacturer": null,
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "panel",
+      "assembly_id": "A-V24-PANELS",
+      "bom_variant_id": "voron-2.4-r2-350",
+      "quantity": 1,
+      "provenance": "voron_bom"
+    },
+    {
+      "group_id": "panel_set_300",
+      "component_id_template": "C-PANEL-300-{nn}",
+      "name_template": "VORON 2.4 300 mm enclosure panel {nn}",
+      "count": 12,
+      "component_kind": "part",
+      "manufacturer": null,
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "panel",
+      "assembly_id": "A-V24-PANELS",
+      "bom_variant_id": "voron-2.4-r2-300",
+      "quantity": 1,
+      "provenance": "voron_bom"
+    },
+    {
+      "group_id": "fasteners",
+      "component_id_template": "C-FASTENER-{suffix}",
+      "name_template": "{name}",
+      "component_kind": "part",
+      "manufacturer": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "fastener",
+      "assembly_id": "A-V24-FASTENERS",
+      "items": [
+        {
+          "suffix": "M3X6-BHCS",
+          "name": "M3x6 black oxide button head screw",
+          "quantity": 80,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M3X8-BHCS",
+          "name": "M3x8 black oxide button head screw",
+          "quantity": 120,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M3X10-BHCS",
+          "name": "M3x10 black oxide button head screw",
+          "quantity": 100,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M3X12-BHCS",
+          "name": "M3x12 black oxide button head screw",
+          "quantity": 80,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M3X16-BHCS",
+          "name": "M3x16 black oxide button head screw",
+          "quantity": 50,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M3X20-BHCS",
+          "name": "M3x20 black oxide button head screw",
+          "quantity": 40,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M3X30-SHCS",
+          "name": "M3x30 socket head cap screw",
+          "quantity": 12,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M5X10-BHCS",
+          "name": "M5x10 button head screw",
+          "quantity": 24,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M5X16-BHCS",
+          "name": "M5x16 button head screw",
+          "quantity": 24,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M3-HEATSET-M2",
+          "name": "M3 heat set insert",
+          "quantity": 150,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M3-TNUT-HAMMER",
+          "name": "M3 hammer head T-nut",
+          "quantity": 90,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M5-TNUT-HAMMER",
+          "name": "M5 hammer head T-nut",
+          "quantity": 40,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M3-NYLOC",
+          "name": "M3 nyloc nut",
+          "quantity": 30,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M5-NYLOC",
+          "name": "M5 nyloc nut",
+          "quantity": 10,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M3-WASHER",
+          "name": "M3 washer",
+          "quantity": 60,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "M5-WASHER",
+          "name": "M5 washer",
+          "quantity": 20,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "SHIM-MGN9",
+          "name": "MGN9 rail stainless shim",
+          "quantity": 12,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "SHIM-MGN12",
+          "name": "MGN12 rail stainless shim",
+          "quantity": 12,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "MAGNET-6X3",
+          "name": "6x3 mm neodymium magnet",
+          "quantity": 20,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "DOWEL-3X20",
+          "name": "3x20 mm hardened dowel pin",
+          "quantity": 16,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "ZIP-TIE-100",
+          "name": "100 mm nylon cable tie",
+          "quantity": 80,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "ZIP-TIE-150",
+          "name": "150 mm nylon cable tie",
+          "quantity": 40,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "VHB-5952",
+          "name": "3M VHB 5952 tape strip",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "FOAM-TAPE",
+          "name": "EPDM foam sealing tape",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "THREADLOCKER-243",
+          "name": "Loctite 243 threadlocker",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        }
+      ],
+      "provenance": "synthetic"
+    },
+    {
+      "group_id": "wiring",
+      "component_id_template": "C-WIRE-{suffix}",
+      "name_template": "{name}",
+      "component_kind": "part",
+      "manufacturer": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "wiring",
+      "assembly_id": "A-V24-WIRING",
+      "items": [
+        {
+          "suffix": "JST-XH-2P",
+          "name": "JST XH 2-pin housing",
+          "manufacturer": null,
+          "quantity": 12,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "JST-XH-3P",
+          "name": "JST XH 3-pin housing",
+          "manufacturer": null,
+          "quantity": 12,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "JST-XH-4P",
+          "name": "JST XH 4-pin housing",
+          "manufacturer": null,
+          "quantity": 8,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "JST-PH-2P",
+          "name": "JST PH 2-pin housing",
+          "manufacturer": null,
+          "quantity": 10,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "MOLEX-MICROFIT-2P",
+          "name": "Molex Micro-Fit 3.0 2-pin plug",
+          "manufacturer": null,
+          "quantity": 6,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "MOLEX-MICROFIT-4P",
+          "name": "Molex Micro-Fit 3.0 4-pin plug",
+          "manufacturer": null,
+          "quantity": 4,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "FERRULE-22AWG",
+          "name": "22 AWG insulated ferrule",
+          "quantity": 30,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "FERRULE-18AWG",
+          "name": "18 AWG insulated ferrule",
+          "quantity": 20,
+          "provenance": "voron_bom",
+          "manufacturer": null
+        },
+        {
+          "suffix": "PTFE-24AWG-BLK",
+          "name": "24 AWG PTFE wire black",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "voron_bom"
+        },
+        {
+          "suffix": "PTFE-24AWG-RED",
+          "name": "24 AWG PTFE wire red",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "voron_bom"
+        },
+        {
+          "suffix": "SILICONE-18AWG-RED",
+          "name": "18 AWG silicone wire red",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "voron_bom"
+        },
+        {
+          "suffix": "SILICONE-18AWG-BLK",
+          "name": "18 AWG silicone wire black",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "voron_bom"
+        },
+        {
+          "suffix": "CANBUS-2C",
+          "name": "22 AWG shielded CAN bus cable",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "USB-PANEL",
+          "name": "USB panel mount cable",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "DIN-RAIL-200",
+          "name": "200 mm DIN rail",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "WAGO-221-412",
+          "name": "Wago 221-412 lever connector",
+          "manufacturer": null,
+          "quantity": 6,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "WAGO-221-413",
+          "name": "Wago 221-413 lever connector",
+          "manufacturer": null,
+          "quantity": 4,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "GROUND-STRAP",
+          "name": "Frame ground strap",
+          "quantity": 2,
+          "provenance": "synthetic",
+          "manufacturer": null
+        }
+      ],
+      "provenance": "synthetic"
+    },
+    {
+      "group_id": "electronics_accessories",
+      "component_id_template": "C-ELEC-{suffix}",
+      "name_template": "{name}",
+      "component_kind": "part",
+      "manufacturer": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "electronics_accessory",
+      "assembly_id": "A-V24-ELECTRONICS",
+      "items": [
+        {
+          "suffix": "DIN-MOUNT-OCTOPUS",
+          "name": "DIN rail mount for Octopus",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "DIN-MOUNT-PI",
+          "name": "DIN rail mount for Raspberry Pi",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "FUSE-5X20-10A",
+          "name": "5x20 mm 10 A ceramic fuse",
+          "manufacturer": null,
+          "quantity": 4,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "FUSE-5X20-3A",
+          "name": "5x20 mm 3 A ceramic fuse",
+          "manufacturer": null,
+          "quantity": 4,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "TERMBLOCK-2P",
+          "name": "Phoenix Contact 2-position terminal block",
+          "manufacturer": null,
+          "quantity": 4,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "TERMBLOCK-4P",
+          "name": "Phoenix Contact 4-position terminal block",
+          "manufacturer": null,
+          "quantity": 2,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "DIN-BREAKER-2A",
+          "name": "2 A DIN rail breaker",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "DIN-BREAKER-10A",
+          "name": "10 A DIN rail breaker",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "BUCK-24-5",
+          "name": "24 V to 5 V buck converter",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "CAN-TRANSCEIVER",
+          "name": "CAN bus transceiver module",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "TEMP-CHAMBER",
+          "name": "Chamber temperature sensor",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "PANEL-SWITCH",
+          "name": "Illuminated panel power switch",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "USB-C-ADAPTER",
+          "name": "USB-C bulkhead adapter",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "SD-EXTENDER",
+          "name": "MicroSD extension cable",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "PI-HEATSINK",
+          "name": "Raspberry Pi heatsink set",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        }
+      ],
+      "provenance": "synthetic"
+    },
+    {
+      "group_id": "motion_hardware",
+      "component_id_template": "C-MOTION-{suffix}",
+      "name_template": "{name}",
+      "component_kind": "part",
+      "manufacturer": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "motion_hardware",
+      "assembly_id": "A-V24-XY-MOTION",
+      "items": [
+        {
+          "suffix": "PULLEY-GT2-20T-5MM",
+          "name": "GT2 20 tooth pulley 5 mm bore",
+          "quantity": 2,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "PULLEY-GT2-20T-6MM",
+          "name": "GT2 20 tooth pulley 6 mm bore",
+          "quantity": 2,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "IDLER-F695-2RS",
+          "name": "F695-2RS flanged bearing",
+          "manufacturer": null,
+          "quantity": 12,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "BEARING-MR85-2RS",
+          "name": "MR85-2RS bearing",
+          "manufacturer": null,
+          "quantity": 8,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "BEARING-625-2RS",
+          "name": "625-2RS bearing",
+          "manufacturer": null,
+          "quantity": 8,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "SHAFT-5X30",
+          "name": "5x30 mm stainless dowel shaft",
+          "quantity": 8,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "SHAFT-5X45",
+          "name": "5x45 mm stainless dowel shaft",
+          "quantity": 4,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "COUPLER-5X8",
+          "name": "5x8 mm flexible shaft coupler",
+          "quantity": 4,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "PULLEY-GT2-80T-5MM",
+          "name": "GT2 80 tooth pulley 5 mm bore for belted Z",
+          "quantity": 4,
+          "assembly_id": "A-V24-Z-DRIVE",
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "Z-BELT-ANCHOR",
+          "name": "VORON 2.4 Z belt anchor hardware",
+          "quantity": 4,
+          "assembly_id": "A-V24-Z-DRIVE",
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "ABEC-IDLER-5MM",
+          "name": "5 mm precision idler stack",
+          "quantity": 4,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "BELT-CLAMP-PLATE",
+          "name": "Belt clamp stainless plate",
+          "quantity": 4,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "RAIL-CARRIAGE-MGN9H",
+          "name": "MGN9H replacement carriage block",
+          "quantity": 2,
+          "provenance": "voron_bom",
+          "manufacturer": null
+        },
+        {
+          "suffix": "RAIL-CARRIAGE-MGN12H",
+          "name": "MGN12H replacement carriage block",
+          "quantity": 4,
+          "provenance": "voron_bom",
+          "manufacturer": null
+        },
+        {
+          "suffix": "IDLER-SPACER-3MM",
+          "name": "3 mm idler spacer",
+          "quantity": 12,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "IDLER-SPACER-6MM",
+          "name": "6 mm idler spacer",
+          "quantity": 8,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "BELT-TENSIONER-SCREW",
+          "name": "Belt tensioner shoulder screw",
+          "quantity": 4,
+          "provenance": "synthetic",
+          "manufacturer": null
+        }
+      ],
+      "provenance": "synthetic"
+    },
+    {
+      "group_id": "bed_stack",
+      "component_id_template": "C-BED-{suffix}",
+      "name_template": "{name}",
+      "component_kind": "part",
+      "manufacturer": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "bed",
+      "assembly_id": "A-V24-BED",
+      "bom_variant_id": "voron-2.4-r2-350",
+      "items": [
+        {
+          "suffix": "CAST-PLATE-350",
+          "name": "350 mm cast aluminum tooling plate",
+          "criticality": "critical",
+          "quantity": 1,
+          "provenance": "voron_bom",
+          "manufacturer": null
+        },
+        {
+          "suffix": "SPRING-STEEL-350",
+          "name": "350 mm spring steel flex plate",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "MAGNET-350",
+          "name": "350 mm magnetic build surface",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "PEI-SMOOTH-350",
+          "name": "Smooth PEI build surface",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "PEI-TEXTURED-350",
+          "name": "Textured PEI build surface",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "INSULATION-350",
+          "name": "Bed insulation sheet",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "WAGO-BED",
+          "name": "Bed heater Wago terminal pair",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "THERMAL-FUSE",
+          "name": "184 C thermal fuse",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "BED-WAGOS-MOUNT",
+          "name": "Printed bed Wago mount",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "BED-SPACER",
+          "name": "Aluminum bed spacer",
+          "quantity": 4,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "KAPTON-TAPE",
+          "name": "Kapton heater retention tape",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "BED-EARTH-LUG",
+          "name": "Bed earth bonding lug",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        }
+      ],
+      "provenance": "synthetic"
+    },
+    {
+      "group_id": "bed_stack_300",
+      "component_id_template": "C-BED-300-{suffix}",
+      "name_template": "{name}",
+      "component_kind": "part",
+      "manufacturer": null,
+      "revision": null,
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "bed",
+      "assembly_id": "A-V24-BED",
+      "bom_variant_id": "voron-2.4-r2-300",
+      "items": [
+        {
+          "suffix": "CAST-PLATE",
+          "name": "300 mm cast aluminum tooling plate",
+          "criticality": "critical",
+          "quantity": 1,
+          "provenance": "voron_bom",
+          "manufacturer": null
+        },
+        {
+          "suffix": "SPRING-STEEL",
+          "name": "300 mm spring steel flex plate",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "MAGNET",
+          "name": "300 mm magnetic build surface",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "PEI-SMOOTH",
+          "name": "300 mm smooth PEI build surface",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "PEI-TEXTURED",
+          "name": "300 mm textured PEI build surface",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "INSULATION",
+          "name": "300 mm bed insulation sheet",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "WAGOS",
+          "name": "300 mm bed heater Wago terminal pair",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "THERMAL-FUSE",
+          "name": "300 mm bed 184 C thermal fuse",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "WAGOS-MOUNT",
+          "name": "300 mm printed bed Wago mount",
+          "manufacturer": null,
+          "quantity": 1,
+          "provenance": "synthetic"
+        },
+        {
+          "suffix": "SPACER",
+          "name": "300 mm aluminum bed spacer",
+          "quantity": 4,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "KAPTON-TAPE",
+          "name": "300 mm Kapton heater retention tape",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        },
+        {
+          "suffix": "EARTH-LUG",
+          "name": "300 mm bed earth bonding lug",
+          "quantity": 1,
+          "provenance": "synthetic",
+          "manufacturer": null
+        }
+      ],
+      "provenance": "synthetic"
+    },
+    {
+      "group_id": "printed_parts",
+      "component_id_template": "C-PRINTED-PART-{nn}",
+      "name_template": "VORON ABS printed structural/toolhead part {nn}",
+      "count": 20,
+      "component_kind": "part",
+      "manufacturer": "Voron Design",
+      "revision": "R2",
+      "lifecycle_status": "active",
+      "criticality": "standard",
+      "category": "printed_part",
+      "assembly_id": "A-V24-TOOLHEAD",
+      "quantity": 1,
+      "provenance": "voron_bom"
+    }
+  ],
+  "component_supply_rules": [
+    {
+      "match": {
+        "component_id": [
+          "C-MOTOR-LDO-36STH20-1004AHG",
+          "C-MOTOR-LDO-42STH40-1684AC",
+          "C-MOTOR-LDO-42STH48-2004MAH"
+        ]
+      },
+      "stop": true,
+      "suppliers": [
+        {
+          "supplier_id": "S-CN-GD-STEPPER",
+          "lead_time_days": 42,
+          "qualification_status": "qualified",
+          "sourcing_role": "primary",
+          "priority_rank": 1,
+          "allocation_pct": 1.0,
+          "activation_state": "active",
+          "capacity_units_per_week": 280,
+          "effective_from": "2026-01-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-21"
+        }
+      ]
+    },
+    {
+      "match": {
+        "component_id": [
+          "C-MOTOR-MOONS-MS17HD6P420I-04"
+        ]
+      },
+      "stop": true,
+      "suppliers": [
+        {
+          "supplier_id": "S-CN-GD-STEPPER",
+          "lead_time_days": 45,
+          "qualification_status": "qualified",
+          "sourcing_role": "primary",
+          "priority_rank": 1,
+          "allocation_pct": 1.0,
+          "activation_state": "active",
+          "capacity_units_per_week": 120,
+          "effective_from": "2026-01-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-18"
+        },
+        {
+          "supplier_id": "S-US-DIST-MOTION",
+          "lead_time_days": 21,
+          "qualification_status": "conditional",
+          "sourcing_role": "secondary",
+          "priority_rank": 2,
+          "allocation_pct": 0.2,
+          "activation_state": "standby",
+          "capacity_units_per_week": 35,
+          "effective_from": "2026-04-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-16"
+        }
+      ]
+    },
+    {
+      "match": {
+        "category": "rail"
+      },
+      "suppliers": [
+        {
+          "supplier_id": "S-TW-RAIL",
+          "lead_time_days": 35,
+          "qualification_status": "qualified",
+          "sourcing_role": "primary",
+          "priority_rank": 1,
+          "allocation_pct": 0.75,
+          "activation_state": "active",
+          "capacity_units_per_week": 220,
+          "effective_from": "2026-01-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-24"
+        },
+        {
+          "supplier_id": "S-US-DIST-MOTION",
+          "lead_time_days": 18,
+          "qualification_status": "conditional",
+          "sourcing_role": "secondary",
+          "priority_rank": 2,
+          "allocation_pct": 0.25,
+          "activation_state": "standby",
+          "capacity_units_per_week": 60,
+          "effective_from": "2026-04-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-16"
+        }
+      ]
+    },
+    {
+      "match": {
+        "category": [
+          "controller",
+          "sbc",
+          "electronics_accessory",
+          "sensor",
+          "lighting",
+          "safety",
+          "power"
+        ]
+      },
+      "suppliers": [
+        {
+          "supplier_id": "S-CN-SZ-ELECTRONICS",
+          "lead_time_days": 28,
+          "qualification_status": "qualified",
+          "sourcing_role": "primary",
+          "priority_rank": 1,
+          "allocation_pct": 0.8,
+          "activation_state": "active",
+          "capacity_units_per_week": 180,
+          "effective_from": "2026-01-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-23"
+        },
+        {
+          "supplier_id": "S-US-DIST-MOTION",
+          "lead_time_days": 14,
+          "qualification_status": "conditional",
+          "sourcing_role": "secondary",
+          "priority_rank": 2,
+          "allocation_pct": 0.2,
+          "activation_state": "standby",
+          "capacity_units_per_week": 40,
+          "effective_from": "2026-02-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-13"
+        }
+      ]
+    },
+    {
+      "match": {
+        "category": [
+          "wiring"
+        ]
+      },
+      "suppliers": [
+        {
+          "supplier_id": "S-CN-DG-HARNESS",
+          "lead_time_days": 24,
+          "qualification_status": "qualified",
+          "sourcing_role": "primary",
+          "priority_rank": 1,
+          "allocation_pct": 0.9,
+          "activation_state": "active",
+          "capacity_units_per_week": 160,
+          "effective_from": "2026-01-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-19"
+        },
+        {
+          "supplier_id": "S-US-KIT-OPS",
+          "lead_time_days": 10,
+          "qualification_status": "conditional",
+          "sourcing_role": "emergency",
+          "priority_rank": 2,
+          "allocation_pct": 0.1,
+          "activation_state": "standby",
+          "capacity_units_per_week": 30,
+          "effective_from": "2026-05-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-15"
+        }
+      ]
+    },
+    {
+      "match": {
+        "category": [
+          "frame",
+          "panel",
+          "bed"
+        ]
+      },
+      "suppliers": [
+        {
+          "supplier_id": "S-CN-FRAME",
+          "lead_time_days": 32,
+          "qualification_status": "qualified",
+          "sourcing_role": "primary",
+          "priority_rank": 1,
+          "allocation_pct": 0.85,
+          "activation_state": "active",
+          "capacity_units_per_week": 90,
+          "effective_from": "2026-01-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-12"
+        },
+        {
+          "supplier_id": "S-US-PANEL",
+          "lead_time_days": 20,
+          "qualification_status": "conditional",
+          "sourcing_role": "secondary",
+          "priority_rank": 2,
+          "allocation_pct": 0.15,
+          "activation_state": "standby",
+          "capacity_units_per_week": 25,
+          "effective_from": "2026-03-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-14"
+        }
+      ]
+    },
+    {
+      "match": {
+        "category": "hotend"
+      },
+      "suppliers": [
+        {
+          "supplier_id": "S-UK-HOTEND",
+          "lead_time_days": 18,
+          "qualification_status": "qualified",
+          "sourcing_role": "secondary",
+          "priority_rank": 3,
+          "allocation_pct": 0.15,
+          "activation_state": "active",
+          "capacity_units_per_week": 25,
+          "effective_from": "2026-01-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-24"
+        }
+      ]
+    },
+    {
+      "match": {
+        "category": [
+          "hotend",
+          "extruder",
+          "fan"
+        ]
+      },
+      "suppliers": [
+        {
+          "supplier_id": "S-CN-TOOLHEAD",
+          "lead_time_days": 30,
+          "qualification_status": "qualified",
+          "sourcing_role": "primary",
+          "priority_rank": 1,
+          "allocation_pct": 0.7,
+          "activation_state": "active",
+          "capacity_units_per_week": 110,
+          "effective_from": "2026-01-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-17"
+        },
+        {
+          "supplier_id": "S-EU-HOTEND",
+          "lead_time_days": 21,
+          "qualification_status": "qualified",
+          "sourcing_role": "secondary",
+          "priority_rank": 2,
+          "allocation_pct": 0.3,
+          "activation_state": "active",
+          "capacity_units_per_week": 55,
+          "effective_from": "2026-01-01",
+          "effective_to": null,
+          "last_verified_at": "2026-06-17"
+        }
+      ]
+    }
+  ],
+  "default_component_supply": [
+    {
+      "supplier_id": "S-EU-FASTENER",
+      "lead_time_days": 16,
+      "qualification_status": "qualified",
+      "sourcing_role": "primary",
+      "priority_rank": 1,
+      "allocation_pct": 0.7,
+      "activation_state": "active",
+      "capacity_units_per_week": 500,
+      "effective_from": "2026-01-01",
+      "effective_to": null,
+      "last_verified_at": "2026-06-11"
+    },
+    {
+      "supplier_id": "S-US-DIST-MOTION",
+      "lead_time_days": 12,
+      "qualification_status": "qualified",
+      "sourcing_role": "secondary",
+      "priority_rank": 2,
+      "allocation_pct": 0.3,
+      "activation_state": "active",
+      "capacity_units_per_week": 150,
+      "effective_from": "2026-01-01",
+      "effective_to": null,
+      "last_verified_at": "2026-06-11"
+    }
+  ],
+  "supplier_supplies_assembly": [
+    {
+      "supplier_id": "S-CN-TOOLHEAD",
+      "assembly_id": "A-V24-TOOLHEAD",
+      "lead_time_days": 34,
+      "qualification_status": "qualified",
+      "sourcing_role": "primary",
+      "priority_rank": 1,
+      "allocation_pct": 1.0,
+      "activation_state": "active",
+      "capacity_units_per_week": 75,
+      "effective_from": "2026-01-01",
+      "effective_to": null,
+      "last_verified_at": "2026-06-17"
+    },
+    {
+      "supplier_id": "S-US-KIT-OPS",
+      "assembly_id": "A-V24-WIRING",
+      "lead_time_days": 12,
+      "qualification_status": "qualified",
+      "sourcing_role": "secondary",
+      "priority_rank": 2,
+      "allocation_pct": 0.25,
+      "activation_state": "standby",
+      "capacity_units_per_week": 40,
+      "effective_from": "2026-05-01",
+      "effective_to": null,
+      "last_verified_at": "2026-06-15"
+    }
+  ],
+  "assembly_part_of_assembly": [
+    {
+      "child_assembly_id": "A-V24-HOTEND",
+      "parent_assembly_id": "A-V24-TOOLHEAD",
+      "quantity": 1,
+      "bom_variant_id": "all",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "child_assembly_id": "A-V24-EXTRUDER",
+      "parent_assembly_id": "A-V24-TOOLHEAD",
+      "quantity": 1,
+      "bom_variant_id": "all",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "child_assembly_id": "A-V24-TOOLHEAD",
+      "parent_assembly_id": "A-V24-GANTRY",
+      "quantity": 1,
+      "bom_variant_id": "all",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "child_assembly_id": "A-V24-XY-MOTION",
+      "parent_assembly_id": "A-V24-GANTRY",
+      "quantity": 1,
+      "bom_variant_id": "all",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "child_assembly_id": "A-V24-PANELS",
+      "parent_assembly_id": "A-V24-ENCLOSURE",
+      "quantity": 1,
+      "bom_variant_id": "all",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    }
+  ],
+  "assembly_part_of_product": [
+    {
+      "assembly_id": "A-V24-BED",
+      "product_id": "PRD-V24R2-300-LITE",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-300-lite",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-ELECTRONICS",
+      "product_id": "PRD-V24R2-300-LITE",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-300-lite",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-ENCLOSURE",
+      "product_id": "PRD-V24R2-300-LITE",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-300-lite",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-FASTENERS",
+      "product_id": "PRD-V24R2-300-LITE",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-300-lite",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-FRAME",
+      "product_id": "PRD-V24R2-300-LITE",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-300-lite",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-GANTRY",
+      "product_id": "PRD-V24R2-300-LITE",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-300-lite",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-WIRING",
+      "product_id": "PRD-V24R2-300-LITE",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-300-lite",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-Z-DRIVE",
+      "product_id": "PRD-V24R2-300-LITE",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-300-lite",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-BED",
+      "product_id": "PRD-V24R2-350-HIW",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-hiwin",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-ELECTRONICS",
+      "product_id": "PRD-V24R2-350-HIW",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-hiwin",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-ENCLOSURE",
+      "product_id": "PRD-V24R2-350-HIW",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-hiwin",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-FASTENERS",
+      "product_id": "PRD-V24R2-350-HIW",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-hiwin",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-FRAME",
+      "product_id": "PRD-V24R2-350-HIW",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-hiwin",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-GANTRY",
+      "product_id": "PRD-V24R2-350-HIW",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-hiwin",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-WIRING",
+      "product_id": "PRD-V24R2-350-HIW",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-hiwin",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-Z-DRIVE",
+      "product_id": "PRD-V24R2-350-HIW",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-hiwin",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-BED",
+      "product_id": "PRD-V24R2-350-LDO",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-ELECTRONICS",
+      "product_id": "PRD-V24R2-350-LDO",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-ENCLOSURE",
+      "product_id": "PRD-V24R2-350-LDO",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-FASTENERS",
+      "product_id": "PRD-V24R2-350-LDO",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-FRAME",
+      "product_id": "PRD-V24R2-350-LDO",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-GANTRY",
+      "product_id": "PRD-V24R2-350-LDO",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-WIRING",
+      "product_id": "PRD-V24R2-350-LDO",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    },
+    {
+      "assembly_id": "A-V24-Z-DRIVE",
+      "product_id": "PRD-V24R2-350-LDO",
+      "quantity": 1,
+      "bom_variant_id": "voron-2.4-r2-350-ldo",
+      "plant_id": "SEA-FINAL-01",
+      "effective_from": "2026-01-01",
+      "effective_to": null
+    }
+  ],
+  "product_in_shipment": [
+    {
+      "product_id": "PRD-V24R2-350-LDO",
+      "shipment_id": "SHIP-2026-0708-MAKERLAB",
+      "qty": 4
+    },
+    {
+      "product_id": "PRD-V24R2-350-HIW",
+      "shipment_id": "SHIP-2026-0710-EDU",
+      "qty": 3
+    },
+    {
+      "product_id": "PRD-V24R2-350-LDO",
+      "shipment_id": "SHIP-2026-0712-PRINTFARM",
+      "qty": 8
+    },
+    {
+      "product_id": "PRD-V24R2-300-LITE",
+      "shipment_id": "SHIP-2026-0715-RESELLER",
+      "qty": 6
+    },
+    {
+      "product_id": "PRD-V24R2-350-LDO",
+      "shipment_id": "SHIP-2026-0718-PROSUMER",
+      "qty": 5
+    },
+    {
+      "product_id": "PRD-V24R2-350-HIW",
+      "shipment_id": "SHIP-2026-0721-SPARES",
+      "qty": 1
+    }
+  ]
+}

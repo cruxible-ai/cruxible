@@ -799,16 +799,45 @@ contracts:
     fields:
       items: {type: json}
 
+  OperationsRoutingResults:
+    description: >
+      work_items rows mirror base WorkItem properties; risks rows mirror base
+      Risk properties; work_item_addresses_incident rows[work_item_id,
+      incident_id].
+    fields:
+      work_items: {type: json}
+      risks: {type: json}
+      work_item_addresses_incident: {type: json}
+
+  SupplierRiskAttachmentInput:
+    description: Routed Risk rows plus incident/cascade graph evidence for supplier risk proposals.
+    fields:
+      incidents: {type: json}
+      suppliers: {type: json}
+      risks: {type: json}
+      impacted_supplier_edges: {type: json}
+      impacted_component_edges: {type: json}
+      impacted_assembly_edges: {type: json}
+
+  SupplierRiskAttachmentResults:
+    description: >
+      items[risk_id, supplier_id, impact_basis, source_evidence,
+      source_evidence_verdict, maintainer_judgment,
+      maintainer_judgment_verdict, verdict].
+    fields:
+      items: {type: json}
+
 artifacts:
   supply_chain_seed_bundle:
     kind: directory
     uri: ./data/seed
-    digest: sha256:9915f747ad2696e38c9c5047251245e4f7c2ff31c81bec8c8ac9a6f1fe41889a
+    digest: sha256:5456ce3d899205ee0ffa7bae8e09262cae0925f0c35897051d57ab333a7eb7fe
     metadata:
       description: >
-        Seed bundle: real open-hardware BOM (components with manufacturer/mpn,
-        nested assemblies, product) with fictional suppliers in real
-        geographies, plus incidents, inventory fixture, and demand context.
+        Seed bundle: pinned public open-hardware BOM/build provenance metadata,
+        nested assemblies, and product demo variants with fictional suppliers
+        in real geographies, plus incidents, inventory fixture, and demand
+        context.
 
 providers:
   load_supply_chain_seed_data:
@@ -837,20 +866,27 @@ providers:
     version: "1.0.0"
     deterministic: true
 
-  fetch_inventory_positions:
+  analyze_operations_routing:
+    description: Load deterministic base WorkItem/Risk routing rows from the bundled operations fixture.
+    contract_in: EmptyInput
+    contract_out: OperationsRoutingResults
+    ref: kit://providers/supply_chain_blast_radius.py::analyze_operations_routing
+    version: "1.0.0"
+    deterministic: true
+    artifact: supply_chain_seed_bundle
+
+  load_inventory_positions:
     description: >
-      Fetch inventory positions from an internal inventory API using
-      provider-managed auth. When base_url is null (the default), reads the
-      bundled inventory fixture instead — the offline/demo mode.
+      Load the pinned inventory fixture with the requested filters applied.
+      Live acquisition deliberately lives outside the workflow boundary:
+      pull positions with scripts/fetch_inventory.py (which owns API auth)
+      and apply the reviewed rows through the sync workflow.
     contract_in: InventoryFetchInput
     contract_out: InventoryFetchResults
-    ref: kit://providers/supply_chain_blast_radius.py::fetch_inventory_positions
+    ref: kit://providers/supply_chain_blast_radius.py::load_inventory_positions
     version: "1.0.0"
-    deterministic: false
-    side_effects: false
-    config:
-      base_url: null
-      timeout_s: 20
+    deterministic: true
+    artifact: supply_chain_seed_bundle
 
   assess_buffer_coverage:
     description: Compute reusable buffer coverage assessments from inventory, BOM, and demand context.
@@ -859,6 +895,7 @@ providers:
     ref: kit://providers/supply_chain_blast_radius.py::assess_buffer_coverage
     version: "1.0.0"
     deterministic: true
+    artifact: supply_chain_seed_bundle
 
   assess_incident_component_cascade:
     description: Cascade impacted suppliers to components, downgrading where viable alternate sourcing exists.
@@ -883,6 +920,15 @@ providers:
     ref: kit://providers/supply_chain_blast_radius.py::assess_incident_product_exposure
     version: "1.0.0"
     deterministic: true
+
+  assess_supplier_risk_attachments:
+    description: Propose governed supplier-risk attachments from routed risks and incident cascade evidence.
+    contract_in: SupplierRiskAttachmentInput
+    contract_out: SupplierRiskAttachmentResults
+    ref: kit://providers/supply_chain_blast_radius.py::assess_supplier_risk_attachments
+    version: "1.0.0"
+    deterministic: true
+    artifact: supply_chain_seed_bundle
 
 workflows:
 
@@ -1067,6 +1113,66 @@ workflows:
         as: apply_incidents
     returns: apply_incidents
 
+  analyze_operations_routing:
+    type: utility
+    description: Load deterministic response work and supplier-risk routing rows from the operations fixture.
+    contract_in: EmptyInput
+    steps:
+      - id: routing
+        provider: analyze_operations_routing
+        input: {}
+        as: routing
+    returns: routing
+
+  apply_operations_routing:
+    type: canonical
+    description: Apply routed base WorkItems, base Risks, and deterministic incident response-work links.
+    contract_in: OperationsRoutingResults
+    steps:
+      - id: work_items
+        make_entities:
+          entity_type: WorkItem
+          items: $input.work_items
+          entity_id: $item.work_item_id
+          properties:
+            work_item_id: $item.work_item_id
+            title: $item.title
+            summary: $item.summary
+            description: $item.description
+            rationale: $item.rationale
+            type: $item.type
+            status: $item.status
+            priority: $item.priority
+            target_date: $item.target_date
+        as: work_items
+      - id: risks
+        make_entities:
+          entity_type: Risk
+          items: $input.risks
+          entity_id: $item.risk_id
+          properties:
+            risk_id: $item.risk_id
+            title: $item.title
+            summary: $item.summary
+            status: $item.status
+            priority: $item.priority
+        as: risks
+      - id: work_incident_edges
+        make_relationships:
+          relationship_type: work_item_addresses_incident
+          items: $input.work_item_addresses_incident
+          from_type: WorkItem
+          from_id: $item.work_item_id
+          to_type: Incident
+          to_id: $item.incident_id
+        as: work_incident_edges
+      - id: apply_routing
+        apply_all:
+          entities_from: [work_items, risks]
+          relationships_from: [work_incident_edges]
+        as: apply_routing
+    returns: apply_routing
+
   sync_inventory_positions:
     type: canonical
     description: Apply fetched or curated inventory positions and their locations into graph state.
@@ -1218,18 +1324,19 @@ workflows:
         as: apply_buffer_inventory
     returns: apply_buffer_inventory
 
-  # ── Utility: live inventory API context ─────────────────────────────
+  # ── Utility: inventory positions context ────────────────────────────
 
   refresh_inventory_positions:
     type: utility
     description: >
-      Fetch inventory positions from an internal inventory API. This is a
-      utility context workflow because live API data is non-deterministic;
-      provider auth is handled inside the kit-specific provider.
+      Load inventory positions from the pinned fixture with optional filters,
+      returning rows for review. For live positions, acquire outside the
+      workflow boundary (scripts/fetch_inventory.py owns the API call and
+      auth) and feed the reviewed JSON to the sync workflow.
     contract_in: InventoryFetchInput
     steps:
       - id: inventory
-        provider: fetch_inventory_positions
+        provider: load_inventory_positions
         input:
           item_ids: $input.item_ids
           item_types: $input.item_types
@@ -1530,6 +1637,125 @@ workflows:
           thesis_text: >
             Directly supplied assemblies are impacted via the supplier
             cascade, adjusted for alternate sourcing coverage.
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+  # ── Operating tail: routed supplier risks ──────────────────────────
+
+  propose_risk_attaches_to_supplier:
+    type: proposal
+    description: >
+      Propose governed Risk -> Supplier attachments from routed risks and
+      incident/cascade graph evidence, emitting the standard supply signal
+      pair expected by the configured policy.
+    contract_in: EmptyInput
+    steps:
+      - id: incidents
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Incident
+          where:
+            result.properties.status:
+              eq: open
+        as: incidents
+      - id: suppliers
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Supplier
+        as: suppliers
+      - id: risks
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Risk
+        as: risks
+      - id: impacted_supplier_edges
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: incident_impacts_supplier
+          where:
+            source.properties.status:
+              eq: open
+        as: impacted_supplier_edges
+      - id: impacted_component_edges
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: incident_impacts_component
+          where:
+            source.properties.status:
+              eq: open
+        as: impacted_component_edges
+      - id: impacted_assembly_edges
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: incident_impacts_assembly
+          where:
+            source.properties.status:
+              eq: open
+        as: impacted_assembly_edges
+      - id: assessments
+        provider: assess_supplier_risk_attachments
+        input:
+          incidents: $steps.incidents.results
+          suppliers: $steps.suppliers.results
+          risks: $steps.risks.results
+          impacted_supplier_edges: $steps.impacted_supplier_edges.results
+          impacted_component_edges: $steps.impacted_component_edges.results
+          impacted_assembly_edges: $steps.impacted_assembly_edges.results
+        as: assessments
+      - id: candidates
+        make_candidates:
+          relationship_type: risk_attaches_to_supplier
+          items: $steps.assessments.items
+          from_type: Risk
+          from_id: $item.risk_id
+          to_type: Supplier
+          to_id: $item.supplier_id
+          properties:
+            impact_basis: $item.impact_basis
+        as: candidates
+      - id: source_evidence_signals
+        map_signals:
+          signal_source: source_evidence
+          items: $steps.assessments.items
+          from_id: $item.risk_id
+          to_id: $item.supplier_id
+          evidence: $item.source_evidence
+          enum:
+            path: source_evidence_verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: source_evidence_signals
+      - id: maintainer_judgment_signals
+        map_signals:
+          signal_source: maintainer_judgment
+          items: $steps.assessments.items
+          from_id: $item.risk_id
+          to_id: $item.supplier_id
+          evidence: $item.maintainer_judgment
+          enum:
+            path: maintainer_judgment_verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: maintainer_judgment_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: risk_attaches_to_supplier
+          candidates_from: candidates
+          signals_from: [source_evidence_signals, maintainer_judgment_signals]
+          thesis_text: >
+            Routed operational risks attach to suppliers with active incident
+            and cascade evidence.
           proposed_by: agent
         as: proposal
     returns: proposal

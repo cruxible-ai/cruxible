@@ -1,0 +1,45 @@
+{
+  "note": "Operational routing fixture for demos. analyze_operations_routing returns these WorkItem/Risk rows; apply_operations_routing applies them and propose_risk_attaches_to_supplier proposes governed supplier-risk links.",
+  "work_items": [
+    {
+      "work_item_id": "WI-GD-STEPPER-ALLOCATE",
+      "title": "Allocate scarce LDO Z steppers to committed 350 LDO shipments",
+      "status": "active",
+      "priority": "critical",
+      "type": "operations",
+      "incident_id": "INC-GD-STEPPER-2026-07"
+    },
+    {
+      "work_item_id": "WI-TW-RAIL-QUALIFY-DIST",
+      "title": "Review standby distributor rail substitution",
+      "status": "planned",
+      "priority": "high",
+      "type": "operations",
+      "incident_id": "INC-TW-RAIL-2026-07"
+    },
+    {
+      "work_item_id": "WI-SH-TOOLHEAD-REPLAN",
+      "title": "Replan Stealthburner assembly cell schedule",
+      "status": "active",
+      "priority": "high",
+      "type": "operations",
+      "incident_id": "INC-SH-TOOLHEAD-2026-07"
+    }
+  ],
+  "risks": [
+    {
+      "risk_id": "RISK-GD-STEPPER-SINGLE-SOURCE",
+      "title": "Single-source LDO/Moons stepper path can block 350 LDO builds",
+      "status": "active",
+      "priority": "critical",
+      "supplier_id": "S-CN-GD-STEPPER"
+    },
+    {
+      "risk_id": "RISK-TW-RAIL-CONDITIONAL-ALT",
+      "title": "Rail alternate is conditional and needs operator approval",
+      "status": "watching",
+      "priority": "medium",
+      "supplier_id": "S-TW-RAIL"
+    }
+  ]
+}

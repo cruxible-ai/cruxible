@@ -1,0 +1,37 @@
+{
+  "retrieved_at": "2026-07-05T01:34:40Z",
+  "license": {
+    "spdx": "GPL-3.0-only",
+    "note": "VoronDesign/Voron-2 declares GPL-3.0. These files are pinned verbatim from public Voron Design GitHub repositories; BOM facts are used with attribution."
+  },
+  "attribution": "Voron Design",
+  "files": [
+    {
+      "path": "voron_2_readme.md",
+      "source_url": "https://raw.githubusercontent.com/VoronDesign/Voron-2/a192410e27ea345644ae5c4b29b4c9c40cbe1a73/README.md",
+      "repository": "VoronDesign/Voron-2",
+      "commit": "a192410e27ea345644ae5c4b29b4c9c40cbe1a73",
+      "upstream_path": "README.md",
+      "size_bytes": 699,
+      "sha256": "7e49d1eb28cf1fe27fb19a6a0abe91b78894827e2ac4fb2becaea8605a9e9964"
+    },
+    {
+      "path": "voron_docs_sourcing.md",
+      "source_url": "https://raw.githubusercontent.com/VoronDesign/Voron-Documentation/bf6cbd3932a58b8a57c8adf0fd72d003d9b2dc92/sourcing.md",
+      "repository": "VoronDesign/Voron-Documentation",
+      "commit": "bf6cbd3932a58b8a57c8adf0fd72d003d9b2dc92",
+      "upstream_path": "sourcing.md",
+      "size_bytes": 8432,
+      "sha256": "2e515b891eec48057bc45543b08559c068bac612953d8c343875c122fcff9237"
+    },
+    {
+      "path": "voron_docs_sourcing_faq.md",
+      "source_url": "https://raw.githubusercontent.com/VoronDesign/Voron-Documentation/bf6cbd3932a58b8a57c8adf0fd72d003d9b2dc92/sourcing_faq.md",
+      "repository": "VoronDesign/Voron-Documentation",
+      "commit": "bf6cbd3932a58b8a57c8adf0fd72d003d9b2dc92",
+      "upstream_path": "sourcing_faq.md",
+      "size_bytes": 7313,
+      "sha256": "07d33da0dfa1c6affcae9abca383203c325ac0bf149f07b101d944939d673a3a"
+    }
+  ]
+}

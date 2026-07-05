@@ -1,23 +1,23 @@
 version: '1'
-config_digest: sha256:2f9320da613359f066a00fbc2224d9ec4d22ddb04cd2d4382db2879e5b75e007
-lock_digest: sha256:4dce13b8626626f46d85f46e7a6adb00915a3c9f5ca1c498b7c5233fc20ba127
-generated_at: 2026-07-04 17:44:21.802929+00:00
+config_digest: sha256:852c691251503d96bc64d54276e3ee51c678d51678643e9ba2671a792b4f01a7
+lock_digest: sha256:0d1942f6102fb1518a0b24d48d3428b9dbe69265a91cc80b4bb8a663609c06e9
+generated_at: 2026-07-05 18:29:10.958110+00:00
 artifacts:
   supply_chain_seed_bundle:
     kind: directory
     uri: ./data/seed
-    digest: sha256:9915f747ad2696e38c9c5047251245e4f7c2ff31c81bec8c8ac9a6f1fe41889a
+    digest: sha256:5456ce3d899205ee0ffa7bae8e09262cae0925f0c35897051d57ab333a7eb7fe
     metadata:
-      description: 'Seed bundle: real open-hardware BOM (components with manufacturer/mpn,
-        nested assemblies, product) with fictional suppliers in real geographies,
-        plus incidents, inventory fixture, and demand context.
+      description: 'Seed bundle: pinned public open-hardware BOM/build provenance
+        metadata, nested assemblies, and product demo variants with fictional suppliers
+        in real geographies, plus incidents, inventory fixture, and demand context.
 
         '
 providers:
   load_supply_chain_seed_data:
     version: 1.0.0
     ref: kit://providers/supply_chain_blast_radius.py::load_seed_data
-    provider_entrypoint_digest: sha256:8cbfb201daa5eaf65c9001f3ef5a21d66fc4cf231fc7bd3142c0e302ddbf15c9
+    provider_entrypoint_digest: sha256:a681d4cf4ff287f986e2f9da8d6bdf76c172e2c9dd3b2b50c8e0b0b397033bd7
     runtime: python
     deterministic: true
     side_effects: false
@@ -26,7 +26,7 @@ providers:
   load_incident_feed:
     version: 1.0.0
     ref: kit://providers/supply_chain_blast_radius.py::load_incident_feed
-    provider_entrypoint_digest: sha256:8cbfb201daa5eaf65c9001f3ef5a21d66fc4cf231fc7bd3142c0e302ddbf15c9
+    provider_entrypoint_digest: sha256:a681d4cf4ff287f986e2f9da8d6bdf76c172e2c9dd3b2b50c8e0b0b397033bd7
     runtime: python
     deterministic: true
     side_effects: false
@@ -35,33 +35,42 @@ providers:
   assess_incident_supplier_scope:
     version: 1.0.0
     ref: kit://providers/supply_chain_blast_radius.py::assess_incident_supplier_scope
-    provider_entrypoint_digest: sha256:8cbfb201daa5eaf65c9001f3ef5a21d66fc4cf231fc7bd3142c0e302ddbf15c9
+    provider_entrypoint_digest: sha256:a681d4cf4ff287f986e2f9da8d6bdf76c172e2c9dd3b2b50c8e0b0b397033bd7
     runtime: python
     deterministic: true
     side_effects: false
     config: {}
-  fetch_inventory_positions:
+  analyze_operations_routing:
     version: 1.0.0
-    ref: kit://providers/supply_chain_blast_radius.py::fetch_inventory_positions
-    provider_entrypoint_digest: sha256:8cbfb201daa5eaf65c9001f3ef5a21d66fc4cf231fc7bd3142c0e302ddbf15c9
-    runtime: python
-    deterministic: false
-    side_effects: false
-    config:
-      base_url: null
-      timeout_s: 20
-  assess_buffer_coverage:
-    version: 1.0.0
-    ref: kit://providers/supply_chain_blast_radius.py::assess_buffer_coverage
-    provider_entrypoint_digest: sha256:8cbfb201daa5eaf65c9001f3ef5a21d66fc4cf231fc7bd3142c0e302ddbf15c9
+    ref: kit://providers/supply_chain_blast_radius.py::analyze_operations_routing
+    provider_entrypoint_digest: sha256:a681d4cf4ff287f986e2f9da8d6bdf76c172e2c9dd3b2b50c8e0b0b397033bd7
     runtime: python
     deterministic: true
     side_effects: false
+    artifact: supply_chain_seed_bundle
+    config: {}
+  load_inventory_positions:
+    version: 1.0.0
+    ref: kit://providers/supply_chain_blast_radius.py::load_inventory_positions
+    provider_entrypoint_digest: sha256:a681d4cf4ff287f986e2f9da8d6bdf76c172e2c9dd3b2b50c8e0b0b397033bd7
+    runtime: python
+    deterministic: true
+    side_effects: false
+    artifact: supply_chain_seed_bundle
+    config: {}
+  assess_buffer_coverage:
+    version: 1.0.0
+    ref: kit://providers/supply_chain_blast_radius.py::assess_buffer_coverage
+    provider_entrypoint_digest: sha256:a681d4cf4ff287f986e2f9da8d6bdf76c172e2c9dd3b2b50c8e0b0b397033bd7
+    runtime: python
+    deterministic: true
+    side_effects: false
+    artifact: supply_chain_seed_bundle
     config: {}
   assess_incident_component_cascade:
     version: 1.0.0
     ref: kit://providers/supply_chain_blast_radius.py::assess_incident_component_cascade
-    provider_entrypoint_digest: sha256:8cbfb201daa5eaf65c9001f3ef5a21d66fc4cf231fc7bd3142c0e302ddbf15c9
+    provider_entrypoint_digest: sha256:a681d4cf4ff287f986e2f9da8d6bdf76c172e2c9dd3b2b50c8e0b0b397033bd7
     runtime: python
     deterministic: true
     side_effects: false
@@ -69,7 +78,7 @@ providers:
   assess_incident_assembly_cascade:
     version: 1.0.0
     ref: kit://providers/supply_chain_blast_radius.py::assess_incident_assembly_cascade
-    provider_entrypoint_digest: sha256:8cbfb201daa5eaf65c9001f3ef5a21d66fc4cf231fc7bd3142c0e302ddbf15c9
+    provider_entrypoint_digest: sha256:a681d4cf4ff287f986e2f9da8d6bdf76c172e2c9dd3b2b50c8e0b0b397033bd7
     runtime: python
     deterministic: true
     side_effects: false
@@ -77,8 +86,17 @@ providers:
   assess_incident_product_exposure:
     version: 1.0.0
     ref: kit://providers/supply_chain_blast_radius.py::assess_incident_product_exposure
-    provider_entrypoint_digest: sha256:8cbfb201daa5eaf65c9001f3ef5a21d66fc4cf231fc7bd3142c0e302ddbf15c9
+    provider_entrypoint_digest: sha256:a681d4cf4ff287f986e2f9da8d6bdf76c172e2c9dd3b2b50c8e0b0b397033bd7
     runtime: python
     deterministic: true
     side_effects: false
+    config: {}
+  assess_supplier_risk_attachments:
+    version: 1.0.0
+    ref: kit://providers/supply_chain_blast_radius.py::assess_supplier_risk_attachments
+    provider_entrypoint_digest: sha256:a681d4cf4ff287f986e2f9da8d6bdf76c172e2c9dd3b2b50c8e0b0b397033bd7
+    runtime: python
+    deterministic: true
+    side_effects: false
+    artifact: supply_chain_seed_bundle
     config: {}
