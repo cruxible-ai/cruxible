@@ -91,7 +91,37 @@ flowchart LR
   linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19 stroke:#2c5f8a,stroke-width:2px
   linkStyle 20,21,22,23,24,25,26,27,28,29,30,31,32 stroke:#e74c3c,stroke-width:2px
 ```
+
+**Diagram legend:** blue node = canonical entity (deterministic writes); solid edge = deterministic relationship; dotted edge = governed relationship.
 <!-- CRUXIBLE:END ontology -->
+
+## Schema Catalog
+
+<!-- CRUXIBLE:BEGIN schema-catalog -->
+| Entity | Properties | Description |
+| --- | --- | --- |
+| `Actor` | `actor_id: string (pk)`, `label: string?`, `kind: actor_kind?`, `status: actor_status?` | Human, agent, service account, or system actor referenced by operation state. Auth-managed: instances materialize from runtime-credential mints (identity source of truth = the credential store) and are writable by no other path, so every property is a credential-derived fact. label is the credential label; kind derives from the authenticated actor type. |
+| `Decision` | `decision_id: string (pk)`, `title: string?`, `summary: string?`, `rationale: string?`, `status: decision_status?`, `decided_at: date?` | Durable operating decision with lifecycle, rationale, impact, and supersession context. |
+| `OpenQuestion` | `question_id: string (pk)`, `title: string?`, `summary: string?`, `status: lifecycle_status?`, `due_date: date?` | Open question that can block work or decisions until answered. |
+| `ReviewRequest` | `review_request_id: string (pk)`, `title: string?`, `status: review_status?`, `summary: string?`, `change_repo: string?`, `change_base: string?`, `change_head: string?`, `requested_at: datetime?`, `resolved_at: datetime?` | Review checkpoint that can gate completion of a work item. |
+| `Risk` | `risk_id: string (pk)`, `title: string?`, `summary: string?`, `status: lifecycle_status?`, `priority: priority?` | Operational risk that can block or materially delay work. |
+| `StateNote` | `note_id: string (pk)`, `kind: state_note_kind?`, `title: string?`, `summary: string?`, `body: string?`, `created_at: datetime?` | Durable dated note about operation state (corrections, field notes, rationale updates, implementation notes, review notes). Preserves evolving interpretation without turning current entity summaries into changelogs. |
+| `SubjectRef` | `subject_ref_id: string (pk)`, `label: string?`, `subject_type: string?`, `subject_id: string?`, `state_ref: string?`, `summary: string?` | Lightweight reference to an external/cross-instance/not-yet-modeled subject. In a composed same-instance graph, prefer explicit typed operation-to-domain relationships over wrapping modeled domain entities in SubjectRef. |
+| `WorkItem` | `work_item_id: string (pk)`, `title: string?`, `summary: string?`, `description: string?`, `rationale: string?`, `type: work_item_type?`, `status: lifecycle_status?`, `priority: priority?`, `target_date: date?` | Execution-level item an agent or human can work, review, close, defer, or supersede. |
+
+### Enums
+
+| Enum | Values |
+| --- | --- |
+| `actor_kind` | human, agent, service_account, system |
+| `actor_status` | active, inactive |
+| `decision_status` | proposed, accepted, rejected, deferred |
+| `lifecycle_status` | planned, active, blocked, watching, deferred, closed |
+| `priority` | low, medium, high, critical |
+| `review_status` | requested, in_review, changes_requested, approved, withdrawn |
+| `state_note_kind` | correction, field_note, rationale_update, implementation_note, review_note |
+| `work_item_type` | feature, bug, cleanup, research, docs, test, infrastructure, operations |
+<!-- CRUXIBLE:END schema-catalog -->
 
 ## Workflow Summary
 
@@ -100,17 +130,18 @@ workflow layer should be composed by a domain kit or local overlay once the
 operation ontology has real state behind it.
 
 <!-- CRUXIBLE:BEGIN workflow-pipeline -->
-```mermaid
-flowchart LR
-  classDef canonicalWorkflow fill:#4a90d9,stroke:#2c5f8a,color:#fff
-  classDef governedWorkflow fill:#e67e22,stroke:#a0521c,color:#fff
-
-```
+This kit declares no workflows.
 <!-- CRUXIBLE:END workflow-pipeline -->
 
 <!-- CRUXIBLE:BEGIN workflow-summary -->
-
+This kit declares no workflows.
 <!-- CRUXIBLE:END workflow-summary -->
+
+## Provider Contracts
+
+<!-- CRUXIBLE:BEGIN provider-contracts -->
+This kit declares no providers; state is written directly by operators and agents.
+<!-- CRUXIBLE:END provider-contracts -->
 
 ## Governed Relationships
 
@@ -151,41 +182,6 @@ evidence-backed when proposed by agents.
 | `maintainer_judgment` | advisory | yes | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
 | `source_evidence` | required | yes | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
-
-## Query Map
-
-<!-- CRUXIBLE:BEGIN query-map -->
-```mermaid
-flowchart LR
-  classDef queryEntity fill:#ecfdf5,stroke:#047857,color:#064e3b
-
-  query_entity_Actor["Actor"]
-  query_entity_AnyEntity["Any Entity"]
-  query_entity_Collection_query["Collection Query"]
-  query_entity_Decision["Decision"]
-  query_entity_OpenQuestion["Open Question"]
-  query_entity_ReviewRequest["Review Request"]
-  query_entity_Risk["Risk"]
-  query_entity_StateNote["State Note"]
-  query_entity_SubjectRef["Subject Ref"]
-  query_entity_WorkItem["Work Item"]
-  class query_entity_Actor,query_entity_AnyEntity,query_entity_Collection_query,query_entity_Decision,query_entity_OpenQuestion,query_entity_ReviewRequest,query_entity_Risk,query_entity_StateNote,query_entity_SubjectRef,query_entity_WorkItem queryEntity
-  query_entity_Actor --> query_entity_WorkItem
-  query_entity_Collection_query --> query_entity_Decision
-  query_entity_Collection_query --> query_entity_OpenQuestion
-  query_entity_Collection_query --> query_entity_ReviewRequest
-  query_entity_Collection_query --> query_entity_Risk
-  query_entity_Collection_query --> query_entity_StateNote
-  query_entity_Collection_query --> query_entity_WorkItem
-  query_entity_ReviewRequest --> query_entity_StateNote
-  query_entity_StateNote --> query_entity_AnyEntity
-  query_entity_SubjectRef --> query_entity_AnyEntity
-  query_entity_WorkItem --> query_entity_AnyEntity
-  query_entity_WorkItem --> query_entity_ReviewRequest
-  query_entity_WorkItem --> query_entity_StateNote
-  query_entity_WorkItem --> query_entity_WorkItem
-```
-<!-- CRUXIBLE:END query-map -->
 
 ## Query Catalog
 

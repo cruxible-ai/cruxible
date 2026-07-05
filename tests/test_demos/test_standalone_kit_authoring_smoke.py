@@ -95,16 +95,19 @@ _ASSETS_CSV = (
     "ASSET-2,db-01.example.com,OWNER-2,Data Team\n"
 )
 
-# The nine canonical-view marker keys `config views --view all` refreshes. The
-# README must already contain each BEGIN/END block — `--update-readme` *replaces*
-# existing marker blocks, it does not create them (see drift note in the report).
+# The canonical-view marker keys `config views --view all` refreshes (kept in
+# sync with DEFAULT_VIEW_ORDER). The README must already contain each BEGIN/END
+# block — `--update-readme` *replaces* existing marker blocks, it does not
+# create them (see drift note in the report).
 _README_VIEW_KEYS = (
     "ontology",
+    "schema-catalog",
     "workflow-pipeline",
     "workflow-summary",
+    "provider-contracts",
     "governance-table",
+    "mutation-guards",
     "signal-policy-catalog",
-    "query-map",
     "query-catalog",
     "quality-rules",
     "learning-loops",

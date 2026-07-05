@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
 from cruxible_core.canonical_views.models import (
@@ -15,6 +17,12 @@ from cruxible_core.canonical_views.models import (
     OverviewView,
     PendingBucketView,
     PropertySchemaView,
+    ProviderCallView,
+    ProviderContractsView,
+    ProviderContractView,
+    ProviderInputFieldView,
+    ProviderOutputFieldView,
+    ProviderOutputShapeView,
     QuerySummaryView,
     QueryView,
     SchemaCatalogTypeView,
@@ -338,6 +346,249 @@ def build_schema_catalog_view(config: CoreConfig) -> SchemaCatalogView:
         entity_types=entity_types,
         relationships=relationships,
         contracts=contracts,
+    )
+
+
+_STEP_REF_PATTERN = re.compile(r"\$steps\.([A-Za-z0-9_]+)")
+_STEP_REF_FULL = re.compile(r"^\$steps\.([A-Za-z0-9_]+)(?:\.(.+))?$")
+_INPUT_REF_FULL = re.compile(r"^\$input\.(.+)$")
+_ITEM_REF_FULL = re.compile(r"^\$item\.(.+)$")
+
+# Step kinds that pass list-shaped rows through: a make_* step downstream of
+# these still consumes the originating provider's row shape.
+_ROW_TRANSFORM_KINDS = frozenset(
+    {"shape_items", "join_items", "filter_items", "aggregate_items", "dedupe_items"}
+)
+
+
+def build_provider_contracts_view(
+    config: CoreConfig,
+    overlay_scope: OverlayScope | None = None,
+) -> ProviderContractsView:
+    """Build the swap-the-data provider manual: per provider, every workflow
+    step that calls it (with resolved input sources) and the row shape each
+    downstream make_entities/make_relationships/make_candidates step demands.
+
+    With ``overlay_scope``, only the rendered layer's own providers appear.
+    """
+    provider_names = sorted(
+        name
+        for name in config.providers
+        if overlay_scope is None or name in overlay_scope.own_providers
+    )
+    calls_by_provider: dict[str, list[ProviderCallView]] = {name: [] for name in provider_names}
+
+    for workflow_name, workflow in sorted(config.workflows.items()):
+        alias_kinds: dict[str, str] = {}
+        # alias -> provider call objects whose row shape flows through it
+        row_sources: dict[str, list[ProviderCallView]] = {}
+        for step in workflow.steps:
+            step_kind = _workflow_step_kind(step)
+            alias = step.as_ or step.id
+            alias_kinds[alias] = step_kind
+            if step_kind == "provider" and step.provider is not None:
+                call = ProviderCallView(
+                    workflow=workflow_name,
+                    step_id=step.id,
+                    inputs=[
+                        ProviderInputFieldView(
+                            name=field_name,
+                            source=_provider_input_source(value, alias_kinds),
+                        )
+                        for field_name, value in step.input.items()
+                    ],
+                    output_shapes=[],
+                )
+                if step.provider in calls_by_provider:
+                    calls_by_provider[step.provider].append(call)
+                row_sources[alias] = [call]
+            elif step_kind in _ROW_TRANSFORM_KINDS:
+                upstream: list[ProviderCallView] = []
+                for ref in _collect_step_aliases(_step_spec_payload(step, step_kind)):
+                    for call in row_sources.get(ref, []):
+                        if call not in upstream:
+                            upstream.append(call)
+                if upstream:
+                    row_sources[alias] = upstream
+            elif step_kind in {"make_entities", "make_relationships", "make_candidates"}:
+                shape = _provider_output_shape(config, step, step_kind)
+                items_expr = _maker_items_expr(step, step_kind)
+                for ref in _collect_step_aliases(items_expr):
+                    for call in row_sources.get(ref, []):
+                        call.output_shapes.append(shape)
+
+    return ProviderContractsView(
+        providers=[
+            _provider_contract_view(config, name, calls_by_provider[name])
+            for name in provider_names
+        ]
+    )
+
+
+def _provider_contract_view(
+    config: CoreConfig,
+    name: str,
+    calls: list[ProviderCallView],
+) -> ProviderContractView:
+    provider = config.providers[name]
+    artifact_uri = None
+    if provider.artifact is not None:
+        artifact = config.artifacts.get(provider.artifact)
+        artifact_uri = _portable_artifact_uri(artifact.uri) if artifact is not None else None
+    return ProviderContractView(
+        name=name,
+        deterministic=provider.deterministic,
+        ref=provider.ref,
+        description=provider.description,
+        artifact=provider.artifact,
+        artifact_uri=artifact_uri,
+        calls=calls,
+    )
+
+
+def _portable_artifact_uri(uri: str) -> str:
+    """Keep generated docs machine-independent: loading absolutizes local
+    artifact paths, so render them relative to the working directory when
+    possible and fall back to the artifact directory name."""
+    if not uri.startswith("/"):
+        return uri
+    path = Path(uri)
+    try:
+        return path.relative_to(Path.cwd()).as_posix()
+    except ValueError:
+        return f".../{path.name}"
+
+
+def _maker_items_expr(step: WorkflowStepSchema, step_kind: str) -> Any:
+    if step_kind == "make_entities" and step.make_entities is not None:
+        return step.make_entities.items
+    if step_kind == "make_relationships" and step.make_relationships is not None:
+        return step.make_relationships.items
+    if step_kind == "make_candidates" and step.make_candidates is not None:
+        return step.make_candidates.items
+    return None
+
+
+def _step_spec_payload(step: WorkflowStepSchema, step_kind: str) -> Any:
+    spec = getattr(step, step_kind, None)
+    if spec is None:
+        return None
+    return spec.model_dump(mode="json")
+
+
+def _collect_step_aliases(value: Any) -> list[str]:
+    """Collect ``$steps.<alias>`` references from an expression tree, in order."""
+    aliases: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, str):
+            for match in _STEP_REF_PATTERN.finditer(node):
+                alias = match.group(1)
+                if alias not in aliases:
+                    aliases.append(alias)
+        elif isinstance(node, dict):
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(value)
+    return aliases
+
+
+def _provider_input_source(value: Any, alias_kinds: dict[str, str]) -> str:
+    """Human label for what feeds one provider input field."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        step_match = _STEP_REF_FULL.match(stripped)
+        if step_match is not None:
+            alias, path = step_match.group(1), step_match.group(2)
+            kind = alias_kinds.get(alias)
+            label = f"{kind} step `{alias}`" if kind else f"step `{alias}`"
+            return f"{label} (`{path}`)" if path else label
+        input_match = _INPUT_REF_FULL.match(stripped)
+        if input_match is not None:
+            return f"workflow input `{input_match.group(1)}`"
+        if stripped == "$input":
+            return "workflow input"
+        return f"literal `{stripped}`"
+    return "config literal (inline in the workflow step)"
+
+
+def _provider_output_shape(
+    config: CoreConfig,
+    step: WorkflowStepSchema,
+    step_kind: str,
+) -> ProviderOutputShapeView:
+    fields: list[ProviderOutputFieldView] = []
+    seen_keys: set[str] = set()
+
+    def add(expr: Any, *, role: str | None = None, target: str | None = None) -> None:
+        key = None
+        if isinstance(expr, str):
+            item_match = _ITEM_REF_FULL.match(expr.strip())
+            if item_match is not None:
+                key = item_match.group(1)
+        if key is not None:
+            if key in seen_keys and role is None:
+                return
+            seen_keys.add(key)
+            fields.append(
+                ProviderOutputFieldView(
+                    key=key,
+                    role=role,
+                    target=target if target is not None and target != key else None,
+                )
+            )
+        elif role is not None:
+            fields.append(ProviderOutputFieldView(key=None, role=role, expr=str(expr)))
+
+    if step_kind == "make_entities" and step.make_entities is not None:
+        spec = step.make_entities
+        add(spec.entity_id, role="entity id")
+        target_type = spec.entity_type
+        if spec.properties == "auto":
+            entity_schema = config.entity_types.get(target_type)
+            declared = list(entity_schema.properties) if entity_schema is not None else []
+            for prop_name in declared:
+                add(f"$item.{prop_name}")
+            auto = True
+        else:
+            for prop_name, expr in spec.properties.items():
+                add(expr, target=prop_name)
+            auto = False
+        return ProviderOutputShapeView(
+            step_id=step.id,
+            kind=step_kind,
+            target_type=target_type,
+            auto_properties=auto,
+            fields=fields,
+        )
+
+    rel_spec = (
+        step.make_relationships if step_kind == "make_relationships" else step.make_candidates
+    )
+    assert rel_spec is not None  # step kind dispatch guarantees the spec is set
+    add(rel_spec.from_id, role="from id")
+    add(rel_spec.to_id, role="to id")
+    target_type = rel_spec.relationship_type
+    if rel_spec.properties == "auto":
+        relationship = next((rel for rel in config.relationships if rel.name == target_type), None)
+        declared = list(relationship.properties) if relationship is not None else []
+        for prop_name in declared:
+            add(f"$item.{prop_name}")
+        auto = True
+    else:
+        for prop_name, expr in rel_spec.properties.items():
+            add(expr, target=prop_name)
+        auto = False
+    return ProviderOutputShapeView(
+        step_id=step.id,
+        kind=step_kind,
+        target_type=target_type,
+        auto_properties=auto,
+        fields=fields,
     )
 
 

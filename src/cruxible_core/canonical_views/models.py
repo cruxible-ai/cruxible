@@ -41,6 +41,10 @@ class OverlayScope:
     own_entities: frozenset[str]
     own_relationships: frozenset[str]
     own_guards: frozenset[str] = frozenset()
+    own_queries: frozenset[str] = frozenset()
+    own_constraints: frozenset[str] = frozenset()
+    own_checks: frozenset[str] = frozenset()
+    own_providers: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -165,6 +169,66 @@ class SchemaCatalogView:
     entity_types: list[SchemaCatalogTypeView] = field(default_factory=list)
     relationships: list[SchemaCatalogTypeView] = field(default_factory=list)
     contracts: list[SchemaCatalogTypeView] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ProviderInputFieldView:
+    """One field in a provider step's ``input:`` mapping."""
+
+    name: str
+    source: str
+
+
+@dataclass(frozen=True)
+class ProviderOutputFieldView:
+    """One required key in a provider's output rows.
+
+    ``key`` is the ``$item.<path>`` row key; when it is None the value is
+    supplied by ``expr`` (a non-row reference such as an earlier step output).
+    ``target`` is set when the graph property name differs from the row key.
+    """
+
+    key: str | None
+    role: str | None = None
+    target: str | None = None
+    expr: str | None = None
+
+
+@dataclass(frozen=True)
+class ProviderOutputShapeView:
+    """A make_* step that shapes a provider's output rows into the graph."""
+
+    step_id: str
+    kind: str
+    target_type: str
+    auto_properties: bool
+    fields: list[ProviderOutputFieldView] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ProviderCallView:
+    """One workflow step that calls a provider."""
+
+    workflow: str
+    step_id: str
+    inputs: list[ProviderInputFieldView] = field(default_factory=list)
+    output_shapes: list[ProviderOutputShapeView] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ProviderContractView:
+    name: str
+    deterministic: bool
+    ref: str
+    description: str | None
+    artifact: str | None = None
+    artifact_uri: str | None = None
+    calls: list[ProviderCallView] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ProviderContractsView:
+    providers: list[ProviderContractView] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

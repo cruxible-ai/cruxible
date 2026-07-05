@@ -72,7 +72,37 @@ flowchart LR
   linkStyle 0,1,2,3,4,5 stroke:#2c5f8a,stroke-width:2px
   linkStyle 6,7,8,9,10 stroke:#e74c3c,stroke-width:2px
 ```
+
+**Diagram legend:** blue node = canonical entity (deterministic writes); dashed grey node = base-kit entity shown for seam context; solid edge = deterministic relationship; dotted edge = governed relationship.
 <!-- CRUXIBLE:END ontology -->
+
+## Schema Catalog
+
+<!-- CRUXIBLE:BEGIN schema-catalog -->
+| Entity | Properties | Description |
+| --- | --- | --- |
+| `Asset` | `asset_id: string (pk)`, `hostname: string?`, `asset_type: asset_type?`, `criticality: criticality?`, `environment: asset_environment?`, `internet_exposed: bool?` | Internal asset from CMDB, cloud inventory, or endpoint tooling. |
+| `BusinessService` | `service_id: string (pk)`, `name: string?`, `criticality: criticality?` | Internal business or technical service depending on assets. |
+| `CompensatingControl` | `control_id: string (pk)`, `name: string?`, `control_type: control_type?`, `status: control_status?` | Control that can reduce or block exploitability. |
+| `Exception` | `exception_id: string (pk)`, `reason: string?`, `review_due_at: date?`, `status: exception_status?` | Approved patch or remediation exception. |
+| `Owner` | `owner_id: string (pk)`, `name: string?`, `team: string?`, `email: string?` | Team or person responsible for an asset or service. |
+| `PatchWindow` | `patch_window_id: string (pk)`, `cadence: patch_cadence?`, `next_window_at: datetime?`, `freeze_status: patch_freeze_status?`, `emergency_patch_allowed: bool?`, `outage_allowed: bool?`, `testing_required: bool?`, `rollback_required: bool?`, `owner_id: string?` | Operational patching schedule or change window. |
+| `VulnerabilityClass` | `class_id: string (pk)`, `name: string?`, `description: string?`, `attack_vector: attack_vector?` | Operational vulnerability category used by local controls, policy, and scenario analysis. This is local-layer classification rather than reference-layer public data. |
+
+### Enums
+
+| Enum | Values |
+| --- | --- |
+| `asset_environment` | production, staging, corporate |
+| `asset_type` | server, laptop |
+| `attack_vector` | network, adjacent, local, physical |
+| `control_status` | active, inactive |
+| `control_type` | waf, endpoint_detection, network_acl |
+| `criticality` | low, medium, high, critical |
+| `exception_status` | approved, expired, revoked |
+| `patch_cadence` | weekly, biweekly, monthly |
+| `patch_freeze_status` | none, partial_freeze |
+<!-- CRUXIBLE:END schema-catalog -->
 
 **Legend:** Blue = canonical/deterministic state, including the inherited KEV
 reference layer | Orange = governed-only trigger/judgment entities | Solid blue
@@ -175,6 +205,89 @@ flowchart LR
 - -
 <!-- CRUXIBLE:END workflow-summary -->
 
+## Provider Contracts
+
+<!-- CRUXIBLE:BEGIN provider-contracts -->
+### `assess_asset_affected` (deterministic)
+
+- Ref: `kit://providers/assessment.py::assess_asset_affected`
+- Purpose: Assess whether joined asset-product and vulnerability-product rows place the installed version within the reference-layer affected range.
+
+Called by workflow `propose_asset_exposure`, step `affected_assessments`:
+
+- Input `joined_product_edges` <- join_items step `affected_product_join` (`items`)
+
+Called by workflow `propose_exposure_reconciliation`, step `affected_assessments`:
+
+- Input `joined_product_edges` <- join_items step `reconciliation_product_join` (`items`)
+
+### `assess_asset_exposure` (deterministic)
+
+- Ref: `kit://providers/assessment.py::assess_asset_exposure`
+- Purpose: Assess whether an affected asset is materially exposed using internet exposure, environment, criticality, and attached active controls.
+
+Called by workflow `propose_asset_exposure`, step `assessments`:
+
+- Input `affected_asset_context` <- join_items step `affected_asset_context` (`items`)
+- Input `active_control_bindings` <- filter_items step `active_control_bindings` (`items`)
+- Input `vulnerability_classification_edges` <- query step `vulnerability_classifications` (`results`)
+- Input `control_mitigation_edges` <- query step `control_mitigations` (`results`)
+- Input `assessment_policy` <- config literal (inline in the workflow step)
+- Output rows -> `make_candidates` step `candidates` (`asset_vulnerability_posture`): required row keys: `asset_id` (from id), `cve_id` (to id), `status`, `priority`, `product_id`, `installed_version`, `basis.affected` -> `affected_basis`, `basis.exposure` -> `exposure_basis`, `basis.control` -> `control_basis`.
+
+### `assess_exposure_reconciliation` (deterministic)
+
+- Ref: `kit://providers/assessment.py::assess_exposure_reconciliation`
+- Purpose: Compare accepted exposure edges against the current product-derived affected candidate set and identify stale exposures to close.
+
+Called by workflow `propose_exposure_reconciliation`, step `reconciliation`:
+
+- Input `accepted_exposure_edges` <- query step `accepted_exposures` (`results`)
+- Input `affected_items` <- dedupe_items step `affected_candidates` (`items`)
+- Input `asset_product_edges` <- query step `asset_products` (`results`)
+- Input `vulnerability_product_edges` <- query step `vulnerability_products` (`results`)
+- Input `remediated_edges` <- query step `remediated_edges` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`asset_remediated_vulnerability`): required row keys: `asset_id` (from id), `cve_id` (to id), `remediation_type`, `rationale` -> `verification_basis`.
+
+### `match_software_to_products` (deterministic)
+
+- Ref: `kit://providers/matching.py::match_software_to_products`
+- Purpose: Fuzzy match software inventory rows against reference-layer products using CPE name similarity and vendor matching. Returns transient match scores for signal mapping plus qualitative governed relationship rationale.
+
+Called by workflow `propose_asset_products`, step `matches`:
+
+- Input `inventory_items` <- shape_items step `inventory` (`items`)
+- Input `reference_products` <- query step `reference_products` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`asset_runs_product`): required row keys: `asset_id` (from id), `product_id` (to id), `observed_software_name`, `observed_vendor`, `installed_version`, `inventory_source`, `last_seen_at`, `match_basis`.
+
+### `parse_local_seed_bundle` (deterministic)
+
+- Ref: `cruxible_core.providers.common.tabular.load_tabular_artifact_bundle`
+- Reads artifact: `local_seed_bundle` (`kits/kev-triage/data/seed`)
+- Purpose: Parse the pinned local seed artifact into generic provenance-rich tabular rows. Domain normalization happens in the next workflow step.
+
+Called by workflow `build_local_state`, step `raw_tables`:
+
+- Input `expected_tables` <- config literal (inline in the workflow step)
+- Output rows -> `make_entities` step `assets` (`Asset`): required row keys: `asset_id` (entity id), `hostname`, `asset_type`, `criticality`, `environment`, `internet_exposed`.
+- Output rows -> `make_entities` step `services` (`BusinessService`): required row keys: `service_id` (entity id), `name`, `criticality`.
+- Output rows -> `make_entities` step `owners` (`Owner`): required row keys: `owner_id` (entity id), `name`, `team`, `email`.
+- Output rows -> `make_entities` step `controls` (`CompensatingControl`): required row keys: `control_id` (entity id), `name`, `control_type`, `status`.
+- Output rows -> `make_entities` step `vulnerability_classes` (`VulnerabilityClass`): required row keys: `class_id` (entity id), `name`, `description`, `attack_vector`.
+- Output rows -> `make_entities` step `exceptions` (`Exception`): required row keys: `exception_id` (entity id), `reason`, `review_due_at`, `status`.
+- Output rows -> `make_entities` step `patch_windows` (`PatchWindow`): required row keys: `patch_window_id` (entity id), `cadence`, `next_window_at`, `freeze_status`, `emergency_patch_allowed`, `outage_allowed`, `testing_required`, `rollback_required`, `owner_id`.
+- Output rows -> `make_relationships` step `svc_asset_edges` (`service_depends_on_asset`): required row keys: `service_id` (from id), `asset_id` (to id).
+- Output rows -> `make_relationships` step `owned_by_edges` (`asset_owned_by`): required row keys: `asset_id` (from id), `owner_id` (to id).
+- Output rows -> `make_relationships` step `control_edges` (`asset_has_control`): required row keys: `asset_id` (from id), `control_id` (to id).
+- Output rows -> `make_relationships` step `exception_edges` (`asset_has_exception`): required row keys: `asset_id` (from id), `exception_id` (to id).
+- Output rows -> `make_relationships` step `patch_window_edges` (`asset_patch_window`): required row keys: `asset_id` (from id), `patch_window_id` (to id).
+- Output rows -> `make_relationships` step `control_mitigation_edges` (`control_mitigates_class`): required row keys: `control_id` (from id), `class_id` (to id), `effect`, `validation_basis`, `verified_at`, `expires_at`.
+
+Called by workflow `propose_asset_products`, step `inventory_tables`:
+
+- Input `expected_tables` <- config literal (inline in the workflow step)
+<!-- CRUXIBLE:END provider-contracts -->
+
 ## Governed Relationships
 
 Each governed relationship has a `proposal_policy` block and signal sources that provide
@@ -211,41 +324,6 @@ above is the source of truth for required/advisory signal labels.
 | `vulnerability_classification` | required | yes | Vulnerability Classified As | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
 
-## Query Map
-
-Named queries are graph-native read surfaces. The map shows entry/return
-affordances; query names and traversal details live in the generated catalog.
-
-<!-- CRUXIBLE:BEGIN query-map -->
-```mermaid
-flowchart LR
-  classDef queryEntity fill:#ecfdf5,stroke:#047857,color:#064e3b
-
-  query_entity_Asset["Asset"]
-  query_entity_BusinessService["Business Service"]
-  query_entity_Collection_query["Collection Query"]
-  query_entity_CompensatingControl["Compensating Control"]
-  query_entity_Owner["Owner"]
-  query_entity_Product["Product"]
-  query_entity_Vendor["Vendor"]
-  query_entity_Vulnerability["Vulnerability"]
-  query_entity_VulnerabilityClass["Vulnerability Class"]
-  query_entity_asset_vulnerability_posture["Asset Vulnerability Posture"]
-  class query_entity_Asset,query_entity_BusinessService,query_entity_Collection_query,query_entity_CompensatingControl,query_entity_Owner,query_entity_Product,query_entity_Vendor,query_entity_Vulnerability,query_entity_VulnerabilityClass,query_entity_asset_vulnerability_posture queryEntity
-  query_entity_Collection_query --> query_entity_asset_vulnerability_posture
-  query_entity_CompensatingControl --> query_entity_BusinessService
-  query_entity_Owner --> query_entity_Vulnerability
-  query_entity_Product --> query_entity_Asset
-  query_entity_Product --> query_entity_Vulnerability
-  query_entity_Vendor --> query_entity_BusinessService
-  query_entity_Vendor --> query_entity_Product
-  query_entity_Vendor --> query_entity_Vulnerability
-  query_entity_Vulnerability --> query_entity_Asset
-  query_entity_Vulnerability --> query_entity_Product
-  query_entity_VulnerabilityClass --> query_entity_Vulnerability
-```
-<!-- CRUXIBLE:END query-map -->
-
 ## Query Catalog
 
 Use the catalog to decide which KEV surfaces survive onboarding for a user's
@@ -277,28 +355,26 @@ relationship.
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Product Asset Context | traversal | Asset | reviewable | Asset Runs Product (Incoming) | Starting from a reference product, return assets that run that product, with product-mapping evidence and side context for affected vulnerabilities, exposure state, owners, services, exceptions, controls, and patch windows. |
-| Product Vulnerabilities | traversal | Vulnerability | live | Vulnerability Affects Product (Incoming) | Starting from a product, return KEV vulnerabilities that affect it. |
 
 ### Vendor
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Vendor Products | traversal | Product | live | Product From Vendor (Incoming) | Starting from a vendor, return products published by that vendor. |
 | Vendor Service Impact | traversal | Business Service | reviewable | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vendor, trace through affected products, reviewable asset-vulnerability posture, and service dependencies to find business services in the blast radius. This broad investigation query keeps accepted, unreviewed, pending, remediated, and exception-covered context visible so agents can triage from the first result instead of treating it as a strict action queue. |
-| Vendor Vulnerabilities | traversal | Vulnerability | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) | Starting from a vendor, return vulnerabilities across that vendor's products, preserving the product evidence path. |
 
 ### Vulnerability
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Vulnerability Asset Context | traversal | Asset | reviewable | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) | Starting from a vulnerability, return internal assets that run affected products, with the relationship evidence needed to tell whether each asset is only a candidate, has pending or accepted exposure state, has remediation state, or is covered by operational context such as owners, services, exceptions, controls, and patch windows. |
-| Vulnerability Products | traversal | Product | live | Vulnerability Affects Product (Outgoing) | Starting from a vulnerability, return affected products with reference edge evidence. |
 
 ### Vulnerability Class
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Vulnerability Class Context | traversal | Vulnerability | reviewable | Vulnerability Classified As (Incoming) | Starting from a vulnerability class, return reviewable vulnerability classifications in the class and include the compensating controls mapped to that class. |
+
+Plus 4 queries inherited from the base kit — see its README.
 <!-- CRUXIBLE:END query-catalog -->
 
 `owner_patch_queue` is the strict action queue: it returns approved exposed
@@ -308,19 +384,6 @@ surfaces. They intentionally keep remediated, exception-covered, and
 non-exposed posture context available so agents can explain the state rather
 than losing rows too early. `product_asset_context` also includes public
 affected-vulnerability context for the product before local posture rows exist.
-
-## Schema Reference
-
-This README keeps schema detail at the diagram and table level so the kit
-remains usable as a drafting surface. The config remains the source of truth
-for full entity, relationship, and contract properties. For a generated
-Markdown schema catalog, run:
-
-```bash
-uv run cruxible config views --config kits/kev-triage/config.yaml --runtime --view schema-catalog
-```
-
-
 
 ## Rules And Learning Loops
 
@@ -337,14 +400,11 @@ No configured constraints.
 
 | Name | Kind | Target | Severity | Rule |
 | --- | --- | --- | --- | --- |
-| `affected_versions_have_useful_keys` | Json Content | Vulnerability Affects Product.affected_versions | Warning | Required Nested Keys; keys: `version_start_including, version_start_excluding, version_end_including, version_end_excluding, version_exact, fixed_version`; match: `any` |
 | `assets_have_hostname` | Property | Asset.hostname | Warning | Non Empty |
 | `assets_have_one_owner` | Cardinality | Asset -> Asset Owned By (out) | Warning | min `1`, max `1` |
 | `minimum_assets_loaded` | Bounds | Asset count | Warning | min `5` |
-| `no_empty_affected_version_objects` | Json Content | Vulnerability Affects Product.affected_versions | Error | No Empty Objects In Array |
-| `product_vendor_id_matches_vendor_edge` | Relationship Property Consistency | Product.vendor_id -> Product From Vendor | Error | Matches related `vendor_id` |
-| `product_vendor_name_matches_vendor_edge` | Relationship Property Consistency | Product.vendor_name -> Product From Vendor | Warning | Matches related `name` |
-| `products_have_exactly_one_vendor` | Cardinality | Product -> Product From Vendor (out) | Error | min `1`, max `1` |
+
+Plus 5 quality checks inherited from the base kit — see its README.
 <!-- CRUXIBLE:END quality-rules -->
 
 <!-- CRUXIBLE:BEGIN learning-loops -->

@@ -13,17 +13,24 @@ from cruxible_core.canonical_views.mermaid import (
     render_ontology_mermaid,
     render_workflow_mermaid,
 )
-from cruxible_core.canonical_views.mermaid_utils import MermaidLegendItem, render_mermaid_legend
+from cruxible_core.canonical_views.mermaid_utils import (
+    MermaidLegendItem,
+    render_mermaid_inline_legend,
+    render_mermaid_legend,
+)
 from cruxible_core.canonical_views.models import (
-    OverlayScope,
     GovernanceView,
     OntologyEnumView,
     OntologyView,
+    OverlayScope,
     OverviewView,
     PropertySchemaView,
+    ProviderCallView,
+    ProviderContractsView,
+    ProviderOutputFieldView,
+    ProviderOutputShapeView,
     QuerySummaryView,
     QueryView,
-    SchemaCatalogTypeView,
     SchemaCatalogView,
     WorkflowView,
 )
@@ -369,25 +376,39 @@ def render_mutation_guards_markdown(
     )
 
 
-def render_signal_policy_catalog_markdown(config: CoreConfig) -> str:
-    """Render governed proposal signal-source policies from relationship config."""
-    used_by: dict[str, set[str]] = {}
+def render_signal_policy_catalog_markdown(
+    config: CoreConfig,
+    overlay_scope: OverlayScope | None = None,
+) -> str:
+    """Render governed proposal signal-source policies from relationship config.
+
+    With ``overlay_scope``, only signal sources used by the rendered layer's
+    own relationships appear, and base users collapse to a count.
+    """
+    own_used_by: dict[str, set[str]] = {}
+    base_used_by: dict[str, set[str]] = {}
     policy_rows: dict[str, tuple[str, str, str]] = {}
     for relationship in config.relationships:
         if relationship.proposal_policy is None:
             continue
+        is_own = overlay_scope is None or relationship.name in overlay_scope.own_relationships
         for source_name, policy in relationship.proposal_policy.signals.items():
-            used_by.setdefault(source_name, set()).add(relationship.name)
-            policy_rows.setdefault(
-                source_name,
-                (
-                    policy.role,
-                    "yes" if policy.always_review_on_unsure else "no",
-                    policy.note.strip() or "-",
-                ),
-            )
+            if is_own:
+                own_used_by.setdefault(source_name, set()).add(relationship.name)
+                policy_rows.setdefault(
+                    source_name,
+                    (
+                        policy.role,
+                        "yes" if policy.always_review_on_unsure else "no",
+                        policy.note.strip() or "-",
+                    ),
+                )
+            else:
+                base_used_by.setdefault(source_name, set()).add(relationship.name)
 
     if not policy_rows:
+        if overlay_scope is not None:
+            return ""
         return "No configured proposal signal sources."
 
     rows: list[tuple[str, ...]] = [
@@ -395,7 +416,10 @@ def render_signal_policy_catalog_markdown(config: CoreConfig) -> str:
             f"`{name}`",
             role,
             always_review,
-            humanize_list_or_dash(sorted(used_by.get(name, set()))),
+            _signal_used_by_label(
+                sorted(own_used_by.get(name, set())),
+                len(base_used_by.get(name, set())),
+            ),
             note,
         )
         for name, (role, always_review, note) in sorted(policy_rows.items())
@@ -406,10 +430,36 @@ def render_signal_policy_catalog_markdown(config: CoreConfig) -> str:
     )
 
 
-def render_quality_rules_markdown(config: CoreConfig) -> str:
-    """Render configured constraints and graph quality checks."""
+def _signal_used_by_label(own_relationships: list[str], base_count: int) -> str:
+    label = humanize_list_or_dash(own_relationships)
+    if base_count:
+        suffix = f"+ {base_count} base relationship{'s' if base_count != 1 else ''}"
+        label = f"{label}, {suffix}" if own_relationships else suffix
+    return label
+
+
+def render_quality_rules_markdown(
+    config: CoreConfig,
+    overlay_scope: OverlayScope | None = None,
+) -> str:
+    """Render configured constraints and graph quality checks.
+
+    With ``overlay_scope``, only the rendered layer's own rules appear plus a
+    single inherited-count line.
+    """
+    constraints = sorted(config.constraints, key=lambda item: item.name)
+    checks = sorted(config.quality_checks, key=lambda item: item.name)
+    inherited_constraints = 0
+    inherited_checks = 0
+    if overlay_scope is not None:
+        own_constraints = [c for c in constraints if c.name in overlay_scope.own_constraints]
+        own_checks = [c for c in checks if c.name in overlay_scope.own_checks]
+        inherited_constraints = len(constraints) - len(own_constraints)
+        inherited_checks = len(checks) - len(own_checks)
+        constraints, checks = own_constraints, own_checks
+
     lines = ["### Constraints", ""]
-    if config.constraints:
+    if constraints:
         lines.append(
             _markdown_table(
                 ("Name", "Severity", "Rule", "Description"),
@@ -420,7 +470,7 @@ def render_quality_rules_markdown(config: CoreConfig) -> str:
                         constraint.rule,
                         constraint.description or "-",
                     )
-                    for constraint in sorted(config.constraints, key=lambda item: item.name)
+                    for constraint in constraints
                 ],
             )
         )
@@ -428,7 +478,7 @@ def render_quality_rules_markdown(config: CoreConfig) -> str:
         lines.append("No configured constraints.")
 
     lines.extend(["", "### Quality Checks", ""])
-    if config.quality_checks:
+    if checks:
         lines.append(
             _markdown_table(
                 ("Name", "Kind", "Target", "Severity", "Rule"),
@@ -440,13 +490,28 @@ def render_quality_rules_markdown(config: CoreConfig) -> str:
                         humanize_label(check.severity),
                         _quality_check_rule_label(check),
                     )
-                    for check in sorted(config.quality_checks, key=lambda item: item.name)
+                    for check in checks
                 ],
             )
         )
     else:
         lines.append("No configured quality checks.")
+
+    inherited_line = _inherited_rules_line(inherited_constraints, inherited_checks)
+    if inherited_line:
+        lines.extend(["", inherited_line])
     return "\n".join(lines)
+
+
+def _inherited_rules_line(constraint_count: int, check_count: int) -> str | None:
+    parts: list[str] = []
+    if constraint_count:
+        parts.append(f"{constraint_count} constraint{'s' if constraint_count != 1 else ''}")
+    if check_count:
+        parts.append(f"{check_count} quality check{'s' if check_count != 1 else ''}")
+    if not parts:
+        return None
+    return f"Plus {' and '.join(parts)} inherited from the base kit — see its README."
 
 
 def render_learning_loops_markdown(config: CoreConfig) -> str:
@@ -513,15 +578,169 @@ def render_query_catalog_markdown(view: QueryView) -> str:
     return "\n".join(lines)
 
 
-def render_schema_catalog_markdown(view: SchemaCatalogView) -> str:
-    """Render entity, relationship, and contract property schemas."""
-    lines: list[str] = []
-    lines.extend(_render_schema_catalog_group("Entity Types", view.entity_types))
-    lines.append("")
-    lines.extend(_render_schema_catalog_group("Relationships", view.relationships))
-    lines.append("")
-    lines.extend(_render_schema_catalog_group("Contracts", view.contracts))
+def render_schema_catalog_markdown(
+    view: SchemaCatalogView,
+    overlay_scope: OverlayScope | None = None,
+) -> str:
+    """Render the compact schema catalog: one row per entity type, plus the
+    enum vocabularies those types actually use.
+
+    With ``overlay_scope``, only the rendered layer's own entity types appear
+    (standalone kits render every type).
+    """
+    entities = view.entity_types
+    if overlay_scope is not None:
+        entities = [entity for entity in entities if entity.name in overlay_scope.own_entities]
+    if not entities:
+        return ""
+    lines = [
+        _markdown_table(
+            ("Entity", "Properties", "Description"),
+            [
+                (
+                    f"`{entity.name}`",
+                    ", ".join(_compact_property_label(prop) for prop in entity.properties) or "-",
+                    entity.description.strip() if entity.description else "-",
+                )
+                for entity in entities
+            ],
+        )
+    ]
+    used_enums: dict[str, list[Any]] = {}
+    for entity in entities:
+        for prop in entity.properties:
+            if prop.enum_ref is not None and prop.enum_ref not in used_enums:
+                used_enums[prop.enum_ref] = prop.enum_values or []
+    if used_enums:
+        lines.extend(
+            [
+                "",
+                "### Enums",
+                "",
+                _markdown_table(
+                    ("Enum", "Values"),
+                    [
+                        (f"`{name}`", ", ".join(str(value) for value in values))
+                        for name, values in sorted(used_enums.items())
+                    ],
+                ),
+            ]
+        )
     return "\n".join(lines)
+
+
+def _compact_property_label(prop: PropertySchemaView) -> str:
+    type_label = prop.enum_ref or ("enum" if prop.enum_values is not None else prop.type)
+    label = f"{prop.name}: {type_label}"
+    if prop.optional:
+        label = f"{label}?"
+    if prop.primary_key:
+        label = f"{label} (pk)"
+    return f"`{label}`"
+
+
+def render_provider_contracts_markdown(view: ProviderContractsView) -> str:
+    """Render the swap-the-data provider manual as compact Markdown.
+
+    Optimized for an agent replacing seed data provider by provider: each
+    entry states what the provider reads, what each calling step feeds it,
+    and the exact row keys downstream make_* steps demand from its output.
+    """
+    if not view.providers:
+        return ""
+    lines: list[str] = []
+    for provider in view.providers:
+        if lines:
+            lines.append("")
+        badge = "deterministic" if provider.deterministic else "non-deterministic"
+        lines.extend(
+            [
+                f"### `{provider.name}` ({badge})",
+                "",
+                f"- Ref: `{provider.ref}`",
+            ]
+        )
+        if provider.artifact:
+            artifact_label = f"- Reads artifact: `{provider.artifact}`"
+            if provider.artifact_uri:
+                artifact_label = f"{artifact_label} (`{provider.artifact_uri}`)"
+            lines.append(artifact_label)
+        if provider.description:
+            lines.append(f"- Purpose: {' '.join(provider.description.split())}")
+        if not provider.calls:
+            lines.append("- Not called by any workflow step.")
+        for call in provider.calls:
+            lines.extend(_provider_call_lines(call))
+    return "\n".join(lines)
+
+
+def _provider_call_lines(call: ProviderCallView) -> list[str]:
+    lines = ["", f"Called by workflow `{call.workflow}`, step `{call.step_id}`:", ""]
+    if call.inputs:
+        lines.extend(f"- Input `{item.name}` <- {item.source}" for item in call.inputs)
+    else:
+        lines.append("- Input: none (empty payload).")
+    for shape in call.output_shapes:
+        lines.append(_provider_output_shape_line(shape))
+    return lines
+
+
+def _provider_output_shape_line(shape: ProviderOutputShapeView) -> str:
+    keys = ", ".join(_provider_output_field_label(item) for item in shape.fields) or "none"
+    line = (
+        f"- Output rows -> `{shape.kind}` step `{shape.step_id}` "
+        f"(`{shape.target_type}`): required row keys: {keys}."
+    )
+    if shape.auto_properties:
+        line = f"{line} `properties: auto` — rows must carry every key; null for unset optionals."
+    return line
+
+
+def _provider_output_field_label(item: ProviderOutputFieldView) -> str:
+    if item.key is None:
+        return f"{item.role} from `{item.expr}`"
+    if item.role is not None:
+        return f"`{item.key}` ({item.role})"
+    if item.target is not None:
+        return f"`{item.key}` -> `{item.target}`"
+    return f"`{item.key}`"
+
+
+def render_ontology_legend_markdown(view: OntologyView) -> str:
+    """One-line legend for the ontology diagram, listing only styles present."""
+    deterministic = [rel for rel in view.relationships if rel.mode == "deterministic"]
+    governed = [rel for rel in view.relationships if rel.mode == "governed"]
+    deterministic_entities = {rel.from_entity for rel in deterministic} | {
+        rel.to_entity for rel in deterministic
+    }
+    governed_entities = {rel.from_entity for rel in governed} | {rel.to_entity for rel in governed}
+    has_base = False
+    has_canonical = False
+    has_governed_entity = False
+    for entity in view.entity_types:
+        if entity.origin == "base":
+            has_base = True
+        elif entity.name in governed_entities and entity.name not in deterministic_entities:
+            has_governed_entity = True
+        else:
+            has_canonical = True
+
+    items: list[MermaidLegendItem] = []
+    if has_canonical:
+        items.append(MermaidLegendItem("blue node", "canonical entity (deterministic writes)"))
+    if has_governed_entity:
+        items.append(
+            MermaidLegendItem("orange node", "governed entity (enters via proposal/review)")
+        )
+    if has_base:
+        items.append(
+            MermaidLegendItem("dashed grey node", "base-kit entity shown for seam context")
+        )
+    if deterministic:
+        items.append(MermaidLegendItem("solid edge", "deterministic relationship"))
+    if governed:
+        items.append(MermaidLegendItem("dotted edge", "governed relationship"))
+    return "\n".join(render_mermaid_inline_legend(items))
 
 
 def render_governance_markdown(view: GovernanceView) -> str:
@@ -788,60 +1007,6 @@ def render_overview_markdown(view: OverviewView) -> str:
         )
 
     return "\n".join(lines)
-
-
-def _render_schema_catalog_group(
-    title: str,
-    entries: list[SchemaCatalogTypeView],
-) -> list[str]:
-    lines = [f"### {title}", ""]
-    if not entries:
-        lines.append("No configured entries.")
-        return lines
-    for entry in entries:
-        lines.append(f"#### `{entry.name}`")
-        if entry.kind == "relationship" and entry.from_entity and entry.to_entity:
-            mode = f" ({entry.mode})" if entry.mode else ""
-            lines.append(f"- Scope: `{entry.from_entity}` -> `{entry.to_entity}`{mode}")
-        if entry.description:
-            lines.append(f"- Description: {entry.description.strip()}")
-        if entry.properties:
-            lines.append(
-                _markdown_table(
-                    ("Property", "Type", "Flags", "Enum", "Default", "Description"),
-                    [_property_schema_row(prop) for prop in entry.properties],
-                )
-            )
-        else:
-            lines.append("No declared properties.")
-        lines.append("")
-    if lines[-1] == "":
-        lines.pop()
-    return lines
-
-
-def _property_schema_row(prop: PropertySchemaView) -> tuple[str, ...]:
-    flags: list[str] = []
-    if prop.primary_key:
-        flags.append("primary key")
-    if prop.optional:
-        flags.append("optional")
-    enum_label = "-"
-    if prop.enum_ref is not None:
-        values = ", ".join(str(value) for value in prop.enum_values or [])
-        enum_label = f"`{prop.enum_ref}`"
-        if values:
-            enum_label = f"{enum_label}: {values}"
-    elif prop.enum_values is not None:
-        enum_label = ", ".join(str(value) for value in prop.enum_values)
-    return (
-        f"`{prop.name}`",
-        prop.type,
-        ", ".join(flags) or "-",
-        enum_label,
-        "-" if prop.default is None else f"`{prop.default}`",
-        prop.description or "-",
-    )
 
 
 def _markdown_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:

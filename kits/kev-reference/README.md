@@ -25,7 +25,17 @@ flowchart LR
   entity_Vulnerability -- "Vulnerability Affects Product" --> entity_Product
   linkStyle 0,1 stroke:#2c5f8a,stroke-width:2px
 ```
+
+**Diagram legend:** blue node = canonical entity (deterministic writes); solid edge = deterministic relationship.
 <!-- CRUXIBLE:END ontology -->
+
+<!-- CRUXIBLE:BEGIN schema-catalog -->
+| Entity | Properties | Description |
+| --- | --- | --- |
+| `Product` | `product_id: string (pk)`, `vendor_id: string?`, `vendor_name: string?`, `product_name: string?`, `cpe_vendor: string?`, `cpe_product: string?`, `cpe_part: string?` | Product identified by CPE vendor and product strings. |
+| `Vendor` | `vendor_id: string (pk)`, `name: string?` | Vendor or software publisher, identified by CPE vendor string. |
+| `Vulnerability` | `cve_id: string (pk)`, `vulnerability_name: string?`, `description: string?`, `date_added_to_kev: date?`, `kev_due_date: date?`, `required_action: string?`, `known_ransomware_use: enum?`, `cvss_score: number?`, `cvss_severity: string?`, `epss_score: number?`, `epss_percentile: number?`, `cwes: json?` | Public vulnerability record from CISA KEV catalog. |
+<!-- CRUXIBLE:END schema-catalog -->
 
 <!-- CRUXIBLE:BEGIN workflow-pipeline -->
 ```mermaid
@@ -55,9 +65,36 @@ flowchart LR
 - Parse Public Kev Bundle (Python Function, v1.0.0); source: `src/cruxible_core/providers/common/tabular.py::load_tabular_artifact_bundle`; artifact: Public Kev Bundle
 <!-- CRUXIBLE:END workflow-summary -->
 
+<!-- CRUXIBLE:BEGIN provider-contracts -->
+### `normalize_public_kev_reference` (deterministic)
+
+- Ref: `kit://providers/reference.py::normalize_public_kev_reference`
+- Purpose: Join parsed KEV catalog, EPSS scores, and NVD CPE configurations on CVE ID, extract CPE-based product identity and version ranges, and emit one row per (CVE, CPE product) pair with aggregated affected_versions.
+
+Called by workflow `build_public_kev_reference`, step `rows`:
+
+- Input `kev_rows` <- provider step `raw_tables` (`tables.known_exploited_vulnerabilities.rows`)
+- Input `epss_rows` <- provider step `raw_tables` (`tables.epss_kev_nvd.rows`)
+- Input `nvd_cpe_rows` <- provider step `raw_tables` (`tables.nvd_kev_cves.rows`)
+- Output rows -> `make_entities` step `vendors` (`Vendor`): required row keys: `vendor_id` (entity id), `vendor_name` -> `name`.
+- Output rows -> `make_entities` step `products` (`Product`): required row keys: `product_id` (entity id), `vendor_id`, `vendor_name`, `product_name`, `cpe_vendor`, `cpe_product`, `cpe_part`.
+- Output rows -> `make_entities` step `vulnerabilities` (`Vulnerability`): required row keys: `cve_id` (entity id), `vulnerability_name`, `description`, `date_added_to_kev`, `kev_due_date`, `required_action`, `known_ransomware_use`, `cvss_score`, `cvss_severity`, `epss_score`, `epss_percentile`, `cwes`.
+- Output rows -> `make_relationships` step `product_vendor` (`product_from_vendor`): required row keys: `product_id` (from id), `vendor_id` (to id).
+- Output rows -> `make_relationships` step `vulnerability_product` (`vulnerability_affects_product`): required row keys: `cve_id` (from id), `product_id` (to id), `source`, `source_record_id`, `cpe_part`, `cpe_vendor`, `cpe_product`, `affected_versions`, `fixed_version`, `default_status`, `vulnerable`, `version_logic`, `source_last_modified_at`.
+
+### `parse_public_kev_bundle` (deterministic)
+
+- Ref: `cruxible_core.providers.common.tabular.load_tabular_artifact_bundle`
+- Reads artifact: `public_kev_bundle` (`kits/kev-reference/data`)
+- Purpose: Parse the pinned public KEV artifact into generic provenance-rich tabular rows. Domain normalization happens in the next workflow step.
+
+Called by workflow `build_public_kev_reference`, step `raw_tables`:
+
+- Input `expected_tables` <- config literal (inline in the workflow step)
+<!-- CRUXIBLE:END provider-contracts -->
+
 <!-- CRUXIBLE:BEGIN governance-table -->
-| Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+This kit declares no governed relationships.
 <!-- CRUXIBLE:END governance-table -->
 
 <!-- CRUXIBLE:BEGIN mutation-guards -->
@@ -67,22 +104,6 @@ No mutation guards declared.
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
 No configured proposal signal sources.
 <!-- CRUXIBLE:END signal-policy-catalog -->
-
-<!-- CRUXIBLE:BEGIN query-map -->
-```mermaid
-flowchart LR
-  classDef queryEntity fill:#ecfdf5,stroke:#047857,color:#064e3b
-
-  query_entity_Product["Product"]
-  query_entity_Vendor["Vendor"]
-  query_entity_Vulnerability["Vulnerability"]
-  class query_entity_Product,query_entity_Vendor,query_entity_Vulnerability queryEntity
-  query_entity_Product --> query_entity_Vulnerability
-  query_entity_Vendor --> query_entity_Product
-  query_entity_Vendor --> query_entity_Vulnerability
-  query_entity_Vulnerability --> query_entity_Product
-```
-<!-- CRUXIBLE:END query-map -->
 
 <!-- CRUXIBLE:BEGIN query-catalog -->
 ### Product

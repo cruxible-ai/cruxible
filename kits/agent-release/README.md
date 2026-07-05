@@ -92,29 +92,101 @@ flowchart LR
   entity_Actor["Actor"]
   entity_AgentSystem["Agent System"]
   entity_AgentVersion["Agent Version"]
+  entity_Decision["Decision"]
   entity_EvalRun["Eval Run"]
   entity_EvalSuite["Eval Suite"]
+  entity_OpenQuestion["Open Question"]
+  entity_ReviewRequest["Review Request"]
   entity_Risk["Risk"]
+  entity_StateNote["State Note"]
+  entity_SubjectRef["Subject Ref"]
   entity_WorkItem["Work Item"]
-  class entity_AgentSystem,entity_AgentVersion,entity_EvalRun,entity_EvalSuite canonicalEntity
-  class entity_Actor,entity_Risk,entity_WorkItem baseEntity
+  class entity_Actor,entity_AgentSystem,entity_AgentVersion,entity_Decision,entity_EvalRun,entity_EvalSuite,entity_OpenQuestion,entity_ReviewRequest,entity_Risk,entity_StateNote,entity_SubjectRef,entity_WorkItem canonicalEntity
 
   %% Deterministic canonical relationships
   entity_AgentSystem -- "Agent System Owned By Actor" --> entity_Actor
   entity_AgentVersion -- "Agent Version Of System" --> entity_AgentSystem
+  entity_Decision -- "Decision Owned By Actor" --> entity_Actor
   entity_EvalRun -- "Eval Run Of Suite" --> entity_EvalSuite
   entity_EvalRun -- "Eval Run Scores Version" --> entity_AgentVersion
   entity_EvalSuite -- "Eval Suite Owned By Actor" --> entity_Actor
+  entity_OpenQuestion -- "Open Question Owned By Actor" --> entity_Actor
+  entity_ReviewRequest -- "Review Request Assigned To Actor" --> entity_Actor
+  entity_ReviewRequest -- "Review Request For Work Item" --> entity_WorkItem
+  entity_ReviewRequest -- "Review Request Requested By Actor" --> entity_Actor
+  entity_Risk -- "Risk Owned By Actor" --> entity_Actor
+  entity_StateNote -- "State Note About Actor" --> entity_Actor
+  entity_StateNote -- "State Note About Decision" --> entity_Decision
+  entity_StateNote -- "State Note About Open Question" --> entity_OpenQuestion
+  entity_StateNote -- "State Note About Review Request" --> entity_ReviewRequest
+  entity_StateNote -- "State Note About Risk" --> entity_Risk
+  entity_StateNote -- "State Note About Subject" --> entity_SubjectRef
+  entity_StateNote -- "State Note About Work Item" --> entity_WorkItem
+  entity_StateNote -- "State Note Authored By Actor" --> entity_Actor
+  entity_StateNote -- "State Note Resolves State Note" --> entity_StateNote
+  entity_StateNote -- "State Note Supersedes State Note" --> entity_StateNote
+  entity_WorkItem -- "Work Item Owned By Actor" --> entity_Actor
+  entity_WorkItem -- "Work Item Part Of Work Item" --> entity_WorkItem
+  entity_WorkItem -- "Work Item Spawned From Work Item" --> entity_WorkItem
   entity_WorkItem -- "Work Item Targets Agent Version" --> entity_AgentVersion
+  entity_WorkItem -- "Work Item Targets Subject" --> entity_SubjectRef
 
   %% Governed proposal/review relationships
   entity_AgentVersion -. "Agent Version Supersedes Version" .-> entity_AgentVersion
+  entity_Decision -. "Decision Affects Subject" .-> entity_SubjectRef
+  entity_Decision -. "Decision Answers Open Question" .-> entity_OpenQuestion
+  entity_Decision -. "Decision Constrains Work Item" .-> entity_WorkItem
+  entity_Decision -. "Decision Supersedes Decision" .-> entity_Decision
   entity_EvalRun -. "Eval Run Certifies Version" .-> entity_AgentVersion
+  entity_OpenQuestion -. "Open Question Blocks Decision" .-> entity_Decision
+  entity_OpenQuestion -. "Open Question Blocks Work Item" .-> entity_WorkItem
+  entity_OpenQuestion -. "Open Question Concerns Subject" .-> entity_SubjectRef
   entity_Risk -. "Risk Attaches To Agent System" .-> entity_AgentSystem
-  linkStyle 0,1,2,3,4,5 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 6,7,8 stroke:#e74c3c,stroke-width:2px
+  entity_Risk -. "Risk Attaches To Subject" .-> entity_SubjectRef
+  entity_Risk -. "Risk Blocks Work Item" .-> entity_WorkItem
+  entity_WorkItem -. "Work Item Answers Open Question" .-> entity_OpenQuestion
+  entity_WorkItem -. "Work Item Depends On Work Item" .-> entity_WorkItem
+  entity_WorkItem -. "Work Item Mitigates Risk" .-> entity_Risk
+  entity_WorkItem -. "Work Item Supersedes Work Item" .-> entity_WorkItem
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41 stroke:#e74c3c,stroke-width:2px
 ```
+
+**Diagram legend:** blue node = canonical entity (deterministic writes); solid edge = deterministic relationship; dotted edge = governed relationship.
 <!-- CRUXIBLE:END ontology -->
+
+## Schema Catalog
+
+<!-- CRUXIBLE:BEGIN schema-catalog -->
+| Entity | Properties | Description |
+| --- | --- | --- |
+| `Actor` | `actor_id: string (pk)`, `label: string?`, `kind: actor_kind?`, `status: actor_status?` | Human, agent, service account, or system actor referenced by operation state. Auth-managed: instances materialize from runtime-credential mints (identity source of truth = the credential store) and are writable by no other path, so every property is a credential-derived fact. label is the credential label; kind derives from the authenticated actor type. |
+| `AgentSystem` | `agent_system_id: string (pk)`, `name: string?`, `description: string?` | Durable agent, bot, pipeline, or assistant being versioned and released. The stable identity that versions belong to. |
+| `AgentVersion` | `agent_version_id: string (pk)`, `label: string?`, `summary: string?`, `status: agent_version_status?`, `change_ref: string?`, `created_at: datetime?` | A specific released or releasable state of an agent system: a prompt revision, model swap, tool change, or code build. change_ref points at the change evidence (git sha, config digest, prompt file hash) — the version record does not embed the change itself. |
+| `Decision` | `decision_id: string (pk)`, `title: string?`, `summary: string?`, `rationale: string?`, `status: decision_status?`, `decided_at: date?` | Durable operating decision with lifecycle, rationale, impact, and supersession context. |
+| `EvalRun` | `eval_run_id: string (pk)`, `ran_at: datetime?`, `passed: bool?`, `score: number?`, `harness: string?`, `summary: string?`, `artifact_ref: string?` | Receipted claim that an eval suite was run against an agent version. Written by the operator or agent after their own harness runs — the kit never executes evals. artifact_ref points at the report/log evidence. |
+| `EvalSuite` | `eval_suite_id: string (pk)`, `name: string?`, `description: string?`, `pass_criteria: string?` | Named evaluation suite an agent system is judged against. pass_criteria records the human-readable bar (e.g. "grade >= 0.9 on 40 held-out tasks"); the suite definition itself lives with the eval harness, not in state. |
+| `OpenQuestion` | `question_id: string (pk)`, `title: string?`, `summary: string?`, `status: lifecycle_status?`, `due_date: date?` | Open question that can block work or decisions until answered. |
+| `ReviewRequest` | `review_request_id: string (pk)`, `title: string?`, `status: review_status?`, `summary: string?`, `change_repo: string?`, `change_base: string?`, `change_head: string?`, `requested_at: datetime?`, `resolved_at: datetime?` | Review checkpoint that can gate completion of a work item. |
+| `Risk` | `risk_id: string (pk)`, `title: string?`, `summary: string?`, `status: lifecycle_status?`, `priority: priority?` | Operational risk that can block or materially delay work. |
+| `StateNote` | `note_id: string (pk)`, `kind: state_note_kind?`, `title: string?`, `summary: string?`, `body: string?`, `created_at: datetime?` | Durable dated note about operation state (corrections, field notes, rationale updates, implementation notes, review notes). Preserves evolving interpretation without turning current entity summaries into changelogs. |
+| `SubjectRef` | `subject_ref_id: string (pk)`, `label: string?`, `subject_type: string?`, `subject_id: string?`, `state_ref: string?`, `summary: string?` | Lightweight reference to an external/cross-instance/not-yet-modeled subject. In a composed same-instance graph, prefer explicit typed operation-to-domain relationships over wrapping modeled domain entities in SubjectRef. |
+| `WorkItem` | `work_item_id: string (pk)`, `title: string?`, `summary: string?`, `description: string?`, `rationale: string?`, `type: work_item_type?`, `status: lifecycle_status?`, `priority: priority?`, `target_date: date?` | Execution-level item an agent or human can work, review, close, defer, or supersede. |
+
+### Enums
+
+| Enum | Values |
+| --- | --- |
+| `actor_kind` | human, agent, service_account, system |
+| `actor_status` | active, inactive |
+| `agent_version_status` | draft, candidate, live, rolled_back, retired |
+| `decision_status` | proposed, accepted, rejected, deferred |
+| `lifecycle_status` | planned, active, blocked, watching, deferred, closed |
+| `priority` | low, medium, high, critical |
+| `review_status` | requested, in_review, changes_requested, approved, withdrawn |
+| `state_note_kind` | correction, field_note, rationale_update, implementation_note, review_note |
+| `work_item_type` | feature, bug, cleanup, research, docs, test, infrastructure, operations |
+<!-- CRUXIBLE:END schema-catalog -->
 
 ## Workflows
 
@@ -124,17 +196,18 @@ certification goes through `group propose`. The composed runtime view below
 shows anything inherited from the base.
 
 <!-- CRUXIBLE:BEGIN workflow-pipeline -->
-```mermaid
-flowchart LR
-  classDef canonicalWorkflow fill:#4a90d9,stroke:#2c5f8a,color:#fff
-  classDef governedWorkflow fill:#e67e22,stroke:#a0521c,color:#fff
-
-```
+This kit declares no workflows.
 <!-- CRUXIBLE:END workflow-pipeline -->
 
 <!-- CRUXIBLE:BEGIN workflow-summary -->
-
+This kit declares no workflows.
 <!-- CRUXIBLE:END workflow-summary -->
+
+## Provider Contracts
+
+<!-- CRUXIBLE:BEGIN provider-contracts -->
+This kit declares no providers; state is written directly by operators and agents.
+<!-- CRUXIBLE:END provider-contracts -->
 
 ## Governance
 
@@ -142,14 +215,30 @@ flowchart LR
 | Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Agent Version Supersedes Version | Agent Version -> Agent Version | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | Supersession Resolution |
+| Decision Affects Subject | Decision -> Subject Ref | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Answers Open Question | Decision -> Open Question | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Constrains Work Item | Decision -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Supersedes Decision | Decision -> Decision | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 | Eval Run Certifies Version | Eval Run -> Agent Version | Proposal only (direct write refused) | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Certification Resolution |
+| Open Question Blocks Decision | Open Question -> Decision | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Open Question Blocks Work Item | Open Question -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Open Question Concerns Subject | Open Question -> Subject Ref | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 | Risk Attaches To Agent System | Risk -> Agent System | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Risk Attaches To Subject | Risk -> Subject Ref | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Risk Blocks Work Item | Risk -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Answers Open Question | Work Item -> Open Question | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Depends On Work Item | Work Item -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Mitigates Risk | Work Item -> Risk | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Work Item Supersedes Work Item | Work Item -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 <!-- CRUXIBLE:END governance-table -->
 
 <!-- CRUXIBLE:BEGIN mutation-guards -->
 | Guard | Fires On | Refused Unless | Message |
 | --- | --- | --- | --- |
 | `agent_version_live_requires_certifying_eval` | `AgentVersion.status` -> `live` | query `certifying_eval_runs_for_version` returns >= 1 result(s) | An AgentVersion cannot be promoted to live without at least one accepted, passing EvalRun certifying it (eval_run_certifies_version at relationship_state live). Record the eval run, get the certification accepted through review, then promote. |
+| `review_request_approval_requires_authorized_actor` | `ReviewRequest.status` -> `approved` | authenticated actor in: authorized-reviewer | ReviewRequest approvals require the authenticated reviewer actor (not a writer credential or spoofed body actor). |
+| `review_verdict_requires_rationale_note` | `ReviewRequest.status` -> `changes_requested, approved, withdrawn` | same write creates `StateNote` (kind=review_note) linked via `state_note_about_review_request` | A ReviewRequest verdict must co-write a new StateNote(kind=review_note) linked via state_note_about_review_request in the same write. Status can't advance without recording why. |
+| `work_item_closed_requires_approved_review` | `WorkItem.status` -> `closed` | query `approved_reviews_for_work_item` returns >= 1 result(s) | Work items cannot be closed until an approved ReviewRequest reviews them. |
 <!-- CRUXIBLE:END mutation-guards -->
 
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
@@ -160,48 +249,6 @@ flowchart LR
 <!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Queries
-
-<!-- CRUXIBLE:BEGIN query-map -->
-```mermaid
-flowchart LR
-  classDef queryEntity fill:#ecfdf5,stroke:#047857,color:#064e3b
-
-  query_entity_Actor["Actor"]
-  query_entity_AgentSystem["Agent System"]
-  query_entity_AgentVersion["Agent Version"]
-  query_entity_AnyEntity["Any Entity"]
-  query_entity_Collection_query["Collection Query"]
-  query_entity_Decision["Decision"]
-  query_entity_EvalRun["Eval Run"]
-  query_entity_EvalSuite["Eval Suite"]
-  query_entity_OpenQuestion["Open Question"]
-  query_entity_ReviewRequest["Review Request"]
-  query_entity_Risk["Risk"]
-  query_entity_StateNote["State Note"]
-  query_entity_SubjectRef["Subject Ref"]
-  query_entity_WorkItem["Work Item"]
-  class query_entity_Actor,query_entity_AgentSystem,query_entity_AgentVersion,query_entity_AnyEntity,query_entity_Collection_query,query_entity_Decision,query_entity_EvalRun,query_entity_EvalSuite,query_entity_OpenQuestion,query_entity_ReviewRequest,query_entity_Risk,query_entity_StateNote,query_entity_SubjectRef,query_entity_WorkItem queryEntity
-  query_entity_Actor --> query_entity_WorkItem
-  query_entity_AgentSystem --> query_entity_AgentVersion
-  query_entity_AgentVersion --> query_entity_AnyEntity
-  query_entity_AgentVersion --> query_entity_EvalRun
-  query_entity_Collection_query --> query_entity_AgentVersion
-  query_entity_Collection_query --> query_entity_Decision
-  query_entity_Collection_query --> query_entity_OpenQuestion
-  query_entity_Collection_query --> query_entity_ReviewRequest
-  query_entity_Collection_query --> query_entity_Risk
-  query_entity_Collection_query --> query_entity_StateNote
-  query_entity_Collection_query --> query_entity_WorkItem
-  query_entity_EvalSuite --> query_entity_EvalRun
-  query_entity_ReviewRequest --> query_entity_StateNote
-  query_entity_StateNote --> query_entity_AnyEntity
-  query_entity_SubjectRef --> query_entity_AnyEntity
-  query_entity_WorkItem --> query_entity_AnyEntity
-  query_entity_WorkItem --> query_entity_ReviewRequest
-  query_entity_WorkItem --> query_entity_StateNote
-  query_entity_WorkItem --> query_entity_WorkItem
-```
-<!-- CRUXIBLE:END query-map -->
 
 <!-- CRUXIBLE:BEGIN query-catalog -->
 ### Actor

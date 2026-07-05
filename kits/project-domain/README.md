@@ -83,22 +83,37 @@ flowchart LR
   linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14 stroke:#2c5f8a,stroke-width:2px
   linkStyle 15,16,17,18,19,20,21 stroke:#e74c3c,stroke-width:2px
 ```
+
+**Diagram legend:** blue node = canonical entity (deterministic writes); dashed grey node = base-kit entity shown for seam context; solid edge = deterministic relationship; dotted edge = governed relationship.
 <!-- CRUXIBLE:END ontology -->
+
+## Schema Catalog
+
+<!-- CRUXIBLE:BEGIN schema-catalog -->
+| Entity | Properties | Description |
+| --- | --- | --- |
+| `Capability` | `capability_id: string (pk)`, `name: string?`, `description: string?`, `status: enum?` | Durable technical or product ability the project supports. |
+| `Milestone` | `milestone_id: string (pk)`, `title: string?`, `summary: string?`, `status: enum?`, `target_date: date?` | Delivery milestone, gate, checkpoint, or intermediate target. |
+| `ProductArea` | `area_id: string (pk)`, `name: string?`, `description: string?` | Stable product, project, subsystem, package, or responsibility area. |
+| `ReleaseLine` | `release_line_id: string (pk)`, `name: string?`, `status: enum?`, `starts_at: date?`, `target_date: date?` | Release train, version line, launch window, or delivery stream. |
+| `RoadmapItem` | `roadmap_item_id: string (pk)`, `title: string?`, `summary: string?`, `status: enum?`, `priority: enum?`, `target_date: date?` | Planned investment, initiative, or roadmap-level change. |
+<!-- CRUXIBLE:END schema-catalog -->
 
 ## Workflows
 
 <!-- CRUXIBLE:BEGIN workflow-pipeline -->
-```mermaid
-flowchart LR
-  classDef canonicalWorkflow fill:#4a90d9,stroke:#2c5f8a,color:#fff
-  classDef governedWorkflow fill:#e67e22,stroke:#a0521c,color:#fff
-
-```
+This layer declares no workflows; composed instances inherit the base kit's.
 <!-- CRUXIBLE:END workflow-pipeline -->
 
 <!-- CRUXIBLE:BEGIN workflow-summary -->
-
+This layer declares no workflows; composed instances inherit the base kit's.
 <!-- CRUXIBLE:END workflow-summary -->
+
+## Provider Contracts
+
+<!-- CRUXIBLE:BEGIN provider-contracts -->
+This layer declares no providers; state is written directly by operators and agents, and any base-kit providers are documented in the base kit's README.
+<!-- CRUXIBLE:END provider-contracts -->
 
 ## Governance
 
@@ -121,78 +136,17 @@ No mutation guards declared.
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
 | Signal Source | Role | Review Unsure | Used By | Notes |
 | --- | --- | --- | --- | --- |
-| `maintainer_judgment` | advisory | yes | Decision Affects Area, Decision Affects Capability, Decision Affects Roadmap Item, Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Roadmap Item, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Area, Risk Attaches To Subject, Risk Blocks Roadmap Item, Risk Blocks Work Item, Roadmap Item Depends On Roadmap Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
-| `source_evidence` | required | yes | Decision Affects Area, Decision Affects Capability, Decision Affects Roadmap Item, Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Roadmap Item, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Area, Risk Attaches To Subject, Risk Blocks Roadmap Item, Risk Blocks Work Item, Roadmap Item Depends On Roadmap Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
+| `maintainer_judgment` | advisory | yes | Decision Affects Area, Decision Affects Capability, Decision Affects Roadmap Item, Open Question Blocks Roadmap Item, Risk Attaches To Area, Risk Blocks Roadmap Item, Roadmap Item Depends On Roadmap Item, + 13 base relationships | - |
+| `source_evidence` | required | yes | Decision Affects Area, Decision Affects Capability, Decision Affects Roadmap Item, Open Question Blocks Roadmap Item, Risk Attaches To Area, Risk Blocks Roadmap Item, Roadmap Item Depends On Roadmap Item, + 13 base relationships | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Queries
 
-<!-- CRUXIBLE:BEGIN query-map -->
-```mermaid
-flowchart LR
-  classDef queryEntity fill:#ecfdf5,stroke:#047857,color:#064e3b
-
-  query_entity_Actor["Actor"]
-  query_entity_AnyEntity["Any Entity"]
-  query_entity_Collection_query["Collection Query"]
-  query_entity_Decision["Decision"]
-  query_entity_Milestone["Milestone"]
-  query_entity_OpenQuestion["Open Question"]
-  query_entity_ProductArea["Product Area"]
-  query_entity_ReleaseLine["Release Line"]
-  query_entity_ReviewRequest["Review Request"]
-  query_entity_Risk["Risk"]
-  query_entity_RoadmapItem["Roadmap Item"]
-  query_entity_StateNote["State Note"]
-  query_entity_SubjectRef["Subject Ref"]
-  query_entity_WorkItem["Work Item"]
-  class query_entity_Actor,query_entity_AnyEntity,query_entity_Collection_query,query_entity_Decision,query_entity_Milestone,query_entity_OpenQuestion,query_entity_ProductArea,query_entity_ReleaseLine,query_entity_ReviewRequest,query_entity_Risk,query_entity_RoadmapItem,query_entity_StateNote,query_entity_SubjectRef,query_entity_WorkItem queryEntity
-  query_entity_Actor --> query_entity_WorkItem
-  query_entity_Collection_query --> query_entity_Decision
-  query_entity_Collection_query --> query_entity_OpenQuestion
-  query_entity_Collection_query --> query_entity_ReviewRequest
-  query_entity_Collection_query --> query_entity_Risk
-  query_entity_Collection_query --> query_entity_StateNote
-  query_entity_Collection_query --> query_entity_WorkItem
-  query_entity_Decision --> query_entity_RoadmapItem
-  query_entity_Milestone --> query_entity_WorkItem
-  query_entity_OpenQuestion --> query_entity_RoadmapItem
-  query_entity_ProductArea --> query_entity_RoadmapItem
-  query_entity_ProductArea --> query_entity_WorkItem
-  query_entity_ReleaseLine --> query_entity_AnyEntity
-  query_entity_ReleaseLine --> query_entity_WorkItem
-  query_entity_ReviewRequest --> query_entity_StateNote
-  query_entity_RoadmapItem --> query_entity_RoadmapItem
-  query_entity_RoadmapItem --> query_entity_WorkItem
-  query_entity_StateNote --> query_entity_AnyEntity
-  query_entity_SubjectRef --> query_entity_AnyEntity
-  query_entity_WorkItem --> query_entity_AnyEntity
-  query_entity_WorkItem --> query_entity_ReviewRequest
-  query_entity_WorkItem --> query_entity_StateNote
-  query_entity_WorkItem --> query_entity_WorkItem
-```
-<!-- CRUXIBLE:END query-map -->
-
 <!-- CRUXIBLE:BEGIN query-catalog -->
-### Actor
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| Actor Work Queue | traversal | Work Item | reviewable | Work Item Owned By Actor (Incoming) | Work items owned by an actor with latest reviews, dependency counts, blockers, subjects. |
-
 ### Collection Query
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Active Risks | collection | Risk | live |  | Active operational risks. |
-| Blocked Work Items | collection | Work Item | reviewable |  | Work items marked blocked, with risk/open-question blocker context. |
-| Changes Requested Reviews | collection | Review Request | reviewable |  | Review requests sent back with changes requested -- the implementer's rework queue, distinct from the reviewer-facing review_queue. |
-| Open Questions Needing Review | collection | Open Question | live |  | Planned/active open questions needing review. |
-| Proposed Decisions | collection | Decision | live |  | Proposed decisions awaiting acceptance/rejection/deferral. |
-| Recent State Notes | collection | State Note | reviewable |  | Recent operation-state notes, corrections, rationale/implementation/review notes. |
-| Review Queue | collection | Review Request | reviewable |  | Review requests awaiting a reviewer -- requested or in review. Reviews sent back for rework live in changes_requested_reviews. |
-| Superseded Decisions | collection | Decision | not-live |  | Decision retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
-| Superseded Work Items | collection | Work Item | not-live |  | WorkItem retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
 | Work Queue | collection | Work Item | live |  | Active work items dispatched for implementation -- the queue an implementer or agentic loop pulls from. Curate by setting a work item's status to active. |
 
 ### Decision
@@ -229,12 +183,6 @@ flowchart LR
 | Release Readiness Context | traversal | Any Entity | reviewable | Work Item In Release \| Roadmap Item In Release (Incoming) | Starting from a release line, inspect active, planned, or blocked work plus roadmap items, including roadmap items that have not yet been decomposed into work. |
 | Release Work Items | traversal | Work Item | live | Work Item In Release \| Milestone In Release \| Roadmap Item In Release \| Work Item In Milestone \| Roadmap Item In Milestone \| Work Item Implements Roadmap Item (Incoming, depth=3) | Work items reachable from a release line directly, through release milestones, or through release roadmap items. |
 
-### Review Request
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| State Notes For Review Request | traversal | State Note | reviewable | State Note About Review Request (Incoming) | The review thread: verdict and finding notes attached to a review request, newest first. This is the read that replaces scrolling a notes blob. |
-
 ### Roadmap Item
 
 | Query | Mode | Returns | State | Traversal | Purpose |
@@ -242,27 +190,7 @@ flowchart LR
 | Roadmap Item Context | traversal | Roadmap Item | reviewable | Roadmap Item Depends On Roadmap Item (Outgoing) | Starting from a roadmap item, inspect dependencies, dependents, delivery placement, work, decisions, risks, and open questions. |
 | Roadmap Item Work Items | traversal | Work Item | live | Work Item Implements Roadmap Item (Incoming) | Work items that implement a roadmap item. |
 
-### State Note
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| State Note Context | traversal | Any Entity | reviewable | State Note Authored By Actor \| State Note About Work Item \| State Note About Review Request \| State Note About Decision \| State Note About Risk \| State Note About Open Question \| State Note About Subject \| State Note About Actor \| State Note Supersedes State Note \| State Note Resolves State Note (Both) | Full context for a state note (targets, author, supersession). |
-
-### Subject Ref
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| Subject Operation Context | traversal | Any Entity | reviewable | State Note About Subject \| Work Item Targets Subject \| Decision Affects Subject \| Risk Attaches To Subject \| Open Question Concerns Subject (Both) | Work, decisions, risks, open questions attached to a subject ref. |
-
-### Work Item
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| Approved Reviews For Work Item | traversal | Review Request | live | Review Request For Work Item (Incoming) | Approved review requests for a work item. Used by the closed-transition guard. |
-| State Notes For Work Item | traversal | State Note | reviewable | State Note About Work Item (Incoming) | State notes attached to a work item, newest first. |
-| Work Item Context | traversal | Any Entity | reviewable | Work Item Owned By Actor \| Review Request For Work Item \| State Note About Work Item \| Work Item Depends On Work Item \| Work Item Part Of Work Item \| Work Item Spawned From Work Item \| Work Item Supersedes Work Item \| Risk Blocks Work Item \| Open Question Blocks Work Item \| Work Item Mitigates Risk \| Work Item Answers Open Question \| Decision Constrains Work Item \| Work Item Targets Subject \| Work Item In Release \| Work Item In Milestone \| Work Item Implements Roadmap Item \| Work Item Targets Area (Both) | From a work item, inspect dependencies, blockers, reviews, composition, lineage, decisions, owner, subjects. all_adjacent expands against the final composed config, so on a composed instance this query also traverses overlay seam edges (e.g. project-domain's roadmap, release, milestone, and area relationships). |
-| Work Item Lineage Context | traversal | Work Item | reviewable | Work Item Spawned From Work Item \| Work Item Supersedes Work Item (Both, depth=5) | Work item lineage/replacement context, excluding sequencing deps. |
-| Work Item Rollup Context | traversal | Work Item | reviewable | Work Item Part Of Work Item (Incoming, depth=5) | Child/descendant work items under a parent. |
+Plus 18 queries inherited from the base kit — see its README.
 <!-- CRUXIBLE:END query-catalog -->
 
 ## Quality Rules
@@ -277,21 +205,11 @@ No configured constraints.
 | Name | Kind | Target | Severity | Rule |
 | --- | --- | --- | --- | --- |
 | `decision_roadmap_impacts_have_type` | Property | Decision Affects Roadmap Item.impact_type | Warning | Required |
-| `decision_supersessions_have_basis` | Property | Decision Supersedes Decision.supersession_basis | Warning | Non Empty |
-| `decision_work_constraints_have_type` | Property | Decision Constrains Work Item.impact_type | Warning | Required |
-| `open_question_work_blockers_have_basis` | Property | Open Question Blocks Work Item.blocking_basis | Warning | Non Empty |
-| `review_requests_review_work` | Cardinality | Review Request -> Review Request For Work Item (out) | Warning | min `1` |
-| `risk_work_blockers_have_basis` | Property | Risk Blocks Work Item.blocking_basis | Warning | Non Empty |
 | `roadmap_dependencies_have_basis` | Property | Roadmap Item Depends On Roadmap Item.dependency_basis | Warning | Non Empty |
 | `roadmap_items_target_area` | Cardinality | Roadmap Item -> Roadmap Item Targets Area (out) | Warning | min `1` |
-| `state_note_supersessions_have_basis` | Property | State Note Supersedes State Note.supersession_basis | Warning | Non Empty |
-| `state_notes_have_author` | Cardinality | State Note -> State Note Authored By Actor (out) | Warning | min `1` |
-| `work_dependencies_have_basis` | Property | Work Item Depends On Work Item.dependency_basis | Warning | Non Empty |
-| `work_item_part_of_single_parent` | Cardinality | Work Item -> Work Item Part Of Work Item (out) | Warning | max `1` |
-| `work_item_spawned_from_single_origin` | Cardinality | Work Item -> Work Item Spawned From Work Item (out) | Warning | max `1` |
-| `work_items_have_owner` | Cardinality | Work Item -> Work Item Owned By Actor (out) | Warning | min `1` |
 | `work_items_target_area` | Cardinality | Work Item -> Work Item Targets Area (out) | Warning | min `1` |
-| `work_supersessions_have_basis` | Property | Work Item Supersedes Work Item.supersession_basis | Warning | Non Empty |
+
+Plus 12 quality checks inherited from the base kit — see its README.
 <!-- CRUXIBLE:END quality-rules -->
 
 ## Learning Loops

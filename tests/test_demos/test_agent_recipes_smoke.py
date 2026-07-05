@@ -330,7 +330,8 @@ def test_recipe_regenerate_kit_docs(tmp_path: Path) -> None:
         "<!-- CRUXIBLE:BEGIN ontology -->",
         "<!-- CRUXIBLE:END ontology -->",
         "<!-- CRUXIBLE:BEGIN workflow-pipeline -->",
-        "<!-- CRUXIBLE:BEGIN query-map -->",
+        "<!-- CRUXIBLE:BEGIN provider-contracts -->",
+        "<!-- CRUXIBLE:BEGIN schema-catalog -->",
     ):
         assert marker in regenerated, f"regeneration dropped marker {marker!r}"
     # Generated diagram content must actually be present inside the blocks.
