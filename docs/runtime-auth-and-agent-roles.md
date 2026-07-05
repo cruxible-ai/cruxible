@@ -199,8 +199,14 @@ cruxible credential recover-admin --state-dir "$HOME/.cruxible/server"
 The command verifies that the invoking uid owns both the state dir and
 `runtime_credentials.db`, takes a SQLite `BEGIN IMMEDIATE` lock, mints one new
 `ADMIN` credential, records a recovery audit event, and prints the plaintext
-token once. If the lock is busy, leave the DB alone and stop the daemon or other
-writer first.
+token once.
+
+Stop the daemon yourself before running recovery. The lock check is
+best-effort only: it refuses when another connection is mid-write, but a
+running daemon that is idle holds no SQLite lock and will NOT be detected.
+Recovery against a live daemon does not corrupt state (credentials are read
+fresh on every request), but the operator — not the lock — is the guarantee
+that nothing else is serving the state dir.
 
 After recovery, restart the daemon with auth enabled and use the new admin token
 to mint, rotate, or revoke credentials. Existing admin credentials are not

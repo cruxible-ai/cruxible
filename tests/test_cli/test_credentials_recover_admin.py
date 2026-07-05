@@ -206,6 +206,68 @@ def test_recover_admin_requires_instance_id_for_multi_instance_db(
     assert _recovery_event_rows(state_dir) == []
 
 
+def test_recover_admin_selects_instance_in_multi_instance_db(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    state_dir, instance_ids = _seed_admin_state(tmp_path, monkeypatch, instance_count=2)
+    target_instance_id = instance_ids[1]
+
+    result = runner.invoke(
+        cli,
+        [
+            "credential",
+            "recover-admin",
+            "--state-dir",
+            str(state_dir),
+            "--instance-id",
+            target_instance_id,
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["credential"]["instance_id"] == target_instance_id
+
+    events = _recovery_event_rows(state_dir)
+    assert len(events) == 1
+    assert events[0]["instance_id"] == target_instance_id
+    other_instance_records = get_runtime_credential_store().list_for_instance(instance_ids[0])
+    assert [record.created_by for record in other_instance_records] == ["runtime_bootstrap"]
+
+
+def test_recover_admin_refuses_instance_without_admin_credential(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "server-state"
+    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(state_dir))
+    reset_registry()
+    reset_runtime_credential_store()
+    workspace_root = tmp_path / "workspace-no-admin"
+    workspace_root.mkdir()
+    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+    get_runtime_credential_store().create_credential(
+        instance_id=registered.record.instance_id,
+        label="writer-only",
+        permission_mode=PermissionMode.GRAPH_WRITE,
+        created_by="runtime_bootstrap",
+    )
+
+    result = runner.invoke(
+        cli,
+        ["credential", "recover-admin", "--state-dir", str(state_dir)],
+    )
+
+    assert result.exit_code == 2
+    assert "No ADMIN runtime credential exists" in result.output
+    assert len(_credential_rows(state_dir)) == 1
+    assert _recovery_event_rows(state_dir) == []
+
+
 def test_recover_admin_refuses_busy_credentials_db(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,

@@ -244,7 +244,8 @@ def _sqlite_busy(exc: sqlite3.OperationalError) -> bool:
     type=click.Path(file_okay=False, path_type=Path),
     help=(
         "Server state directory containing runtime_credentials.db. Stop the daemon "
-        "first; a busy SQLite lock is treated as an active daemon/process."
+        "first; the lock check only refuses a writer caught mid-transaction and "
+        "does not detect an idle running daemon."
     ),
 )
 @click.option(
@@ -271,8 +272,9 @@ def recover_admin_cmd(
     Trust model: this local-only command never contacts a Cruxible server. It
     treats ownership of --state-dir and its runtime_credentials.db by the
     invoking uid as authority to mint one new ADMIN runtime credential directly
-    in that DB. Stop the daemon first; recovery takes BEGIN IMMEDIATE and
-    refuses a busy DB as evidence that the state dir may still be served.
+    in that DB. Stop the daemon first: the BEGIN IMMEDIATE check refuses a
+    writer caught mid-transaction but cannot detect an idle running daemon,
+    so operator discipline is the real guarantee.
     Existing credentials are not revoked automatically.
     """
     _refuse_recover_admin_server_mode()
@@ -295,6 +297,10 @@ def recover_admin_cmd(
         raise click.UsageError(str(exc)) from exc
     except RuntimeCredentialRecoveryError as exc:
         raise click.UsageError(str(exc)) from exc
+    except sqlite3.OperationalError as exc:
+        raise click.UsageError(
+            f"Could not write runtime credentials DB at {db_path}: {exc}"
+        ) from exc
 
     credential = _credential_metadata_from_record(result.record)
     if output_json:
