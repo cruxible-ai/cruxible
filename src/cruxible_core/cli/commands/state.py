@@ -192,6 +192,7 @@ def state_health_cmd(output_json: bool) -> None:
         return
 
     groups = payload["groups"]
+    signals = payload["signals"]
     provenance = payload["provenance"]
     freshness = payload["freshness"]
     integrity = payload["integrity"]
@@ -209,6 +210,15 @@ def state_health_cmd(output_json: bool) -> None:
         f"  unresolved age: oldest={_fmt_age(groups['oldest_unresolved_age_seconds'])} "
         f"newest={_fmt_age(groups['newest_unresolved_age_seconds'])}"
     )
+
+    click.echo("Signals:")
+    unevidenced_support = signals["unevidenced_support_by_source"]
+    if unevidenced_support:
+        click.echo("  unevidenced_support_by_source:")
+        for source, count in sorted(unevidenced_support.items()):
+            click.echo(f"    {source}: {count}")
+    else:
+        click.echo("  unevidenced_support_by_source: -")
 
     click.echo("Provenance (edges):")
     click.echo(f"  direct_write:   {provenance['direct_write_edge_count']}")

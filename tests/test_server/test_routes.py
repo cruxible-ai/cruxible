@@ -481,6 +481,7 @@ def test_state_health_route_returns_valid_report(
     payload = contracts.StateHealthResult.model_validate(response.json())
     assert payload.captured_at
     assert payload.groups.total_count >= 0
+    assert isinstance(payload.signals.unevidenced_support_by_source, dict)
     assert payload.provenance.total_edge_count >= 1
     assert payload.freshness.config_compatible is True
     assert payload.integrity.configuration_locked in (True, False)

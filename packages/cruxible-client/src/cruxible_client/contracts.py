@@ -837,6 +837,12 @@ class StateHealthGroupsSection(BaseModel):
     newest_unresolved_age_seconds: float | None = None
 
 
+class StateHealthSignalsSection(BaseModel):
+    """Signal evidence counts for unresolved candidate proposals."""
+
+    unevidenced_support_by_source: dict[str, int] = Field(default_factory=dict)
+
+
 class StateHealthProvenanceSection(BaseModel):
     """Edge provenance tally by source_ref class."""
 
@@ -877,6 +883,7 @@ class StateHealthResult(BaseModel):
     captured_at: str
     head_snapshot_id: str | None = None
     groups: StateHealthGroupsSection = Field(default_factory=StateHealthGroupsSection)
+    signals: StateHealthSignalsSection = Field(default_factory=StateHealthSignalsSection)
     provenance: StateHealthProvenanceSection = Field(default_factory=StateHealthProvenanceSection)
     freshness: StateHealthFreshnessSection = Field(default_factory=StateHealthFreshnessSection)
     integrity: StateHealthIntegritySection = Field(default_factory=StateHealthIntegritySection)

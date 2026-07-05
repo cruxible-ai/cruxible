@@ -483,6 +483,8 @@ relationships: []
         result = _chdir_run(runner, project, ["state", "health"])
         assert result.exit_code == 0, result.output
         assert "Groups:" in result.output
+        assert "Signals:" in result.output
+        assert "unevidenced_support_by_source:" in result.output
         assert "Provenance (edges):" in result.output
         assert "Freshness:" in result.output
         assert "Integrity:" in result.output
@@ -493,16 +495,18 @@ relationships: []
         result = _chdir_run(runner, project, ["state", "health", "--json"])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
-        # Envelope plus four deterministic sections present and all-zero on empty.
+        # Envelope plus five deterministic sections present and all-zero on empty.
         assert set(payload) == {
             "captured_at",
             "head_snapshot_id",
             "groups",
+            "signals",
             "provenance",
             "freshness",
             "integrity",
         }
         assert payload["groups"]["total_count"] == 0
+        assert payload["signals"]["unevidenced_support_by_source"] == {}
         assert payload["provenance"]["total_edge_count"] == 0
         assert payload["freshness"]["config_compatible"] is True
         assert payload["integrity"]["configuration_locked"] is False

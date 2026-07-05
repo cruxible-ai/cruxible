@@ -20,7 +20,11 @@ from cruxible_core.config.schema import (
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.provenance import SOURCE_REF_ADD_RELATIONSHIP
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import CandidateMember
+from cruxible_core.group.types import (
+    CandidateMember,
+    CandidateSignal,
+    QuerySourceEvidence,
+)
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     RelationshipWriteInput,
@@ -930,6 +934,8 @@ class TestStateHealth:
         assert result.groups.oldest_unresolved_age_seconds is None
         assert result.groups.newest_unresolved_age_seconds is None
 
+        assert result.signals.unevidenced_support_by_source == {}
+
         assert result.provenance.total_edge_count == 0
         assert result.provenance.direct_write_edge_count == 0
         assert result.provenance.group_backed_edge_count == 0
@@ -1030,6 +1036,77 @@ class TestStateHealth:
         assert with_pending.groups.oldest_unresolved_age_seconds is not None
         assert with_pending.groups.oldest_unresolved_age_seconds >= 0
         assert with_pending.groups.newest_unresolved_age_seconds is not None
+
+    def test_signals_count_unevidenced_support_by_source(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        graph = populated_instance.load_graph()
+        for vehicle_id in ("V-EVIDENCE-1", "V-EVIDENCE-2"):
+            if graph.get_entity("Vehicle", vehicle_id) is None:
+                graph.add_entity(
+                    EntityInstance(
+                        entity_type="Vehicle",
+                        entity_id=vehicle_id,
+                        properties={"vehicle_id": vehicle_id, "make": "Honda"},
+                    )
+                )
+        populated_instance.save_graph(graph)
+
+        result = service_propose_group(
+            populated_instance,
+            "fits",
+            members=[
+                CandidateMember(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    to_type="Vehicle",
+                    to_id="V-EVIDENCE-1",
+                    relationship_type="fits",
+                    signals=[
+                        CandidateSignal(signal_source="scanner", signal="support"),
+                        CandidateSignal(
+                            signal_source="manual_check",
+                            signal="support",
+                            evidence="reviewed by QA",
+                        ),
+                        CandidateSignal(
+                            signal_source="catalog",
+                            signal="support",
+                            evidence_refs=[],
+                        ),
+                    ],
+                ),
+                CandidateMember(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    to_type="Vehicle",
+                    to_id="V-EVIDENCE-2",
+                    relationship_type="fits",
+                    signals=[
+                        CandidateSignal(signal_source="scanner", signal="support"),
+                        CandidateSignal(signal_source="query_signal", signal="support"),
+                    ],
+                    source_query_evidence=[
+                        QuerySourceEvidence(
+                            query_receipt_id="RCP-query000001",
+                            row_index=0,
+                            source_step="query_signal",
+                        )
+                    ],
+                ),
+            ],
+            thesis_text="signal evidence backlog",
+            thesis_facts={"source": "test"},
+        )
+        assert result.group_id is not None
+
+        health = service_state_health(populated_instance)
+
+        assert health.signals.unevidenced_support_by_source == {
+            "catalog": 1,
+            "scanner": 2,
+        }
 
     def test_provenance_source_ref_tally(self, populated_instance: CruxibleInstance) -> None:
         # populated_instance starts with 4 fixture edges written with NO
