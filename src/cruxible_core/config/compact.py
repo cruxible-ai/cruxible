@@ -457,9 +457,9 @@ def _find_signature(item: dict[str, Any]) -> tuple[str, str]:
 def _expand_proposal_policy(policy: dict[str, Any]) -> dict[str, Any]:
     """Expand a (possibly compact-inline) proposal policy to the explicit shape.
 
-    Signal entries authored inline (``{role: required, always_review_on_unsure: true}``)
-    pass through as explicit mappings; the engine fills the remaining inert policy
-    defaults.
+    Signal entries authored inline (``{role: required, always_review_on_unsure: true,
+    require_evidence_on_support: true}``) pass through as explicit mappings; the
+    engine fills the remaining inert policy defaults.
     """
     _reject_unknown_keys(
         "proposal policy",

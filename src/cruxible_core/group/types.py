@@ -128,6 +128,17 @@ class CandidateMember(RelationshipInstance):
         )
 
 
+def is_unevidenced_support_signal(signal: CandidateSignal) -> bool:
+    """Return whether a support signal lacks signal-attributable evidence."""
+    if signal.signal != "support":
+        return False
+    if signal.evidence.strip():
+        return False
+    if signal.evidence_refs:
+        return False
+    return True
+
+
 class GroupResolution(BaseModel):
     """Persisted resolution of a candidate group (approve or reject)."""
 

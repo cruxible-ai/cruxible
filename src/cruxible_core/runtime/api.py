@@ -1832,6 +1832,9 @@ def state_health(instance_id: str) -> contracts.StateHealthResult:
             oldest_unresolved_age_seconds=result.groups.oldest_unresolved_age_seconds,
             newest_unresolved_age_seconds=result.groups.newest_unresolved_age_seconds,
         ),
+        signals=contracts.StateHealthSignalsSection(
+            unevidenced_support_by_source=result.signals.unevidenced_support_by_source,
+        ),
         provenance=contracts.StateHealthProvenanceSection(
             direct_write_edge_count=result.provenance.direct_write_edge_count,
             group_backed_edge_count=result.provenance.group_backed_edge_count,

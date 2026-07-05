@@ -998,6 +998,13 @@ class StateHealthGroupsSection:
 
 
 @dataclass
+class StateHealthSignalsSection:
+    """Support-signal counts pending review under the evidence guard."""
+
+    unevidenced_support_by_source: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
 class StateHealthProvenanceSection:
     """Edge provenance tally by source_ref class."""
 
@@ -1031,11 +1038,12 @@ class StateHealthIntegritySection:
 
 @dataclass
 class StateHealthResult:
-    """Aggregated read-only state-health report (four deterministic sections)."""
+    """Aggregated read-only state-health report (five deterministic sections)."""
 
     captured_at: str
     head_snapshot_id: str | None
     groups: StateHealthGroupsSection
+    signals: StateHealthSignalsSection
     provenance: StateHealthProvenanceSection
     freshness: StateHealthFreshnessSection
     integrity: StateHealthIntegritySection

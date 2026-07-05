@@ -21,7 +21,7 @@ from cruxible_core.graph.provenance import (
     SOURCE_REF_BATCH_DIRECT_WRITE,
 )
 from cruxible_core.graph.types import RelationshipMetadata
-from cruxible_core.group.types import TrustStatus
+from cruxible_core.group.types import TrustStatus, is_unevidenced_support_signal
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.evaluate import (
     EvaluationReport,
@@ -49,6 +49,7 @@ from cruxible_core.service.types import (
     StateHealthIntegritySection,
     StateHealthProvenanceSection,
     StateHealthResult,
+    StateHealthSignalsSection,
     TrustAdjustmentSuggestion,
     UncodedFeedbackExample,
     UncodedOutcomeExample,
@@ -121,6 +122,7 @@ def service_state_health(instance: InstanceProtocol) -> StateHealthResult:
     graph = instance.load_graph()
 
     groups = _state_health_groups(instance, now=now)
+    signals = _state_health_signals(instance)
     provenance = _state_health_provenance(graph)
     freshness = _state_health_freshness(instance, config=config, graph=graph, now=now)
     integrity = _state_health_integrity(instance, config=config, graph=graph)
@@ -129,6 +131,7 @@ def service_state_health(instance: InstanceProtocol) -> StateHealthResult:
         captured_at=format_datetime(now) or now.isoformat(),
         head_snapshot_id=instance.get_head_snapshot_id(),
         groups=groups,
+        signals=signals,
         provenance=provenance,
         freshness=freshness,
         integrity=integrity,
@@ -188,6 +191,45 @@ def _state_health_groups(
         total_count=sum(counts.values()),
         oldest_unresolved_age_seconds=max(ages) if ages else None,
         newest_unresolved_age_seconds=min(ages) if ages else None,
+    )
+
+
+def _state_health_signals(instance: InstanceProtocol) -> StateHealthSignalsSection:
+    """Count support signals pending review under the evidence guard."""
+    config = instance.load_config()
+    counts: dict[str, int] = defaultdict(int)
+    group_store = instance.get_group_store()
+    try:
+        offset = 0
+        page = 500
+        while True:
+            batch = group_store.list_groups(limit=page, offset=offset)
+            if not batch:
+                break
+            for group in batch:
+                if group.status != "pending_review":
+                    continue
+                rel_schema = config.get_relationship(group.relationship_type)
+                if rel_schema is None or rel_schema.proposal_policy is None:
+                    continue
+                signal_policies = rel_schema.proposal_policy.signals
+                for member in group_store.get_members(group.group_id):
+                    for signal in member.signals:
+                        signal_config = signal_policies.get(signal.signal_source)
+                        if signal_config is None or signal_config.role == "advisory":
+                            continue
+                        if not signal_config.require_evidence_on_support:
+                            continue
+                        if is_unevidenced_support_signal(signal):
+                            counts[signal.signal_source] += 1
+            if len(batch) < page:
+                break
+            offset += page
+    finally:
+        group_store.close()
+
+    return StateHealthSignalsSection(
+        unevidenced_support_by_source=dict(sorted(counts.items()))
     )
 
 

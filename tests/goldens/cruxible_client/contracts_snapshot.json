@@ -21725,6 +21725,15 @@
           "schema": {
             "$ref": "#/$defs/StateHealthProvenanceSection"
           }
+        },
+        "signals": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "signals",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/StateHealthSignalsSection"
+          }
         }
       },
       "json_schema": {
@@ -21902,6 +21911,20 @@
             },
             "title": "StateHealthProvenanceSection",
             "type": "object"
+          },
+          "StateHealthSignalsSection": {
+            "description": "Support-signal counts pending review under the evidence guard.",
+            "properties": {
+              "unevidenced_support_by_source": {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "title": "Unevidenced Support By Source",
+                "type": "object"
+              }
+            },
+            "title": "StateHealthSignalsSection",
+            "type": "object"
           }
         },
         "description": "Read-only deterministic state-health report.\n\nAggregates raw maintenance metrics (counts, ages, timestamps) and binary\ndeterministic facts only. Carries NO scoring, ranking, severity, or\nthreshold-derived statuses — agents interpret; core reports defensible facts.",
@@ -21933,6 +21956,9 @@
           },
           "provenance": {
             "$ref": "#/$defs/StateHealthProvenanceSection"
+          },
+          "signals": {
+            "$ref": "#/$defs/StateHealthSignalsSection"
           }
         },
         "required": [
@@ -21944,6 +21970,38 @@
       "required_fields": [
         "captured_at"
       ]
+    },
+    "StateHealthSignalsSection": {
+      "fields": {
+        "unevidenced_support_by_source": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "unevidenced_support_by_source",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Unevidenced Support By Source",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Support-signal counts pending review under the evidence guard.",
+        "properties": {
+          "unevidenced_support_by_source": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Unevidenced Support By Source",
+            "type": "object"
+          }
+        },
+        "title": "StateHealthSignalsSection",
+        "type": "object"
+      },
+      "required_fields": []
     },
     "StateOverlayResult": {
       "fields": {

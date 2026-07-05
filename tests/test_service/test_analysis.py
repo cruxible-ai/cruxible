@@ -20,7 +20,11 @@ from cruxible_core.config.schema import (
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.provenance import SOURCE_REF_ADD_RELATIONSHIP
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import CandidateMember
+from cruxible_core.group.types import (
+    CandidateMember,
+    CandidateSignal,
+    QuerySourceEvidence,
+)
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     RelationshipWriteInput,
@@ -930,6 +934,8 @@ class TestStateHealth:
         assert result.groups.oldest_unresolved_age_seconds is None
         assert result.groups.newest_unresolved_age_seconds is None
 
+        assert result.signals.unevidenced_support_by_source == {}
+
         assert result.provenance.total_edge_count == 0
         assert result.provenance.direct_write_edge_count == 0
         assert result.provenance.group_backed_edge_count == 0
@@ -1030,6 +1036,157 @@ class TestStateHealth:
         assert with_pending.groups.oldest_unresolved_age_seconds is not None
         assert with_pending.groups.oldest_unresolved_age_seconds >= 0
         assert with_pending.groups.newest_unresolved_age_seconds is not None
+
+    def test_signals_count_unevidenced_support_by_source(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        config = populated_instance.load_config()
+        fits = config.get_relationship("fits")
+        replaces = config.get_relationship("replaces")
+        assert fits is not None
+        assert replaces is not None
+        fits.proposal_policy = ProposalPolicySchema(
+            signals={
+                "scanner": SignalPolicySchema(
+                    role="required",
+                    require_evidence_on_support=True,
+                ),
+                "query_signal": SignalPolicySchema(
+                    role="required",
+                    require_evidence_on_support=True,
+                ),
+                "manual_check": SignalPolicySchema(
+                    role="advisory",
+                    require_evidence_on_support=True,
+                ),
+                "catalog": SignalPolicySchema(role="advisory"),
+            }
+        )
+        replaces.proposal_policy = ProposalPolicySchema(
+            signals={"catalog": SignalPolicySchema(role="required")}
+        )
+        populated_instance.save_config(config)
+
+        graph = populated_instance.load_graph()
+        for vehicle_id in (
+            "V-EVIDENCE-1",
+            "V-EVIDENCE-2",
+            "V-EVIDENCE-RESOLVED",
+        ):
+            if graph.get_entity("Vehicle", vehicle_id) is None:
+                graph.add_entity(
+                    EntityInstance(
+                        entity_type="Vehicle",
+                        entity_id=vehicle_id,
+                        properties={"vehicle_id": vehicle_id, "make": "Honda"},
+                    )
+                )
+        populated_instance.save_graph(graph)
+
+        result = service_propose_group(
+            populated_instance,
+            "fits",
+            members=[
+                CandidateMember(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    to_type="Vehicle",
+                    to_id="V-EVIDENCE-1",
+                    relationship_type="fits",
+                    signals=[
+                        CandidateSignal(signal_source="scanner", signal="support"),
+                        CandidateSignal(
+                            signal_source="query_signal",
+                            signal="support",
+                            evidence="query row carried onto the signal",
+                        ),
+                        CandidateSignal(
+                            signal_source="manual_check",
+                            signal="support",
+                            evidence="reviewed by QA",
+                        ),
+                        CandidateSignal(signal_source="catalog", signal="support"),
+                    ],
+                ),
+                CandidateMember(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    to_type="Vehicle",
+                    to_id="V-EVIDENCE-2",
+                    relationship_type="fits",
+                    signals=[
+                        CandidateSignal(signal_source="scanner", signal="support"),
+                        CandidateSignal(signal_source="query_signal", signal="support"),
+                    ],
+                    source_query_evidence=[
+                        QuerySourceEvidence(
+                            query_receipt_id="RCP-query000001",
+                            row_index=0,
+                            source_step="query_signal",
+                        )
+                    ],
+                ),
+            ],
+            thesis_text="signal evidence backlog",
+            thesis_facts={"source": "test"},
+        )
+        assert result.group_id is not None
+
+        resolved_result = service_propose_group(
+            populated_instance,
+            "fits",
+            members=[
+                CandidateMember(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    to_type="Vehicle",
+                    to_id="V-EVIDENCE-RESOLVED",
+                    relationship_type="fits",
+                    signals=[
+                        CandidateSignal(signal_source="scanner", signal="support"),
+                        CandidateSignal(signal_source="query_signal", signal="support"),
+                    ],
+                )
+            ],
+            thesis_text="resolved evidence backlog",
+            thesis_facts={"source": "resolved-test"},
+        )
+        assert resolved_result.group_id is not None
+        service_resolve_group(
+            populated_instance,
+            resolved_result.group_id,
+            action="reject",
+            rationale="not part of pending health backlog",
+            resolved_by="human",
+            expected_pending_version=1,
+        )
+
+        unflagged_result = service_propose_group(
+            populated_instance,
+            "replaces",
+            members=[
+                CandidateMember(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    to_type="Part",
+                    to_id="BP-1002",
+                    relationship_type="replaces",
+                    signals=[CandidateSignal(signal_source="catalog", signal="support")],
+                    properties={"direction": "downgrade", "confidence": 0.8},
+                )
+            ],
+            thesis_text="unflagged source backlog",
+            thesis_facts={"source": "unflagged-test"},
+        )
+        assert unflagged_result.group_id is not None
+
+        health = service_state_health(populated_instance)
+
+        assert health.signals.unevidenced_support_by_source == {
+            "query_signal": 1,
+            "scanner": 2,
+        }
 
     def test_provenance_source_ref_tally(self, populated_instance: CruxibleInstance) -> None:
         # populated_instance starts with 4 fixture edges written with NO

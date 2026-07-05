@@ -325,7 +325,10 @@ def test_relationship_proposal_policy_references_preset() -> None:
           policies:
             standard:
               signals:
-                source_evidence: {role: required, always_review_on_unsure: true}
+                source_evidence:
+                  role: required
+                  always_review_on_unsure: true
+                  require_evidence_on_support: true
         relationships:
           - work_item_owned_by_actor: WorkItem -> Actor
             proposal_policy: standard
@@ -335,6 +338,7 @@ def test_relationship_proposal_policy_references_preset() -> None:
     assert policy["signals"]["source_evidence"] == {
         "role": "required",
         "always_review_on_unsure": True,
+        "require_evidence_on_support": True,
     }
 
 
@@ -1727,7 +1731,10 @@ def test_presets_and_metadata_are_stripped() -> None:
               policies:
                 standard:
                   signals:
-                    source_evidence: {role: required, always_review_on_unsure: true}
+                    source_evidence:
+                      role: required
+                      always_review_on_unsure: true
+                      require_evidence_on_support: true
             entity_types:
               E:
                 id: e_id
