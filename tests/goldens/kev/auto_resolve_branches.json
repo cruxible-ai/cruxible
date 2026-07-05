@@ -32,7 +32,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:b95cc239c167605eea7233ab5210b250184dce6caaa045c9f944ac5d8135418e",
+          "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
           "step_id": "proposal",
           "workflow_name": "propose_vulnerability_classification"
         },
@@ -179,7 +179,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:b95cc239c167605eea7233ab5210b250184dce6caaa045c9f944ac5d8135418e",
+          "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
           "step_id": "proposal",
           "workflow_name": "propose_vulnerability_classification"
         },
@@ -285,7 +285,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:b95cc239c167605eea7233ab5210b250184dce6caaa045c9f944ac5d8135418e",
+          "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
           "step_id": "proposal",
           "workflow_name": "propose_vulnerability_classification"
         },
@@ -432,7 +432,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:b95cc239c167605eea7233ab5210b250184dce6caaa045c9f944ac5d8135418e",
+          "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
           "step_id": "proposal",
           "workflow_name": "propose_vulnerability_classification"
         },

@@ -53,7 +53,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:7d73f47f99373458cef2f30d3244305995e962346992b3028c77468af70aa74e",
+        "proposal_logic_digest": "sha256:20e2f171756680da68d628ac6f1452174c7dd399acf972ebf41425bef1078660",
         "step_id": "proposal",
         "workflow_name": "propose_asset_exposure"
       },
@@ -5124,7 +5124,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:7d73f47f99373458cef2f30d3244305995e962346992b3028c77468af70aa74e",
+        "proposal_logic_digest": "sha256:20e2f171756680da68d628ac6f1452174c7dd399acf972ebf41425bef1078660",
         "step_id": "proposal",
         "workflow_name": "propose_asset_exposure"
       },

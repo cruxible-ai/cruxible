@@ -6900,7 +6900,7 @@
           ]
         },
         "confirmed": true,
-        "group_signature": "sigv1:144816f7a44e8eff038b27a8fdd15f4fe8843cbb81cbb2d0c6084e74580f8280",
+        "group_signature": "sigv1:c00077da84cea1556739abd9728f185f8ed707fc42ba8021871a2fa7af25a46e",
         "rationale": "",
         "relationship_type": "asset_runs_product",
         "resolution_id": "<RESOLUTION_1>",
@@ -6914,7 +6914,7 @@
           "origin": {
             "evidence_mode": "workflow_generated",
             "kind": "workflow",
-            "proposal_logic_digest": "sha256:af49a037a96e83a85a91748f4e3ddb077979bb1d09671e0357fb5caefdd7a323",
+            "proposal_logic_digest": "sha256:43c6f72a91290343891d83e115cd75ffd15b1b4f162b39d3b0f891ad1ae8afed",
             "step_id": "proposal",
             "workflow_name": "propose_asset_products"
           },
@@ -6947,7 +6947,7 @@
       "signal_sources_used": [
         "software_product_match"
       ],
-      "signature": "sigv1:144816f7a44e8eff038b27a8fdd15f4fe8843cbb81cbb2d0c6084e74580f8280",
+      "signature": "sigv1:c00077da84cea1556739abd9728f185f8ed707fc42ba8021871a2fa7af25a46e",
       "source_query_receipt_ids": [
         "<RECEIPT_3>"
       ],
@@ -6970,7 +6970,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:af49a037a96e83a85a91748f4e3ddb077979bb1d09671e0357fb5caefdd7a323",
+          "proposal_logic_digest": "sha256:43c6f72a91290343891d83e115cd75ffd15b1b4f162b39d3b0f891ad1ae8afed",
           "step_id": "proposal",
           "workflow_name": "propose_asset_products"
         },
@@ -11361,7 +11361,7 @@
           ]
         },
         "confirmed": true,
-        "group_signature": "sigv1:8855a8404a4253106374b339a629e9c0157262ed31f995732da5c4a31fab2f6c",
+        "group_signature": "sigv1:a30d1a3efc82544a729ca03edc1ba527cd2bec681465d3cd19a8789223828859",
         "rationale": "",
         "relationship_type": "asset_vulnerability_posture",
         "resolution_id": "<RESOLUTION_2>",
@@ -11375,7 +11375,7 @@
           "origin": {
             "evidence_mode": "workflow_generated",
             "kind": "workflow",
-            "proposal_logic_digest": "sha256:7d73f47f99373458cef2f30d3244305995e962346992b3028c77468af70aa74e",
+            "proposal_logic_digest": "sha256:20e2f171756680da68d628ac6f1452174c7dd399acf972ebf41425bef1078660",
             "step_id": "proposal",
             "workflow_name": "propose_asset_exposure"
           },
@@ -11414,7 +11414,7 @@
         "exploitability_signal",
         "control_effectiveness"
       ],
-      "signature": "sigv1:8855a8404a4253106374b339a629e9c0157262ed31f995732da5c4a31fab2f6c",
+      "signature": "sigv1:a30d1a3efc82544a729ca03edc1ba527cd2bec681465d3cd19a8789223828859",
       "source_query_receipt_ids": [
         "<RECEIPT_6>",
         "<RECEIPT_7>",
@@ -11445,7 +11445,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:7d73f47f99373458cef2f30d3244305995e962346992b3028c77468af70aa74e",
+          "proposal_logic_digest": "sha256:20e2f171756680da68d628ac6f1452174c7dd399acf972ebf41425bef1078660",
           "step_id": "proposal",
           "workflow_name": "propose_asset_exposure"
         },
@@ -11561,7 +11561,7 @@
           ]
         },
         "confirmed": true,
-        "group_signature": "sigv1:6b2e4a0f5c8016e84bc64db927ee93aebe6519c1bc337a30be94772b3f0d1598",
+        "group_signature": "sigv1:7283b389a95212cc4be61b3f62c2a0d2774ad9cef0968f978a2a51a648a565de",
         "rationale": "",
         "relationship_type": "vulnerability_classified_as",
         "resolution_id": "<RESOLUTION_3>",
@@ -11575,7 +11575,7 @@
           "origin": {
             "evidence_mode": "workflow_generated",
             "kind": "workflow",
-            "proposal_logic_digest": "sha256:b95cc239c167605eea7233ab5210b250184dce6caaa045c9f944ac5d8135418e",
+            "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
             "step_id": "proposal",
             "workflow_name": "propose_vulnerability_classification"
           },
@@ -11608,7 +11608,7 @@
       "signal_sources_used": [
         "vulnerability_classification"
       ],
-      "signature": "sigv1:6b2e4a0f5c8016e84bc64db927ee93aebe6519c1bc337a30be94772b3f0d1598",
+      "signature": "sigv1:7283b389a95212cc4be61b3f62c2a0d2774ad9cef0968f978a2a51a648a565de",
       "source_query_receipt_ids": [],
       "source_step_ids": [
         "proposal",
@@ -11626,7 +11626,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:b95cc239c167605eea7233ab5210b250184dce6caaa045c9f944ac5d8135418e",
+          "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
           "step_id": "proposal",
           "workflow_name": "propose_vulnerability_classification"
         },

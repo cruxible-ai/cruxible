@@ -36,7 +36,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:585a37f2986ee145a1ee2ab9c217693a78db1e3e3de2b3d921c384547889cb3f",
+        "proposal_logic_digest": "sha256:a5eebee9ae457c59d57da6c45279a16b9b01ff5b8718d8a351771028ab4f7aef",
         "step_id": "proposal",
         "workflow_name": "propose_exposure_reconciliation"
       },
@@ -253,7 +253,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:585a37f2986ee145a1ee2ab9c217693a78db1e3e3de2b3d921c384547889cb3f",
+        "proposal_logic_digest": "sha256:a5eebee9ae457c59d57da6c45279a16b9b01ff5b8718d8a351771028ab4f7aef",
         "step_id": "proposal",
         "workflow_name": "propose_exposure_reconciliation"
       },

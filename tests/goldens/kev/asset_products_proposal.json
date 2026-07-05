@@ -39,7 +39,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:af49a037a96e83a85a91748f4e3ddb077979bb1d09671e0357fb5caefdd7a323",
+        "proposal_logic_digest": "sha256:43c6f72a91290343891d83e115cd75ffd15b1b4f162b39d3b0f891ad1ae8afed",
         "step_id": "proposal",
         "workflow_name": "propose_asset_products"
       },
@@ -1465,7 +1465,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:af49a037a96e83a85a91748f4e3ddb077979bb1d09671e0357fb5caefdd7a323",
+        "proposal_logic_digest": "sha256:43c6f72a91290343891d83e115cd75ffd15b1b4f162b39d3b0f891ad1ae8afed",
         "step_id": "proposal",
         "workflow_name": "propose_asset_products"
       },
