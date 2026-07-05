@@ -1,243 +1,324 @@
 # State Resolution And Maintenance
 
-Cruxible state is durable shared state. Maintaining it means resolving review
-groups, retiring stale facts, checking health signals, and preserving receipts
-that explain why a graph changed.
+This document is for adopters who have run the [Quickstart](quickstart.md) and
+now need to trust Cruxible with real state. It answers two questions from the
+runtime's actual behavior: when agents and pipelines disagree, what wins — and
+what happens to your graph over time.
 
-Cruxible does not silently merge conflicting state. It preserves explicit graph
-state and makes reviewer or operator actions visible through receipts,
-relationship metadata, group resolutions, and lifecycle state.
+Vocabulary (candidate groups, signals, receipts, kits) is defined in
+[Concepts](concepts.md). Policy syntax is in the
+[Config Reference](config-reference.md). Nothing here repeats those documents.
 
-## Resolution Model
+## 1. How Proposal Conflicts Resolve
 
-Candidate groups are review buckets for governed relationship changes. A group
-has a relationship type, a signature, members, thesis text, signals, review
-state, and eventually a resolution.
+### Signature buckets
 
-Cruxible resolves group conflicts in three places:
+Every governed proposal lands in a **signature bucket**: a SHA-256 of the
+relationship type plus canonical `thesis_facts` (`sigv1:...`). The signature
+deliberately excludes `analysis_state`, so LLM rationale and other run-varying
+context never split a bucket. Workflow-authored proposals hash the workflow
+name, step, proposal logic digest, signal sources, and the relationship's
+policy; direct agent proposals hash the relationship, the member-derived
+signal sources, and the caller's scope facts. The bucket is the unit of
+precedent: resolutions and trust are stored per `(relationship_type,
+signature)`, not per edge.
 
-- proposal time;
-- review time;
-- maintenance time.
+### What gets suppressed at proposal time
 
-At proposal time, Cruxible avoids obvious duplicate work:
+Before a group is stored, each proposed member tuple is checked (for
+`proposal_identity: relationship_tuple` relationships):
 
-- if a tuple is already live, the proposed member is suppressed as
-  `existing_edge`;
-- if a tuple is already in a pending or applying group, the proposed member is
-  suppressed as `pending_proposal`;
-- if a proposal lands in the same signature bucket as an existing pending
-  group, the pending group is rewritten or refreshed rather than creating a
-  second independent group.
+- tuple already live in the graph → suppressed, reason `existing_edge`;
+- tuple already sitting in a `pending_review` or `applying` group → suppressed,
+  reason `pending_proposal`, with the competing group's id in the result;
+- tuple already approved earlier in this same signature bucket → suppressed as
+  `existing_edge`.
 
-At review time, a reviewer approves or rejects the group. Approving creates
-valid missing edges. Rejecting records the decision without creating edges.
+If everything is suppressed, no group is created — the propose result comes
+back `suppressed: true` with the per-tuple reasons. Duplicate work is refused
+at the door, not merged later.
 
-At maintenance time, reviewers can adjust trust on prior resolutions:
+### Review priorities
 
-- `trusted` means a matching future proposal may auto-resolve when policy and
-  signals allow it;
-- `watch` keeps the precedent accepted but review-sensitive;
-- `invalidated` means the precedent should no longer be trusted, and future
-  matching proposals should come back for review.
+Each stored group carries a mechanical `review_priority` derived from policy
+signals and prior trust — `cruxible group list` sorts by it:
 
-## Pending Versions
+| Priority | Set when |
+|---|---|
+| `critical` | any member carries a `contradict` signal from a **blocking** source, or the bucket's prior resolution was **invalidated** |
+| `review` | first contact (no prior confirmed approval for this signature); an `unsure` signal where the source sets `always_review_on_unsure` or has role `blocking`/`required`; a `support` signal with no evidence under `require_evidence_on_support`; prior resolution on `watch`; a decision policy with effect `require_review` matched; or a member tuple whose live edge has an active override or pending/rejected review state |
+| `normal` | none of the above — a clean repeat of an already-reviewed thesis |
 
-Pending groups carry a `pending_version`. Reviewers should approve or reject the
-version they inspected. If a group is rewritten while review is in progress,
-the stale pending version is rejected at resolution time.
+Signals from sources with role `advisory` are skipped entirely in this
+derivation. Priority is advisory ordering for reviewers; it does not gate who
+may resolve.
 
-This prevents an agent from approving an older view after another agent added,
-removed, or changed candidate members.
+### Auto-resolve: earned, per bucket, never on first contact
 
-## Existing Edges
+A fresh group is stored as `auto_resolved` instead of `pending_review` only
+when **all** of the following hold:
 
-Approving a group normally creates only missing valid edges. If a member tuple
-is already live when resolution runs, the member is skipped and the result
-explains why.
+1. The bucket has a prior **confirmed approval** whose trust status satisfies
+   `auto_resolve_requires_prior_trust` (`trusted_only` by default;
+   `trusted_or_watch` optionally). No prior resolution — or an `invalidated`
+   one — means no auto-resolve. **The first run of any thesis always goes to
+   review.**
+2. Current signals satisfy `auto_resolve_when`: `all_support` (every
+   non-advisory signal is `support`) or `no_contradict` (no blocking
+   `contradict`). An `unsure` under `always_review_on_unsure`, or an
+   unevidenced `support` under `require_evidence_on_support`, disqualifies
+   regardless of policy.
+3. Nothing forces review: no matched `require_review` decision policy, and no
+   member tuple with an active edge override.
 
-This can happen when:
-
-- a direct write created the edge after the group was proposed;
-- legacy or imported state already contained the tuple;
-- a previous operation created the edge outside the group currently being
-  reviewed.
-
-By default, Cruxible skips the existing edge rather than changing its authority
-label. This is conservative: the existing edge may have different properties,
-evidence, provenance, or prior review state than the proposed group member.
-
-### `stamp_existing`
-
-`stamp_existing` is an explicit reconciliation option on group approval. When
-enabled, a skipped existing edge is blessed with the approving group's review
-status and group provenance instead of remaining merely direct-written or
-unreviewed.
-
-Use it for narrow reconciliation cases:
-
-- a pending group was reviewed, but a direct write created the same edge before
-  approval;
-- a small amount of trusted legacy state needs to be brought under the group
-  that reviewed it;
-- a reviewer intentionally wants the group to become the authority for an
-  already-live edge.
-
-Do not treat `stamp_existing` as a general merge strategy. It does not fully
-solve existing-edge adoption. In particular, the complete post-0.2 design still
-needs answers for:
-
-- whether existing-edge adoption should be a group proposal mode or a separate
-  command;
-- how proposed member properties should be compared with current edge
-  properties;
-- whether group/member evidence should be merged into the existing edge or only
-  referenced through lineage;
-- how to handle an edge already backed by a different group;
-- when adoption should require a force flag or rationale.
-
-Track that unresolved design as an open question before making adoption the
-default behavior.
-
-## Direct Write Conflicts
-
-Direct writes are available for explicit state updates where the domain permits
-them — a governed `proposal_only` entity or relationship type (or the
-instance-wide `refuse_direct_writes` kill-switch, set via the
-`CRUXIBLE_REFUSE_DIRECT_WRITES` environment variable) refuses direct writes and
-forces state in through the proposal/workflow path instead. When a direct
-relationship write is permitted and overlaps a member of a pending or applying
-group, Cruxible keeps the write permissive and annotates the affected group with
-direct-write conflict metadata.
-
-The group is not auto-approved, rejected, or mutated into a different status.
-The reviewer sees that live state changed while the group was pending and can
-decide whether to approve, reject, refresh, or use `stamp_existing`.
-
-## Lifecycle Maintenance
-
-Cruxible distinguishes domain properties from system lifecycle metadata.
-
-Use lifecycle state when an entity or relationship should stop participating in
-normal live reads. Set it with `cruxible entity update --lifecycle-status ...`
-and `cruxible relationship update --lifecycle-status ...`. The status
-vocabularies are distinct by kind:
-
-- entities are `live`, `superseded`, or `retired` — retire or supersede stale
-  entities instead of deleting them;
-- relationships are `active`, `inactive`, `superseded`, or `retracted` —
-  retract, supersede, or inactivate stale relationships instead of rewriting
-  history;
-- keep receipts and provenance intact so future agents can inspect what
-  happened.
-
-The typed lifecycle write touches only the lifecycle slice; it cannot approve or
-reject the edge or alter group state. It is a direct-write verb, so a governed
-`proposal_only` domain refuses it just as it refuses other direct writes.
-
-Deletion should be reserved for bad imports, test data, or invalid state that
-should not be preserved as operational history.
-
-## Choosing The Right Repair
-
-Every repair verb preserves history except deletion. Pick by symptom:
-
-| Symptom | Repair | Why this verb |
-|---|---|---|
-| A governed edge that passed review turns out to be wrong | Retract the edge (`relationship update --lifecycle-status retracted`), then invalidate the precedent (`group trust --status invalidated`) | The edge stops participating in live reads, and future matching proposals come back for review instead of auto-resolving on the bad precedent |
-| A fact was true and no longer is | Supersede: set lifecycle `superseded` and, where the kit models it, add a `*_supersedes_*` edge to the replacement | The old fact remains inspectable as history; queries follow live state |
-| A fact is temporarily suspended, not wrong | Relationship lifecycle `inactive` | Reversible without erasing or re-reviewing anything |
-| The interpretation or summary is wrong, but the record matters | A note with `kind: correction`, plus a supersedes edge to the note it corrects (in kits that model notes) | Current summaries stay current; the correction chain carries the history instead of a rewritten description |
-| A direct write duplicated a member of a reviewed group | `stamp_existing` at group approval | The reviewed group becomes the authority for the already-live edge (see the constraints above) |
-| Repeated bad outcomes on a resolution path | Record outcomes against the claims, set the resolution to `watch` or `invalidated` | Trust demotion is the feedback loop's job; don't hand-retract edges that are individually defensible |
-| Bad import, test data, invalid state | Delete | The one case where preserving history is wrong — junk is not history |
-
-When in doubt: lifecycle transitions and corrections are cheap and visible;
-deletion and trust invalidation are the two verbs that change what future
-operations are allowed to assume, so they deserve a rationale.
-
-## Adjusting Trust On Precedents
-
-Group resolutions are precedents: an accepted resolution can let matching
-future proposals auto-resolve when the kit's policy allows it. Trust is
-adjusted per resolution:
+Trust does not accumulate automatically. A first approval records the
+resolution at `watch`. Promotion is an explicit act:
 
 ```bash
-cruxible group resolutions                # find the resolution ID
-cruxible group trust --resolution <id> --status invalidated \
-  --reason "Upstream mapping changed; re-review matches"
+cruxible group resolutions                 # find the resolution ID
+cruxible group trust --resolution <id> --status trusted \
+  --reason "Spot-checked 20 members against source documents"
 ```
 
-- `trusted` — matching future proposals may auto-resolve under policy;
-- `watch` — the precedent stands, but matches come back for review;
-- `invalidated` — the precedent is no longer trusted; matches always re-review.
+`group trust` also revokes: `--status invalidated` makes the next matching
+proposal come back `critical` and permanently blocks auto-resolve until a
+human re-approves the bucket (that re-approval resets trust to `watch`, not
+`trusted`). Trust can only be set on the **latest confirmed approval** for a
+signature — you cannot re-trust a superseded precedent. Trust changes never
+touch existing edges; demoting a precedent and retracting a wrong edge are two
+separate acts.
 
-Trust changes never touch existing edges. Retracting a wrong edge and
-demoting the precedent that admitted it are two separate, deliberate acts.
+One honest limit: `auto_resolved` is a status, not an applied write. An
+auto-resolved group has skipped human triage, but its edges are written only
+when something calls `group resolve --action approve` (a `GRAPH_WRITE`
+operation). Nothing in core applies auto-resolved groups on a timer.
 
-## Auth-Managed Entities
+### Re-proposing while a group is pending
 
-Entity types declared `auth_managed` (for example the agent-operation kit's
-`Actor`) are outside normal maintenance: they materialize from
-runtime-credential mints, and `write_policy: mint_only` refuses every other
-writer — including lifecycle updates. Their status transitions come from the
-credential lifecycle (revocation materializes the status change), not from
-maintenance verbs. Editorial facts about such an entity belong on notes
-attached to it (e.g. `state_note_about_actor`), never on the entity itself.
+Buckets converge instead of forking. If a proposal arrives for a signature
+that already has a `pending_review` group, the pending group is **rewritten in
+place**: members replaced (default) or merged (`pending_refresh_mode:
+retain_missing`), metadata refreshed, priority re-derived, and
+`pending_version` incremented. A rewrite never auto-resolves — auto-resolve is
+evaluated only for fresh buckets. If the re-proposal has no surviving members,
+the default mode clears the now-empty pending group (with a `group_clear`
+receipt); `retain_missing` leaves it standing.
 
-## Archiving
+`pending_version` is the reviewer's concurrency guard: resolve requires
+`--expected-pending-version`, and a mismatch fails with "Group changed during
+review". You approve the exact member set you inspected, or nothing.
 
-There is no archive verb yet. The working pattern for retiring a whole
-instance's worth of history: stop writing to it, keep the daemon (or a
-restored snapshot) available read-only, and start the successor instance
-clean rather than porting closed items — receipts and review threads stay
-queryable where they happened, and the new instance carries only live work.
+### Approval and rejection semantics
 
-## Evaluate And Health
+**Approve** validates every member against the current graph and config:
+already-live tuples are skipped (reason `existing_edge` — pass
+`stamp_existing` to instead bless the surviving edge with the group's review
+state and provenance), invalid members are skipped with the validation detail,
+and relationship evidence guards can abort the whole approval. Valid members
+become edges through the governed `group_resolve` write path, stamped with the
+group's evidence refs, source receipt/trace/step ids, and an
+`assertion.review` of `approved/group`. The resolution is confirmed and the
+group moves to `resolved`. If the process dies mid-apply the group is left
+`applying`; re-running approve retries the same resolution (reject is refused
+in that state).
 
-`evaluate` is the low-level graph and config quality checker. It reports facts
-such as orphan entities, coverage gaps, constraint violations, quality check
-failures, governed support warnings, and unreviewed co-member prompts.
+**Reject** writes no edges. It records a confirmed `reject` resolution (with
+your rationale and the group's full thesis and analysis state) and marks the
+group `resolved`. Rejection is not a tombstone: it does not count as the prior
+approval that auto-resolve looks for, so a re-proposal of the same thesis
+opens a fresh bucket that again forces review. If you want a rejection to
+*teach* the system, pair it with structured feedback (`cruxible feedback`) or
+a decision policy so the same candidates get suppressed at proposal time.
 
-State health is broader. `cruxible state health` (also `GET
-/api/v1/{instance_id}/state/health`) aggregates deterministic, read-only
-maintenance signals into four sections, alongside a `captured_at` timestamp and
-the current `head_snapshot_id`:
+## 2. Direct Writes Vs Governed Writes
 
-- **groups** — candidate-group counts by status (pending_review, applying,
-  auto_resolved, resolved, total) plus the age span of the *unresolved* backlog
-  (`oldest_unresolved_age_seconds` / `newest_unresolved_age_seconds`, scoped to
-  pending_review and applying groups; resolved groups only accumulate age and are
-  not an actionable signal);
-- **provenance** — every live edge tallied by the class of its provenance
-  source: direct-write, group-backed, or other;
+### Permission tiers
+
+The runtime enforces four cumulative tiers via `CRUXIBLE_MODE`
+(`ADMIN ⊃ GRAPH_WRITE ⊃ GOVERNED_WRITE ⊃ READ_ONLY`):
+
+| Tier | Can do |
+|---|---|
+| `read_only` | queries, receipts, traces, inspect, `group list`/`get`/`status`, state health, workflow planning |
+| `governed_write` | propose groups, run/test/propose workflows, feedback and outcomes, decision records, snapshots, constraints and decision policies, state pulls |
+| `graph_write` | `entity add`/`update`, `relationship add`, batch direct write, **canonical workflow apply**, **group resolve**, **group trust** |
+| `admin` | config reload, locks, clones, backup/restore, state publish, overlays, credentials |
+
+The split to notice: an agent at `governed_write` can *propose* anything but
+*commit* nothing — resolving a group, applying a canonical preview, and
+adjusting trust all sit at `graph_write`. When `CRUXIBLE_MODE` is unset the
+local default is `admin` (deliberate, for local UX; set
+`CRUXIBLE_DEFAULT_READ_ONLY=1` or an explicit mode to change it).
+
+### Write policies are orthogonal to tiers
+
+Per-type `write_policy` is a hard governance constraint that no tier
+overrides, including `admin`:
+
+- `proposal_only` — direct writes (`entity add`, `relationship add`, batch
+  direct write, the typed lifecycle write) are refused with
+  `direct_write_refused`; state enters only through the governed verbs
+  (`workflow_apply`, `group_resolve`) or, for relationships, staged with
+  `pending=true`. The `CRUXIBLE_REFUSE_DIRECT_WRITES` env kill-switch forces
+  this instance-wide.
+- `mint_only` — refuses **every** writer including the governed verbs; only
+  the `token_mint` source may write.
+
+### Mutation guards refuse with reasons and receipts
+
+Config-defined mutation guards (actor identity, co-write requirements,
+evidence floors, named-query result counts) run at the write chokepoints —
+direct writes, workflow apply, and group approval alike. A refusal is a
+`DataValidationError` whose errors name the guard and the offending write
+(`Mutation guard '<name>' rejected write <type>:<id> <property>=<value>:
+<message>`). Failed mutations still persist a receipt: the receipt records the
+failed validation nodes and the error carries its `mutation_receipt_id`, so a
+refusal is as auditable as a success.
+
+### Auth-managed types
+
+An entity type marked `auth_managed: true` + `write_policy: mint_only` (the
+agent-operation kit's `Actor` is the canonical example) is materialized
+exclusively from runtime-credential mints — `cruxible credential mint` is the
+only writer. Config-declared workflows that target a `mint_only` type are
+rejected at config load, and lifecycle updates are refused like any other
+write. Facts *about* such an entity belong on notes attached to it, never on
+the entity itself.
+
+### Provenance on every edge
+
+Every edge carries system-owned provenance: `source` (the operation),
+`source_ref`, `created_at`/`last_modified_*`, actor context when auth is on,
+and write-time `receipt_id`/`resolution_id` correlation. The `source_ref`
+classes are how you read authority off an edge:
+
+- `add_relationship` / `batch_direct_write` — direct-written;
+- `group:<group_id>` — group-backed, with `resolution_id` linking to the
+  approval;
+- anything else (workflow apply refs, `clone_origin`-stamped snapshot/pull
+  edges, legacy nulls) — "other".
+
+Governed groups additionally record how their evidence was produced in their
+signature facts: `evidence_mode: workflow_generated` (proposal built by a
+locked workflow, carrying the workflow name, step, and proposal logic digest)
+vs `agent_supplied` (an agent asserted the signals directly). The two modes
+hash into different signatures, so agent-asserted judgments never inherit the
+trust earned by a pipeline's judgments.
+
+## 3. State Maintenance Over Time
+
+### Lifecycle, not deletion
+
+Entities are `live` / `superseded` / `retired`; relationships are `active` /
+`inactive` / `superseded` / `retracted`. Non-live state is gated out of live
+reads but stays fetchable by id, with `reason`, `closed_at`/`closed_by`, and
+supersession links preserved. Lifecycle is set only through the typed channel:
+
+```bash
+cruxible entity update --type Matter --id M-104 \
+  --lifecycle-status retired --lifecycle-reason "Matter closed 2026-06-30"
+```
+
+Hand-authored `metadata={"lifecycle": ...}` is inert free-form data — it can
+never become the typed state. The lifecycle write is a direct-write verb, so a
+`proposal_only` type refuses it too. Reserve deletion for bad imports and test
+data; everything operational should retire, not vanish.
+
+### Re-running deterministic ingest
+
+Canonical ingest workflows are safe to re-run:
+
+- **No-op upserts.** `apply_entities` / `apply_relationships` compare against
+  current state; an upsert that changes nothing is counted as a `noop` — no
+  write, no receipt write-node, no provenance churn. Re-running an unchanged
+  ingest converges instead of rewriting.
+- **Digest-pinned artifacts.** Canonical workflows require their file or
+  directory artifacts to carry a `sha256:` digest. The digest is verified
+  against disk when the lock is built and again when a plan compiles. If seed
+  data changes underneath you, the run fails with the expected and actual
+  hashes; `cruxible lock --force` is the explicit act of accepting the new
+  content. Data cannot drift silently under a pinned workflow.
+- **Preview/apply identity.** The `apply_digest` binds workflow name,
+  normalized input, lock digest, head snapshot, and the previewed changes —
+  apply refuses a preview that no longer matches what you inspected.
+
+### Staleness is a kit-level idiom
+
+Core has no decay or freshness engine — time-based maintenance is written as
+kit workflows. The pattern is a **date sweep**: a canonical workflow that
+queries current state, applies a deterministic date rule in a provider, and
+writes back narrow status changes. The case-law kit's
+`refresh_stale_deadlines` is the reference example: it closes deadlines that
+lapsed or whose matter closed, and deliberately does *not* auto-close the work
+items behind them — those close only through the review gate. If your domain
+has a "stale after N days" rule, model it as a sweep workflow so the rule is
+pinned, previewable, and receipted.
+
+### State health
+
+`cruxible state health` (also `GET /api/v1/{instance_id}/state/health`) is the
+deterministic maintenance dashboard. It reports raw counts, ages, and binary
+facts only — no scoring or severity; interpretation is left to you or your
+agents. Five sections, plus `captured_at` and the current `head_snapshot_id`:
+
+- **groups** — counts by status and the age span of the *unresolved* backlog
+  (`pending_review` + `applying` only; an old pending group is a stale review
+  queue, an old applying group is a stuck apply);
+- **signals** — `unevidenced_support_by_source`: support signals sitting in
+  pending review with no evidence, counted per source and scoped to sources
+  that declare `require_evidence_on_support` — a per-source backlog of
+  judgments asserted without proof;
+- **provenance** — every live edge tallied as direct-write, group-backed, or
+  other (watch the direct-write share on a domain you meant to govern);
 - **freshness** — source-artifact and provider-trace counts and oldest ages,
-  plus `config_compatible` and any config-compatibility warnings;
-- **integrity** — orphan entity count, unused entity and relationship types, and
-  whether the configuration is locked.
+  plus config/graph compatibility warnings;
+- **integrity** — orphan entities, unused entity/relationship types, and
+  whether the workflow configuration is locked.
 
-Like `evaluate`, health reports raw metrics (counts, ages, timestamps) and
-binary deterministic facts only — there is no scoring, grading, ranking, or
-severity. The core signals are deterministic and defensible; agents interpret
-those signals, rank maintenance work, and propose repairs.
+## 4. Repair: When Accepted State Is Wrong
 
-Some maintenance signals the surface does not yet aggregate, and which remain
-future work, include source-artifact drift versus the tracked upstream, deeper
-provider and trace staleness, lock or generated-view or seed-data drift, and
-per-entity-type orphan rates.
+Wrong state that passed review is fixed in the open, not rewritten. The
+sequence:
 
-## Maintenance Workflow
+1. **Retire the wrong fact with a reason.**
+   `cruxible relationship update ... --lifecycle-status retracted
+   --lifecycle-reason "..."` (or `entity update --lifecycle-status retired`).
+   The edge leaves live reads; its history, provenance, and receipts remain.
+2. **Demote the precedent that admitted it.**
+   `cruxible group trust --resolution <id> --status invalidated --reason "..."`
+   so future matches of the same thesis re-review instead of auto-resolving.
+   Skipping this step means the same pipeline can re-admit the same mistake.
+3. **Re-propose the correction.** Propose the corrected members through the
+   normal governed path. First contact with the corrected thesis forces review
+   — that is the system working, not friction.
+4. **Let quality checks catch the rest.** `cruxible evaluate` and `cruxible
+   lint` report constraint violations, orphans, coverage gaps, and
+   quality-check failures deterministically; `cruxible lint` additionally
+   turns repeated rejection feedback and negative outcomes into concrete
+   suggestions (constraints, decision policies, trust demotions).
 
-Use this loop for regular state maintenance:
+For the audit trail while you work:
 
-1. Run health or evaluate checks.
-2. Inspect pending groups, direct-write conflicts, and stale review queues.
-3. Resolve groups with explicit approve/reject decisions.
-4. Use lifecycle state to retire stale entities or relationships.
-5. Use direct writes only when the state change is explicit and should be live
-   immediately.
-6. Use candidate groups when a relationship judgment needs review.
-7. Preserve receipts and source evidence so another agent can reconstruct the
-   decision later.
+```bash
+cruxible entity history --type Matter --id M-104   # receipt-derived change history
+cruxible explain --receipt <receipt-id>            # render any receipt
+cruxible group get --group <group-id>              # thesis, members, signals, resolution
+```
 
-When in doubt, prefer a visible reviewed transition over a silent rewrite.
+Every mutation — including refused ones — has a receipt; every group-backed
+edge links its `resolution_id`; every resolution stores the thesis and
+analysis state it was judged on. If you cannot reconstruct why an edge exists,
+that is a bug worth reporting, not a gap you should paper over.
+
+## Summary: Who Wins
+
+- **Pipelines and agents never overwrite each other silently.** Live edges and
+  pending groups suppress overlapping proposals; pending buckets converge by
+  rewrite with a version guard; direct writes to governed types are refused.
+- **Review wins by default.** First contact, contradictions, unsure signals,
+  and unevidenced support all force a human (or `graph_write` agent) decision.
+- **Automation is earned per thesis** — a confirmed approval promoted to
+  `trusted`, revocable in one command.
+- **Time is handled by pinned workflows, not decay** — and `state health`
+  tells you when the backlog, evidence debt, or provenance mix needs
+  attention.

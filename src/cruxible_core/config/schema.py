@@ -35,6 +35,7 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     PrivateAttr,
     ValidationInfo,
@@ -243,7 +244,14 @@ class EntityTypeSchema(BaseModel):
 
 
 class SignalPolicySchema(BaseModel):
-    """Per-signal-source guardrails for candidate group proposals."""
+    """Per-signal-source guardrails for candidate group proposals.
+
+    Unknown keys are refused: a typo'd enforcement flag (e.g. a misspelled
+    ``require_evidence_on_support``) must be a config error, never a
+    silently disabled guard.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     role: Literal["blocking", "required", "advisory"] = "required"
     always_review_on_unsure: bool = False

@@ -3131,3 +3131,16 @@ class TestQualityCheckValidation:
         )
         with pytest.raises(ConfigError, match="requires entity_type 'Product'"):
             validate_config(config)
+
+
+def test_signal_policy_rejects_unknown_keys() -> None:
+    """A typo'd enforcement flag must be a config error, not a silent no-op."""
+    import pytest as _pytest
+    from pydantic import ValidationError as _ValidationError
+
+    from cruxible_core.config.schema import SignalPolicySchema
+
+    with _pytest.raises(_ValidationError, match="require_evidence_on_suport"):
+        SignalPolicySchema.model_validate(
+            {"role": "required", "require_evidence_on_suport": True}
+        )

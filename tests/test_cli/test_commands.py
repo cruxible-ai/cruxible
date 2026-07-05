@@ -3114,3 +3114,62 @@ class TestNounVerbGrouping:
     def test_batch_direct_write_stays_top_level(self) -> None:
         # Power-user write verb with no clean noun group; intentionally left flat.
         assert "batch-direct-write" in cli.commands
+
+
+def test_get_relationship_server_result_preserves_trust_metadata() -> None:
+    """Server-mode `relationship get` must not drop provenance/review metadata.
+
+    Regression: the CLI rebuilt RelationshipInstance from the wire result
+    without metadata, rendering approved group-provenanced edges as
+    unreviewed/unattributed (wi-relationship-get-provenance-null).
+    """
+    import json as _json
+
+    from click.testing import CliRunner
+
+    from cruxible_client import contracts as client_contracts
+    from cruxible_core.cli.commands import _common
+    from cruxible_core.cli.main import cli
+
+    wire = client_contracts.GetRelationshipResult(
+        found=True,
+        from_type="Risk",
+        from_id="risk-1",
+        relationship_type="risk_blocks_work_item",
+        to_type="WorkItem",
+        to_id="wi-1",
+        edge_key=0,
+        properties={"blocking_basis": "test"},
+        metadata={
+            "provenance": {"source": "group_resolve", "source_ref": "grp_123"},
+            "assertion": {"review": {"status": "approved", "source": "human"}},
+        },
+    )
+
+    original = _common._dispatch_cli_instance
+    _common._dispatch_cli_instance = lambda server_fn, local_fn: wire
+    try:
+        import cruxible_core.cli.commands.reads as reads_module
+
+        original_reads = reads_module._dispatch_cli_instance
+        reads_module._dispatch_cli_instance = lambda server_fn, local_fn: wire
+        try:
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "relationship", "get",
+                    "--from-type", "Risk", "--from-id", "risk-1",
+                    "--relationship", "risk_blocks_work_item",
+                    "--to-type", "WorkItem", "--to-id", "wi-1",
+                    "--json",
+                ],
+            )
+        finally:
+            reads_module._dispatch_cli_instance = original_reads
+    finally:
+        _common._dispatch_cli_instance = original
+
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.output)
+    assert payload["metadata"]["provenance"]["source"] == "group_resolve"
+    assert payload["metadata"]["assertion"]["review"]["status"] == "approved"

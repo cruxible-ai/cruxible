@@ -74,7 +74,12 @@ from cruxible_core.cli.main import handle_errors
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import CoreError
 from cruxible_core.errors import QueryNotFoundError as CoreQueryNotFoundError
-from cruxible_core.graph.types import EntityInstance, EntityMetadata, RelationshipInstance
+from cruxible_core.graph.types import (
+    EntityInstance,
+    EntityMetadata,
+    RelationshipInstance,
+    RelationshipMetadata,
+)
 from cruxible_core.query.types import ProjectedQueryRow, dump_query_row
 from cruxible_core.service import (
     InspectEntityResult,
@@ -1594,6 +1599,10 @@ def get_relationship_cmd(
             to_id=result.to_id,
             edge_key=result.edge_key,
             properties=result.properties,
+            # The wire result carries the full trust metadata; dropping it here
+            # made `relationship get` render approved, group-provenanced edges
+            # as unreviewed/unattributed in server mode.
+            metadata=RelationshipMetadata.model_validate(result.metadata),
         )
     else:
         if result is None:
