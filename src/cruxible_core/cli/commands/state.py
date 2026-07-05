@@ -211,7 +211,7 @@ def state_health_cmd(output_json: bool) -> None:
         f"newest={_fmt_age(groups['newest_unresolved_age_seconds'])}"
     )
 
-    click.echo("Signals:")
+    click.echo("Signals: supports pending review under the evidence guard")
     unevidenced_support = signals["unevidenced_support_by_source"]
     if unevidenced_support:
         click.echo("  unevidenced_support_by_source:")

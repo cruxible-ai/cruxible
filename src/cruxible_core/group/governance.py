@@ -333,7 +333,7 @@ def derive_review_priority(
                 if signal_config.role in ("blocking", "required"):
                     has_review = True
             elif signal_config.require_evidence_on_support and is_unevidenced_support_signal(
-                member, signal
+                signal
             ):
                 has_review = True
 
@@ -581,7 +581,7 @@ def check_auto_resolve_signals(
                 return False
 
             if signal_config.require_evidence_on_support and is_unevidenced_support_signal(
-                member, signal
+                signal
             ):
                 return False
 

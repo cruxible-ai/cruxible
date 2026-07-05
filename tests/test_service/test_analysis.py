@@ -1041,8 +1041,39 @@ class TestStateHealth:
         self,
         populated_instance: CruxibleInstance,
     ) -> None:
+        config = populated_instance.load_config()
+        fits = config.get_relationship("fits")
+        replaces = config.get_relationship("replaces")
+        assert fits is not None
+        assert replaces is not None
+        fits.proposal_policy = ProposalPolicySchema(
+            signals={
+                "scanner": SignalPolicySchema(
+                    role="required",
+                    require_evidence_on_support=True,
+                ),
+                "query_signal": SignalPolicySchema(
+                    role="required",
+                    require_evidence_on_support=True,
+                ),
+                "manual_check": SignalPolicySchema(
+                    role="advisory",
+                    require_evidence_on_support=True,
+                ),
+                "catalog": SignalPolicySchema(role="advisory"),
+            }
+        )
+        replaces.proposal_policy = ProposalPolicySchema(
+            signals={"catalog": SignalPolicySchema(role="required")}
+        )
+        populated_instance.save_config(config)
+
         graph = populated_instance.load_graph()
-        for vehicle_id in ("V-EVIDENCE-1", "V-EVIDENCE-2"):
+        for vehicle_id in (
+            "V-EVIDENCE-1",
+            "V-EVIDENCE-2",
+            "V-EVIDENCE-RESOLVED",
+        ):
             if graph.get_entity("Vehicle", vehicle_id) is None:
                 graph.add_entity(
                     EntityInstance(
@@ -1066,15 +1097,16 @@ class TestStateHealth:
                     signals=[
                         CandidateSignal(signal_source="scanner", signal="support"),
                         CandidateSignal(
+                            signal_source="query_signal",
+                            signal="support",
+                            evidence="query row carried onto the signal",
+                        ),
+                        CandidateSignal(
                             signal_source="manual_check",
                             signal="support",
                             evidence="reviewed by QA",
                         ),
-                        CandidateSignal(
-                            signal_source="catalog",
-                            signal="support",
-                            evidence_refs=[],
-                        ),
+                        CandidateSignal(signal_source="catalog", signal="support"),
                     ],
                 ),
                 CandidateMember(
@@ -1101,10 +1133,58 @@ class TestStateHealth:
         )
         assert result.group_id is not None
 
+        resolved_result = service_propose_group(
+            populated_instance,
+            "fits",
+            members=[
+                CandidateMember(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    to_type="Vehicle",
+                    to_id="V-EVIDENCE-RESOLVED",
+                    relationship_type="fits",
+                    signals=[
+                        CandidateSignal(signal_source="scanner", signal="support"),
+                        CandidateSignal(signal_source="query_signal", signal="support"),
+                    ],
+                )
+            ],
+            thesis_text="resolved evidence backlog",
+            thesis_facts={"source": "resolved-test"},
+        )
+        assert resolved_result.group_id is not None
+        service_resolve_group(
+            populated_instance,
+            resolved_result.group_id,
+            action="reject",
+            rationale="not part of pending health backlog",
+            resolved_by="human",
+            expected_pending_version=1,
+        )
+
+        unflagged_result = service_propose_group(
+            populated_instance,
+            "replaces",
+            members=[
+                CandidateMember(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    to_type="Part",
+                    to_id="BP-1002",
+                    relationship_type="replaces",
+                    signals=[CandidateSignal(signal_source="catalog", signal="support")],
+                    properties={"direction": "downgrade", "confidence": 0.8},
+                )
+            ],
+            thesis_text="unflagged source backlog",
+            thesis_facts={"source": "unflagged-test"},
+        )
+        assert unflagged_result.group_id is not None
+
         health = service_state_health(populated_instance)
 
         assert health.signals.unevidenced_support_by_source == {
-            "catalog": 1,
+            "query_signal": 1,
             "scanner": 2,
         }
 

@@ -128,7 +128,7 @@ class CandidateMember(RelationshipInstance):
         )
 
 
-def is_unevidenced_support_signal(member: CandidateMember, signal: CandidateSignal) -> bool:
+def is_unevidenced_support_signal(signal: CandidateSignal) -> bool:
     """Return whether a support signal lacks signal-attributable evidence."""
     if signal.signal != "support":
         return False
@@ -136,9 +136,6 @@ def is_unevidenced_support_signal(member: CandidateMember, signal: CandidateSign
         return False
     if signal.evidence_refs:
         return False
-    for source_evidence in member.source_query_evidence:
-        if source_evidence.source_step == signal.signal_source:
-            return False
     return True
 
 

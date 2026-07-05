@@ -195,7 +195,8 @@ def _state_health_groups(
 
 
 def _state_health_signals(instance: InstanceProtocol) -> StateHealthSignalsSection:
-    """Count unevidenced support signals on pending candidate proposals."""
+    """Count support signals pending review under the evidence guard."""
+    config = instance.load_config()
     counts: dict[str, int] = defaultdict(int)
     group_store = instance.get_group_store()
     try:
@@ -208,9 +209,18 @@ def _state_health_signals(instance: InstanceProtocol) -> StateHealthSignalsSecti
             for group in batch:
                 if group.status != "pending_review":
                     continue
+                rel_schema = config.get_relationship(group.relationship_type)
+                if rel_schema is None or rel_schema.proposal_policy is None:
+                    continue
+                signal_policies = rel_schema.proposal_policy.signals
                 for member in group_store.get_members(group.group_id):
                     for signal in member.signals:
-                        if is_unevidenced_support_signal(member, signal):
+                        signal_config = signal_policies.get(signal.signal_source)
+                        if signal_config is None or signal_config.role == "advisory":
+                            continue
+                        if not signal_config.require_evidence_on_support:
+                            continue
+                        if is_unevidenced_support_signal(signal):
                             counts[signal.signal_source] += 1
             if len(batch) < page:
                 break

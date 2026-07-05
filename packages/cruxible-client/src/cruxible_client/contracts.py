@@ -838,7 +838,7 @@ class StateHealthGroupsSection(BaseModel):
 
 
 class StateHealthSignalsSection(BaseModel):
-    """Signal evidence counts for unresolved candidate proposals."""
+    """Support-signal counts pending review under the evidence guard."""
 
     unevidenced_support_by_source: dict[str, int] = Field(default_factory=dict)
 
