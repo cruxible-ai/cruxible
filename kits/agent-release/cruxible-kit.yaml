@@ -1,7 +1,8 @@
 schema_version: cruxible.kit.v1
 kit_id: agent-release
 version: 0.2.0
-role: standalone
+role: overlay
+target_state: agent-operation
 entry_config: config.yaml
 provider_paths: []
 copy_paths: []
