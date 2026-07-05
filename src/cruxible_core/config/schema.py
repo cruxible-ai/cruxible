@@ -1850,6 +1850,27 @@ class MakeRelationshipsSpec(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class RegisterSourceArtifactsSpec(BaseModel):
+    """Register source artifacts from already-loaded workflow row data."""
+
+    items: Any
+    artifact_id: Any
+    content: Any
+    kind: Literal["markdown"]
+    label: Any | None = None
+    original_uri: Any | None = None
+    retention: Literal["manifest_only", "archive"] | None = Field(
+        default=None,
+        description=(
+            "An existing artifact with identical content is a noop; differing "
+            "label/original_uri/retention are NOT applied. Re-register under a "
+            "new id to change retention."
+        ),
+    )
+
+    model_config = {"extra": "forbid"}
+
+
 class ApplyEntitiesSpec(BaseModel):
     """Apply an entity set to staged canonical state."""
 
@@ -1899,6 +1920,7 @@ StepKind = Literal[
     "propose_relationship_group",
     "make_entities",
     "make_relationships",
+    "register_source_artifacts",
     "apply_entities",
     "apply_relationships",
     "apply_all",
@@ -1937,7 +1959,9 @@ class WorkflowStepSchema(BaseModel):
         make_entities       Build entity objects from list data.
         make_relationships  Build relationship objects from list data.
 
-    Phase 4 — Write (mutate the graph, only in ``apply`` mode):
+    Phase 4 — Write (mutate canonical state, only in ``apply`` mode):
+        register_source_artifacts
+                            Register source artifacts from workflow row data.
         apply_entities      Write built entities into the graph.
         apply_relationships Write built relationships into the graph.
         apply_all           Write explicitly listed entity and relationship sets.
@@ -1968,6 +1992,7 @@ class WorkflowStepSchema(BaseModel):
     propose_relationship_group: ProposeRelationshipGroupSpec | None = None
     make_entities: MakeEntitiesSpec | None = None
     make_relationships: MakeRelationshipsSpec | None = None
+    register_source_artifacts: RegisterSourceArtifactsSpec | None = None
     apply_entities: ApplyEntitiesSpec | None = None
     apply_relationships: ApplyRelationshipsSpec | None = None
     apply_all: ApplyAllSpec | None = None
@@ -1998,6 +2023,7 @@ class WorkflowStepSchema(BaseModel):
             "propose_relationship_group": self.propose_relationship_group,
             "make_entities": self.make_entities,
             "make_relationships": self.make_relationships,
+            "register_source_artifacts": self.register_source_artifacts,
             "apply_entities": self.apply_entities,
             "apply_relationships": self.apply_relationships,
             "apply_all": self.apply_all,

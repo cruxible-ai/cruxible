@@ -2196,6 +2196,25 @@ class TestWorkflowSchema:
         with pytest.raises(ValidationError, match="apply_all requires"):
             WorkflowStepSchema(id="apply_all_state", apply_all={}, **{"as": "apply_all_state"})
 
+    def test_register_source_artifacts_step_shape(self):
+        step = WorkflowStepSchema(
+            id="pin_texts",
+            register_source_artifacts={
+                "items": "$steps.fetched.opinion_texts",
+                "artifact_id": "$item.source_artifact_id",
+                "content": "$item.plain_text",
+                "kind": "markdown",
+                "label": "$item.opinion_id",
+                "original_uri": "$item.source_url",
+                "retention": "manifest_only",
+            },
+            **{"as": "pinned"},
+        )
+
+        assert step.register_source_artifacts is not None
+        assert step.register_source_artifacts.kind == "markdown"
+        assert step.register_source_artifacts.retention == "manifest_only"
+
     @pytest.mark.parametrize(
         ("field", "value", "message"),
         [

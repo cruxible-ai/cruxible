@@ -39,7 +39,8 @@ _SOURCE_ARTIFACT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}")
 def service_register_source_artifact(
     instance: InstanceProtocol,
     *,
-    source_path: str,
+    source_path: str | None = None,
+    source_content: str | bytes | None = None,
     source_kind: SourceKind = "markdown",
     source_retention: SourceRetention = "manifest_only",
     original_uri: str | None = None,
@@ -48,14 +49,18 @@ def service_register_source_artifact(
     actor_context: GovernedActorContext | None = None,
     allowed_source_roots: Sequence[str | Path] | None = None,
     source_artifact_id: str | None = None,
+    persist: bool = True,
 ) -> RegisterSourceArtifactResult:
-    """Register a local source document as proposal evidence.
+    """Register a local or already-loaded source document as proposal evidence.
 
-    The resolved source path must stay within one of *allowed_source_roots*
-    (defaulting to the instance root) and any roots configured via
-    ``CRUXIBLE_ALLOWED_ROOTS``. Containment is default-deny: an absolute
-    ``source_path`` that escapes the allowed roots is rejected even when
-    ``CRUXIBLE_ALLOWED_ROOTS`` is unset.
+    When ``source_path`` is used, the resolved source path must stay within one
+    of *allowed_source_roots* (defaulting to the instance root) and any roots
+    configured via ``CRUXIBLE_ALLOWED_ROOTS``. Containment is default-deny: an
+    absolute ``source_path`` that escapes the allowed roots is rejected even
+    when ``CRUXIBLE_ALLOWED_ROOTS`` is unset.
+
+    ``source_content`` is for callers that already hold source bytes in trusted
+    workflow/service memory; it never resolves a path or reads local files.
     """
     if source_kind != "markdown":
         raise ConfigError(f"Unsupported source_kind '{source_kind}'")
@@ -64,10 +69,23 @@ def service_register_source_artifact(
     if parser_version != MARKDOWN_CHUNKS_V1:
         raise ConfigError(f"Unsupported parser_version '{parser_version}'")
 
-    path = _resolve_source_path(instance, source_path, allowed_source_roots=allowed_source_roots)
-    if not path.is_file():
-        raise ConfigError(f"Source artifact path is not a file: {source_path}")
-    content = path.read_bytes()
+    path: Path | None = None
+    if (source_path is None) == (source_content is None):
+        raise ConfigError("Exactly one of source_path or source_content is required")
+    if source_content is None:
+        assert source_path is not None
+        path = _resolve_source_path(
+            instance,
+            source_path,
+            allowed_source_roots=allowed_source_roots,
+        )
+        if not path.is_file():
+            raise ConfigError(f"Source artifact path is not a file: {source_path}")
+        content = path.read_bytes()
+    elif isinstance(source_content, str):
+        content = source_content.encode("utf-8")
+    else:
+        content = source_content
     try:
         content.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -81,10 +99,13 @@ def service_register_source_artifact(
                 "source_artifact_id must be 3-64 chars of [A-Za-z0-9._-] "
                 "starting with an alphanumeric"
             )
-        if instance.get_source_artifact_store().get_artifact(source_artifact_id) is not None:
-            raise ConfigError(
-                f"Source artifact '{source_artifact_id}' is already registered"
-            )
+        store = instance.get_source_artifact_store()
+        try:
+            existing_artifact = store.get_artifact(source_artifact_id)
+        finally:
+            store.close()
+        if existing_artifact is not None:
+            raise ConfigError(f"Source artifact '{source_artifact_id}' is already registered")
     else:
         source_artifact_id = new_id("SRC")
     chunks = parse_markdown_chunks(
@@ -102,23 +123,28 @@ def service_register_source_artifact(
         source_artifact_id=source_artifact_id,
         source_kind=source_kind,
         source_retention=source_retention,
-        original_uri=_default_original_uri(instance, path, original_uri),
+        original_uri=(
+            _default_original_uri(instance, path, original_uri)
+            if path is not None
+            else original_uri
+        ),
         label=label,
         parser_version=parser_version,
         content_hash=content_hash,
         byte_count=len(content),
-        local_path=str(path),
+        local_path=str(path) if path is not None else None,
         archived=archived,
         archive_content_hash=content_hash if archived else None,
         created_at=created_at,
         registered_actor_context=actor_context,
     )
-    with instance.write_transaction() as uow:
-        uow.source_artifacts.save_artifact(
-            record,
-            chunks,
-            archive_content=content if archived else None,
-        )
+    if persist:
+        with instance.write_transaction() as uow:
+            uow.source_artifacts.save_artifact(
+                record,
+                chunks,
+                archive_content=content if archived else None,
+            )
 
     return RegisterSourceArtifactResult(
         source_artifact_id=source_artifact_id,

@@ -60,6 +60,83 @@ def _actor() -> GovernedActorContext:
     )
 
 
+def _list_source_artifacts(instance: CruxibleInstance):
+    store = instance.get_source_artifact_store()
+    try:
+        return store.list_artifacts()
+    finally:
+        store.close()
+
+
+def _get_source_artifact(instance: CruxibleInstance, source_artifact_id: str):
+    store = instance.get_source_artifact_store()
+    try:
+        return store.get_artifact(source_artifact_id)
+    finally:
+        store.close()
+
+
+def test_register_source_content_happy_path(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+
+    registered = service_register_source_artifact(
+        instance,
+        source_content="# Fitment\n\nInline BP-1001 evidence.\n",
+        source_artifact_id="inline_fitment_doc",
+        original_uri="memory:inline-fitment",
+        label="inline fitment",
+    )
+
+    assert registered.source_artifact_id == "inline_fitment_doc"
+    assert registered.original_uri == "memory:inline-fitment"
+    assert registered.label == "inline fitment"
+    assert registered.chunks
+    stored = _get_source_artifact(instance, "inline_fitment_doc")
+    assert stored is not None
+    assert stored.local_path is None
+    assert stored.original_uri == "memory:inline-fitment"
+    assert stored.label == "inline fitment"
+    assert stored.content_hash == registered.content_hash
+
+
+def test_register_source_content_rejects_empty_content(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+
+    with pytest.raises(ConfigError, match="did not produce any addressable chunks"):
+        service_register_source_artifact(
+            instance,
+            source_content="",
+            source_artifact_id="empty_inline_doc",
+        )
+
+    assert _list_source_artifacts(instance) == []
+
+
+def test_register_source_artifact_persist_false_returns_record_without_writing(
+    tmp_path: Path,
+) -> None:
+    instance = _instance(tmp_path)
+
+    registered = service_register_source_artifact(
+        instance,
+        source_content="# Fitment\n\nDry-run BP-1001 evidence.\n",
+        source_artifact_id="dry_run_fitment_doc",
+        source_retention="archive",
+        original_uri="memory:dry-run",
+        label="dry run",
+        persist=False,
+    )
+
+    assert registered.source_artifact_id == "dry_run_fitment_doc"
+    assert registered.archived is True
+    assert registered.archive_content_hash == registered.content_hash
+    assert registered.original_uri == "memory:dry-run"
+    assert registered.label == "dry run"
+    assert registered.chunks
+    assert _get_source_artifact(instance, "dry_run_fitment_doc") is None
+    assert _list_source_artifacts(instance) == []
+
+
 def test_manifest_only_source_artifact_reports_local_drift(tmp_path: Path) -> None:
     instance = _instance(tmp_path)
     source_path = tmp_path / "evidence.md"

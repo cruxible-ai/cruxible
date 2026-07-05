@@ -420,6 +420,23 @@ def compile_workflow(
             )
             continue
 
+        if step.register_source_artifacts is not None:
+            if not is_canonical:
+                raise ConfigError(
+                    f"Workflow '{workflow_name}' must be type: canonical to use "
+                    "register_source_artifacts"
+                )
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="register_source_artifacts",
+                    workflow_type=workflow_type,
+                    as_name=step.as_,
+                    register_source_artifacts_spec=step.register_source_artifacts,
+                )
+            )
+            continue
+
         if step.apply_entities is not None:
             if not is_canonical:
                 raise ConfigError(
