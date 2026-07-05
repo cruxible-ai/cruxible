@@ -19,6 +19,7 @@ from cruxible_core.mcp.handlers import (
     handle_batch_direct_write,
     handle_query,
     handle_query_inline,
+    handle_register_source_artifact,
 )
 from cruxible_core.mcp.server import create_server
 from cruxible_core.provider.types import ExecutionTrace
@@ -128,6 +129,61 @@ def test_handle_batch_direct_write_preserves_payload(
     assert captured["instance_id"] == "inst_123"
     assert captured["payload"] == payload
     assert captured["dry_run"] is True
+
+
+def test_handle_register_source_artifact_omitted_id_preserves_client_call_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def register_source_artifact(
+            self,
+            instance_id,
+            *,
+            source_path,
+            source_kind="markdown",
+            source_retention="manifest_only",
+            original_uri=None,
+            label=None,
+        ):
+            captured["instance_id"] = instance_id
+            captured["kwargs"] = {
+                "source_path": source_path,
+                "source_kind": source_kind,
+                "source_retention": source_retention,
+                "original_uri": original_uri,
+                "label": label,
+            }
+            return contracts.RegisterSourceArtifactResult(
+                source_artifact_id="SRC-generated",
+                source_kind="markdown",
+                source_retention="manifest_only",
+                content_hash="sha256:generated",
+                byte_count=12,
+                parser_version="markdown_chunks_v1",
+                chunks=[],
+            )
+
+    monkeypatch.setattr("cruxible_core.mcp.handlers._get_client", lambda: StubClient())
+    result = handle_register_source_artifact(
+        "inst_123",
+        source_path="evidence.md",
+        original_uri="evidence.md",
+        label="Evidence",
+    )
+
+    assert result.source_artifact_id == "SRC-generated"
+    assert captured == {
+        "instance_id": "inst_123",
+        "kwargs": {
+            "source_path": "evidence.md",
+            "source_kind": "markdown",
+            "source_retention": "manifest_only",
+            "original_uri": "evidence.md",
+            "label": "Evidence",
+        },
+    }
 
 
 def test_handle_query_inline_preserves_definition(
@@ -311,6 +367,63 @@ def workflow_instance_id(canonical_workflow_project: Path) -> str:
 def test_mutating_tools_require_server(server, tool_name: str, args: dict[str, Any]) -> None:
     error = call_tool_expect_error(server, tool_name, args)
     assert "configure a server" in error.lower()
+
+
+def _init_governed_source_instance(server, tmp_project: Path) -> str:
+    result = call_tool(
+        server,
+        "cruxible_init",
+        {
+            "root_dir": str(tmp_project),
+            "config_path": str(tmp_project / "config.yaml"),
+        },
+    )
+    return result["instance_id"]
+
+
+def test_register_source_artifact_threads_caller_supplied_id(
+    server,
+    governed_client,
+    tmp_project: Path,
+) -> None:
+    instance_id = _init_governed_source_instance(server, tmp_project)
+    source_path = tmp_project / "wiki-source.md"
+    source_path.write_text("# Wiki Source\n\nPinned source evidence.\n")
+
+    result = call_tool(
+        server,
+        "cruxible_register_source_artifact",
+        {
+            "instance_id": instance_id,
+            "source_path": str(source_path),
+            "source_artifact_id": "wiki_import_source_001",
+        },
+    )
+
+    assert result["source_artifact_id"] == "wiki_import_source_001"
+    assert result["source_kind"] == "markdown"
+    assert result["chunks"]
+
+
+def test_register_source_artifact_duplicate_id_surfaces_clean_mcp_error(
+    server,
+    governed_client,
+    tmp_project: Path,
+) -> None:
+    instance_id = _init_governed_source_instance(server, tmp_project)
+    source_path = tmp_project / "wiki-source.md"
+    source_path.write_text("# Wiki Source\n\nPinned source evidence.\n")
+    args = {
+        "instance_id": instance_id,
+        "source_path": str(source_path),
+        "source_artifact_id": "wiki_import_duplicate",
+    }
+
+    call_tool(server, "cruxible_register_source_artifact", args)
+    error = call_tool_expect_error(server, "cruxible_register_source_artifact", args)
+
+    assert "Source artifact 'wiki_import_duplicate' is already registered" in error
+    assert "Traceback" not in error
 
 
 def test_validate_valid_config(server, tmp_project: Path) -> None:
