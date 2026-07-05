@@ -15,6 +15,7 @@ from cruxible_core.group.types import (
     CandidateMember,
     GroupResolution,
     ReviewPriority,
+    is_unevidenced_support_signal,
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol
 from cruxible_core.primitives import canonical_json, ordered_unique
@@ -331,6 +332,10 @@ def derive_review_priority(
                     has_review = True
                 if signal_config.role in ("blocking", "required"):
                     has_review = True
+            elif signal_config.require_evidence_on_support and is_unevidenced_support_signal(
+                member, signal
+            ):
+                has_review = True
 
     if prior_resolution is None:
         has_review = True
@@ -573,6 +578,11 @@ def check_auto_resolve_signals(
                 continue
 
             if signal.signal == "unsure" and signal_config.always_review_on_unsure:
+                return False
+
+            if signal_config.require_evidence_on_support and is_unevidenced_support_signal(
+                member, signal
+            ):
                 return False
 
             if policy == "all_support":

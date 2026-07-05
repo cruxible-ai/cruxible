@@ -240,6 +240,7 @@ class SignalPolicySchema(BaseModel):
 
     role: Literal["blocking", "required", "advisory"] = "required"
     always_review_on_unsure: bool = False
+    require_evidence_on_support: bool = False
     note: str = ""
 
 

@@ -2914,6 +2914,7 @@ class TestSignalPolicySchema:
         cfg = SignalPolicySchema()
         assert cfg.role == "required"
         assert cfg.always_review_on_unsure is False
+        assert cfg.require_evidence_on_support is False
         assert cfg.note == ""
 
     def test_all_roles(self):
@@ -2990,6 +2991,7 @@ relationships:
         cosine_v1:
           role: blocking
           always_review_on_unsure: true
+          require_evidence_on_support: true
           note: authoritative
       auto_resolve_when: no_contradict
       max_group_size: 200
@@ -3011,6 +3013,7 @@ relationships:
         assert rel2.proposal_policy is not None
         assert rel2.proposal_policy.signals["cosine_v1"].role == "blocking"
         assert rel2.proposal_policy.signals["cosine_v1"].always_review_on_unsure is True
+        assert rel2.proposal_policy.signals["cosine_v1"].require_evidence_on_support is True
 
 
 class TestQualityCheckValidation:
