@@ -179,8 +179,14 @@
   "/api/v1/{instance_id}/snapshots/clone": {
     "POST": "CloneSnapshotResult"
   },
+  "/api/v1/{instance_id}/source-artifacts": {
+    "GET": "SourceArtifactListResult"
+  },
   "/api/v1/{instance_id}/source-artifacts/register": {
     "POST": "RegisterSourceArtifactResult"
+  },
+  "/api/v1/{instance_id}/source-artifacts/{artifact_id}": {
+    "GET": "SourceArtifactReadResult"
   },
   "/api/v1/{instance_id}/source-evidence/dereference": {
     "POST": "DereferenceSourceEvidenceResult"

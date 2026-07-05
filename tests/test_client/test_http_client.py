@@ -582,6 +582,95 @@ def test_source_artifact_methods_use_expected_routes_and_payloads():
     }
 
 
+def test_source_artifact_read_methods_use_expected_routes_and_params():
+    captured: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(
+            {
+                "method": request.method,
+                "path": request.url.path,
+                "params": dict(request.url.params),
+            }
+        )
+        if request.url.path.endswith("/source-artifacts"):
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "source_artifact_id": "SRC-1",
+                            "kind": "markdown",
+                            "retention": "archive",
+                            "original_uri": "docs/evidence.md",
+                            "label": "Evidence",
+                            "content_hash": "sha256:abc",
+                            "registered_at": "2026-06-05T12:00:00Z",
+                            "chunk_count": 1,
+                            "byte_count": 10,
+                        }
+                    ],
+                    "total": 1,
+                    "limit": 10,
+                    "offset": 4,
+                    "truncated": False,
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "source_artifact_id": "SRC-1",
+                "kind": "markdown",
+                "retention": "archive",
+                "original_uri": "docs/evidence.md",
+                "label": "Evidence",
+                "content_hash": "sha256:abc",
+                "registered_at": "2026-06-05T12:00:00Z",
+                "chunk_count": 1,
+                "byte_count": 10,
+                "parser_version": "markdown_chunks_v1",
+                "archived": True,
+                "archive_content_hash": "sha256:abc",
+                "content_available": True,
+                "body_origin": "archive",
+                "current_artifact_hash": "sha256:abc",
+                "chunks": [
+                    {
+                        "chunk_id": "mdchunk_1",
+                        "heading_path": ["Evidence"],
+                        "block_selector": "paragraph:1",
+                        "block_type": "paragraph",
+                        "line_start": 3,
+                        "line_end": 3,
+                        "content_hash": "sha256:def",
+                        "text": "source text",
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+    listed = client.list_source_artifacts("inst_123", limit=10, offset=4)
+    detail = client.get_source_artifact("inst_123", "SRC-1")
+
+    assert listed.items[0].source_artifact_id == "SRC-1"
+    assert listed.items[0].kind == "markdown"
+    assert detail.content_available is True
+    assert detail.chunks[0].text == "source text"
+    assert captured == [
+        {
+            "method": "GET",
+            "path": "/api/v1/inst_123/source-artifacts",
+            "params": {"offset": "4", "limit": "10"},
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/inst_123/source-artifacts/SRC-1",
+            "params": {},
+        },
+    ]
+
+
 def test_add_relationships_serializes_evidence_fields():
     captured: dict[str, Any] = {}
 

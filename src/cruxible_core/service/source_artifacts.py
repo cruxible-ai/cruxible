@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import re
-
 import hashlib
 import os
+import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, SourceArtifactNotFoundError
 from cruxible_core.governance.actors import (
     GovernedActorContext,
     dump_actor_context,
@@ -22,9 +22,15 @@ from cruxible_core.source_artifacts.markdown import parse_markdown_chunks
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 from cruxible_core.source_artifacts.types import (
     MARKDOWN_CHUNKS_V1,
+    DereferenceBodyOrigin,
     DereferenceSourceEvidenceResult,
+    DereferenceStatus,
     RegisterSourceArtifactResult,
     SourceArtifactChunk,
+    SourceArtifactListItem,
+    SourceArtifactListResult,
+    SourceArtifactReadChunk,
+    SourceArtifactReadResult,
     SourceArtifactRecord,
     SourceEvidenceInput,
     SourceKind,
@@ -32,8 +38,86 @@ from cruxible_core.source_artifacts.types import (
 )
 from cruxible_core.temporal import format_datetime, utc_now
 
-
 _SOURCE_ARTIFACT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}")
+
+
+@dataclass(frozen=True)
+class _SourceContentResolution:
+    status: DereferenceStatus
+    content: bytes | None = None
+    body_origin: DereferenceBodyOrigin | None = None
+    current_artifact_hash: str | None = None
+    reason: str | None = None
+
+
+def service_list_source_artifacts(
+    instance: InstanceProtocol,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> SourceArtifactListResult:
+    """List registered source artifacts with deterministic id ordering."""
+    if offset < 0:
+        raise ConfigError("offset must be >= 0")
+    if limit is not None and limit < 0:
+        raise ConfigError("limit must be >= 0")
+
+    store = instance.get_source_artifact_store()
+    try:
+        artifacts = sorted(
+            store.list_artifacts(),
+            key=lambda artifact: artifact.source_artifact_id,
+        )
+        total = len(artifacts)
+        end = None if limit is None else offset + limit
+        page = artifacts[offset:end]
+        items = [
+            _artifact_list_item(
+                artifact, chunk_count=len(store.list_chunks(artifact.source_artifact_id))
+            )
+            for artifact in page
+        ]
+        return SourceArtifactListResult(
+            items=items,
+            total=total,
+            limit=limit,
+            offset=offset,
+            truncated=offset + len(items) < total,
+        )
+    finally:
+        store.close()
+
+
+def service_get_source_artifact(
+    instance: InstanceProtocol,
+    *,
+    source_artifact_id: str,
+) -> SourceArtifactReadResult:
+    """Return artifact metadata and ordered chunks, with text when retained content resolves."""
+    store = instance.get_source_artifact_store()
+    try:
+        artifact = store.get_artifact(source_artifact_id)
+        if artifact is None:
+            raise SourceArtifactNotFoundError(source_artifact_id)
+        chunks = store.list_chunks(source_artifact_id)
+        content = _resolve_artifact_content(store, artifact)
+        content_available = content.status == "available" and content.content is not None
+        return SourceArtifactReadResult(
+            **_artifact_list_item(artifact, chunk_count=len(chunks)).model_dump(mode="python"),
+            parser_version=artifact.parser_version,
+            archived=artifact.archived,
+            archive_content_hash=artifact.archive_content_hash,
+            content_available=content_available,
+            content_unavailable_reason=None if content_available else content.reason,
+            body_origin=content.body_origin,
+            current_artifact_hash=content.current_artifact_hash,
+            chunks=[
+                _read_chunk(chunk, content.content if content_available else None)
+                for chunk in chunks
+            ],
+        )
+    finally:
+        store.close()
 
 
 def service_register_source_artifact(
@@ -82,9 +166,7 @@ def service_register_source_artifact(
                 "starting with an alphanumeric"
             )
         if instance.get_source_artifact_store().get_artifact(source_artifact_id) is not None:
-            raise ConfigError(
-                f"Source artifact '{source_artifact_id}' is already registered"
-            )
+            raise ConfigError(f"Source artifact '{source_artifact_id}' is already registered")
     else:
         source_artifact_id = new_id("SRC")
     chunks = parse_markdown_chunks(
@@ -172,45 +254,16 @@ def service_dereference_source_evidence(
                 chunk=chunk,
             )
 
-        if artifact.archive_content_hash is not None:
-            archived = store.get_archive_content(artifact.archive_content_hash)
-            if archived is not None:
-                archived_hash = _sha256_bytes(archived)
-                if archived_hash != artifact.content_hash:
-                    return _unavailable_result(
-                        artifact,
-                        chunk,
-                        "archived source content hash does not match manifest",
-                    )
-                return DereferenceSourceEvidenceResult(
-                    status="available",
-                    source_artifact_id=artifact.source_artifact_id,
-                    chunk_id=chunk.chunk_id,
-                    content_hash=chunk.content_hash,
-                    expected_artifact_hash=artifact.content_hash,
-                    current_artifact_hash=archived_hash,
-                    body_origin="archive",
-                    body=_chunk_body(archived, chunk),
-                    chunk=chunk,
-                )
-
-        if artifact.local_path is None:
-            return _unavailable_result(artifact, chunk, "source artifact has no local path")
-        path = Path(artifact.local_path)
-        if not path.is_file():
-            return _unavailable_result(artifact, chunk, "local source path is unavailable")
-
-        content = path.read_bytes()
-        current_hash = _sha256_bytes(content)
-        if current_hash != artifact.content_hash:
+        content = _resolve_artifact_content(store, artifact)
+        if content.status != "available" or content.content is None:
             return DereferenceSourceEvidenceResult(
-                status="drifted",
+                status=content.status,
                 source_artifact_id=artifact.source_artifact_id,
                 chunk_id=chunk.chunk_id,
                 content_hash=chunk.content_hash,
                 expected_artifact_hash=artifact.content_hash,
-                current_artifact_hash=current_hash,
-                reason="local source content hash does not match registered manifest",
+                current_artifact_hash=content.current_artifact_hash,
+                reason=content.reason,
                 chunk=chunk,
             )
         return DereferenceSourceEvidenceResult(
@@ -219,9 +272,9 @@ def service_dereference_source_evidence(
             chunk_id=chunk.chunk_id,
             content_hash=chunk.content_hash,
             expected_artifact_hash=artifact.content_hash,
-            current_artifact_hash=current_hash,
-            body_origin="local_path",
-            body=_chunk_body(content, chunk),
+            current_artifact_hash=content.current_artifact_hash,
+            body_origin=content.body_origin,
+            body=_chunk_body(content.content, chunk),
             chunk=chunk,
         )
     finally:
@@ -289,6 +342,88 @@ def resolve_source_evidence_refs(
         return merge_evidence_ref_objects(refs)
     finally:
         store.close()
+
+
+def _artifact_list_item(
+    artifact: SourceArtifactRecord,
+    *,
+    chunk_count: int,
+) -> SourceArtifactListItem:
+    return SourceArtifactListItem(
+        source_artifact_id=artifact.source_artifact_id,
+        kind=artifact.source_kind,
+        retention=artifact.source_retention,
+        original_uri=artifact.original_uri,
+        label=artifact.label,
+        content_hash=artifact.content_hash,
+        registered_at=artifact.created_at,
+        chunk_count=chunk_count,
+        byte_count=artifact.byte_count,
+    )
+
+
+def _read_chunk(
+    chunk: SourceArtifactChunk,
+    content: bytes | None,
+) -> SourceArtifactReadChunk:
+    return SourceArtifactReadChunk(
+        chunk_id=chunk.chunk_id,
+        heading_path=chunk.heading_path,
+        block_selector=chunk.block_selector,
+        block_type=chunk.block_type,
+        line_start=chunk.line_start,
+        line_end=chunk.line_end,
+        content_hash=chunk.content_hash,
+        text=_chunk_body(content, chunk) if content is not None else None,
+    )
+
+
+def _resolve_artifact_content(
+    store: SourceArtifactStoreProtocol,
+    artifact: SourceArtifactRecord,
+) -> _SourceContentResolution:
+    if artifact.archive_content_hash is not None:
+        archived = store.get_archive_content(artifact.archive_content_hash)
+        if archived is not None:
+            archived_hash = _sha256_bytes(archived)
+            if archived_hash != artifact.content_hash:
+                return _SourceContentResolution(
+                    status="unavailable",
+                    reason="archived source content hash does not match manifest",
+                )
+            return _SourceContentResolution(
+                status="available",
+                content=archived,
+                body_origin="archive",
+                current_artifact_hash=archived_hash,
+            )
+
+    if artifact.local_path is None:
+        return _SourceContentResolution(
+            status="unavailable",
+            reason="source artifact has no local path",
+        )
+    path = Path(artifact.local_path)
+    if not path.is_file():
+        return _SourceContentResolution(
+            status="unavailable",
+            reason="local source path is unavailable",
+        )
+
+    content = path.read_bytes()
+    current_hash = _sha256_bytes(content)
+    if current_hash != artifact.content_hash:
+        return _SourceContentResolution(
+            status="drifted",
+            current_artifact_hash=current_hash,
+            reason="local source content hash does not match registered manifest",
+        )
+    return _SourceContentResolution(
+        status="available",
+        content=content,
+        body_origin="local_path",
+        current_artifact_hash=current_hash,
+    )
 
 
 def _resolve_chunk(

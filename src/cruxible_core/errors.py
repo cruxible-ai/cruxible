@@ -27,6 +27,7 @@ errors (runtime data), making it easy to catch by category.
     ├── OutcomeNotFoundError (feedback store lookup)
     ├── InstanceNotFoundError (instance registry lookup)
     ├── GroupNotFoundError (group store lookup)
+    ├── SourceArtifactNotFoundError (source artifact store lookup)
     ├── RuntimeCredentialNotFoundError (server credential store lookup)
     ├── AuthenticationError (HTTP/API credential failure)
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
@@ -318,6 +319,14 @@ class GroupNotFoundError(CoreError):
     def __init__(self, group_id: str):
         self.group_id = group_id
         super().__init__(f"Group '{group_id}' not found")
+
+
+class SourceArtifactNotFoundError(CoreError):
+    """Source artifact ID not found in store."""
+
+    def __init__(self, source_artifact_id: str):
+        self.source_artifact_id = source_artifact_id
+        super().__init__(f"Source artifact '{source_artifact_id}' not found")
 
 
 class RuntimeCredentialNotFoundError(CoreError):

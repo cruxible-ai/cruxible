@@ -99,6 +99,62 @@ class SourceEvidenceInput(BaseModel):
         return self
 
 
+class SourceArtifactListItem(BaseModel):
+    """Metadata summary for a registered source artifact."""
+
+    source_artifact_id: str
+    kind: SourceKind
+    retention: SourceRetention
+    original_uri: str | None = None
+    label: str | None = None
+    content_hash: str
+    registered_at: str
+    chunk_count: int
+    byte_count: int
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SourceArtifactReadChunk(BaseModel):
+    """One addressable source artifact chunk, optionally including resolved text."""
+
+    chunk_id: str
+    heading_path: list[str] = Field(default_factory=list)
+    block_selector: str
+    block_type: str
+    line_start: int
+    line_end: int
+    content_hash: str
+    text: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SourceArtifactListResult(BaseModel):
+    """Paginated source artifact listing."""
+
+    items: list[SourceArtifactListItem] = Field(default_factory=list)
+    total: int
+    limit: int | None = None
+    offset: int = 0
+    truncated: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SourceArtifactReadResult(SourceArtifactListItem):
+    """Full source artifact read model with ordered chunks."""
+
+    parser_version: str
+    archived: bool = False
+    archive_content_hash: str | None = None
+    content_available: bool
+    content_unavailable_reason: str | None = None
+    body_origin: DereferenceBodyOrigin | None = None
+    current_artifact_hash: str | None = None
+    chunks: list[SourceArtifactReadChunk] = Field(default_factory=list)
+
+
 class DereferenceSourceEvidenceResult(BaseModel):
     """Result of resolving a persisted source citation back to readable source text."""
 

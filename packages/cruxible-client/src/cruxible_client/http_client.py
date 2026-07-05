@@ -1187,6 +1187,32 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.SnapshotListResult)
 
+    def list_source_artifacts(
+        self,
+        instance_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> contracts.SourceArtifactListResult:
+        params: dict[str, int] = {"offset": offset}
+        if limit is not None:
+            params["limit"] = limit
+        response = self._client.get(
+            f"/api/v1/{instance_id}/source-artifacts",
+            params=params,
+        )
+        return self._parse_model(response, contracts.SourceArtifactListResult)
+
+    def get_source_artifact(
+        self,
+        instance_id: str,
+        source_artifact_id: str,
+    ) -> contracts.SourceArtifactReadResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/source-artifacts/{source_artifact_id}",
+        )
+        return self._parse_model(response, contracts.SourceArtifactReadResult)
+
     def register_source_artifact(
         self,
         instance_id: str,

@@ -13,6 +13,8 @@ from cruxible_core.service import (
     GroupMemberInput,
     GroupSignalInput,
     service_dereference_source_evidence,
+    service_get_source_artifact,
+    service_list_source_artifacts,
     service_propose_group_inputs,
     service_register_source_artifact,
 )
@@ -58,6 +60,99 @@ def _actor() -> GovernedActorContext:
         operation_id="op_source",
         timestamp="2026-06-05T12:00:00Z",
     )
+
+
+def test_list_source_artifacts_empty_and_paginated(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+
+    empty = service_list_source_artifacts(instance, limit=10, offset=0)
+
+    assert empty.items == []
+    assert empty.total == 0
+    assert empty.limit == 10
+    assert empty.offset == 0
+    assert empty.truncated is False
+
+    first_path = tmp_path / "first.md"
+    first_path.write_text("# First\n\nFirst source text.\n")
+    second_path = tmp_path / "second.md"
+    second_path.write_text("# Second\n\nSecond source text.\n")
+    service_register_source_artifact(
+        instance,
+        source_path=str(second_path),
+        source_artifact_id="source_b",
+        label="second",
+    )
+    service_register_source_artifact(
+        instance,
+        source_path=str(first_path),
+        source_artifact_id="source_a",
+        label="first",
+    )
+
+    page = service_list_source_artifacts(instance, limit=1, offset=1)
+
+    assert page.total == 2
+    assert page.limit == 1
+    assert page.offset == 1
+    assert page.truncated is False
+    assert [item.source_artifact_id for item in page.items] == ["source_b"]
+    assert page.items[0].kind == "markdown"
+    assert page.items[0].retention == "manifest_only"
+    assert page.items[0].chunk_count > 0
+    assert page.items[0].byte_count == second_path.stat().st_size
+
+
+def test_get_source_artifact_returns_ordered_chunks_with_text(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Evidence\n\nFirst paragraph.\n\nSecond paragraph.\n")
+    registered = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_artifact_id="readable_source",
+        label="readable",
+    )
+
+    result = service_get_source_artifact(
+        instance,
+        source_artifact_id=registered.source_artifact_id,
+    )
+
+    assert result.source_artifact_id == "readable_source"
+    assert result.content_available is True
+    assert result.body_origin == "local_path"
+    assert result.chunk_count == len(registered.chunks)
+    assert [chunk.line_start for chunk in result.chunks] == sorted(
+        chunk.line_start for chunk in result.chunks
+    )
+    paragraph = next(chunk for chunk in result.chunks if chunk.block_selector == "paragraph:1")
+    assert paragraph.text == "First paragraph."
+
+
+def test_get_source_artifact_manifest_only_missing_file_omits_text(
+    tmp_path: Path,
+) -> None:
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "missing.md"
+    source_path.write_text("# Evidence\n\nTransient source text.\n")
+    registered = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_retention="manifest_only",
+        source_artifact_id="missing_source",
+    )
+    source_path.unlink()
+
+    result = service_get_source_artifact(
+        instance,
+        source_artifact_id=registered.source_artifact_id,
+    )
+
+    assert result.content_available is False
+    assert result.content_unavailable_reason == "local source path is unavailable"
+    assert result.chunks
+    assert all(chunk.text is None for chunk in result.chunks)
 
 
 def test_manifest_only_source_artifact_reports_local_drift(tmp_path: Path) -> None:
