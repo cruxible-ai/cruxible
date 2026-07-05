@@ -365,6 +365,40 @@ class DereferenceSourceEvidenceResult(BaseModel):
     chunk: SourceArtifactChunk | None = None
 
 
+class SourceArtifactListItem(BaseModel):
+    source_artifact_id: str
+    kind: SourceKind
+    retention: SourceRetention
+    original_uri: str | None = None
+    label: str | None = None
+    content_hash: str
+    registered_at: str
+    chunk_count: int
+    byte_count: int
+
+
+class SourceArtifactReadChunk(BaseModel):
+    chunk_id: str
+    heading_path: list[str] = Field(default_factory=list)
+    block_selector: str
+    block_type: str
+    line_start: int
+    line_end: int
+    content_hash: str
+    text: str | None = None
+
+
+class SourceArtifactReadResult(SourceArtifactListItem):
+    parser_version: str
+    archived: bool = False
+    archive_content_hash: str | None = None
+    content_available: bool
+    content_unavailable_reason: str | None = None
+    body_origin: DereferenceBodyOrigin | None = None
+    current_artifact_hash: str | None = None
+    chunks: list[SourceArtifactReadChunk] = Field(default_factory=list)
+
+
 class SignalInput(BaseModel):
     signal_source: str = Field(
         description="Name of the declared signal source producing this signal."
@@ -588,6 +622,10 @@ class ListEnvelopeFields(BaseModel):
     limit: int | None = None
     offset: int = 0
     truncated: bool = False
+
+
+class SourceArtifactListResult(ListEnvelopeFields):
+    items: list[SourceArtifactListItem] = Field(default_factory=list)
 
 
 class QueryEntityItem(BaseModel):

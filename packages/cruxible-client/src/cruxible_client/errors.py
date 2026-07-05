@@ -209,6 +209,12 @@ class GroupNotFoundError(CoreError):
         super().__init__(f"Group '{group_id}' not found")
 
 
+class SourceArtifactNotFoundError(CoreError):
+    def __init__(self, source_artifact_id: str):
+        self.source_artifact_id = source_artifact_id
+        super().__init__(f"Source artifact '{source_artifact_id}' not found")
+
+
 class RuntimeCredentialNotFoundError(CoreError):
     def __init__(self, credential_id: str):
         self.credential_id = credential_id
@@ -341,6 +347,8 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = InstanceNotFoundError(context.get("instance_id", "unknown"))
     elif body.error_type == "GroupNotFoundError":
         exc = GroupNotFoundError(context.get("group_id", "unknown"))
+    elif body.error_type == "SourceArtifactNotFoundError":
+        exc = SourceArtifactNotFoundError(context.get("source_artifact_id", "unknown"))
     elif body.error_type == "RuntimeCredentialNotFoundError":
         exc = RuntimeCredentialNotFoundError(context.get("credential_id", "unknown"))
     elif body.error_type == "AuthenticationError":

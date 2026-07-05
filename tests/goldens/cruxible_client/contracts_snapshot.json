@@ -20948,6 +20948,1025 @@
         "line_start"
       ]
     },
+    "SourceArtifactListItem": {
+      "fields": {
+        "byte_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "byte_count",
+          "required": true,
+          "schema": {
+            "title": "Byte Count",
+            "type": "integer"
+          }
+        },
+        "chunk_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "chunk_count",
+          "required": true,
+          "schema": {
+            "title": "Chunk Count",
+            "type": "integer"
+          }
+        },
+        "content_hash": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "content_hash",
+          "required": true,
+          "schema": {
+            "title": "Content Hash",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "const": "markdown",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "label": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "label",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          }
+        },
+        "original_uri": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "original_uri",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Original Uri"
+          }
+        },
+        "registered_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "registered_at",
+          "required": true,
+          "schema": {
+            "title": "Registered At",
+            "type": "string"
+          }
+        },
+        "retention": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "retention",
+          "required": true,
+          "schema": {
+            "enum": [
+              "manifest_only",
+              "archive"
+            ],
+            "title": "Retention",
+            "type": "string"
+          }
+        },
+        "source_artifact_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_artifact_id",
+          "required": true,
+          "schema": {
+            "title": "Source Artifact Id",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "byte_count": {
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "chunk_count": {
+            "title": "Chunk Count",
+            "type": "integer"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "kind": {
+            "const": "markdown",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "original_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Original Uri"
+          },
+          "registered_at": {
+            "title": "Registered At",
+            "type": "string"
+          },
+          "retention": {
+            "enum": [
+              "manifest_only",
+              "archive"
+            ],
+            "title": "Retention",
+            "type": "string"
+          },
+          "source_artifact_id": {
+            "title": "Source Artifact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_artifact_id",
+          "kind",
+          "retention",
+          "content_hash",
+          "registered_at",
+          "chunk_count",
+          "byte_count"
+        ],
+        "title": "SourceArtifactListItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "byte_count",
+        "chunk_count",
+        "content_hash",
+        "kind",
+        "registered_at",
+        "retention",
+        "source_artifact_id"
+      ]
+    },
+    "SourceArtifactListResult": {
+      "fields": {
+        "items": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "items",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/SourceArtifactListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "SourceArtifactListItem": {
+            "properties": {
+              "byte_count": {
+                "title": "Byte Count",
+                "type": "integer"
+              },
+              "chunk_count": {
+                "title": "Chunk Count",
+                "type": "integer"
+              },
+              "content_hash": {
+                "title": "Content Hash",
+                "type": "string"
+              },
+              "kind": {
+                "const": "markdown",
+                "title": "Kind",
+                "type": "string"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "original_uri": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Original Uri"
+              },
+              "registered_at": {
+                "title": "Registered At",
+                "type": "string"
+              },
+              "retention": {
+                "enum": [
+                  "manifest_only",
+                  "archive"
+                ],
+                "title": "Retention",
+                "type": "string"
+              },
+              "source_artifact_id": {
+                "title": "Source Artifact Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_artifact_id",
+              "kind",
+              "retention",
+              "content_hash",
+              "registered_at",
+              "chunk_count",
+              "byte_count"
+            ],
+            "title": "SourceArtifactListItem",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/SourceArtifactListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total"
+        ],
+        "title": "SourceArtifactListResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "total"
+      ]
+    },
+    "SourceArtifactReadChunk": {
+      "fields": {
+        "block_selector": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "block_selector",
+          "required": true,
+          "schema": {
+            "title": "Block Selector",
+            "type": "string"
+          }
+        },
+        "block_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "block_type",
+          "required": true,
+          "schema": {
+            "title": "Block Type",
+            "type": "string"
+          }
+        },
+        "chunk_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "chunk_id",
+          "required": true,
+          "schema": {
+            "title": "Chunk Id",
+            "type": "string"
+          }
+        },
+        "content_hash": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "content_hash",
+          "required": true,
+          "schema": {
+            "title": "Content Hash",
+            "type": "string"
+          }
+        },
+        "heading_path": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "heading_path",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Heading Path",
+            "type": "array"
+          }
+        },
+        "line_end": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line_end",
+          "required": true,
+          "schema": {
+            "title": "Line End",
+            "type": "integer"
+          }
+        },
+        "line_start": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line_start",
+          "required": true,
+          "schema": {
+            "title": "Line Start",
+            "type": "integer"
+          }
+        },
+        "text": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "text",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Text"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "block_selector": {
+            "title": "Block Selector",
+            "type": "string"
+          },
+          "block_type": {
+            "title": "Block Type",
+            "type": "string"
+          },
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "heading_path": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Heading Path",
+            "type": "array"
+          },
+          "line_end": {
+            "title": "Line End",
+            "type": "integer"
+          },
+          "line_start": {
+            "title": "Line Start",
+            "type": "integer"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Text"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "block_selector",
+          "block_type",
+          "line_start",
+          "line_end",
+          "content_hash"
+        ],
+        "title": "SourceArtifactReadChunk",
+        "type": "object"
+      },
+      "required_fields": [
+        "block_selector",
+        "block_type",
+        "chunk_id",
+        "content_hash",
+        "line_end",
+        "line_start"
+      ]
+    },
+    "SourceArtifactReadResult": {
+      "fields": {
+        "archive_content_hash": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "archive_content_hash",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archive Content Hash"
+          }
+        },
+        "archived": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "archived",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Archived",
+            "type": "boolean"
+          }
+        },
+        "body_origin": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "body_origin",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "archive",
+                  "local_path"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Body Origin"
+          }
+        },
+        "byte_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "byte_count",
+          "required": true,
+          "schema": {
+            "title": "Byte Count",
+            "type": "integer"
+          }
+        },
+        "chunk_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "chunk_count",
+          "required": true,
+          "schema": {
+            "title": "Chunk Count",
+            "type": "integer"
+          }
+        },
+        "chunks": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "chunks",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/SourceArtifactReadChunk"
+            },
+            "title": "Chunks",
+            "type": "array"
+          }
+        },
+        "content_available": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "content_available",
+          "required": true,
+          "schema": {
+            "title": "Content Available",
+            "type": "boolean"
+          }
+        },
+        "content_hash": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "content_hash",
+          "required": true,
+          "schema": {
+            "title": "Content Hash",
+            "type": "string"
+          }
+        },
+        "content_unavailable_reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "content_unavailable_reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Content Unavailable Reason"
+          }
+        },
+        "current_artifact_hash": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "current_artifact_hash",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Current Artifact Hash"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "const": "markdown",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "label": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "label",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          }
+        },
+        "original_uri": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "original_uri",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Original Uri"
+          }
+        },
+        "parser_version": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "parser_version",
+          "required": true,
+          "schema": {
+            "title": "Parser Version",
+            "type": "string"
+          }
+        },
+        "registered_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "registered_at",
+          "required": true,
+          "schema": {
+            "title": "Registered At",
+            "type": "string"
+          }
+        },
+        "retention": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "retention",
+          "required": true,
+          "schema": {
+            "enum": [
+              "manifest_only",
+              "archive"
+            ],
+            "title": "Retention",
+            "type": "string"
+          }
+        },
+        "source_artifact_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_artifact_id",
+          "required": true,
+          "schema": {
+            "title": "Source Artifact Id",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "SourceArtifactReadChunk": {
+            "properties": {
+              "block_selector": {
+                "title": "Block Selector",
+                "type": "string"
+              },
+              "block_type": {
+                "title": "Block Type",
+                "type": "string"
+              },
+              "chunk_id": {
+                "title": "Chunk Id",
+                "type": "string"
+              },
+              "content_hash": {
+                "title": "Content Hash",
+                "type": "string"
+              },
+              "heading_path": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Heading Path",
+                "type": "array"
+              },
+              "line_end": {
+                "title": "Line End",
+                "type": "integer"
+              },
+              "line_start": {
+                "title": "Line Start",
+                "type": "integer"
+              },
+              "text": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Text"
+              }
+            },
+            "required": [
+              "chunk_id",
+              "block_selector",
+              "block_type",
+              "line_start",
+              "line_end",
+              "content_hash"
+            ],
+            "title": "SourceArtifactReadChunk",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "archive_content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archive Content Hash"
+          },
+          "archived": {
+            "default": false,
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "body_origin": {
+            "anyOf": [
+              {
+                "enum": [
+                  "archive",
+                  "local_path"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Body Origin"
+          },
+          "byte_count": {
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "chunk_count": {
+            "title": "Chunk Count",
+            "type": "integer"
+          },
+          "chunks": {
+            "items": {
+              "$ref": "#/$defs/SourceArtifactReadChunk"
+            },
+            "title": "Chunks",
+            "type": "array"
+          },
+          "content_available": {
+            "title": "Content Available",
+            "type": "boolean"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "content_unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Content Unavailable Reason"
+          },
+          "current_artifact_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Current Artifact Hash"
+          },
+          "kind": {
+            "const": "markdown",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "original_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Original Uri"
+          },
+          "parser_version": {
+            "title": "Parser Version",
+            "type": "string"
+          },
+          "registered_at": {
+            "title": "Registered At",
+            "type": "string"
+          },
+          "retention": {
+            "enum": [
+              "manifest_only",
+              "archive"
+            ],
+            "title": "Retention",
+            "type": "string"
+          },
+          "source_artifact_id": {
+            "title": "Source Artifact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_artifact_id",
+          "kind",
+          "retention",
+          "content_hash",
+          "registered_at",
+          "chunk_count",
+          "byte_count",
+          "parser_version",
+          "content_available"
+        ],
+        "title": "SourceArtifactReadResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "byte_count",
+        "chunk_count",
+        "content_available",
+        "content_hash",
+        "kind",
+        "parser_version",
+        "registered_at",
+        "retention",
+        "source_artifact_id"
+      ]
+    },
     "SourceEvidenceInput": {
       "fields": {
         "block_selector": {

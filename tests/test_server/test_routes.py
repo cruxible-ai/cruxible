@@ -1255,6 +1255,105 @@ def test_source_artifact_relative_path_resolves_from_workspace_root(
     assert dereferenced_payload["body"] == "Workspace-local source text."
 
 
+def test_source_artifact_read_routes_list_paginate_and_get_text(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    docs_dir = server_project / "docs"
+    docs_dir.mkdir()
+    source_a = docs_dir / "source-a.md"
+    source_a.write_text("# Evidence A\n\nReadable A text.\n")
+    source_b = docs_dir / "source-b.md"
+    source_b.write_text("# Evidence B\n\nReadable B text.\n")
+    instance_id = _init_instance(app_client, server_project)
+
+    empty = app_client.get(f"/api/v1/{instance_id}/source-artifacts")
+    assert empty.status_code == 200
+    assert empty.json() == {"items": [], "total": 0, "limit": None, "offset": 0, "truncated": False}
+
+    for artifact_id, source_path in (
+        ("source_b", "docs/source-b.md"),
+        ("source_a", "docs/source-a.md"),
+    ):
+        response = app_client.post(
+            f"/api/v1/{instance_id}/source-artifacts/register",
+            json={
+                "source_path": source_path,
+                "source_retention": "manifest_only",
+                "source_artifact_id": artifact_id,
+            },
+        )
+        assert response.status_code == 200, response.json()
+
+    listed = app_client.get(f"/api/v1/{instance_id}/source-artifacts?limit=1&offset=1")
+    assert listed.status_code == 200
+    listed_payload = listed.json()
+    assert listed_payload["total"] == 2
+    assert listed_payload["limit"] == 1
+    assert listed_payload["offset"] == 1
+    assert listed_payload["truncated"] is False
+    assert [item["source_artifact_id"] for item in listed_payload["items"]] == ["source_b"]
+    assert listed_payload["items"][0]["kind"] == "markdown"
+    assert listed_payload["items"][0]["retention"] == "manifest_only"
+    assert listed_payload["items"][0]["chunk_count"] > 0
+
+    detail = app_client.get(f"/api/v1/{instance_id}/source-artifacts/source_a")
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert detail_payload["source_artifact_id"] == "source_a"
+    assert detail_payload["content_available"] is True
+    assert detail_payload["body_origin"] == "local_path"
+    paragraph = next(
+        chunk for chunk in detail_payload["chunks"] if chunk["block_selector"] == "paragraph:1"
+    )
+    assert paragraph["text"] == "Readable A text."
+
+
+def test_source_artifact_read_route_manifest_only_missing_file_omits_text(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    docs_dir = server_project / "docs"
+    docs_dir.mkdir()
+    source_path = docs_dir / "transient.md"
+    source_path.write_text("# Transient\n\nTemporary source text.\n")
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/source-artifacts/register",
+        json={
+            "source_path": "docs/transient.md",
+            "source_retention": "manifest_only",
+            "source_artifact_id": "source_missing",
+        },
+    )
+    assert response.status_code == 200, response.json()
+    source_path.unlink()
+
+    detail = app_client.get(f"/api/v1/{instance_id}/source-artifacts/source_missing")
+
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["content_available"] is False
+    assert payload["content_unavailable_reason"] == "local source path is unavailable"
+    assert payload["chunks"]
+    assert all("text" not in chunk for chunk in payload["chunks"])
+
+
+def test_source_artifact_read_route_unknown_artifact_returns_404(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.get(f"/api/v1/{instance_id}/source-artifacts/missing_artifact")
+
+    assert response.status_code == 404
+    payload = response.json()
+    assert payload["error_type"] == "SourceArtifactNotFoundError"
+    assert payload["context"] == {"source_artifact_id": "missing_artifact"}
+
+
 @pytest.mark.parametrize(
     "payload",
     [

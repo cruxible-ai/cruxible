@@ -70,6 +70,7 @@ from cruxible_core.service import (
     service_get_receipt,
     service_get_relationship,
     service_get_relationship_lineage,
+    service_get_source_artifact,
     service_get_trace,
     service_group_status,
     service_init,
@@ -84,6 +85,7 @@ from cruxible_core.service import (
     service_list_queries,
     service_list_resolutions,
     service_list_snapshots,
+    service_list_source_artifacts,
     service_list_traces,
     service_lock,
     service_outcome,
@@ -2930,6 +2932,33 @@ def propose_group(
         policy_summary=result.policy_summary,
         receipt_id=result.receipt_id,
     )
+
+
+def list_source_artifacts(
+    instance_id: str,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> contracts.SourceArtifactListResult:
+    """List registered source artifacts for UI browsing."""
+    check_permission("cruxible_list_source_artifacts", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_list_source_artifacts(instance, limit=limit, offset=offset)
+    return contracts.SourceArtifactListResult.model_validate(result.model_dump(mode="json"))
+
+
+def get_source_artifact(
+    instance_id: str,
+    source_artifact_id: str,
+) -> contracts.SourceArtifactReadResult:
+    """Return one source artifact with ordered chunks and available text."""
+    check_permission("cruxible_get_source_artifact", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_get_source_artifact(
+        instance,
+        source_artifact_id=source_artifact_id,
+    )
+    return contracts.SourceArtifactReadResult.model_validate(result.model_dump(mode="json"))
 
 
 def register_source_artifact(

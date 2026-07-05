@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from cruxible_client import contracts
 from cruxible_core.runtime import api
@@ -13,6 +13,39 @@ from cruxible_core.server.request_models import (
 from cruxible_core.server.routes import resolve_server_instance_id
 
 router = APIRouter(prefix="/api/v1", tags=["source-artifacts"])
+
+
+@router.get(
+    "/{instance_id}/source-artifacts",
+    response_model=contracts.SourceArtifactListResult,
+)
+async def list_source_artifacts(
+    instance_id: str,
+    limit: int | None = Query(default=None, ge=1),
+    offset: int = Query(default=0, ge=0),
+) -> contracts.SourceArtifactListResult:
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return api.list_source_artifacts(
+        instance_id=resolved_instance_id,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/{instance_id}/source-artifacts/{artifact_id}",
+    response_model=contracts.SourceArtifactReadResult,
+    response_model_exclude_none=True,
+)
+async def get_source_artifact(
+    instance_id: str,
+    artifact_id: str,
+) -> contracts.SourceArtifactReadResult:
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return api.get_source_artifact(
+        instance_id=resolved_instance_id,
+        source_artifact_id=artifact_id,
+    )
 
 
 @router.post(
