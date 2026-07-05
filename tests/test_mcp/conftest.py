@@ -403,6 +403,27 @@ class GovernedLocalClient:
     def add_entities(self, instance_id: str, entities, *, dry_run: bool = False):
         return api.add_entities(instance_id, entities, dry_run=dry_run)
 
+    def register_source_artifact(
+        self,
+        instance_id: str,
+        *,
+        source_path: str,
+        source_kind: str = "markdown",
+        source_retention: str = "manifest_only",
+        original_uri: str | None = None,
+        label: str | None = None,
+        source_artifact_id: str | None = None,
+    ):
+        return api.register_source_artifact(
+            instance_id,
+            source_path=source_path,
+            source_kind=source_kind,
+            source_retention=source_retention,
+            original_uri=original_uri,
+            label=label,
+            source_artifact_id=source_artifact_id,
+        )
+
     def add_constraint(
         self,
         instance_id: str,

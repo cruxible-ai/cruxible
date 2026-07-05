@@ -224,6 +224,17 @@ class TestInputSchema:
         assert "kit" not in required
         assert "no_kit" not in required
 
+    def test_register_source_artifact_has_optional_source_artifact_id(self, server):
+        schemas = _get_tool_schemas(server)
+        schema = schemas["cruxible_register_source_artifact"].inputSchema
+        props = schema["properties"]
+        required = set(schema.get("required", []))
+        assert "source_artifact_id" in props
+        assert "source_artifact_id" not in required
+        assert any(
+            item.get("type") == "string" for item in props["source_artifact_id"]["anyOf"]
+        )
+
     def test_new_curated_agent_tools_have_expected_inputs(self, server):
         schemas = _get_tool_schemas(server)
         assert "limit" in schemas["cruxible_inspect_governance"].inputSchema["properties"]

@@ -1644,29 +1644,26 @@ def handle_register_source_artifact(
     instance_id: str,
     *,
     source_path: str,
+    source_artifact_id: str | None = None,
     source_kind: contracts.SourceKind = "markdown",
     source_retention: contracts.SourceRetention = "manifest_only",
     original_uri: str | None = None,
     label: str | None = None,
 ) -> contracts.RegisterSourceArtifactResult:
     """Register a source artifact for source-backed proposal evidence."""
+    register_kwargs: dict[str, Any] = {
+        "source_path": source_path,
+        "source_kind": source_kind,
+        "source_retention": source_retention,
+        "original_uri": original_uri,
+        "label": label,
+    }
+    if source_artifact_id is not None:
+        register_kwargs["source_artifact_id"] = source_artifact_id
+
     return _dispatch_remote_or_local(
-        lambda client: client.register_source_artifact(
-            instance_id,
-            source_path=source_path,
-            source_kind=source_kind,
-            source_retention=source_retention,
-            original_uri=original_uri,
-            label=label,
-        ),
-        lambda: api.register_source_artifact(
-            instance_id,
-            source_path=source_path,
-            source_kind=source_kind,
-            source_retention=source_retention,
-            original_uri=original_uri,
-            label=label,
-        ),
+        lambda client: client.register_source_artifact(instance_id, **register_kwargs),
+        lambda: api.register_source_artifact(instance_id, **register_kwargs),
         allow_local=False,
         operation_name="cruxible_register_source_artifact",
     )

@@ -1129,15 +1129,23 @@ def register_tools(server: FastMCP) -> list[str]:
     def cruxible_register_source_artifact(
         instance_id: str,
         source_path: str,
+        source_artifact_id: str | None = None,
         source_kind: contracts.SourceKind = "markdown",
         source_retention: contracts.SourceRetention = "manifest_only",
         original_uri: str | None = None,
         label: str | None = None,
     ) -> contracts.RegisterSourceArtifactResult:
-        """Register a local source document for source-backed proposal evidence."""
+        """Register a local source document for source-backed proposal evidence.
+
+        source_artifact_id is a caller-supplied artifact id so pinned evidence
+        locators can reference it deterministically; server-generated when
+        omitted. When provided, it must be 3-64 chars of [A-Za-z0-9._-]
+        starting with an alphanumeric. Duplicate ids are refused by the service.
+        """
         return handlers.handle_register_source_artifact(
             instance_id,
             source_path=source_path,
+            source_artifact_id=source_artifact_id,
             source_kind=source_kind,
             source_retention=source_retention,
             original_uri=original_uri,

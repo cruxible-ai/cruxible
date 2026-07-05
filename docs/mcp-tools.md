@@ -1618,6 +1618,7 @@ error-level finding exists.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `source_path` | yes | string | Path to the local source document. |
+| `source_artifact_id` | no | string | null | Caller-supplied artifact id so pinned evidence locators can reference it deterministically; server-generated when omitted. Must be 3-64 chars of `[A-Za-z0-9._-]` starting with an alphanumeric. Duplicate ids are refused by the service. |
 | `source_kind` | no | enum: markdown | Only `markdown` is currently supported. |
 | `source_retention` | no | enum: manifest_only, archive | `manifest_only` stores chunk hashes only; `archive` also stores the document content. |
 | `original_uri` | no | string | null | Original document location for provenance. |
@@ -1630,6 +1631,7 @@ error-level finding exists.
 **Common Errors:**
 - Unknown `instance_id` or missing daemon configuration.
 - Permission mode too low for this tool.
+- Invalid or duplicate caller-supplied `source_artifact_id`.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
 ## cruxible_dereference_source_evidence
