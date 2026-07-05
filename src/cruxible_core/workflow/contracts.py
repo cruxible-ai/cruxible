@@ -14,6 +14,7 @@ from cruxible_core.config.schema import (
     PropertySchema,
 )
 from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.workflow.step_helpers import SOURCE_METADATA_KEY
 
 
 def validate_contract_payload(
@@ -24,6 +25,7 @@ def validate_contract_payload(
     subject: str,
     error_factory: Callable[[str], Exception],
     empty_payload_hint: str | None = None,
+    strip_reserved_source_metadata: bool = False,
 ) -> dict[str, Any]:
     """Validate and normalize a payload against a named contract."""
     contract_name = contract_reference_label(contract_ref)
@@ -31,12 +33,21 @@ def validate_contract_payload(
     if contract is None:
         raise ConfigError(f"Contract '{contract_name}' not found for {subject}")
 
+    validation_payload = payload
+    if (
+        strip_reserved_source_metadata
+        and SOURCE_METADATA_KEY in payload
+        and SOURCE_METADATA_KEY not in contract.fields
+    ):
+        validation_payload = dict(payload)
+        validation_payload.pop(SOURCE_METADATA_KEY, None)
+
     required_missing: list[str] = []
     errors: list[str] = []
     normalized: dict[str, Any] = {}
 
     for field_name, field_schema in contract.fields.items():
-        if field_name not in payload:
+        if field_name not in validation_payload:
             if field_schema.default is not None:
                 try:
                     normalized[field_name] = _normalize_contract_field(
@@ -56,13 +67,13 @@ def validate_contract_payload(
             normalized[field_name] = _normalize_contract_field(
                 config,
                 field_name,
-                payload[field_name],
+                validation_payload[field_name],
                 field_schema,
             )
         except ValueError as exc:
             errors.append(f"field '{field_name}': {exc}")
 
-    extra = sorted(set(payload.keys()) - set(contract.fields.keys()))
+    extra = sorted(set(validation_payload.keys()) - set(contract.fields.keys()))
     if contract.allow_extra:
         json_schema = PropertySchema(type="json", optional=True)
         for field_name in extra:
@@ -70,7 +81,7 @@ def validate_contract_payload(
                 normalized[field_name] = _normalize_contract_field(
                     config,
                     field_name,
-                    payload[field_name],
+                    validation_payload[field_name],
                     json_schema,
                 )
             except ValueError as exc:
@@ -79,7 +90,7 @@ def validate_contract_payload(
         for field_name in extra:
             errors.append(f"unexpected field '{field_name}'")
 
-    if not payload and required_missing:
+    if not validation_payload and required_missing:
         missing = ", ".join(f"'{field_name}'" for field_name in required_missing)
         message = f"{subject} failed contract '{contract_name}': empty input payload provided"
         message = f"{message}; required fields: {missing}"

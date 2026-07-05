@@ -31,7 +31,7 @@ from cruxible_core.graph.assertion_state import RelationshipAssertion, Relations
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.receipt.serializer import to_markdown
-from cruxible_core.service import service_list
+from cruxible_core.service import service_list, service_run
 from cruxible_core.storage.sqlite import SQLiteGraphRepository
 from cruxible_core.workflow import (
     build_lock,
@@ -41,6 +41,7 @@ from cruxible_core.workflow import (
     write_lock,
 )
 from cruxible_core.workflow.apply import make_relationship_set
+from cruxible_core.workflow.step_helpers import SOURCE_METADATA_KEY
 
 USER_INDEX_FIELD = "_query_result_index"
 
@@ -51,6 +52,148 @@ def _review_metadata(status: str) -> RelationshipMetadata:
             review=RelationshipReviewState(status=status),
         )
     )
+
+
+def _envelope_input_contract_yaml(*, declare_source_metadata: bool = False) -> str:
+    source_metadata_field = ""
+    if declare_source_metadata:
+        source_metadata_field = f"""
+      {SOURCE_METADATA_KEY}:
+        type: json
+        optional: true"""
+    return f"""\
+version: "1.0"
+name: envelope_input_contract
+
+entity_types:
+  Thing:
+    properties:
+      thing_id:
+        type: string
+        primary_key: true
+
+relationships: []
+
+contracts:
+  WorkflowInput:
+    fields:
+      items:
+        type: json
+{source_metadata_field}
+  ProviderInput:
+    fields:
+      payload:
+        type: json
+  ProviderOutput:
+    fields:
+      items:
+        type: json
+
+providers:
+  echo_json:
+    kind: function
+    contract_in: ProviderInput
+    contract_out: ProviderOutput
+    ref: tests.support.workflow_test_providers.echo_json_payload
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+workflows:
+  inspect_input:
+    contract_in: WorkflowInput
+    steps:
+      - id: echo
+        provider: echo_json
+        input:
+          payload: $input
+        as: echo
+    returns: echo
+"""
+
+
+def _envelope_pipe_config_yaml() -> str:
+    return """\
+version: "1.0"
+name: envelope_pipe
+
+entity_types:
+  Thing:
+    properties:
+      thing_id:
+        type: string
+        primary_key: true
+      label:
+        type: string
+
+relationships: []
+
+named_queries:
+  list_things:
+    mode: collection
+    returns: Thing
+    result_shape: entity
+
+contracts:
+  EmptyInput:
+    fields: {}
+  ItemsInput:
+    fields:
+      items:
+        type: json
+  ProviderInput:
+    fields:
+      payload:
+        type: json
+  ProviderOutput:
+    fields:
+      items:
+        type: json
+
+providers:
+  echo_json:
+    kind: function
+    contract_in: ProviderInput
+    contract_out: ProviderOutput
+    ref: tests.support.workflow_test_providers.echo_json_payload
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+workflows:
+  analyze_things:
+    contract_in: EmptyInput
+    steps:
+      - id: read
+        query: list_things
+        params: {}
+        as: read
+      - id: echoed
+        provider: echo_json
+        input:
+          payload:
+            items: $steps.read.results
+        as: echoed
+    returns: echoed
+  apply_things:
+    type: canonical
+    contract_in: ItemsInput
+    steps:
+      - id: entities
+        make_entities:
+          entity_type: Thing
+          items: $input.items
+          entity_id: $item.entity_id
+          properties:
+            thing_id: $item.entity_id
+            label: $item.properties.label
+        as: entities
+      - id: apply_entities
+        apply_entities:
+          entities_from: entities
+        as: applied
+    returns: applied
+"""
 
 
 def test_make_relationship_set_attaches_typed_evidence_refs(
@@ -2348,6 +2491,103 @@ class TestWorkflowExecutor:
             },
         )
         assert nested_null_result.output["items"] == [{"verdict": "support", "note": None}]
+
+    def test_workflow_input_contract_strips_reserved_source_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        instance = json_contract_instance(
+            tmp_path,
+            _envelope_input_contract_yaml(),
+        )
+        items = [{"thing_id": "thing-1"}]
+        payload = {
+            "items": items,
+            SOURCE_METADATA_KEY: {"receipt_id": "query-1", "truncated": False},
+        }
+
+        result = execute_workflow(
+            instance,
+            instance.load_config(),
+            "inspect_input",
+            payload,
+        )
+
+        assert result.traces[0].input_payload["payload"] == {"items": items}
+        assert result.receipt.parameters == {"items": items}
+        assert SOURCE_METADATA_KEY in payload
+
+    def test_workflow_input_contract_keeps_declared_source_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        instance = json_contract_instance(
+            tmp_path,
+            _envelope_input_contract_yaml(declare_source_metadata=True),
+        )
+        metadata = {"receipt_id": "query-1", "truncated": False}
+        items = [{"thing_id": "thing-1"}]
+
+        result = execute_workflow(
+            instance,
+            instance.load_config(),
+            "inspect_input",
+            {"items": items, SOURCE_METADATA_KEY: metadata},
+        )
+
+        assert result.traces[0].input_payload["payload"] == {
+            "items": items,
+            SOURCE_METADATA_KEY: metadata,
+        }
+        assert result.receipt.parameters == {"items": items, SOURCE_METADATA_KEY: metadata}
+
+    def test_workflow_input_contract_still_rejects_arbitrary_extra_key(
+        self, tmp_path: Path
+    ) -> None:
+        instance = json_contract_instance(
+            tmp_path,
+            _envelope_input_contract_yaml(),
+        )
+
+        with pytest.raises(ConfigError, match="unexpected field 'bogus'"):
+            execute_workflow(
+                instance,
+                instance.load_config(),
+                "inspect_input",
+                {"items": [], "bogus": True},
+            )
+
+    def test_service_run_pipes_utility_source_metadata_into_canonical_input(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(_envelope_pipe_config_yaml())
+        instance = CruxibleInstance.init(tmp_path, "config.yaml")
+        graph = instance.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Thing",
+                entity_id="thing-1",
+                properties={"thing_id": "thing-1", "label": "Alpha"},
+            )
+        )
+        instance.save_graph(graph)
+        write_lock_for_instance(instance)
+
+        utility_result = service_run(instance, "analyze_things", {})
+
+        assert utility_result.output["items"][0]["entity_id"] == "thing-1"
+        assert utility_result.output["items"][0]["properties"]["label"] == "Alpha"
+        assert SOURCE_METADATA_KEY in utility_result.output
+
+        canonical_result = service_run(
+            instance,
+            "apply_things",
+            utility_result.output,
+        )
+
+        assert canonical_result.mode == "preview"
+        assert canonical_result.workflow_type == "canonical"
+        assert canonical_result.receipt.parameters == {"items": utility_result.output["items"]}
+        assert canonical_result.output["noop_count"] == 1
 
     def test_execute_workflow_assert_failure_records_workflow_receipt(
         self, workflow_instance: CruxibleInstance

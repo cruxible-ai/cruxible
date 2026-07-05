@@ -202,6 +202,7 @@ def compile_workflow(
         subject=f"Workflow '{workflow_name}' input",
         error_factory=ConfigError,
         empty_payload_hint="Use --input or --input-file to provide workflow input.",
+        strip_reserved_source_metadata=True,
     )
 
     compiled_steps: list[CompiledPlanStep] = []
