@@ -23,7 +23,7 @@ async def init_hosted_instance(
     return api.init_hosted_instance(
         instance_id=req.instance_id,
         source_type=req.source_type,
-        kit_ref=req.kit_ref,
+        kit_refs=req.kit_refs,
         transport_ref=req.transport_ref,
         state_ref=req.state_ref,
         overlay_kit_ref=req.overlay_kit_ref,

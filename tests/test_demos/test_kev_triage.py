@@ -1618,7 +1618,7 @@ def test_exposure_reconciliation_no_candidates_completes_without_group(
 
 def test_release_backed_kev_overlay_can_propose_asset_products(tmp_path: Path) -> None:
     reference_root = tmp_path / "reference"
-    reference = service_init(reference_root, kit="kev-reference").instance
+    reference = service_init(reference_root, kits=["kev-reference"]).instance
     service_lock(reference)
     _apply_canonical_workflow(reference, "build_public_kev_reference")
     product = reference.load_graph().list_entities("Product")[0]

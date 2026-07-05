@@ -140,7 +140,7 @@ def test_recipe_validate_and_lock(daemon_client: CruxibleClient, tmp_path: Path)
     assert validated.valid is True, "kev-reference config did not validate"
     assert validated.name
 
-    init = client.init(str(tmp_path / "kev-reference-workspace"), kit="kev-reference")
+    init = client.init(str(tmp_path / "kev-reference-workspace"), kits=["kev-reference"])
     instance_id = init.instance_id
 
     # ``lock`` — the recipe's second command. The lock file must now exist.
@@ -166,7 +166,7 @@ def test_recipe_refresh_canonical_state(daemon_client: CruxibleClient, tmp_path:
     """
     client = daemon_client
 
-    init = client.init(str(tmp_path / "kev-reference-workspace"), kit="kev-reference")
+    init = client.init(str(tmp_path / "kev-reference-workspace"), kits=["kev-reference"])
     instance_id = init.instance_id
     client.workflow_lock(instance_id)
 
@@ -220,7 +220,7 @@ def test_recipe_debug_provider_failure(daemon_client: CruxibleClient, tmp_path: 
     assert "mermaid" in rendered.output, "workflow-steps view rendered no diagram"
 
     # Run a real canonical workflow so there is execution evidence to inspect.
-    init = client.init(str(tmp_path / "kev-reference-workspace"), kit="kev-reference")
+    init = client.init(str(tmp_path / "kev-reference-workspace"), kits=["kev-reference"])
     instance_id = init.instance_id
     client.workflow_lock(instance_id)
     preview = client.workflow_run(instance_id, workflow_name="build_public_kev_reference")
@@ -270,7 +270,7 @@ def test_recipe_update_source_data(daemon_client: CruxibleClient, tmp_path: Path
     """
     client = daemon_client
 
-    init = client.init(str(tmp_path / "kev-reference-workspace"), kit="kev-reference")
+    init = client.init(str(tmp_path / "kev-reference-workspace"), kits=["kev-reference"])
     instance_id = init.instance_id
 
     # First full cycle.

@@ -14,7 +14,7 @@ class InitRequest(BaseModel):
     config_path: str | None = None
     config_yaml: str | None = None
     data_dir: str | None = None
-    kit: str | None = None
+    kits: list[str] | None = None
 
 
 class ValidateRequest(BaseModel):
@@ -34,7 +34,7 @@ class RuntimeCredentialCreateRequest(BaseModel):
 class HostedInstanceInitRequest(BaseModel):
     instance_id: str | None = None
     source_type: contracts.HostedInstanceSourceType
-    kit_ref: str | None = None
+    kit_refs: list[str] | None = None
     transport_ref: str | None = None
     state_ref: str | None = None
     overlay_kit_ref: str | None = None
@@ -42,9 +42,10 @@ class HostedInstanceInitRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_source(self) -> HostedInstanceInitRequest:
+        normalized_kit_refs = [value.strip() for value in (self.kit_refs or []) if value.strip()]
         if self.source_type == "kit":
-            if not (self.kit_ref or "").strip():
-                raise ValueError("kit_ref is required when source_type=kit")
+            if not normalized_kit_refs:
+                raise ValueError("kit_refs is required when source_type=kit")
             if any(
                 (value or "").strip()
                 for value in (self.transport_ref, self.state_ref, self.overlay_kit_ref)
@@ -65,8 +66,8 @@ class HostedInstanceInitRequest(BaseModel):
             )
         if (self.overlay_kit_ref or "").strip() and self.no_overlay_kit:
             raise ValueError("Provide overlay_kit_ref or no_overlay_kit, not both")
-        if (self.kit_ref or "").strip():
-            raise ValueError("kit_ref requires source_type=kit")
+        if normalized_kit_refs:
+            raise ValueError("kit_refs requires source_type=kit")
         return self
 
 

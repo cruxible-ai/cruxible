@@ -108,7 +108,7 @@ def handle_init(
     config_path: str | None = None,
     config_yaml: str | None = None,
     data_dir: str | None = None,
-    kit: str | None = None,
+    kits: list[str] | None = None,
 ) -> contracts.InitResult:
     """Initialize a new cruxible instance, or reload an existing one."""
     uploaded_yaml = config_yaml
@@ -121,12 +121,12 @@ def handle_init(
             config_path=None,
             config_yaml=uploaded_yaml,
             data_dir=data_dir,
-            kit=kit,
+            kits=kits,
         )
 
     return _dispatch_remote_or_local(
         _remote_init,
-        lambda: api.init_local(root_dir, config_path, config_yaml, data_dir, kit),
+        lambda: api.init_local(root_dir, config_path, config_yaml, data_dir, kits),
         allow_local=False,
         operation_name="cruxible_init",
     )

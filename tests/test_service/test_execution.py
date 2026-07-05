@@ -500,9 +500,9 @@ class TestWorkflowExecutionServices:
         config = load_config(source / "config.yaml")
         write_lock(build_lock(config, source), source / "cruxible.lock.yaml")
 
-        result = service_init(target, kit=f"file://{source}")
+        result = service_init(target, kits=[f"file://{source}"])
         instance_lock = result.instance.get_instance_dir() / "cruxible.lock.yaml"
-        (target / "cruxible.lock.yaml").unlink()
+        (target / "kits" / "no-op" / "cruxible.lock.yaml").unlink()
         plan = service_plan(result.instance, "no_op", {})
 
         assert instance_lock.exists()

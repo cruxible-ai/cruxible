@@ -1,6 +1,5 @@
 version: "1.0"
 name: project_domain
-extends: ../agent-operation/config.yaml
 description: >
   Project/product domain overlay composed over the agent-operation base kit.
   The base supplies the operating layer (Actor, SubjectRef, WorkItem,

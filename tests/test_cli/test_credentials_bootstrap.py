@@ -285,7 +285,7 @@ def test_server_mode_init_bootstrap_uses_hosted_kit_route(
 
     assert result.exit_code == 0, result.output
     assert captured["source_type"] == "kit"
-    assert captured["kit_ref"] == "kev-reference"
+    assert captured["kit_refs"] == ["kev-reference"]
     assert "Instance ID: inst_hosted" in result.output
     assert "Active instance: inst_hosted" in result.output
 

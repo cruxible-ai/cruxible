@@ -46,16 +46,17 @@ def register_tools(server: FastMCP) -> list[str]:
         config_path: str | None = None,
         config_yaml: str | None = None,
         data_dir: str | None = None,
-        kit: str | None = None,
+        kits: list[str] | None = None,
     ) -> contracts.InitResult:
         """Create or reload a governed daemon-backed instance.
 
-        Provide `config_path` or `config_yaml` when creating a new
-        instance. In server mode, `config_path` is read locally and
+        Provide `config_path`, `config_yaml`, or an ordered `kits`
+        sequence (standalone base first, overlays after) when creating a
+        new instance. In server mode, `config_path` is read locally and
         uploaded as config content; the daemon stores its own active
-        copy. To reload after a restart, omit both.
+        copy. To reload after a restart, omit all three.
         """
-        return handlers.handle_init(root_dir, config_path, config_yaml, data_dir, kit)
+        return handlers.handle_init(root_dir, config_path, config_yaml, data_dir, kits)
 
     @_tool
     def cruxible_validate(

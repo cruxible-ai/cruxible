@@ -1,6 +1,5 @@
 version: "1.0"
 name: agent_release
-extends: ../agent-operation/config.yaml
 description: >
   Agent release domain overlay composed over the agent-operation base kit.
   The base supplies the operating layer (Actor, WorkItem, ReviewRequest,

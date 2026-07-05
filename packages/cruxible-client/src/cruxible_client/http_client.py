@@ -159,7 +159,7 @@ class CruxibleClient:
         *,
         source_type: contracts.HostedInstanceSourceType,
         instance_id: str | None = None,
-        kit_ref: str | None = None,
+        kit_refs: list[str] | None = None,
         transport_ref: str | None = None,
         state_ref: str | None = None,
         overlay_kit_ref: str | None = None,
@@ -170,7 +170,7 @@ class CruxibleClient:
             json={
                 "instance_id": instance_id,
                 "source_type": source_type,
-                "kit_ref": kit_ref,
+                "kit_refs": kit_refs,
                 "transport_ref": transport_ref,
                 "state_ref": state_ref,
                 "overlay_kit_ref": overlay_kit_ref,
@@ -225,7 +225,7 @@ class CruxibleClient:
         config_path: str | None = None,
         config_yaml: str | None = None,
         data_dir: str | None = None,
-        kit: str | None = None,
+        kits: list[str] | None = None,
     ) -> contracts.InitResult:
         response = self._client.post(
             "/api/v1/instances",
@@ -234,7 +234,7 @@ class CruxibleClient:
                 "config_path": config_path,
                 "config_yaml": config_yaml,
                 "data_dir": data_dir,
-                "kit": kit,
+                "kits": kits,
             },
         )
         return self._parse_model(response, contracts.InitResult)

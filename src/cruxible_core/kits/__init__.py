@@ -179,9 +179,7 @@ def materialize_kit(
         raise ConfigError(
             f"Kit '{manifest.kit_id}' is missing entry_config: {manifest.entry_config}"
         )
-    if manifest.role == "overlay":
-        if upstream_config_path is None:
-            raise ConfigError("Overlay kit materialization requires upstream_config_path")
+    if manifest.role == "overlay" and upstream_config_path is not None:
         _rewrite_extends(config_path, upstream_config_path)
     _verify_bundled_lock(root)
     write_materialized_kit_metadata(root, bundle_digest=bundle.digest)
@@ -225,23 +223,68 @@ def write_materialized_kit_metadata(root: Path, *, bundle_digest: str | None = N
     )
 
 
-def find_materialized_kit_root(config_base_path: Path) -> Path:
-    """Find the kit root associated with a config or composed config base path."""
+def namespace_kit_provider_ref(ref: str, kit_id: str) -> str:
+    """Rewrite a kit:// provider ref to its kit-scoped form for composed instances."""
+    rel_path, attr = _parse_kit_provider_ref(ref)
+    first_segment = rel_path.split("/", 1)[0]
+    if first_segment == kit_id:
+        return ref
+    return f"kit://{kit_id}/{rel_path}::{attr}"
+
+
+def _locate_kit_root_for_ref(rel_path: str, config_base_path: Path) -> tuple[Path, str]:
+    """Resolve a kit:// ref path to its kit root and kit-relative provider path.
+
+    Two layouts are supported: the kit-scoped form ``kit://<kit_id>/<path>``
+    rooted at ``<instance_root>/kits/<kit_id>/`` (composed instances), and the
+    un-namespaced form ``kit://<path>`` resolved by walking up to the nearest
+    flat kit root (existing flat-layout instances). If a ref could resolve under
+    both layouts the ambiguity is refused rather than guessed.
+    """
     base = config_base_path.resolve()
     candidates = [base, *base.parents]
+    first_segment, separator, remainder = rel_path.partition("/")
+
+    namespaced_root: Path | None = None
+    if separator and remainder:
+        for candidate in candidates:
+            scoped_root = candidate / "kits" / first_segment
+            if (scoped_root / KIT_MANIFEST_FILE).exists():
+                namespaced_root = scoped_root
+                break
+
+    flat_root: Path | None = None
     for candidate in candidates:
         if (candidate / KIT_MANIFEST_FILE).exists():
-            _validate_dev_tree_metadata(candidate)
-            return candidate
+            flat_root = candidate
+            break
+
+    if namespaced_root is not None and flat_root is not None:
+        raise ConfigError(
+            f"kit:// provider ref path '{rel_path}' is ambiguous: it matches both the "
+            f"kit-scoped root {namespaced_root} and the flat kit root {flat_root}"
+        )
+    if namespaced_root is not None:
+        manifest = load_kit_manifest(namespaced_root)
+        if manifest.kit_id != first_segment:
+            raise ConfigError(
+                f"Materialized kit at {namespaced_root} declares kit_id "
+                f"'{manifest.kit_id}', not '{first_segment}'"
+            )
+        _validate_dev_tree_metadata(namespaced_root)
+        return namespaced_root, remainder
+    if flat_root is not None:
+        _validate_dev_tree_metadata(flat_root)
+        return flat_root, rel_path
     raise ConfigError("kit:// provider refs require a materialized kit root with cruxible-kit.yaml")
 
 
 def resolve_kit_provider_ref(ref: str, config_base_path: Path) -> tuple[Path, str, Path]:
     """Resolve a kit:// provider ref to file path, attribute, and kit root."""
     rel_path, attr = _parse_kit_provider_ref(ref)
-    kit_root = find_materialized_kit_root(config_base_path)
+    kit_root, kit_rel_path = _locate_kit_root_for_ref(rel_path, config_base_path)
     manifest = load_kit_manifest(kit_root)
-    path = _safe_join(kit_root, rel_path)
+    path = _safe_join(kit_root, kit_rel_path)
     if path.suffix != ".py":
         raise ConfigError(f"kit:// provider ref '{ref}' must point to a .py file")
     _ensure_under_declared_provider_path(path, kit_root, manifest)
@@ -597,12 +640,10 @@ def _rewrite_extends(config_path: Path, upstream_config_path: str) -> None:
             replaced += 1
         else:
             updated.append(line)
-    if replaced == 0:
-        raise ConfigError(
-            f"Overlay kit config '{config_path}' must contain a top-level extends: entry"
-        )
     if replaced > 1:
         raise ConfigError(
             f"Overlay kit config '{config_path}' has multiple top-level extends: entries"
         )
+    if replaced == 0:
+        updated.insert(0, f"extends: {upstream_config_path}")
     config_path.write_text("\n".join(updated) + "\n", encoding="utf-8")

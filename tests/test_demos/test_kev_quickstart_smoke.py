@@ -113,7 +113,7 @@ def test_kev_quickstart_end_to_end_against_daemon(
 
     # ── Step 1: Create the KEV reference world (init --kit kev-reference) ──
     reference_root = tmp_path / "kev-reference-workspace"
-    init = client.init(str(reference_root), kit="kev-reference")
+    init = client.init(str(reference_root), kits=["kev-reference"])
     reference_id = init.instance_id
     assert reference_id and reference_id != str(reference_root)
 

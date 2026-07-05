@@ -67,6 +67,9 @@ cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --bootstr
 cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
 ```
 
+`--kit` is repeatable to compose overlay kits onto a base at init, e.g.
+`cruxible init --kit agent-operation --kit project-domain`.
+
 Claim the admin credential, then mint one for your first agent. **Minting is
 what creates the agent's identity in state**: the kit's `Actor` type is
 auth-managed, so the Actor entity materializes from the mint, and no other

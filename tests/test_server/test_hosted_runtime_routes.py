@@ -1782,7 +1782,7 @@ def test_hosted_instance_init_from_kit_is_idempotent_and_survives_restart(
     payload = {
         "instance_id": "inst_hostedkit",
         "source_type": "kit",
-        "kit_ref": "car-parts-hosted",
+        "kit_refs": ["car-parts-hosted"],
     }
 
     created = client.post("/api/v1/runtime/instances", json=payload)
@@ -1797,7 +1797,7 @@ def test_hosted_instance_init_from_kit_is_idempotent_and_survives_restart(
 
     changed = client.post(
         "/api/v1/runtime/instances",
-        json={**payload, "kit_ref": f"file://{kit_dir}"},
+        json={**payload, "kit_refs": [f"file://{kit_dir}"]},
     )
     assert changed.status_code == 400
     assert "different material" in changed.json()["message"]
@@ -1823,7 +1823,7 @@ def test_hosted_instance_init_rejects_invalid_kit_without_registry_mutation(
         json={
             "instance_id": instance_id,
             "source_type": "kit",
-            "kit_ref": "missing-kit",
+            "kit_refs": ["missing-kit"],
         },
     )
 
@@ -1964,7 +1964,7 @@ def test_hosted_instance_init_accepts_unclaimed_bootstrap_secret(
 
     missing = client.post(
         "/api/v1/runtime/instances",
-        json={"source_type": "kit", "kit_ref": "car-parts-hosted"},
+        json={"source_type": "kit", "kit_refs": ["car-parts-hosted"]},
     )
     assert missing.status_code == 401
 
@@ -1973,7 +1973,7 @@ def test_hosted_instance_init_accepts_unclaimed_bootstrap_secret(
         json={
             "instance_id": "inst_bootinit",
             "source_type": "kit",
-            "kit_ref": "car-parts-hosted",
+            "kit_refs": ["car-parts-hosted"],
         },
         headers={"Authorization": "Bearer bootstrap-secret"},
     )
@@ -1990,7 +1990,7 @@ def test_hosted_instance_init_accepts_unclaimed_bootstrap_secret(
         json={
             "instance_id": "inst_bootinit2",
             "source_type": "kit",
-            "kit_ref": "car-parts-hosted",
+            "kit_refs": ["car-parts-hosted"],
         },
         headers={"Authorization": "Bearer bootstrap-secret"},
     )
@@ -2015,7 +2015,7 @@ def test_non_admin_runtime_credential_cannot_init_hosted_instance(
         json={
             "instance_id": "inst_deniedhosted",
             "source_type": "kit",
-            "kit_ref": "missing-kit",
+            "kit_refs": ["missing-kit"],
         },
         headers=headers,
     )
@@ -2053,7 +2053,7 @@ def test_scoped_admin_runtime_credential_cannot_init_new_hosted_instance(
         json={
             "instance_id": denied_instance_id,
             "source_type": "kit",
-            "kit_ref": "car-parts-hosted",
+            "kit_refs": ["car-parts-hosted"],
         },
         headers=headers,
     )

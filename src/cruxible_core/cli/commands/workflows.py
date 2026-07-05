@@ -165,7 +165,15 @@ def _print_preview_reference(reference: dict[str, Any]) -> None:
 
 @click.command()
 @click.option("--config", "config_path", default=None, help="Path to config YAML file.")
-@click.option("--kit", default=None, help="Standalone kit alias or ref to materialize.")
+@click.option(
+    "--kit",
+    "kits",
+    multiple=True,
+    help=(
+        "Kit alias or ref to materialize; repeatable. Order is composition order: "
+        "a standalone base kit first, overlay kits after."
+    ),
+)
 @click.option(
     "--root-dir",
     default=None,
@@ -185,7 +193,7 @@ def _print_preview_reference(reference: dict[str, Any]) -> None:
 @handle_errors
 def init(
     config_path: str | None,
-    kit: str | None,
+    kits: tuple[str, ...],
     root_dir: str | None,
     data_dir: str | None,
     bootstrap: bool,
@@ -196,11 +204,12 @@ def init(
     effective_root_dir = root_dir
     if client is not None and effective_root_dir is None:
         effective_root_dir = str(Path.cwd())
+    kit_args = " ".join(f"--kit {value}" for value in kits)
 
     if bootstrap:
         if client is None:
             raise click.UsageError("--bootstrap requires server mode.")
-        if kit is None:
+        if not kits:
             raise click.UsageError("--bootstrap requires --kit.")
         if config_path is not None or data_dir is not None or root_dir is not None:
             raise click.UsageError(
@@ -217,25 +226,25 @@ def init(
             ),
             "data_dir": data_dir,
         }
-        if kit is not None:
-            init_kwargs["kit"] = kit
+        if kits:
+            init_kwargs["kits"] = list(kits)
         try:
             return client.init(**init_kwargs)
         except ClientAuthenticationError as exc:
-            if kit is not None:
+            if kits:
                 raise click.UsageError(
                     "Server auth rejected plain init. For first auth-enabled kit bootstrap, "
                     "set CRUXIBLE_SERVER_BEARER_TOKEN to the bootstrap secret and run "
-                    f"`cruxible init --kit {kit} --bootstrap`, then claim the admin token "
+                    f"`cruxible init {kit_args} --bootstrap`, then claim the admin token "
                     "with `cruxible credential claim-bootstrap`."
                 ) from exc
             raise
 
     if bootstrap:
         assert client is not None
-        assert kit is not None
+        assert kits
         try:
-            hosted_result = client.init_hosted_instance(source_type="kit", kit_ref=kit)
+            hosted_result = client.init_hosted_instance(source_type="kit", kit_refs=list(kits))
         except ClientAuthenticationError as exc:
             raise click.ClickException(
                 "Server auth rejected hosted bootstrap init. If the bootstrap secret "
@@ -245,7 +254,7 @@ def init(
                 "commands, or mint more credentials with `cruxible credential mint`. "
                 "If the bearer is missing or wrong, set CRUXIBLE_SERVER_BEARER_TOKEN "
                 "to the BOOTSTRAP secret and retry "
-                f"`cruxible init --kit {kit} --bootstrap`."
+                f"`cruxible init {kit_args} --bootstrap`."
             ) from exc
         click.echo(f"Instance {hosted_result.status}.")
         click.echo(f"Instance ID: {hosted_result.instance_id}")
@@ -264,7 +273,7 @@ def init(
             Path(effective_root_dir) if effective_root_dir is not None else Path.cwd(),
             config_path=config_path,
             data_dir=data_dir,
-            kit=kit,
+            kits=list(kits),
         ),
         allow_local=False,
         command_name="init",
