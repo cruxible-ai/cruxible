@@ -1,0 +1,539 @@
+{
+  "opinions": [
+    {
+      "opinion_id": "op_barnhart",
+      "case_name": "Barnhart v. Walton",
+      "citation": "535 U.S. 212",
+      "docket_number": "00-1937",
+      "date_filed": "2002-03-27",
+      "jurisdiction": "United States",
+      "precedential_status": "published",
+      "source_url": "https://supreme.justia.com/cases/federal/us/535/212/"
+    },
+    {
+      "opinion_id": "op_brandx",
+      "case_name": "National Cable & Telecommunications Ass'n v. Brand X Internet Services",
+      "citation": "545 U.S. 967",
+      "docket_number": "04-277",
+      "date_filed": "2005-06-27",
+      "jurisdiction": "United States",
+      "precedential_status": "published",
+      "source_url": "https://supreme.justia.com/cases/federal/us/545/967/"
+    },
+    {
+      "opinion_id": "op_chevron",
+      "case_name": "Chevron U.S.A. Inc. v. Natural Resources Defense Council, Inc.",
+      "citation": "467 U.S. 837",
+      "docket_number": "82-1005",
+      "date_filed": "1984-06-25",
+      "jurisdiction": "United States",
+      "precedential_status": "published",
+      "source_url": "https://supreme.justia.com/cases/federal/us/467/837/"
+    },
+    {
+      "opinion_id": "op_city_arlington",
+      "case_name": "City of Arlington v. FCC",
+      "citation": "569 U.S. 290",
+      "docket_number": "11-1545",
+      "date_filed": "2013-05-20",
+      "jurisdiction": "United States",
+      "precedential_status": "published",
+      "source_url": "https://supreme.justia.com/cases/federal/us/569/290/"
+    },
+    {
+      "opinion_id": "op_entergy",
+      "case_name": "Entergy Corp. v. Riverkeeper, Inc.",
+      "citation": "556 U.S. 208",
+      "docket_number": "07-588",
+      "date_filed": "2009-04-01",
+      "jurisdiction": "United States",
+      "precedential_status": "published",
+      "source_url": "https://supreme.justia.com/cases/federal/us/556/208/"
+    },
+    {
+      "opinion_id": "op_mayo",
+      "case_name": "Mayo Foundation for Medical Education & Research v. United States",
+      "citation": "562 U.S. 44",
+      "docket_number": "09-837",
+      "date_filed": "2011-01-11",
+      "jurisdiction": "United States",
+      "precedential_status": "published",
+      "source_url": "https://supreme.justia.com/cases/federal/us/562/44/"
+    },
+    {
+      "opinion_id": "op_mead",
+      "case_name": "United States v. Mead Corp.",
+      "citation": "533 U.S. 218",
+      "docket_number": "99-1434",
+      "date_filed": "2001-06-18",
+      "jurisdiction": "United States",
+      "precedential_status": "published",
+      "source_url": "https://supreme.justia.com/cases/federal/us/533/218/"
+    },
+    {
+      "opinion_id": "op_rust",
+      "case_name": "Rust v. Sullivan",
+      "citation": "500 U.S. 173",
+      "docket_number": "89-1391",
+      "date_filed": "1991-05-23",
+      "jurisdiction": "United States",
+      "precedential_status": "published",
+      "source_url": "https://supreme.justia.com/cases/federal/us/500/173/"
+    },
+    {
+      "opinion_id": "op_smiley",
+      "case_name": "Smiley v. Citibank (South Dakota), N.A.",
+      "citation": "517 U.S. 735",
+      "docket_number": "95-860",
+      "date_filed": "1996-06-03",
+      "jurisdiction": "United States",
+      "precedential_status": "published",
+      "source_url": "https://supreme.justia.com/cases/federal/us/517/735/"
+    },
+    {
+      "opinion_id": "op_sweet_home",
+      "case_name": "Babbitt v. Sweet Home Chapter of Communities for a Great Oregon",
+      "citation": "515 U.S. 687",
+      "docket_number": "94-859",
+      "date_filed": "1995-06-29",
+      "jurisdiction": "United States",
+      "precedential_status": "published",
+      "source_url": "https://supreme.justia.com/cases/federal/us/515/687/"
+    }
+  ],
+  "courts": [
+    {
+      "court_id": "court_dc_cir",
+      "name": "U.S. Court of Appeals for the D.C. Circuit",
+      "jurisdiction": "D.C. Circuit",
+      "level": "appellate"
+    },
+    {
+      "court_id": "court_fifth_cir",
+      "name": "U.S. Court of Appeals for the Fifth Circuit",
+      "jurisdiction": "Fifth Circuit",
+      "level": "appellate"
+    },
+    {
+      "court_id": "court_first_cir",
+      "name": "U.S. Court of Appeals for the First Circuit",
+      "jurisdiction": "First Circuit",
+      "level": "appellate"
+    },
+    {
+      "court_id": "court_ninth_cir",
+      "name": "U.S. Court of Appeals for the Ninth Circuit",
+      "jurisdiction": "Ninth Circuit",
+      "level": "appellate"
+    },
+    {
+      "court_id": "court_scotus",
+      "name": "Supreme Court of the United States",
+      "jurisdiction": "United States",
+      "level": "supreme"
+    }
+  ],
+  "judges": [
+    {
+      "judge_id": "judge_breyer",
+      "name": "Justice Stephen Breyer",
+      "court_hint": "Supreme Court of the United States"
+    },
+    {
+      "judge_id": "judge_rehnquist",
+      "name": "Chief Justice William Rehnquist",
+      "court_hint": "Supreme Court of the United States"
+    },
+    {
+      "judge_id": "judge_roberts",
+      "name": "Chief Justice John Roberts",
+      "court_hint": "Supreme Court of the United States"
+    },
+    {
+      "judge_id": "judge_scalia",
+      "name": "Justice Antonin Scalia",
+      "court_hint": "Supreme Court of the United States"
+    },
+    {
+      "judge_id": "judge_souter",
+      "name": "Justice David Souter",
+      "court_hint": "Supreme Court of the United States"
+    },
+    {
+      "judge_id": "judge_stevens",
+      "name": "Justice John Paul Stevens",
+      "court_hint": "Supreme Court of the United States"
+    },
+    {
+      "judge_id": "judge_thomas",
+      "name": "Justice Clarence Thomas",
+      "court_hint": "Supreme Court of the United States"
+    }
+  ],
+  "statutes": [
+    {
+      "statute_id": "stat_apa_judicial_review",
+      "title": "Administrative Procedure Act",
+      "section": "5 U.S.C. \u00a7 706",
+      "jurisdiction": "United States",
+      "topic": "judicial review of agency action"
+    },
+    {
+      "statute_id": "stat_chevron_doctrine",
+      "title": "Chevron deference doctrine",
+      "section": "Chevron U.S.A. framework",
+      "jurisdiction": "United States",
+      "topic": "agency deference"
+    },
+    {
+      "statute_id": "stat_clean_air_act_111d",
+      "title": "Clean Air Act",
+      "section": "42 U.S.C. \u00a7 7411(d)",
+      "jurisdiction": "United States",
+      "topic": "stationary source emission guidelines"
+    },
+    {
+      "statute_id": "stat_clean_water_act_316b",
+      "title": "Clean Water Act",
+      "section": "33 U.S.C. \u00a7 1326(b)",
+      "jurisdiction": "United States",
+      "topic": "cooling-water intake structures"
+    },
+    {
+      "statute_id": "stat_communications_act",
+      "title": "Communications Act of 1934",
+      "section": "47 U.S.C. \u00a7 153",
+      "jurisdiction": "United States",
+      "topic": "telecommunications service classification"
+    },
+    {
+      "statute_id": "stat_esa_9",
+      "title": "Endangered Species Act",
+      "section": "16 U.S.C. \u00a7 1538",
+      "jurisdiction": "United States",
+      "topic": "take prohibition"
+    },
+    {
+      "statute_id": "stat_irc_student_exception",
+      "title": "Internal Revenue Code",
+      "section": "26 U.S.C. \u00a7 3121(b)(10)",
+      "jurisdiction": "United States",
+      "topic": "FICA student exception"
+    },
+    {
+      "statute_id": "stat_national_bank_act_85",
+      "title": "National Bank Act",
+      "section": "12 U.S.C. \u00a7 85",
+      "jurisdiction": "United States",
+      "topic": "interest and late-payment fees"
+    },
+    {
+      "statute_id": "stat_social_security_disability",
+      "title": "Social Security Act",
+      "section": "42 U.S.C. \u00a7 423(d)(1)(A)",
+      "jurisdiction": "United States",
+      "topic": "disability benefit duration"
+    },
+    {
+      "statute_id": "stat_tariff_act_1500",
+      "title": "Tariff Act of 1930",
+      "section": "19 U.S.C. \u00a7 1500",
+      "jurisdiction": "United States",
+      "topic": "customs classification rulings"
+    },
+    {
+      "statute_id": "stat_telecom_siting",
+      "title": "Telecommunications Act of 1996",
+      "section": "47 U.S.C. \u00a7 332(c)(7)",
+      "jurisdiction": "United States",
+      "topic": "wireless facility siting"
+    },
+    {
+      "statute_id": "stat_title_x",
+      "title": "Public Health Service Act",
+      "section": "42 U.S.C. \u00a7 300a-6",
+      "jurisdiction": "United States",
+      "topic": "Title X program conditions"
+    }
+  ],
+  "legal_issues": [
+    {
+      "issue_id": "issue_agency_deference",
+      "name": "Agency statutory deference",
+      "practice_area": "Administrative Law",
+      "description": "Whether courts defer to an agency's interpretation of ambiguous statutory text."
+    },
+    {
+      "issue_id": "issue_banking_deference",
+      "name": "Banking regulator deference",
+      "practice_area": "Financial Services",
+      "description": "OCC and banking-agency interpretations of bank powers and fees."
+    },
+    {
+      "issue_id": "issue_environmental_agency_authority",
+      "name": "Environmental agency authority",
+      "practice_area": "Environmental",
+      "description": "EPA or Interior interpretations of environmental statutes and permitting duties."
+    },
+    {
+      "issue_id": "issue_health_agency_rulemaking",
+      "name": "Health agency rulemaking",
+      "practice_area": "Health Care",
+      "description": "HHS, CMS, and related health-agency program rules."
+    },
+    {
+      "issue_id": "issue_tax_regulatory_deference",
+      "name": "Tax regulatory deference",
+      "practice_area": "Tax",
+      "description": "Treasury and IRS regulatory interpretations."
+    },
+    {
+      "issue_id": "issue_telecom_jurisdiction",
+      "name": "Telecom agency jurisdiction",
+      "practice_area": "Telecommunications",
+      "description": "FCC authority and telecommunications classification issues."
+    }
+  ],
+  "clients": [
+    {
+      "client_id": "client_greengrid",
+      "name": "GreenGrid Manufacturers Inc.",
+      "industry": "Industrial manufacturing"
+    },
+    {
+      "client_id": "client_harbor",
+      "name": "Harbor Fisheries Cooperative",
+      "industry": "Commercial fishing"
+    },
+    {
+      "client_id": "client_northbank",
+      "name": "Northbank Health Plan",
+      "industry": "Health insurance"
+    },
+    {
+      "client_id": "client_riverstone",
+      "name": "Tallgrass Delta Power Cooperative",
+      "industry": "Energy"
+    },
+    {
+      "client_id": "client_sentinel",
+      "name": "Sentinel Broadband LLC",
+      "industry": "Telecommunications"
+    }
+  ],
+  "matters": [
+    {
+      "matter_id": "matter_greengrid_epa",
+      "name": "GreenGrid EPA BACT Permit Appeal",
+      "matter_type": "litigation",
+      "status": "active",
+      "jurisdiction": "D.C. Circuit"
+    },
+    {
+      "matter_id": "matter_harbor_noaa",
+      "name": "Harbor Fisheries NOAA Observer Fee Challenge",
+      "matter_type": "litigation",
+      "status": "active",
+      "jurisdiction": "First Circuit"
+    },
+    {
+      "matter_id": "matter_northbank_cms",
+      "name": "Northbank CMS Audit Advice",
+      "matter_type": "advisory",
+      "status": "active",
+      "jurisdiction": "D.C. Circuit"
+    },
+    {
+      "matter_id": "matter_riverstone_intake",
+      "name": "Tallgrass Delta Cooling Intake Renewal",
+      "matter_type": "regulatory",
+      "status": "monitoring",
+      "jurisdiction": "D.C. Circuit"
+    },
+    {
+      "matter_id": "matter_sentinel_fcc",
+      "name": "Sentinel FCC Shot Clock Petition",
+      "matter_type": "regulatory",
+      "status": "active",
+      "jurisdiction": "Fifth Circuit"
+    }
+  ],
+  "arguments": [
+    {
+      "argument_id": "arg_greengrid_entergy",
+      "title": "EPA cost-benefit deference supports permit defense",
+      "description": "GreenGrid's permit strategy cites Chevron and Entergy for deferential review of EPA cost-benefit choices.",
+      "argument_type": "defense",
+      "position": "respondent",
+      "status": "filed"
+    },
+    {
+      "argument_id": "arg_harbor_chevron",
+      "title": "Chevron framework governs NOAA fee interpretation",
+      "description": "The briefing plan assumes Chevron supplies the legal framework for reviewing NOAA's observer-fee interpretation.",
+      "argument_type": "claim",
+      "position": "petitioner",
+      "status": "filed"
+    },
+    {
+      "argument_id": "arg_northbank_barnhart",
+      "title": "CMS audit rule receives deference under Barnhart",
+      "description": "Northbank's advisory memo relies on Barnhart and health-agency deference to preserve CMS audit discretion.",
+      "argument_type": "advisory_position",
+      "position": "advisory",
+      "status": "draft"
+    },
+    {
+      "argument_id": "arg_riverstone_entergy",
+      "title": "Cooling-intake renewal follows Entergy",
+      "description": "Tallgrass Delta monitors EPA intake-renewal guidance under Entergy's Chevron-backed cost-benefit holding.",
+      "argument_type": "advisory_position",
+      "position": "advisory",
+      "status": "planned"
+    },
+    {
+      "argument_id": "arg_sentinel_brandx",
+      "title": "FCC jurisdiction can receive Brand X deference",
+      "description": "Sentinel's petition relies on Brand X and City of Arlington for FCC interpretations of telecom ambiguity.",
+      "argument_type": "claim",
+      "position": "petitioner",
+      "status": "filed"
+    }
+  ],
+  "opinion_from_court_edges": [
+    {"opinion_id": "op_barnhart", "court_id": "court_scotus"},
+    {"opinion_id": "op_brandx", "court_id": "court_scotus"},
+    {"opinion_id": "op_chevron", "court_id": "court_scotus"},
+    {"opinion_id": "op_city_arlington", "court_id": "court_scotus"},
+    {"opinion_id": "op_entergy", "court_id": "court_scotus"},
+    {"opinion_id": "op_mayo", "court_id": "court_scotus"},
+    {"opinion_id": "op_mead", "court_id": "court_scotus"},
+    {"opinion_id": "op_rust", "court_id": "court_scotus"},
+    {"opinion_id": "op_smiley", "court_id": "court_scotus"},
+    {"opinion_id": "op_sweet_home", "court_id": "court_scotus"}
+  ],
+  "opinion_decided_by_judge_edges": [
+    {"opinion_id": "op_barnhart", "judge_id": "judge_breyer", "role": "author"},
+    {"opinion_id": "op_brandx", "judge_id": "judge_thomas", "role": "author"},
+    {"opinion_id": "op_chevron", "judge_id": "judge_stevens", "role": "author"},
+    {"opinion_id": "op_city_arlington", "judge_id": "judge_scalia", "role": "author"},
+    {"opinion_id": "op_entergy", "judge_id": "judge_scalia", "role": "author"},
+    {"opinion_id": "op_mayo", "judge_id": "judge_roberts", "role": "author"},
+    {"opinion_id": "op_mead", "judge_id": "judge_souter", "role": "author"},
+    {"opinion_id": "op_rust", "judge_id": "judge_rehnquist", "role": "author"},
+    {"opinion_id": "op_smiley", "judge_id": "judge_scalia", "role": "author"},
+    {"opinion_id": "op_sweet_home", "judge_id": "judge_stevens", "role": "author"}
+  ],
+  "opinion_cites_opinion_edges": [
+    {
+      "source_opinion_id": "op_barnhart",
+      "cited_opinion_id": "op_chevron",
+      "citation_context": "applies Chevron deference to the Social Security Administration's interpretation"
+    },
+    {
+      "source_opinion_id": "op_brandx",
+      "cited_opinion_id": "op_chevron",
+      "citation_context": "follows Chevron and applies it to FCC classification authority"
+    },
+    {
+      "source_opinion_id": "op_brandx",
+      "cited_opinion_id": "op_mead",
+      "citation_context": "follows Mead's force-of-law framing for Chevron eligibility"
+    },
+    {
+      "source_opinion_id": "op_city_arlington",
+      "cited_opinion_id": "op_brandx",
+      "citation_context": "follows Brand X on agency authority to resolve statutory ambiguity"
+    },
+    {
+      "source_opinion_id": "op_city_arlington",
+      "cited_opinion_id": "op_chevron",
+      "citation_context": "follows Chevron for jurisdictional statutory ambiguity"
+    },
+    {
+      "source_opinion_id": "op_entergy",
+      "cited_opinion_id": "op_chevron",
+      "citation_context": "applies Chevron deference to EPA's Clean Water Act interpretation"
+    },
+    {
+      "source_opinion_id": "op_mayo",
+      "cited_opinion_id": "op_chevron",
+      "citation_context": "follows Chevron for Treasury regulations"
+    },
+    {
+      "source_opinion_id": "op_mead",
+      "cited_opinion_id": "op_chevron",
+      "citation_context": "clarifies Chevron eligibility for delegations carrying force of law"
+    },
+    {
+      "source_opinion_id": "op_rust",
+      "cited_opinion_id": "op_chevron",
+      "citation_context": "applies Chevron to HHS Title X regulations"
+    },
+    {
+      "source_opinion_id": "op_smiley",
+      "cited_opinion_id": "op_chevron",
+      "citation_context": "applies Chevron to OCC's National Bank Act interpretation"
+    },
+    {
+      "source_opinion_id": "op_sweet_home",
+      "cited_opinion_id": "op_chevron",
+      "citation_context": "applies Chevron to Interior's Endangered Species Act regulation"
+    }
+  ],
+  "matter_for_client_edges": [
+    {"matter_id": "matter_greengrid_epa", "client_id": "client_greengrid"},
+    {"matter_id": "matter_harbor_noaa", "client_id": "client_harbor"},
+    {"matter_id": "matter_northbank_cms", "client_id": "client_northbank"},
+    {"matter_id": "matter_riverstone_intake", "client_id": "client_riverstone"},
+    {"matter_id": "matter_sentinel_fcc", "client_id": "client_sentinel"}
+  ],
+  "matter_in_jurisdiction_edges": [
+    {"matter_id": "matter_greengrid_epa", "court_id": "court_dc_cir"},
+    {"matter_id": "matter_harbor_noaa", "court_id": "court_first_cir"},
+    {"matter_id": "matter_northbank_cms", "court_id": "court_dc_cir"},
+    {"matter_id": "matter_riverstone_intake", "court_id": "court_dc_cir"},
+    {"matter_id": "matter_sentinel_fcc", "court_id": "court_fifth_cir"}
+  ],
+  "argument_in_matter_edges": [
+    {"argument_id": "arg_greengrid_entergy", "matter_id": "matter_greengrid_epa"},
+    {"argument_id": "arg_harbor_chevron", "matter_id": "matter_harbor_noaa"},
+    {"argument_id": "arg_northbank_barnhart", "matter_id": "matter_northbank_cms"},
+    {"argument_id": "arg_riverstone_entergy", "matter_id": "matter_riverstone_intake"},
+    {"argument_id": "arg_sentinel_brandx", "matter_id": "matter_sentinel_fcc"}
+  ],
+  "argument_raises_issue_edges": [
+    {"argument_id": "arg_greengrid_entergy", "issue_id": "issue_agency_deference"},
+    {"argument_id": "arg_greengrid_entergy", "issue_id": "issue_environmental_agency_authority"},
+    {"argument_id": "arg_harbor_chevron", "issue_id": "issue_agency_deference"},
+    {"argument_id": "arg_northbank_barnhart", "issue_id": "issue_agency_deference"},
+    {"argument_id": "arg_northbank_barnhart", "issue_id": "issue_health_agency_rulemaking"},
+    {"argument_id": "arg_riverstone_entergy", "issue_id": "issue_environmental_agency_authority"},
+    {"argument_id": "arg_sentinel_brandx", "issue_id": "issue_agency_deference"},
+    {"argument_id": "arg_sentinel_brandx", "issue_id": "issue_telecom_jurisdiction"}
+  ],
+  "argument_cites_opinion_edges": [
+    {"argument_id": "arg_greengrid_entergy", "opinion_id": "op_chevron", "citation_role": "supporting"},
+    {"argument_id": "arg_greengrid_entergy", "opinion_id": "op_entergy", "citation_role": "primary"},
+    {"argument_id": "arg_harbor_chevron", "opinion_id": "op_chevron", "citation_role": "primary"},
+    {"argument_id": "arg_northbank_barnhart", "opinion_id": "op_barnhart", "citation_role": "primary"},
+    {"argument_id": "arg_northbank_barnhart", "opinion_id": "op_rust", "citation_role": "supporting"},
+    {"argument_id": "arg_riverstone_entergy", "opinion_id": "op_entergy", "citation_role": "primary"},
+    {"argument_id": "arg_sentinel_brandx", "opinion_id": "op_brandx", "citation_role": "primary"},
+    {"argument_id": "arg_sentinel_brandx", "opinion_id": "op_city_arlington", "citation_role": "supporting"}
+  ],
+  "statute_governs_issue_edges": [
+    {"statute_id": "stat_apa_judicial_review", "issue_id": "issue_agency_deference"},
+    {"statute_id": "stat_chevron_doctrine", "issue_id": "issue_agency_deference"},
+    {"statute_id": "stat_clean_air_act_111d", "issue_id": "issue_environmental_agency_authority"},
+    {"statute_id": "stat_clean_water_act_316b", "issue_id": "issue_environmental_agency_authority"},
+    {"statute_id": "stat_communications_act", "issue_id": "issue_telecom_jurisdiction"},
+    {"statute_id": "stat_esa_9", "issue_id": "issue_environmental_agency_authority"},
+    {"statute_id": "stat_irc_student_exception", "issue_id": "issue_tax_regulatory_deference"},
+    {"statute_id": "stat_national_bank_act_85", "issue_id": "issue_banking_deference"},
+    {"statute_id": "stat_social_security_disability", "issue_id": "issue_health_agency_rulemaking"},
+    {"statute_id": "stat_tariff_act_1500", "issue_id": "issue_agency_deference"},
+    {"statute_id": "stat_telecom_siting", "issue_id": "issue_telecom_jurisdiction"},
+    {"statute_id": "stat_title_x", "issue_id": "issue_health_agency_rulemaking"}
+  ]
+}

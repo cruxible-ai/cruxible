@@ -1,0 +1,26 @@
+{
+  "description": "Demo-tuned scoping hints: per-statute keyword sets used by scope_matters_to_statutes to widen matter-to-statute token matching for THIS seed world (tokens include the synthetic firm's matter names). Hints are optional bundle data, not provider logic: replace or delete this file for your own corpus and the provider falls back to plain significant-token overlap between statute text and matter text. All hint-based matches stay verdict=unsure and review-gated.",
+  "hints": {
+    "stat_chevron_doctrine": [
+      "agency", "audit", "bact", "chevron", "cms", "deference", "delta",
+      "epa", "fcc", "fee", "fisheries", "greengrid", "harbor", "intake",
+      "renewal", "noaa", "northbank", "observer", "permit", "sentinel",
+      "shot", "tallgrass"
+    ],
+    "stat_apa_judicial_review": [
+      "agency", "audit", "bact", "chevron", "cms", "deference", "delta",
+      "epa", "fcc", "fee", "fisheries", "greengrid", "harbor", "intake",
+      "judicial", "renewal", "noaa", "northbank", "observer", "permit",
+      "sentinel", "shot", "tallgrass"
+    ],
+    "stat_clean_air_act_111d": ["epa", "air", "permit", "emission", "environmental"],
+    "stat_clean_water_act_316b": ["water", "intake", "cooling", "environmental"],
+    "stat_communications_act": ["fcc", "broadband", "telecom", "wireless"],
+    "stat_telecom_siting": ["fcc", "broadband", "telecom", "wireless", "siting"],
+    "stat_title_x": ["hhs", "health", "clinic", "program"],
+    "stat_social_security_disability": ["health", "benefit", "disability"],
+    "stat_irc_student_exception": ["tax", "treasury", "fica"],
+    "stat_national_bank_act_85": ["bank", "occ", "interest"],
+    "stat_esa_9": ["species", "habitat", "environmental"]
+  }
+}

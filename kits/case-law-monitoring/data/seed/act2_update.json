@@ -1,0 +1,92 @@
+{
+  "opinions": [
+    {
+      "opinion_id": "op_loper_bright",
+      "case_name": "Loper Bright Enterprises v. Raimondo",
+      "citation": "603 U.S. 369",
+      "docket_number": "22-451; 22-1219",
+      "date_filed": "2024-06-28",
+      "jurisdiction": "United States",
+      "precedential_status": "published",
+      "source_url": "https://supreme.justia.com/cases/federal/us/603/22-451/"
+    }
+  ],
+  "courts": [
+    {
+      "court_id": "court_scotus",
+      "name": "Supreme Court of the United States",
+      "jurisdiction": "United States",
+      "level": "supreme"
+    }
+  ],
+  "judges": [
+    {
+      "judge_id": "judge_roberts",
+      "name": "Chief Justice John Roberts",
+      "court_hint": "Supreme Court of the United States"
+    }
+  ],
+  "opinion_from_court_edges": [
+    {
+      "opinion_id": "op_loper_bright",
+      "court_id": "court_scotus"
+    }
+  ],
+  "opinion_decided_by_judge_edges": [
+    {
+      "opinion_id": "op_loper_bright",
+      "judge_id": "judge_roberts",
+      "role": "author"
+    }
+  ],
+  "opinion_cites_opinion_edges": [
+    {
+      "source_opinion_id": "op_loper_bright",
+      "cited_opinion_id": "op_chevron",
+      "citation_context": "overrules Chevron and holds courts must exercise independent judgment under the Administrative Procedure Act",
+      "evidence": {
+        "quote": "Chevron is overruled.",
+        "opinion_id": "op_loper_bright",
+        "char_start": 105514,
+        "char_end": 105535,
+        "text_sha256": "sha256:240de878af2bcdbc50bf6b58a615891cc88dd10901af15b47917f4610680c621",
+        "source_artifact_id": "opinion_text_op_loper_bright",
+        "chunk_id": "mdchunk_e430db4f4d3e0714",
+        "expected_content_hash": "sha256:623253925d9beb5dc3e14d96eebd03c3e367a871db8974697ed1faa29c86a9df",
+        "path": "opinions/op_loper_bright.txt"
+      }
+    },
+    {
+      "source_opinion_id": "op_loper_bright",
+      "cited_opinion_id": "op_brandx",
+      "citation_context": "abrogates Brand X to the extent it depended on Chevron overriding prior judicial construction",
+      "evidence": {
+        "quote": "unless the prior court happened to also say that the\nstatute is “unambiguous. ” Brand X, 545 U. S., at 982.\nThat regime is the antithesis of the time honored approach\nthe APA prescribes.",
+        "opinion_id": "op_loper_bright",
+        "char_start": 75585,
+        "char_end": 75771,
+        "text_sha256": "sha256:240de878af2bcdbc50bf6b58a615891cc88dd10901af15b47917f4610680c621",
+        "source_artifact_id": "opinion_text_op_loper_bright",
+        "chunk_id": "mdchunk_c8f425552b321dbf",
+        "expected_content_hash": "sha256:77b6a919c9d2e3778ac2a2f4b4e5048fd5b602836ad16b4f5b7e328fd0e04899",
+        "path": "opinions/op_loper_bright.txt"
+      }
+    },
+    {
+      "source_opinion_id": "op_loper_bright",
+      "cited_opinion_id": "op_mead",
+      "citation_context": "limits Mead to Skidmore-style respect and rejects Chevron deference as binding law",
+      "evidence": {
+        "quote": "authority.” Mead, 533 U. S., at 226–227. In practice, that\nthreshold requirement—sometimes called Chevron “step\nzero”—largely limits Chevron",
+        "opinion_id": "op_loper_bright",
+        "char_start": 88059,
+        "char_end": 88199,
+        "text_sha256": "sha256:240de878af2bcdbc50bf6b58a615891cc88dd10901af15b47917f4610680c621",
+        "source_artifact_id": "opinion_text_op_loper_bright",
+        "chunk_id": "mdchunk_2c78bac611aa1384",
+        "expected_content_hash": "sha256:d811b28244f52d7712692f610090753338015c66f562d1ab67bdf8d980971cd7",
+        "path": "opinions/op_loper_bright.txt"
+      }
+    }
+  ]
+}

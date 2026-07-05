@@ -1,0 +1,310 @@
+{
+  "curated_holdings": [
+    {
+      "opinion_id": "op_chevron",
+      "holding_id": "hold_chevron_deference",
+      "summary": "When Congress leaves ambiguity in an administered statute, courts defer to a reasonable agency construction under the Chevron framework.",
+      "holding_type": "rule",
+      "scope": "Chevron step-two deference to reasonable agency interpretations.",
+      "locator": "467 U.S. 837, 842-845",
+      "statute_ids": [
+        "stat_chevron_doctrine",
+        "stat_clean_air_act_111d"
+      ],
+      "issue_ids": [
+        "issue_agency_deference",
+        "issue_environmental_agency_authority"
+      ],
+      "orientation": "supports_deference",
+      "evidence": {
+        "quote": "if the statute is silent or ambiguous with respect to the specific issue, the question for the court is whether the agency's answer is based on a permissible construction of the statute.",
+        "opinion_id": "op_chevron",
+        "char_start": 9797,
+        "char_end": 9983,
+        "text_sha256": "sha256:edde9415bf234323829b70676d230edde3d64e5bf4cd8cf95341bb0fcd2d86a4",
+        "source_artifact_id": "opinion_text_op_chevron",
+        "chunk_id": "mdchunk_abff5c60aed80ce2",
+        "expected_content_hash": "sha256:e61e4881e2c3277001aaab2220ef578fd88f8cd3274ebfecc74b5ec073207988",
+        "path": "opinions/op_chevron.txt"
+      }
+    },
+    {
+      "opinion_id": "op_rust",
+      "holding_id": "hold_rust_title_x_deference",
+      "summary": "HHS permissibly construed Title X restrictions and received Chevron deference for a reasonable program interpretation.",
+      "holding_type": "application",
+      "scope": "Health-agency grant conditions and program integrity rules.",
+      "locator": "500 U.S. 173, 184-187",
+      "statute_ids": [
+        "stat_chevron_doctrine",
+        "stat_title_x"
+      ],
+      "issue_ids": [
+        "issue_agency_deference",
+        "issue_health_agency_rulemaking"
+      ],
+      "orientation": "supports_deference",
+      "evidence": {
+        "quote": "the Secretary's construction must be accorded substantial deference as the interpretation of the agency charged with administering the statute",
+        "opinion_id": "op_rust",
+        "char_start": 1723,
+        "char_end": 1865,
+        "text_sha256": "sha256:a4e868a7a7a11db1c7efcf70fd07a82e90975f4dc51223e9329632e2c4c1b38a",
+        "source_artifact_id": "opinion_text_op_rust",
+        "chunk_id": "mdchunk_a4532137ccc77331",
+        "expected_content_hash": "sha256:b922728b2bd34111dddda582380ea6313d7a79a37061f6945b1c000db0a8896a",
+        "path": "opinions/op_rust.txt"
+      }
+    },
+    {
+      "opinion_id": "op_sweet_home",
+      "holding_id": "hold_sweet_home_esa_deference",
+      "summary": "The Interior Department's habitat-modification regulation was a reasonable construction of the Endangered Species Act.",
+      "holding_type": "application",
+      "scope": "Endangered Species Act take regulation.",
+      "locator": "515 U.S. 687, 703-704",
+      "statute_ids": [
+        "stat_chevron_doctrine",
+        "stat_esa_9"
+      ],
+      "issue_ids": [
+        "issue_agency_deference",
+        "issue_environmental_agency_authority"
+      ],
+      "orientation": "supports_deference",
+      "evidence": {
+        "quote": "the Secretary reasonably construed the intent of Congress when he defined \"harm\" to include \"significant habitat modification or degradation that actually kills or injures wildlife.\"",
+        "opinion_id": "op_sweet_home",
+        "char_start": 27203,
+        "char_end": 27385,
+        "text_sha256": "sha256:d7b1f1950632abf08f106bd7ff3f41c1ebe5b2a282687d85282f91bd7e5cf6ae",
+        "source_artifact_id": "opinion_text_op_sweet_home",
+        "chunk_id": "mdchunk_1ccfd7e9631c48fc",
+        "expected_content_hash": "sha256:2cfd5c9f1db2ed6b0be5c2105ffc0d87660da041aa5f8c950035c3e3352e5708",
+        "path": "opinions/op_sweet_home.txt"
+      }
+    },
+    {
+      "opinion_id": "op_smiley",
+      "holding_id": "hold_smiley_occ_deference",
+      "summary": "The Comptroller of the Currency reasonably interpreted interest under the National Bank Act to include late-payment fees.",
+      "holding_type": "application",
+      "scope": "National Bank Act interest regulation.",
+      "locator": "517 U.S. 735, 739-747",
+      "statute_ids": [
+        "stat_chevron_doctrine",
+        "stat_national_bank_act_85"
+      ],
+      "issue_ids": [
+        "issue_agency_deference",
+        "issue_banking_deference"
+      ],
+      "orientation": "supports_deference",
+      "evidence": {
+        "quote": "The Comptroller of the Currency has reasonably interpreted the term ``interest'' in Section(s) 85 to include late-payment fees",
+        "opinion_id": "op_smiley",
+        "char_start": 1175,
+        "char_end": 1301,
+        "text_sha256": "sha256:1842011d2570db1c2db1f41a963fbb5c04b20e63f94bbb84c5bd223e2d95993c",
+        "source_artifact_id": "opinion_text_op_smiley",
+        "chunk_id": "mdchunk_2870733c1d2f0b1a",
+        "expected_content_hash": "sha256:a5b3db883b816454701deca0f7fc599b221accf8363104fb827ede9452d36995",
+        "path": "opinions/op_smiley.txt"
+      }
+    },
+    {
+      "opinion_id": "op_mead",
+      "holding_id": "hold_mead_force_of_law_limit",
+      "summary": "Chevron applies when Congress delegated authority carrying force of law and the agency interpretation was issued through that authority.",
+      "holding_type": "rule",
+      "scope": "Limits Chevron eligibility for informal customs rulings.",
+      "locator": "533 U.S. 218, 226-234",
+      "statute_ids": [
+        "stat_chevron_doctrine",
+        "stat_tariff_act_1500"
+      ],
+      "issue_ids": [
+        "issue_agency_deference"
+      ],
+      "orientation": "limits_deference",
+      "evidence": {
+        "quote": "when it appears that Congress delegated authority to the agency generally to make rules carrying the force of law, and that the agency interpretation claiming deference was promulgated in the exercise of such authority.",
+        "opinion_id": "op_mead",
+        "char_start": 2110,
+        "char_end": 2329,
+        "text_sha256": "sha256:4b4a80262f237660a2ee6f4ed8b4c7f345fa6cb802ba9368788936b4448d1e8b",
+        "source_artifact_id": "opinion_text_op_mead",
+        "chunk_id": "mdchunk_0c96226b9d5be722",
+        "expected_content_hash": "sha256:515c6fecc04e912a9e24084eadaf21c6f7935e12458f705240f1ee8fce9d8f80",
+        "path": "opinions/op_mead.txt"
+      }
+    },
+    {
+      "opinion_id": "op_barnhart",
+      "holding_id": "hold_barnhart_ssa_deference",
+      "summary": "The Social Security Administration reasonably interpreted disability duration requirements and received Chevron deference.",
+      "holding_type": "application",
+      "scope": "Social Security disability-benefit eligibility.",
+      "locator": "535 U.S. 212, 217-222",
+      "statute_ids": [
+        "stat_chevron_doctrine",
+        "stat_social_security_disability"
+      ],
+      "issue_ids": [
+        "issue_agency_deference",
+        "issue_health_agency_rulemaking"
+      ],
+      "orientation": "supports_deference",
+      "evidence": {
+        "quote": "The Agency's interpretations of the statute fall within its lawful interpretative authority.",
+        "opinion_id": "op_barnhart",
+        "char_start": 1862,
+        "char_end": 1954,
+        "text_sha256": "sha256:4f85dbab67a529309c95b52df58d4bcc24d8bec9993e8264e8273831604c0fac",
+        "source_artifact_id": "opinion_text_op_barnhart",
+        "chunk_id": "mdchunk_6fa6a6786f27a58c",
+        "expected_content_hash": "sha256:4a32af43a30d827ad04501f13e0254abe8c39636910ddd754461e9e545079344",
+        "path": "opinions/op_barnhart.txt"
+      }
+    },
+    {
+      "opinion_id": "op_brandx",
+      "holding_id": "hold_brandx_prior_precedent",
+      "summary": "A reasonable agency interpretation may receive Chevron deference even when it departs from a prior judicial construction of an ambiguous statute.",
+      "holding_type": "rule",
+      "scope": "Telecommunications classification and prior judicial precedent.",
+      "locator": "545 U.S. 967, 982-986",
+      "statute_ids": [
+        "stat_chevron_doctrine",
+        "stat_communications_act"
+      ],
+      "issue_ids": [
+        "issue_agency_deference",
+        "issue_telecom_jurisdiction"
+      ],
+      "orientation": "supports_deference",
+      "evidence": {
+        "quote": "A court’s prior judicial construction of a statute trumps\nan agency construction otherwise entitled to Chevron\ndeference only if the prior court decision holds that its\nconstruction follows from the unambiguous terms of the\nstatute and thus leaves no room for agency discretion.",
+        "opinion_id": "op_brandx",
+        "char_start": 35156,
+        "char_end": 35434,
+        "text_sha256": "sha256:e0c2145f3e794d8b61aa39da4d667dc031ce69acb3bd44ead8edc1c4785e0ebf",
+        "source_artifact_id": "opinion_text_op_brandx",
+        "chunk_id": "mdchunk_0f0eef9949de6418",
+        "expected_content_hash": "sha256:bd58ba8a65291b78a06972cf94b7757098a462f9f210a7f7e75948ea0ecaff45",
+        "path": "opinions/op_brandx.txt"
+      }
+    },
+    {
+      "opinion_id": "op_entergy",
+      "holding_id": "hold_entergy_cost_benefit_deference",
+      "summary": "EPA permissibly used cost-benefit analysis under Clean Water Act section 316(b), and its interpretation received Chevron deference.",
+      "holding_type": "application",
+      "scope": "Clean Water Act cooling-water intake structures.",
+      "locator": "556 U.S. 208, 218-226",
+      "statute_ids": [
+        "stat_chevron_doctrine",
+        "stat_clean_water_act_316b"
+      ],
+      "issue_ids": [
+        "issue_agency_deference",
+        "issue_environmental_agency_authority"
+      ],
+      "orientation": "supports_deference",
+      "evidence": {
+        "quote": "The EPA permissibly relied on cost-benefit analysis in setting the\n national performance standards and in providing for cost-benefit\n variances from those standards as part of the Phase II regulations.",
+        "opinion_id": "op_entergy",
+        "char_start": 3919,
+        "char_end": 4120,
+        "text_sha256": "sha256:34556d9c4510ab3094bd37d1ee2d04a6ac83b0b6df2c5b061a1c79118e701cec",
+        "source_artifact_id": "opinion_text_op_entergy",
+        "chunk_id": "mdchunk_be4a36dcbab2dad6",
+        "expected_content_hash": "sha256:d82667620739b81f1c1cd922dd13022e96408dfbbb05e131cadefbd42c2bc5c6",
+        "path": "opinions/op_entergy.txt"
+      }
+    },
+    {
+      "opinion_id": "op_mayo",
+      "holding_id": "hold_mayo_tax_deference",
+      "summary": "General Chevron principles govern Treasury regulations interpreting the Internal Revenue Code student exception.",
+      "holding_type": "rule",
+      "scope": "Treasury regulations and FICA student exception.",
+      "locator": "562 U.S. 44, 55-58",
+      "statute_ids": [
+        "stat_chevron_doctrine",
+        "stat_irc_student_exception"
+      ],
+      "issue_ids": [
+        "issue_agency_deference",
+        "issue_tax_regulatory_deference"
+      ],
+      "orientation": "supports_deference",
+      "evidence": {
+        "quote": "The full-time employee rule easily satisfies the second\nstep of Chevron, which asks whether the Department’s\nrule is a “reasonable interpretation” of the enacted text.",
+        "opinion_id": "op_mayo",
+        "char_start": 32759,
+        "char_end": 32926,
+        "text_sha256": "sha256:ab1fb3e34537ba99f1127339160a38cec3ecf46daa2dfb50deb29f17df954b8f",
+        "source_artifact_id": "opinion_text_op_mayo",
+        "chunk_id": "mdchunk_7208895762e7efdc",
+        "expected_content_hash": "sha256:ab4bf8df2e7bed3202bd0d5e7f9569d2acc6bc6fc04038e06ffefecf7891d960",
+        "path": "opinions/op_mayo.txt"
+      }
+    },
+    {
+      "opinion_id": "op_city_arlington",
+      "holding_id": "hold_city_arlington_jurisdictional_deference",
+      "summary": "Courts apply Chevron to agency interpretations of statutory ambiguity concerning the scope of agency jurisdiction.",
+      "holding_type": "rule",
+      "scope": "FCC authority over wireless siting applications.",
+      "locator": "569 U.S. 290, 296-307",
+      "statute_ids": [
+        "stat_chevron_doctrine",
+        "stat_telecom_siting"
+      ],
+      "issue_ids": [
+        "issue_agency_deference",
+        "issue_telecom_jurisdiction"
+      ],
+      "orientation": "supports_deference",
+      "evidence": {
+        "quote": "Courts must apply the Chevron framework to an agency’s inter-\n pretation of a statutory ambiguity that concerns the scope of the\n agency’s statutory authority (i.e., its jurisdiction).",
+        "opinion_id": "op_city_arlington",
+        "char_start": 2191,
+        "char_end": 2375,
+        "text_sha256": "sha256:119b8e8f4e57475a2322a7a64f9c7b23fab4f95fb829179b8a566fb4d42fecd0",
+        "source_artifact_id": "opinion_text_op_city_arlington",
+        "chunk_id": "mdchunk_c9731a152aa3e54b",
+        "expected_content_hash": "sha256:5189a3054dc6040c075a51de94cdbca2209219f247032f76e3d748172ec330fd",
+        "path": "opinions/op_city_arlington.txt"
+      }
+    },
+    {
+      "opinion_id": "op_loper_bright",
+      "holding_id": "hold_loper_overrules_chevron",
+      "summary": "The Administrative Procedure Act requires courts to exercise independent judgment on questions of law, and Chevron is overruled.",
+      "holding_type": "rule",
+      "scope": "Judicial review of agency statutory interpretations after Chevron.",
+      "locator": "603 U.S. 369, 412-413",
+      "statute_ids": [
+        "stat_chevron_doctrine",
+        "stat_apa_judicial_review"
+      ],
+      "issue_ids": [
+        "issue_agency_deference"
+      ],
+      "orientation": "overrules_deference",
+      "evidence": {
+        "quote": "Chevron is overruled. Courts must exercise their inde-\npendent judgment in deciding whether an agency has acted\nwithin its statutory authority, as the APA requires.",
+        "opinion_id": "op_loper_bright",
+        "char_start": 105514,
+        "char_end": 105678,
+        "text_sha256": "sha256:240de878af2bcdbc50bf6b58a615891cc88dd10901af15b47917f4610680c621",
+        "source_artifact_id": "opinion_text_op_loper_bright",
+        "chunk_id": "mdchunk_e430db4f4d3e0714",
+        "expected_content_hash": "sha256:623253925d9beb5dc3e14d96eebd03c3e367a871db8974697ed1faa29c86a9df",
+        "path": "opinions/op_loper_bright.txt"
+      }
+    }
+  ]
+}

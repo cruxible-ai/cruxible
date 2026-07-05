@@ -44,6 +44,71 @@ structural truth. Everything outside them is authored explanation.
   metadata; anything smarter proposes through the same governed path with
   tri-state signals and never writes accepted state.
 
+## Opinion-text evidence
+
+The launch corpus includes real CourtListener opinion text under
+`data/seed/opinions/`. Each curated holding and each Loper Bright treatment
+edge cites a verbatim quote, character offsets in the stored text file, and the
+text file hash. The holding and treatment proposal workflows pass those rows'
+`evidence_refs` through to candidate groups while retaining the rationale text,
+so review still has a useful fallback if source artifacts are not registered.
+
+To pull fresh CourtListener data, use `scripts/fetch_courtlistener.py` — the
+acquisition tool outside the workflow boundary (set `COURTLISTENER_API_TOKEN`
+or place a token in `~/.cruxible/courtlistener-api-key`; the environment
+variable wins). Providers never fetch: acquisition crosses into Cruxible as
+digest-pinned artifacts and reviewed rows. See `data/seed/README.md` for the
+full recipe.
+
+Register the text files after instance initialization so evidence refs
+dereference to the actual passages (`--id` pins the deterministic artifact ids
+the seed evidence cites, e.g. `opinion_text_op_loper_bright`):
+
+```bash
+jq -r '.opinions[] | [.opinion_id, .source_url] | @tsv' \
+  kits/case-law-monitoring/data/seed/opinions/manifest.json |
+while IFS=$'\t' read -r opinion_id source_url; do
+  cruxible source register \
+    --path "kits/case-law-monitoring/data/seed/opinions/${opinion_id}.txt" \
+    --id "opinion_text_${opinion_id}" \
+    --kind markdown \
+    --retention manifest_only \
+    --original-uri "$source_url" \
+    --label "${opinion_id} opinion text" \
+    --json
+done
+```
+
+## The agent pathway (when logic can't be bottled)
+
+The bundled analysis providers are the **zero-LLM floor**: joins over curated
+seed data, plus deliberately simple lexical signals (a keyword scan cannot
+read *"we decline to overrule Chevron"* correctly — a reviewer, or a model,
+can). They make the kit demoable and replayable with no model in the loop,
+and they define the row shapes judgment must arrive in. They are not the
+ceiling.
+
+For real operation, the intelligence steering the ship supplies the judgment
+through the **same contracts and the same gates**:
+
+1. **Context out.** The agent reads the registered opinion text
+   (`cruxible source read` / evidence dereference) and queries the matter
+   graph for whatever context it needs.
+2. **Judgment in, as contract rows.** The agent authors its own
+   holding/treatment/impact rows — same shapes the providers emit (see
+   Provider Contracts below) — and feeds them to the proposal workflows with
+   `--input-file`, or proposes governed edges directly (agent-supplied
+   signals are first-class: their provenance is recorded as
+   `evidence_mode: agent_supplied`, distinct from `workflow_generated`).
+3. **Same governance.** Agent-authored rows face the identical review
+   policies and evidence expectations as provider output. A support verdict
+   without evidence stops at review either way.
+
+The guarantees are model-quality-orthogonal on purpose: a better model writes
+better proposals, and nothing about review, evidence, or receipts moves. The
+keyword heuristics are what the kit knows without a model; the contract path
+is how a model makes it smarter without ever writing state directly.
+
 ## Ontology
 
 <!-- CRUXIBLE:BEGIN ontology -->
@@ -102,7 +167,43 @@ flowchart LR
   linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14 stroke:#2c5f8a,stroke-width:2px
   linkStyle 15,16,17,18,19,20,21,22,23,24 stroke:#e74c3c,stroke-width:2px
 ```
+
+**Diagram legend:** blue node = canonical entity (deterministic writes); orange node = governed entity (enters via proposal/review); dashed grey node = base-kit entity shown for seam context; solid edge = deterministic relationship; dotted edge = governed relationship.
 <!-- CRUXIBLE:END ontology -->
+
+<!-- CRUXIBLE:BEGIN schema-catalog -->
+| Entity | Properties | Description |
+| --- | --- | --- |
+| `Argument` | `argument_id: string (pk)`, `title: string?`, `description: string?`, `argument_type: argument_type?`, `position: argument_position?`, `status: argument_status?` | Legal argument, position, theory, or cited-authority bundle used in a matter. |
+| `CaseOutcome` | `outcome_id: string (pk)`, `result: outcome_result?`, `resolved_at: date?`, `notes: string?` | Resolved matter result. Distinct from Cruxible Loop 2 outcomes, which judge whether system decisions were correct. |
+| `Client` | `client_id: string (pk)`, `name: string?`, `industry: string?` | Firm client associated with one or more matters. |
+| `Court` | `court_id: string (pk)`, `name: string?`, `jurisdiction: string?`, `level: court_level?` | Court or tribunal issuing opinions and hosting matters. |
+| `Deadline` | `deadline_id: string (pk)`, `title: string?`, `due_date: date?`, `deadline_type: deadline_type?`, `status: deadline_status?` | Filing deadline, response obligation, hearing date, or other matter deadline. |
+| `Filing` | `filing_id: string (pk)`, `title: string?`, `docket_number: string?`, `filing_type: filing_type?`, `filed_at: date?` | Filing, brief, motion, order, or docket entry associated with a matter. |
+| `Holding` | `holding_id: string (pk)`, `summary: string?`, `holding_type: holding_type?`, `scope: string?` | Atomic holding or rule extracted from an opinion. Judgment-born: created inert by the canonical apply step; the governed opinion_has_holding edge is what makes it reviewed legal reasoning. |
+| `Judge` | `judge_id: string (pk)`, `name: string?`, `court_hint: string?` | Judge, panel member, or adjudicator associated with an opinion. |
+| `LegalIssue` | `issue_id: string (pk)`, `name: string?`, `practice_area: string?`, `description: string?` | Practice-specific legal issue or doctrine tracked by the firm. |
+| `Matter` | `matter_id: string (pk)`, `name: string?`, `matter_type: matter_type?`, `status: matter_status?`, `jurisdiction: string?` | Firm matter, pending case, investigation, deal, or representation that legal developments may affect. |
+| `Opinion` | `opinion_id: string (pk)`, `case_name: string?`, `citation: string?`, `docket_number: string?`, `date_filed: date?`, `jurisdiction: string?`, `precedential_status: precedential_status?`, `source_url: string?` | Published opinion, order, or precedential authority in the monitored corpus (CourtListener-sourced). |
+| `Statute` | `statute_id: string (pk)`, `title: string?`, `section: string?`, `jurisdiction: string?`, `topic: string?` | Statute, regulation, rule, or doctrinal source interpreted by opinions and relevant to matters. |
+
+### Enums
+
+| Enum | Values |
+| --- | --- |
+| `argument_position` | plaintiff, defense, petitioner, respondent, advisory, neutral |
+| `argument_status` | draft, filed, planned, abandoned, preserved |
+| `argument_type` | claim, defense, counterclaim, affirmative_defense, motion, advisory_position |
+| `court_level` | trial, appellate, supreme, administrative |
+| `deadline_status` | pending, met, missed, extended, waived, closed |
+| `deadline_type` | filing, response, discovery, hearing, statute_of_limitations, client_update |
+| `filing_type` | complaint, motion, brief, order, notice, letter, memo |
+| `holding_type` | rule, exception, application, distinction, procedural |
+| `matter_status` | active, stayed, closed, monitoring |
+| `matter_type` | litigation, investigation, advisory, transaction, regulatory |
+| `outcome_result` | won, lost, settled, dismissed, default_judgment, withdrawn, moot |
+| `precedential_status` | published, unpublished, precedential, nonprecedential, order |
+<!-- CRUXIBLE:END schema-catalog -->
 
 ## Workflows
 
@@ -278,7 +379,7 @@ flowchart LR
 **Role:** Governed proposal
 
 **Input context**
-- Query context: Deadline, Filing, Matter
+- Query context: Deadline, Filing, Matter, Filing In Matter, Matter Has Deadline
 
 **Result**
 - Proposed relationships: Filing Requires Response
@@ -291,7 +392,7 @@ flowchart LR
 **Role:** Governed proposal
 
 **Input context**
-- Query context: Holding, Legal Issue, Holding Interprets Statute
+- Query context: Holding, Legal Issue, Holding Interprets Statute, Statute Governs Issue
 
 **Result**
 - Proposed relationships: Holding Addresses Issue
@@ -317,7 +418,7 @@ flowchart LR
 **Role:** Governed proposal
 
 **Input context**
-- Query context: Matter, Opinion, Holding Supports Argument, Holding Undermines Argument, Matter In Jurisdiction, Matter Turns On Statute, Opinion From Court, Opinion Treats Opinion
+- Query context: Matter, Opinion, Argument In Matter, Holding Supports Argument, Holding Undermines Argument, Matter In Jurisdiction, Matter Turns On Statute, Opinion From Court, Opinion Has Holding, Opinion Treats Opinion
 
 **Result**
 - Proposed relationships: Opinion Affects Matter
@@ -336,7 +437,7 @@ flowchart LR
 - Proposed relationships: Matter Turns On Statute
 
 **Provider source**
-- Scope Matters To Statutes (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::scope_matters_to_statutes`
+- Scope Matters To Statutes (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::scope_matters_to_statutes`; artifact: Corpus Seed Bundle
 
 ### 15. Propose Opinion Treatment
 
@@ -395,7 +496,7 @@ flowchart LR
 **Role:** Utility
 
 **Input context**
-- Query context: Matter, Opinion, Opinion Affects Matter, Opinion Treats Opinion
+- Query context: Matter, Opinion, Argument Cites Opinion, Argument In Matter, Opinion Affects Matter, Opinion Treats Opinion
 
 **Result**
 - Provider output: Route Review Work
@@ -411,11 +512,215 @@ flowchart LR
 - None
 
 **Result**
-- Provider output: Fetch Courtlistener Cluster
+- Provider output: Load Corpus Update
 
 **Provider source**
-- Fetch Courtlistener Cluster (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::fetch_courtlistener_cluster`; non-deterministic
+- Load Corpus Update (Python Function, v0.2.0); source: `kit://providers/case_law_monitoring.py::load_corpus_update`; artifact: Corpus Seed Bundle
 <!-- CRUXIBLE:END workflow-summary -->
+
+<!-- CRUXIBLE:BEGIN provider-contracts -->
+### `assess_argument_impact` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::assess_argument_impact`
+- Purpose: Assess whether holdings support or undermine firm arguments via shared issues.
+
+Called by workflow `propose_argument_risk`, step `judgments`:
+
+- Input `holdings` <- query step `holdings` (`results`)
+- Input `arguments` <- query step `arguments` (`results`)
+- Input `holding_issue_edges` <- query step `holding_issue_edges` (`results`)
+- Input `argument_issue_edges` <- query step `argument_issue_edges` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`holding_undermines_argument`): required row keys: `holding_id` (from id), `argument_id` (to id), `risk_type`, `rationale`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+Called by workflow `propose_argument_support`, step `judgments`:
+
+- Input `holdings` <- query step `holdings` (`results`)
+- Input `arguments` <- query step `arguments` (`results`)
+- Input `holding_issue_edges` <- query step `holding_issue_edges` (`results`)
+- Input `argument_issue_edges` <- query step `argument_issue_edges` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`holding_supports_argument`): required row keys: `holding_id` (from id), `argument_id` (to id), `support_strength`, `rationale`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `assess_filing_response_obligations` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::assess_filing_response_obligations`
+- Purpose: Assess whether filings require responses, deadlines, or client updates.
+
+Called by workflow `propose_filing_response`, step `judgments`:
+
+- Input `filings` <- query step `filings` (`results`)
+- Input `matters` <- query step `matters` (`results`)
+- Input `deadlines` <- query step `deadlines` (`results`)
+- Input `filing_in_matter_edges` <- query step `filing_in_matter_edges` (`results`)
+- Input `matter_deadline_edges` <- query step `matter_deadline_edges` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`filing_requires_response`): required row keys: `filing_id` (from id), `matter_id` (to id), `response_type`, `deadline_date`, `rationale`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `assess_matter_impact` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::assess_matter_impact`
+- Purpose: Assess whether opinions affect firm matters via argument impact, treatment, scope, and jurisdiction overlap.
+
+Called by workflow `propose_matter_impact`, step `judgments`:
+
+- Input `opinions` <- query step `opinions` (`results`)
+- Input `matters` <- query step `matters` (`results`)
+- Input `support_edges` <- query step `support_edges` (`results`)
+- Input `undermine_edges` <- query step `undermine_edges` (`results`)
+- Input `opinion_holding_edges` <- query step `opinion_holding_edges` (`results`)
+- Input `argument_matter_edges` <- query step `argument_matter_edges` (`results`)
+- Input `treatment_edges` <- query step `treatment_edges` (`results`)
+- Input `matter_statute_edges` <- query step `matter_statute_edges` (`results`)
+- Input `opinion_court_edges` <- query step `opinion_court_edges` (`results`)
+- Input `matter_jurisdiction_edges` <- query step `matter_jurisdiction_edges` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`opinion_affects_matter`): required row keys: `opinion_id` (from id), `matter_id` (to id), `impact_level`, `impact_type`, `rationale`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `classify_opinion_treatment` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::classify_opinion_treatment`
+- Purpose: Classify legally meaningful treatment along the citation graph.
+
+Called by workflow `propose_opinion_treatment`, step `judgments`:
+
+- Input `opinions` <- query step `opinions` (`results`)
+- Input `citation_edges` <- query step `citation_edges` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`opinion_treats_opinion`): required row keys: `source_opinion_id` (from id), `cited_opinion_id` (to id), `treatment`, `rationale`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `extract_holdings_from_opinions` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::extract_holdings_from_opinions`
+- Purpose: Extract candidate holdings from corpus opinions (deterministic heuristics over opinion metadata and curated holding text).
+
+Called by workflow `analyze_opinions_for_holdings`, step `candidates`:
+
+- Input `opinions` <- query step `opinions` (`results`)
+
+### `link_holdings_to_statutes` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::link_holdings_to_statutes`
+- Purpose: Propose statute/rule interpretation links for applied holdings.
+
+Called by workflow `propose_statute_interpretations`, step `judgments`:
+
+- Input `holdings` <- query step `holdings` (`results`)
+- Input `statutes` <- query step `statutes` (`results`)
+- Input `opinion_holding_edges` <- query step `opinion_holding_edges` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`holding_interprets_statute`): required row keys: `holding_id` (from id), `statute_id` (to id), `interpretation_type`, `rationale`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `load_case_outcome_feed` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::load_case_outcome_feed`
+- Reads artifact: `corpus_seed_bundle` (`kits/case-law-monitoring/data/seed`)
+- Purpose: Load resolved case outcomes with matter and argument edges.
+
+Called by workflow `ingest_case_outcomes`, step `feed`:
+
+- Input: none (empty payload).
+- Output rows -> `make_entities` step `case_outcomes` (`CaseOutcome`): required row keys: `outcome_id` (entity id), `result`, `resolved_at`, `notes`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `outcome_matter_edges` (`outcome_of_matter`): required row keys: `outcome_id` (from id), `matter_id` (to id).
+- Output rows -> `make_relationships` step `outcome_argument_edges` (`outcome_resolved_argument`): required row keys: `outcome_id` (from id), `argument_id` (to id), `role`, `prevailed`, `weight`, `notes`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `load_corpus_seed` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::load_corpus_seed`
+- Reads artifact: `corpus_seed_bundle` (`kits/case-law-monitoring/data/seed`)
+- Purpose: Parse the pinned corpus bundle into corpus + firm rows.
+
+Called by workflow `build_corpus`, step `seed`:
+
+- Input: none (empty payload).
+- Output rows -> `make_entities` step `opinions` (`Opinion`): required row keys: `opinion_id` (entity id), `case_name`, `citation`, `docket_number`, `date_filed`, `jurisdiction`, `precedential_status`, `source_url`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `courts` (`Court`): required row keys: `court_id` (entity id), `name`, `jurisdiction`, `level`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `judges` (`Judge`): required row keys: `judge_id` (entity id), `name`, `court_hint`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `statutes` (`Statute`): required row keys: `statute_id` (entity id), `title`, `section`, `jurisdiction`, `topic`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `legal_issues` (`LegalIssue`): required row keys: `issue_id` (entity id), `name`, `practice_area`, `description`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `clients` (`Client`): required row keys: `client_id` (entity id), `name`, `industry`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `matters` (`Matter`): required row keys: `matter_id` (entity id), `name`, `matter_type`, `status`, `jurisdiction`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `arguments` (`Argument`): required row keys: `argument_id` (entity id), `title`, `description`, `argument_type`, `position`, `status`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `opinion_court_edges` (`opinion_from_court`): required row keys: `opinion_id` (from id), `court_id` (to id).
+- Output rows -> `make_relationships` step `opinion_judge_edges` (`opinion_decided_by_judge`): required row keys: `opinion_id` (from id), `judge_id` (to id), `role`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `citation_edges` (`opinion_cites_opinion`): required row keys: `source_opinion_id` (from id), `cited_opinion_id` (to id), `citation_context`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `matter_client_edges` (`matter_for_client`): required row keys: `matter_id` (from id), `client_id` (to id).
+- Output rows -> `make_relationships` step `matter_jurisdiction_edges` (`matter_in_jurisdiction`): required row keys: `matter_id` (from id), `court_id` (to id).
+- Output rows -> `make_relationships` step `argument_matter_edges` (`argument_in_matter`): required row keys: `argument_id` (from id), `matter_id` (to id).
+- Output rows -> `make_relationships` step `argument_issue_edges` (`argument_raises_issue`): required row keys: `argument_id` (from id), `issue_id` (to id).
+- Output rows -> `make_relationships` step `argument_opinion_edges` (`argument_cites_opinion`): required row keys: `argument_id` (from id), `opinion_id` (to id), `citation_role`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `statute_issue_edges` (`statute_governs_issue`): required row keys: `statute_id` (from id), `issue_id` (to id).
+
+### `load_corpus_update` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::load_corpus_update`
+- Reads artifact: `corpus_seed_bundle` (`kits/case-law-monitoring/data/seed`)
+- Purpose: Parse the pinned act-two corpus update fixture into corpus rows. Live acquisition deliberately lives outside the workflow boundary: fetch fresh opinions with scripts/fetch_courtlistener.py, register the texts as source artifacts, and apply the reviewed rows via sync_corpus_update.
+
+Called by workflow `refresh_corpus`, step `fetched`:
+
+- Input: none (empty payload).
+
+### `load_docket_feed` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::load_docket_feed`
+- Reads artifact: `corpus_seed_bundle` (`kits/case-law-monitoring/data/seed`)
+- Purpose: Load filings and deadlines arriving from a docket feed.
+
+Called by workflow `ingest_docket`, step `feed`:
+
+- Input: none (empty payload).
+- Output rows -> `make_entities` step `filings` (`Filing`): required row keys: `filing_id` (entity id), `title`, `docket_number`, `filing_type`, `filed_at`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_entities` step `deadlines` (`Deadline`): required row keys: `deadline_id` (entity id), `title`, `due_date`, `deadline_type`, `status`. `properties: auto` — rows must carry every key; null for unset optionals.
+- Output rows -> `make_relationships` step `filing_matter_edges` (`filing_in_matter`): required row keys: `filing_id` (from id), `matter_id` (to id).
+- Output rows -> `make_relationships` step `matter_deadline_edges` (`matter_has_deadline`): required row keys: `matter_id` (from id), `deadline_id` (to id).
+
+### `map_holdings_to_issues` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::map_holdings_to_issues`
+- Purpose: Map applied holdings to firm-tracked legal issues.
+
+Called by workflow `propose_holding_issue_links`, step `judgments`:
+
+- Input `holdings` <- query step `holdings` (`results`)
+- Input `issues` <- query step `issues` (`results`)
+- Input `statute_edges` <- query step `statute_edges` (`results`)
+- Input `statute_issue_edges` <- query step `statute_issue_edges` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`holding_addresses_issue`): required row keys: `holding_id` (from id), `issue_id` (to id), `issue_fit`, `rationale`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `route_review_work` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::route_review_work`
+- Purpose: Suggest review-obligation work items from accepted matter impacts and negative treatments.
+
+Called by workflow `analyze_review_work`, step `suggestions`:
+
+- Input `opinions` <- query step `opinions` (`results`)
+- Input `matters` <- query step `matters` (`results`)
+- Input `matter_impact_edges` <- query step `matter_impact_edges` (`results`)
+- Input `treatment_edges` <- query step `treatment_edges` (`results`)
+- Input `argument_citation_edges` <- query step `argument_citation_edges` (`results`)
+- Input `argument_matter_edges` <- query step `argument_matter_edges` (`results`)
+
+### `scope_matters_to_statutes` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::scope_matters_to_statutes`
+- Reads artifact: `corpus_seed_bundle` (`kits/case-law-monitoring/data/seed`)
+- Purpose: Match tracked matters to governing statutes and doctrines using optional curated hint keywords from the seed bundle, falling back to plain token overlap. All matches are unsure and review-gated.
+
+Called by workflow `propose_matter_statutory_scope`, step `judgments`:
+
+- Input `matters` <- query step `matters` (`results`)
+- Input `statutes` <- query step `statutes` (`results`)
+- Output rows -> `make_candidates` step `candidates` (`matter_turns_on_statute`): required row keys: `matter_id` (from id), `statute_id` (to id), `scope_basis`. `properties: auto` — rows must carry every key; null for unset optionals.
+
+### `sweep_stale_deadlines` (deterministic)
+
+- Ref: `kit://providers/case_law_monitoring.py::sweep_stale_deadlines`
+- Purpose: Identify pending deadlines that lapsed or whose matter closed.
+
+Called by workflow `refresh_stale_deadlines`, step `sweep`:
+
+- Input `as_of` <- literal `2024-07-15`
+- Input `deadlines` <- query step `deadlines` (`results`)
+- Input `matters` <- query step `matters` (`results`)
+- Input `matter_deadline_edges` <- query step `matter_deadline_edges` (`results`)
+- Output rows -> `make_entities` step `closed_deadlines` (`Deadline`): required row keys: `deadline_id` (entity id), `status`.
+<!-- CRUXIBLE:END provider-contracts -->
 
 ## Governance
 
@@ -449,81 +754,20 @@ No mutation guards declared.
 | `holding_extractor` | required | yes | Opinion Has Holding | - |
 | `issue_mapper` | required | yes | Holding Addresses Issue | - |
 | `jurisdiction_overlap` | advisory | yes | Opinion Affects Matter | - |
-| `maintainer_judgment` | advisory | yes | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
 | `matter_impact_assessor` | required | yes | Opinion Affects Matter | - |
 | `matter_statute_match` | required | yes | Matter Turns On Statute | - |
 | `review_router` | required | yes | Opinion Creates Work Item | - |
-| `source_evidence` | required | yes | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
 | `statute_interpretation_extractor` | required | yes | Holding Interprets Statute | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Queries
 
-<!-- CRUXIBLE:BEGIN query-map -->
-```mermaid
-flowchart LR
-  classDef queryEntity fill:#ecfdf5,stroke:#047857,color:#064e3b
-
-  query_entity_Actor["Actor"]
-  query_entity_AnyEntity["Any Entity"]
-  query_entity_Argument["Argument"]
-  query_entity_CaseOutcome["Case Outcome"]
-  query_entity_Client["Client"]
-  query_entity_Collection_query["Collection Query"]
-  query_entity_Deadline["Deadline"]
-  query_entity_Decision["Decision"]
-  query_entity_Filing["Filing"]
-  query_entity_Judge["Judge"]
-  query_entity_LegalIssue["Legal Issue"]
-  query_entity_Matter["Matter"]
-  query_entity_OpenQuestion["Open Question"]
-  query_entity_Opinion["Opinion"]
-  query_entity_ReviewRequest["Review Request"]
-  query_entity_Risk["Risk"]
-  query_entity_StateNote["State Note"]
-  query_entity_Statute["Statute"]
-  query_entity_SubjectRef["Subject Ref"]
-  query_entity_WorkItem["Work Item"]
-  class query_entity_Actor,query_entity_AnyEntity,query_entity_Argument,query_entity_CaseOutcome,query_entity_Client,query_entity_Collection_query,query_entity_Deadline,query_entity_Decision,query_entity_Filing,query_entity_Judge,query_entity_LegalIssue,query_entity_Matter,query_entity_OpenQuestion,query_entity_Opinion,query_entity_ReviewRequest,query_entity_Risk,query_entity_StateNote,query_entity_Statute,query_entity_SubjectRef,query_entity_WorkItem queryEntity
-  query_entity_Actor --> query_entity_Deadline
-  query_entity_Actor --> query_entity_WorkItem
-  query_entity_Argument --> query_entity_CaseOutcome
-  query_entity_Client --> query_entity_Opinion
-  query_entity_Collection_query --> query_entity_Deadline
-  query_entity_Collection_query --> query_entity_Decision
-  query_entity_Collection_query --> query_entity_OpenQuestion
-  query_entity_Collection_query --> query_entity_ReviewRequest
-  query_entity_Collection_query --> query_entity_Risk
-  query_entity_Collection_query --> query_entity_StateNote
-  query_entity_Collection_query --> query_entity_WorkItem
-  query_entity_Judge --> query_entity_Opinion
-  query_entity_LegalIssue --> query_entity_Opinion
-  query_entity_LegalIssue --> query_entity_Statute
-  query_entity_Matter --> query_entity_AnyEntity
-  query_entity_Matter --> query_entity_CaseOutcome
-  query_entity_Matter --> query_entity_Filing
-  query_entity_Matter --> query_entity_Opinion
-  query_entity_Matter --> query_entity_Statute
-  query_entity_Matter --> query_entity_WorkItem
-  query_entity_Opinion --> query_entity_AnyEntity
-  query_entity_Opinion --> query_entity_Matter
-  query_entity_Opinion --> query_entity_WorkItem
-  query_entity_ReviewRequest --> query_entity_StateNote
-  query_entity_StateNote --> query_entity_AnyEntity
-  query_entity_SubjectRef --> query_entity_AnyEntity
-  query_entity_WorkItem --> query_entity_AnyEntity
-  query_entity_WorkItem --> query_entity_ReviewRequest
-  query_entity_WorkItem --> query_entity_StateNote
-  query_entity_WorkItem --> query_entity_WorkItem
-```
-<!-- CRUXIBLE:END query-map -->
 
 <!-- CRUXIBLE:BEGIN query-catalog -->
 ### Actor
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Actor Work Queue | traversal | Work Item | reviewable | Work Item Owned By Actor (Incoming) | Work items owned by an actor with latest reviews, dependency counts, blockers, subjects. |
 | Deadline Watch | traversal | Deadline | live | Matter Owned By Actor (Incoming) -> Matter Has Deadline (Outgoing) | Deadlines across the matters this actor owns, soonest first. |
 
 ### Argument
@@ -542,15 +786,6 @@ flowchart LR
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Active Risks | collection | Risk | live |  | Active operational risks. |
-| Blocked Work Items | collection | Work Item | reviewable |  | Work items marked blocked, with risk/open-question blocker context. |
-| Changes Requested Reviews | collection | Review Request | reviewable |  | Review requests sent back with changes requested -- the implementer's rework queue, distinct from the reviewer-facing review_queue. |
-| Open Questions Needing Review | collection | Open Question | live |  | Planned/active open questions needing review. |
-| Proposed Decisions | collection | Decision | live |  | Proposed decisions awaiting acceptance/rejection/deferral. |
-| Recent State Notes | collection | State Note | reviewable |  | Recent operation-state notes, corrections, rationale/implementation/review notes. |
-| Review Queue | collection | Review Request | reviewable |  | Review requests awaiting a reviewer -- requested or in review. Reviews sent back for rework live in changes_requested_reviews. |
-| Superseded Decisions | collection | Decision | not-live |  | Decision retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
-| Superseded Work Items | collection | Work Item | not-live |  | WorkItem retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
 | Upcoming Deadlines | collection | Deadline | live |  | All live deadlines still awaiting action, soonest first — the practice-wide docket view. |
 
 ### Judge
@@ -590,33 +825,7 @@ flowchart LR
 | Opinion Context | traversal | Any Entity | reviewable | Opinion From Court \| Opinion Decided By Judge \| Opinion Cites Opinion \| Argument Cites Opinion \| Opinion Creates Work Item \| Opinion Has Holding \| Opinion Treats Opinion \| Opinion Affects Matter (Both) | Court, judges, citations, treatments, holdings, impacts, and created work for one opinion. |
 | Opinion Work Items | traversal | Work Item | reviewable | Opinion Creates Work Item (Outgoing) | Review obligations created by this opinion. |
 
-### Review Request
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| State Notes For Review Request | traversal | State Note | reviewable | State Note About Review Request (Incoming) | The review thread: verdict and finding notes attached to a review request, newest first. This is the read that replaces scrolling a notes blob. |
-
-### State Note
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| State Note Context | traversal | Any Entity | reviewable | State Note Authored By Actor \| State Note About Work Item \| State Note About Review Request \| State Note About Decision \| State Note About Risk \| State Note About Open Question \| State Note About Subject \| State Note About Actor \| State Note Supersedes State Note \| State Note Resolves State Note (Both) | Full context for a state note (targets, author, supersession). |
-
-### Subject Ref
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| Subject Operation Context | traversal | Any Entity | reviewable | State Note About Subject \| Work Item Targets Subject \| Decision Affects Subject \| Risk Attaches To Subject \| Open Question Concerns Subject (Both) | Work, decisions, risks, open questions attached to a subject ref. |
-
-### Work Item
-
-| Query | Mode | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| Approved Reviews For Work Item | traversal | Review Request | live | Review Request For Work Item (Incoming) | Approved review requests for a work item. Used by the closed-transition guard. |
-| State Notes For Work Item | traversal | State Note | reviewable | State Note About Work Item (Incoming) | State notes attached to a work item, newest first. |
-| Work Item Context | traversal | Any Entity | reviewable | Work Item Owned By Actor \| Review Request For Work Item \| State Note About Work Item \| Work Item Depends On Work Item \| Work Item Part Of Work Item \| Work Item Spawned From Work Item \| Work Item Supersedes Work Item \| Risk Blocks Work Item \| Open Question Blocks Work Item \| Work Item Mitigates Risk \| Work Item Answers Open Question \| Decision Constrains Work Item \| Work Item Targets Subject \| Work Item Targets Matter \| Opinion Creates Work Item (Both) | From a work item, inspect dependencies, blockers, reviews, composition, lineage, decisions, owner, subjects. all_adjacent expands against the final composed config, so on a composed instance this query also traverses overlay seam edges (e.g. project-domain's roadmap, release, milestone, and area relationships). |
-| Work Item Lineage Context | traversal | Work Item | reviewable | Work Item Spawned From Work Item \| Work Item Supersedes Work Item (Both, depth=5) | Work item lineage/replacement context, excluding sequencing deps. |
-| Work Item Rollup Context | traversal | Work Item | reviewable | Work Item Part Of Work Item (Incoming, depth=5) | Child/descendant work items under a parent. |
+Plus 18 queries inherited from the base kit — see its README.
 <!-- CRUXIBLE:END query-catalog -->
 
 ## Quality Rules
@@ -632,25 +841,15 @@ No configured constraints.
 | --- | --- | --- | --- | --- |
 | `case_outcomes_have_matter` | Cardinality | Case Outcome -> Outcome Of Matter (out) | Error | min `1`, max `1` |
 | `deadlines_have_matter` | Cardinality | Deadline -> Matter Has Deadline (in) | Warning | min `1` |
-| `decision_supersessions_have_basis` | Property | Decision Supersedes Decision.supersession_basis | Warning | Non Empty |
-| `decision_work_constraints_have_type` | Property | Decision Constrains Work Item.impact_type | Warning | Required |
 | `holdings_belong_to_an_opinion` | Cardinality | Holding -> Opinion Has Holding (in) | Warning | min `1` |
 | `matter_impacts_have_level` | Property | Opinion Affects Matter.impact_level | Error | Required |
 | `matters_have_one_client` | Cardinality | Matter -> Matter For Client (out) | Warning | min `1`, max `1` |
 | `matters_have_owner` | Cardinality | Matter -> Matter Owned By Actor (out) | Warning | min `1` |
-| `open_question_work_blockers_have_basis` | Property | Open Question Blocks Work Item.blocking_basis | Warning | Non Empty |
 | `opinions_have_court` | Cardinality | Opinion -> Opinion From Court (out) | Warning | min `1` |
-| `review_requests_review_work` | Cardinality | Review Request -> Review Request For Work Item (out) | Warning | min `1` |
-| `risk_work_blockers_have_basis` | Property | Risk Blocks Work Item.blocking_basis | Warning | Non Empty |
 | `scope_links_have_basis` | Property | Matter Turns On Statute.scope_basis | Warning | Non Empty |
-| `state_note_supersessions_have_basis` | Property | State Note Supersedes State Note.supersession_basis | Warning | Non Empty |
-| `state_notes_have_author` | Cardinality | State Note -> State Note Authored By Actor (out) | Warning | min `1` |
 | `treatments_have_rationale` | Property | Opinion Treats Opinion.rationale | Warning | Non Empty |
-| `work_dependencies_have_basis` | Property | Work Item Depends On Work Item.dependency_basis | Warning | Non Empty |
-| `work_item_part_of_single_parent` | Cardinality | Work Item -> Work Item Part Of Work Item (out) | Warning | max `1` |
-| `work_item_spawned_from_single_origin` | Cardinality | Work Item -> Work Item Spawned From Work Item (out) | Warning | max `1` |
-| `work_items_have_owner` | Cardinality | Work Item -> Work Item Owned By Actor (out) | Warning | min `1` |
-| `work_supersessions_have_basis` | Property | Work Item Supersedes Work Item.supersession_basis | Warning | Non Empty |
+
+Plus 12 quality checks inherited from the base kit — see its README.
 <!-- CRUXIBLE:END quality-rules -->
 
 ## Learning Loops

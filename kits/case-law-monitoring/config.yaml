@@ -653,6 +653,7 @@ contracts:
       clients: {type: json}
       matters: {type: json}
       arguments: {type: json}
+      opinion_texts: {type: json, optional: true, default: []}
       opinion_from_court_edges: {type: json}
       opinion_decided_by_judge_edges: {type: json}
       opinion_cites_opinion_edges: {type: json}
@@ -662,12 +663,6 @@ contracts:
       argument_raises_issue_edges: {type: json}
       argument_cites_opinion_edges: {type: json}
       statute_governs_issue_edges: {type: json}
-
-  CourtListenerFetchInput:
-    description: Pinned CourtListener identifiers to fetch; empty lists mean the provider's configured cluster.
-    fields:
-      opinion_cluster_ids: {type: json, optional: true, default: []}
-      docket_ids: {type: json, optional: true, default: []}
 
   DocketFeedOutput:
     description: Filings and deadlines arriving from a docket feed with their matter edges.
@@ -686,6 +681,7 @@ contracts:
 
   StaleDeadlineSweepInput:
     fields:
+      as_of: {type: string}
       deadlines: {type: json}
       matters: {type: json}
       matter_deadline_edges: {type: json}
@@ -704,8 +700,11 @@ contracts:
       Extractor output shared by the canonical apply step and the governed
       proposal: one row per candidate holding with opinion_id, holding_id,
       summary, holding_type, scope, locator, rationale, verdict.
+      source_metadata carries the analyze pass's fetch provenance and rides
+      along so analyze output pipes into apply/propose unchanged.
     fields:
       items: {type: json}
+      source_metadata: {type: json, optional: true}
 
   StatuteInterpretationInput:
     fields:
@@ -718,6 +717,7 @@ contracts:
       holdings: {type: json}
       issues: {type: json}
       statute_edges: {type: json}
+      statute_issue_edges: {type: json}
 
   OpinionTreatmentInput:
     fields:
@@ -742,6 +742,8 @@ contracts:
       matters: {type: json}
       support_edges: {type: json}
       undermine_edges: {type: json}
+      opinion_holding_edges: {type: json}
+      argument_matter_edges: {type: json}
       treatment_edges: {type: json}
       matter_statute_edges: {type: json}
       opinion_court_edges: {type: json}
@@ -752,6 +754,8 @@ contracts:
       filings: {type: json}
       matters: {type: json}
       deadlines: {type: json}
+      filing_in_matter_edges: {type: json}
+      matter_deadline_edges: {type: json}
 
   WorkRoutingInput:
     fields:
@@ -759,15 +763,19 @@ contracts:
       matters: {type: json}
       matter_impact_edges: {type: json}
       treatment_edges: {type: json}
+      argument_citation_edges: {type: json}
+      argument_matter_edges: {type: json}
 
   WorkItemCandidates:
     description: >
       Router output shared by the canonical apply step and the two governed
       link proposals: one row per suggested obligation with work_item_id,
       title, work_item_type (base enum value), priority, opinion_id,
-      matter_id, obligation_type, rationale, verdict.
+      matter_id, obligation_type, rationale, verdict. source_metadata carries
+      the engine's utility-output envelope so analyze output pipes unchanged.
     fields:
       items: {type: json}
+      source_metadata: {type: json, optional: true}
 
   JudgmentItems:
     description: Generic tri-state judgment rows produced by an assessor provider.
@@ -778,7 +786,7 @@ artifacts:
   corpus_seed_bundle:
     kind: directory
     uri: ./data/seed
-    digest: sha256:a5cc965ff65c21e206a079d9ba4aa01586b3a1f25daf02c8174e78e35121900e
+    digest: sha256:7b7197010057fcfa4974389673ec468d8b3d83edf1a156daa3dc7991fd3bf5a5
     metadata:
       description: >
         Digest-pinned two-act corpus: real public opinions (CourtListener
@@ -796,18 +804,18 @@ providers:
     deterministic: true
     artifact: corpus_seed_bundle
 
-  fetch_courtlistener_cluster:
+  load_corpus_update:
     description: >
-      Fetch opinion clusters, courts, judges, and citation edges live from the
-      CourtListener REST API (network, non-deterministic). Falls back to the
-      bundled act-two fixture when offline so the demo never depends on the
-      network.
-    contract_in: CourtListenerFetchInput
+      Parse the pinned act-two corpus update fixture into corpus rows. Live
+      acquisition deliberately lives outside the workflow boundary: fetch
+      fresh opinions with scripts/fetch_courtlistener.py, register the texts
+      as source artifacts, and apply the reviewed rows via sync_corpus_update.
+    contract_in: EmptyInput
     contract_out: CorpusSeedOutput
-    ref: kit://providers/case_law_monitoring.py::fetch_courtlistener_cluster
+    ref: kit://providers/case_law_monitoring.py::load_corpus_update
     version: "0.2.0"
-    deterministic: false
-    side_effects: false
+    deterministic: true
+    artifact: corpus_seed_bundle
 
   load_docket_feed:
     description: Load filings and deadlines arriving from a docket feed.
@@ -876,12 +884,16 @@ providers:
     deterministic: true
 
   scope_matters_to_statutes:
-    description: Match tracked matters to governing statutes and doctrines.
+    description: >
+      Match tracked matters to governing statutes and doctrines using optional
+      curated hint keywords from the seed bundle, falling back to plain token
+      overlap. All matches are unsure and review-gated.
     contract_in: MatterScopeInput
     contract_out: JudgmentItems
     ref: kit://providers/case_law_monitoring.py::scope_matters_to_statutes
     version: "0.2.0"
     deterministic: true
+    artifact: corpus_seed_bundle
 
   assess_matter_impact:
     description: Assess whether opinions affect firm matters via argument impact, treatment, scope, and jurisdiction overlap.
@@ -1088,17 +1100,16 @@ workflows:
   refresh_corpus:
     type: utility
     description: >
-      Act two / the maintenance loop: fetch new or updated opinions live from
-      CourtListener (or the bundled fixture when offline) and return corpus
-      rows for review. Apply through sync_corpus_update; then run the
-      treatment and impact proposal chain to see the law change propagate.
-    contract_in: CourtListenerFetchInput
+      Act two / the maintenance loop: load the bundled corpus update fixture
+      and return corpus rows for review. Apply through sync_corpus_update;
+      then run the treatment and impact proposal chain to see the law change
+      propagate. For fresh opinions, acquire outside the workflow boundary
+      (scripts/fetch_courtlistener.py, then register the opinion texts as
+      source artifacts) and feed the reviewed JSON to sync_corpus_update.
+    contract_in: EmptyInput
     steps:
       - id: fetched
-        provider: fetch_courtlistener_cluster
-        input:
-          opinion_cluster_ids: $input.opinion_cluster_ids
-          docket_ids: $input.docket_ids
+        provider: load_corpus_update
         as: fetched
     returns: fetched
 
@@ -1273,6 +1284,7 @@ workflows:
       - id: sweep
         provider: sweep_stale_deadlines
         input:
+          as_of: "2024-07-15"
           deadlines: $steps.deadlines.results
           matters: $steps.matters.results
           matter_deadline_edges: $steps.matter_deadline_edges.results
@@ -1341,6 +1353,9 @@ workflows:
           to_type: Holding
           to_id: $item.holding_id
           properties: auto
+          evidence:
+            refs: $item.evidence_refs
+            rationale: $item.rationale
         as: candidates
       - id: signals
         map_signals:
@@ -1349,6 +1364,7 @@ workflows:
           from_id: $item.opinion_id
           to_id: $item.holding_id
           evidence: $item.rationale
+          evidence_refs: $item.evidence_refs
           enum:
             path: verdict
             map: {support: support, unsure: unsure, contradict: contradict}
@@ -1431,12 +1447,16 @@ workflows:
       - id: statute_edges
         query: {mode: collection, result_shape: relationship, returns: holding_interprets_statute}
         as: statute_edges
+      - id: statute_issue_edges
+        query: {mode: collection, result_shape: relationship, returns: statute_governs_issue}
+        as: statute_issue_edges
       - id: judgments
         provider: map_holdings_to_issues
         input:
           holdings: $steps.holdings.results
           issues: $steps.issues.results
           statute_edges: $steps.statute_edges.results
+          statute_issue_edges: $steps.statute_issue_edges.results
         as: judgments
       - id: candidates
         make_candidates:
@@ -1495,6 +1515,9 @@ workflows:
           to_type: Opinion
           to_id: $item.cited_opinion_id
           properties: auto
+          evidence:
+            refs: $item.evidence_refs
+            rationale: $item.rationale
         as: candidates
       - id: signals
         map_signals:
@@ -1503,6 +1526,7 @@ workflows:
           from_id: $item.source_opinion_id
           to_id: $item.cited_opinion_id
           evidence: $item.rationale
+          evidence_refs: $item.evidence_refs
           enum:
             path: verdict
             map: {support: support, unsure: unsure, contradict: contradict}
@@ -1697,6 +1721,12 @@ workflows:
       - id: treatment_edges
         query: {mode: collection, result_shape: relationship, returns: opinion_treats_opinion}
         as: treatment_edges
+      - id: opinion_holding_edges
+        query: {mode: collection, result_shape: relationship, returns: opinion_has_holding}
+        as: opinion_holding_edges
+      - id: argument_matter_edges
+        query: {mode: collection, result_shape: relationship, returns: argument_in_matter}
+        as: argument_matter_edges
       - id: matter_statute_edges
         query: {mode: collection, result_shape: relationship, returns: matter_turns_on_statute}
         as: matter_statute_edges
@@ -1713,6 +1743,8 @@ workflows:
           matters: $steps.matters.results
           support_edges: $steps.support_edges.results
           undermine_edges: $steps.undermine_edges.results
+          opinion_holding_edges: $steps.opinion_holding_edges.results
+          argument_matter_edges: $steps.argument_matter_edges.results
           treatment_edges: $steps.treatment_edges.results
           matter_statute_edges: $steps.matter_statute_edges.results
           opinion_court_edges: $steps.opinion_court_edges.results
@@ -1774,12 +1806,20 @@ workflows:
       - id: deadlines
         query: {mode: collection, result_shape: entity, returns: Deadline}
         as: deadlines
+      - id: filing_in_matter_edges
+        query: {mode: collection, result_shape: relationship, returns: filing_in_matter}
+        as: filing_in_matter_edges
+      - id: matter_deadline_edges
+        query: {mode: collection, result_shape: relationship, returns: matter_has_deadline}
+        as: matter_deadline_edges
       - id: judgments
         provider: assess_filing_response_obligations
         input:
           filings: $steps.filings.results
           matters: $steps.matters.results
           deadlines: $steps.deadlines.results
+          filing_in_matter_edges: $steps.filing_in_matter_edges.results
+          matter_deadline_edges: $steps.matter_deadline_edges.results
         as: judgments
       - id: candidates
         make_candidates:
@@ -1842,6 +1882,12 @@ workflows:
       - id: treatment_edges
         query: {mode: collection, result_shape: relationship, returns: opinion_treats_opinion, relationship_state: accepted}
         as: treatment_edges
+      - id: argument_citation_edges
+        query: {mode: collection, result_shape: relationship, returns: argument_cites_opinion}
+        as: argument_citation_edges
+      - id: argument_matter_edges
+        query: {mode: collection, result_shape: relationship, returns: argument_in_matter}
+        as: argument_matter_edges
       - id: suggestions
         provider: route_review_work
         input:
@@ -1849,6 +1895,8 @@ workflows:
           matters: $steps.matters.results
           matter_impact_edges: $steps.matter_impact_edges.results
           treatment_edges: $steps.treatment_edges.results
+          argument_citation_edges: $steps.argument_citation_edges.results
+          argument_matter_edges: $steps.argument_matter_edges.results
         as: suggestions
     returns: suggestions
 

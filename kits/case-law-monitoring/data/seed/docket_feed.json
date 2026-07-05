@@ -1,0 +1,91 @@
+{
+  "filings": [
+    {
+      "filing_id": "filing_greengrid_epa_response_order",
+      "matter_id": "matter_greengrid_epa",
+      "title": "GreenGrid EPA order setting supplemental response after Loper Bright",
+      "docket_number": "GG-EPA-24-017",
+      "filing_type": "order",
+      "filed_at": "2024-06-20"
+    },
+    {
+      "filing_id": "filing_harbor_loper_notice",
+      "matter_id": "matter_harbor_noaa",
+      "title": "Harbor Fisheries notice of supplemental authority re Loper Bright",
+      "docket_number": "HF-NOAA-24-004",
+      "filing_type": "notice",
+      "filed_at": "2024-07-01"
+    },
+    {
+      "filing_id": "filing_northbank_cms_letter",
+      "matter_id": "matter_northbank_cms",
+      "title": "Northbank CMS audit letter requesting post-Chevron position",
+      "docket_number": "NB-CMS-24-031",
+      "filing_type": "letter",
+      "filed_at": "2024-07-02"
+    },
+    {
+      "filing_id": "filing_sentinel_fcc_order",
+      "matter_id": "matter_sentinel_fcc",
+      "title": "Sentinel FCC order inviting Loper Bright briefing",
+      "docket_number": "SB-FCC-24-012",
+      "filing_type": "order",
+      "filed_at": "2024-07-05"
+    }
+  ],
+  "deadlines": [
+    {
+      "deadline_id": "deadline_greengrid_response",
+      "matter_id": "matter_greengrid_epa",
+      "title": "GreenGrid supplemental EPA response",
+      "due_date": "2024-07-03",
+      "deadline_type": "response",
+      "status": "pending"
+    },
+    {
+      "deadline_id": "deadline_harbor_supp_brief",
+      "matter_id": "matter_harbor_noaa",
+      "title": "Harbor supplemental Loper Bright brief",
+      "due_date": "2024-07-19",
+      "deadline_type": "filing",
+      "status": "pending"
+    },
+    {
+      "deadline_id": "deadline_northbank_client_update",
+      "matter_id": "matter_northbank_cms",
+      "title": "Northbank post-Chevron client update",
+      "due_date": "2024-07-15",
+      "deadline_type": "client_update",
+      "status": "pending"
+    },
+    {
+      "deadline_id": "deadline_riverstone_review",
+      "matter_id": "matter_riverstone_intake",
+      "title": "Tallgrass Delta cooling intake monitoring review",
+      "due_date": "2024-06-21",
+      "deadline_type": "client_update",
+      "status": "pending"
+    },
+    {
+      "deadline_id": "deadline_sentinel_client_alert",
+      "matter_id": "matter_sentinel_fcc",
+      "title": "Sentinel FCC client alert",
+      "due_date": "2024-07-12",
+      "deadline_type": "client_update",
+      "status": "pending"
+    }
+  ],
+  "filing_in_matter_edges": [
+    {"filing_id": "filing_greengrid_epa_response_order", "matter_id": "matter_greengrid_epa"},
+    {"filing_id": "filing_harbor_loper_notice", "matter_id": "matter_harbor_noaa"},
+    {"filing_id": "filing_northbank_cms_letter", "matter_id": "matter_northbank_cms"},
+    {"filing_id": "filing_sentinel_fcc_order", "matter_id": "matter_sentinel_fcc"}
+  ],
+  "matter_has_deadline_edges": [
+    {"matter_id": "matter_greengrid_epa", "deadline_id": "deadline_greengrid_response"},
+    {"matter_id": "matter_harbor_noaa", "deadline_id": "deadline_harbor_supp_brief"},
+    {"matter_id": "matter_northbank_cms", "deadline_id": "deadline_northbank_client_update"},
+    {"matter_id": "matter_riverstone_intake", "deadline_id": "deadline_riverstone_review"},
+    {"matter_id": "matter_sentinel_fcc", "deadline_id": "deadline_sentinel_client_alert"}
+  ]
+}

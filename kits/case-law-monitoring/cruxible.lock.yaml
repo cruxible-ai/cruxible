@@ -1,12 +1,12 @@
 version: '1'
-config_digest: sha256:8c6cea8f7ba5d785906cc07e58fbe7f0964b13e81c88cf59d4e041c1bb16e47e
-lock_digest: sha256:cd392c0944be2da40e28cd8dea84fa449b7607f08c02d80b75534cebac3a44ba
-generated_at: 2026-07-04 17:44:21.664020+00:00
+config_digest: sha256:7c6e1b30f39ce6378ad9f4e7a37b4ae6838d431bd49b766a28f36c4b5e3dcda2
+lock_digest: sha256:fe14c444bebb8e1d91a10741c34d9fe76d9bb839118795b0b51a2b4989973e4d
+generated_at: 2026-07-05 19:06:55.175181+00:00
 artifacts:
   corpus_seed_bundle:
     kind: directory
     uri: ./data/seed
-    digest: sha256:a5cc965ff65c21e206a079d9ba4aa01586b3a1f25daf02c8174e78e35121900e
+    digest: sha256:7b7197010057fcfa4974389673ec468d8b3d83edf1a156daa3dc7991fd3bf5a5
     metadata:
       description: 'Digest-pinned two-act corpus: real public opinions (CourtListener
         metadata, Chevron-deference cluster) plus the synthetic firm layer. Act two
@@ -18,24 +18,25 @@ providers:
   load_corpus_seed:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::load_corpus_seed
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
     artifact: corpus_seed_bundle
     config: {}
-  fetch_courtlistener_cluster:
+  load_corpus_update:
     version: 0.2.0
-    ref: kit://providers/case_law_monitoring.py::fetch_courtlistener_cluster
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    ref: kit://providers/case_law_monitoring.py::load_corpus_update
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
-    deterministic: false
+    deterministic: true
     side_effects: false
+    artifact: corpus_seed_bundle
     config: {}
   load_docket_feed:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::load_docket_feed
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
@@ -44,7 +45,7 @@ providers:
   load_case_outcome_feed:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::load_case_outcome_feed
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
@@ -53,7 +54,7 @@ providers:
   sweep_stale_deadlines:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::sweep_stale_deadlines
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
@@ -61,7 +62,7 @@ providers:
   extract_holdings_from_opinions:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::extract_holdings_from_opinions
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
@@ -69,7 +70,7 @@ providers:
   link_holdings_to_statutes:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::link_holdings_to_statutes
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
@@ -77,7 +78,7 @@ providers:
   map_holdings_to_issues:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::map_holdings_to_issues
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
@@ -85,7 +86,7 @@ providers:
   classify_opinion_treatment:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::classify_opinion_treatment
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
@@ -93,7 +94,7 @@ providers:
   assess_argument_impact:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::assess_argument_impact
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
@@ -101,15 +102,16 @@ providers:
   scope_matters_to_statutes:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::scope_matters_to_statutes
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
+    artifact: corpus_seed_bundle
     config: {}
   assess_matter_impact:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::assess_matter_impact
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
@@ -117,7 +119,7 @@ providers:
   assess_filing_response_obligations:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::assess_filing_response_obligations
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false
@@ -125,7 +127,7 @@ providers:
   route_review_work:
     version: 0.2.0
     ref: kit://providers/case_law_monitoring.py::route_review_work
-    provider_entrypoint_digest: sha256:42a926cc369265e2e625ad5d0ad812c473370cf5dabd209d5724f74c36c20aea
+    provider_entrypoint_digest: sha256:f4bbc0cbb20e22da4d8d68450da24e3703843851bb85486bbfcb2b36ca116b2f
     runtime: python
     deterministic: true
     side_effects: false

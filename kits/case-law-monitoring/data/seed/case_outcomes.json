@@ -1,0 +1,38 @@
+{
+  "case_outcomes": [
+    {
+      "outcome_id": "outcome_greengrid_2023_settlement",
+      "result": "settled",
+      "resolved_at": "2023-11-17",
+      "notes": "Synthetic prior permit dispute settled after EPA narrowed the permit condition."
+    },
+    {
+      "outcome_id": "outcome_northbank_2023_audit",
+      "result": "won",
+      "resolved_at": "2023-09-08",
+      "notes": "Synthetic audit advice accepted a CMS discretionary interpretation before Loper Bright."
+    }
+  ],
+  "outcome_of_matter_edges": [
+    {"outcome_id": "outcome_greengrid_2023_settlement", "matter_id": "matter_greengrid_epa"},
+    {"outcome_id": "outcome_northbank_2023_audit", "matter_id": "matter_northbank_cms"}
+  ],
+  "outcome_resolved_argument_edges": [
+    {
+      "outcome_id": "outcome_greengrid_2023_settlement",
+      "argument_id": "arg_greengrid_entergy",
+      "role": "primary_argument",
+      "prevailed": true,
+      "weight": "adopted",
+      "notes": "EPA cost-benefit deference remained useful in settlement posture."
+    },
+    {
+      "outcome_id": "outcome_northbank_2023_audit",
+      "argument_id": "arg_northbank_barnhart",
+      "role": "primary_argument",
+      "prevailed": true,
+      "weight": "adopted",
+      "notes": "CMS discretion argument resolved the audit favorably before Chevron was overruled."
+    }
+  ]
+}
