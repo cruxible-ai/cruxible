@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
@@ -12,6 +14,15 @@ from cruxible_core.graph.evidence import (
     evidence_ref_payload,
     merge_evidence_refs,
 )
+from cruxible_core.provider.types import ProviderContext
+
+# Tri-state signal verdict vocabulary. Providers should import these rather
+# than retyping the strings: a typo'd verdict is silently meaningless to
+# governance, never an error.
+VERDICT_SUPPORT = "support"
+VERDICT_UNSURE = "unsure"
+VERDICT_CONTRADICT = "contradict"
+VERDICTS = frozenset({VERDICT_SUPPORT, VERDICT_UNSURE, VERDICT_CONTRADICT})
 
 
 class ParsedTabularBundle(BaseModel):
@@ -107,6 +118,81 @@ def evidence_ref(source: str, source_record_id: str, **extra: Any) -> dict[str, 
     return evidence_ref_payload({"source": source, "source_record_id": source_record_id, **extra})
 
 
+def source_artifact_evidence_ref(
+    artifact_id: str,
+    record_id: str,
+    *,
+    quote: str | None = None,
+    char_start: int | None = None,
+    char_end: int | None = None,
+    content_hash: str | None = None,
+    label: str | None = None,
+    **metadata: Any,
+) -> dict[str, Any]:
+    """Evidence ref into a registered source artifact, with the blessed locator shape.
+
+    This is the dereferenceable-evidence pattern: ``record_id`` is the chunk id
+    inside the artifact, and the locator metadata keys (``quote``,
+    ``char_start``/``char_end``, ``expected_content_hash``) are a shared
+    vocabulary — evidence rendering and drift verification can only generalize
+    across kits if every kit spells them the same way. Use this instead of
+    hand-building the dict so the keys stay converged.
+    """
+    locator = {
+        "quote": quote,
+        "char_start": char_start,
+        "char_end": char_end,
+        "expected_content_hash": content_hash,
+    }
+    payload: dict[str, Any] = {
+        "source": "source_artifact",
+        "source_record_id": record_id,
+        "artifact_id": artifact_id,
+        "metadata": {
+            **{key: value for key, value in locator.items() if value is not None},
+            **metadata,
+        },
+    }
+    if label is not None:
+        payload["label"] = label
+    return evidence_ref_payload(payload)
+
+
+def load_artifact_json(
+    context: ProviderContext | None,
+    filename: str,
+    *,
+    fallback_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Load a JSON object file from the provider's resolved artifact directory.
+
+    Providers must not reach into ``context.artifact`` internals directly —
+    that would freeze runtime attribute paths into de-facto public API. This
+    accessor owns resolution and error reporting; ``fallback_dir`` supports
+    direct provider calls in tests (context=None) and dev trees.
+    """
+    directory: Path | None = None
+    if context is not None and context.artifact is not None and context.artifact.local_path:
+        directory = Path(context.artifact.local_path)
+    elif fallback_dir is not None:
+        directory = fallback_dir
+    if directory is None:
+        raise ValueError(
+            f"no artifact directory available to load '{filename}': the provider has no "
+            "resolved artifact and no fallback_dir was given"
+        )
+    path = directory / filename
+    try:
+        raw = json.loads(path.read_text())
+    except FileNotFoundError as exc:
+        raise ValueError(f"artifact data file not found: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"artifact data file is invalid JSON: {path}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError(f"artifact data file must contain a JSON object: {path}")
+    return raw
+
+
 def _normalize_table_payload(
     table_name: str,
     table_payload: Any,
@@ -144,9 +230,15 @@ def _coerce_rows(rows: list[Any], label: str) -> list[dict[str, Any]]:
 
 
 __all__ = [
+    "VERDICT_CONTRADICT",
+    "VERDICT_SUPPORT",
+    "VERDICT_UNSURE",
+    "VERDICTS",
     "EvidenceRef",
     "JsonItems",
     "ParsedTabularBundle",
     "evidence_ref",
+    "load_artifact_json",
     "merge_evidence_refs",
+    "source_artifact_evidence_ref",
 ]
