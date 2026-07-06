@@ -153,37 +153,47 @@ relationships:
   # --- Work axes ---
   - work_item_depends_on_work_item: WorkItem -> WorkItem       # Sequencing: from depends on to landing/deciding first.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: dependency_basis
   - work_item_part_of_work_item: WorkItem -> WorkItem          # Composition: part-of roll-up; NOT a prerequisite.
   - work_item_spawned_from_work_item: WorkItem -> WorkItem     # Lineage: spawned from; provenance, not prerequisite.
   - work_item_supersedes_work_item: WorkItem -> WorkItem       # Governed: one work item replaces/supersedes another.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: supersession_basis
 
   # --- Governed judgments (proposal_policy -> presets.policies; basis -> rationale prop) ---
   - risk_blocks_work_item: Risk -> WorkItem                    # Governed: a risk blocks/materially delays a work item.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: blocking_basis
   - open_question_blocks_work_item: OpenQuestion -> WorkItem   # Governed: an open question blocks/delays a work item.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: blocking_basis
   - open_question_blocks_decision: OpenQuestion -> Decision    # Governed: an open question blocks a decision.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: blocking_basis
   - work_item_mitigates_risk: WorkItem -> Risk                 # Governed: a work item mitigates/reduces a risk.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: mitigation_basis
   - work_item_answers_open_question: WorkItem -> OpenQuestion  # Governed: a work item answers/investigates a question.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: answer_basis
   - decision_answers_open_question: Decision -> OpenQuestion   # Governed: a decision answers an open question.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: answer_basis
   - decision_supersedes_decision: Decision -> Decision         # Governed: one decision supersedes another.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: supersession_basis
   - decision_constrains_work_item: Decision -> WorkItem        # Governed: a decision constrains how work proceeds.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: constraint_basis
     properties: {impact_type: enum decision_impact_type}
 
@@ -191,13 +201,16 @@ relationships:
   - work_item_targets_subject: WorkItem -> SubjectRef          # Work item targets/changes a domain subject.
   - decision_affects_subject: Decision -> SubjectRef           # Governed: a decision affects a domain subject.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: impact_basis
     properties: {impact_type: enum decision_impact_type}
   - risk_attaches_to_subject: Risk -> SubjectRef               # Governed: a risk attaches to a domain subject.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: impact_basis
   - open_question_concerns_subject: OpenQuestion -> SubjectRef # Governed: an open question concerns a domain subject.
     proposal_policy: standard
+    write_policy: proposal_only
     basis: concern_basis
 
 named_queries:

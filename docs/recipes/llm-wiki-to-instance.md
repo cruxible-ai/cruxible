@@ -94,6 +94,8 @@ ids with heading paths and line ranges. Keep it next to the wiki. For
 `skipped` pages, recover the chunk manifest with
 `cruxible source get <artifact-id> --json`.
 
+When importing the demo fixture, pass `--exclude "README.md"` — the fixture's README explains its deliberate contradictions, and registering it hands stage 2 the answer key.
+
 Useful flags: `--include` (glob, default `**/*.md`), `--exclude` (repeatable;
 `.git`, `node_modules`, and `.obsidian` are always excluded), `--id-prefix`
 (default `wiki`), `--cruxible-bin "uv run cruxible"` when running from a
@@ -132,6 +134,9 @@ Connection:
   (or --server-socket <PATH>). The bearer token is already in
   CRUXIBLE_SERVER_BEARER_TOKEN; never print it.
 - Import manifest: <PATH-TO-wiki-manifest.json>
+- Inspect property schemas and enum vocabularies before writing:
+  cruxible ... schema --json (status enums are lifecycle vocabulary:
+  planned/active/blocked/watching/deferred/closed)
 - The instance runs the agent-operation ontology. Target types:
   WorkItem (open threads someone should act on), Decision (things the team
   decided, with status proposed/accepted/rejected/deferred), Risk (standing
@@ -159,7 +164,9 @@ line ranges, and content hash. As a fallback, dereference by heading:
     --heading "<top heading>" --heading "<subheading>" --block-selector section --json
 
 A dereference returns status available/drifted/unavailable plus the source
-text. If a chunk comes back drifted, stop and report it — do not build state
+text. Chunks overlap by design (section chunks span their blocks): read
+section chunks for context, and cite the tightest block chunk containing
+the quoted phrase. If a chunk comes back drifted, stop and report it — do not build state
 on text that no longer matches its registered hash.
 
 Step 2 — Inventory the claims before writing anything.
@@ -299,6 +306,11 @@ brief's rules exist for: a decision whose own text doubts its rollout, a
 conventions rule the decisions page retired but did not delete, a standup
 "decision" that contradicts the conventions page, and stale sprint items. A
 stage-2 run that marks none of these unsure is a bad run.
+
+> **Reviewer note:** direct-written corrections and OpenQuestions do not
+> appear in the proposal queue — review the agent's step-6 report (or
+> `recent_state_notes`) alongside `group list`, or the flagship
+> contradiction findings never reach you.
 
 ## Stage 3: Review The Queue
 

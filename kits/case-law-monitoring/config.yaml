@@ -237,45 +237,55 @@ relationships:
   - work_item_targets_matter: WorkItem -> Matter    # Work item advances or protects a matter.
   - opinion_creates_work_item: Opinion -> WorkItem  # Governed: an opinion creates a concrete review obligation.
     proposal_policy: work_routing
+    write_policy: proposal_only
     basis: routing_basis
     properties: {obligation_type: enum obligation_type optional}
 
   # --- Governed legal judgments ---
   - matter_turns_on_statute: Matter -> Statute      # Governed: the matter's legal scope depends on this statute or doctrine.
     proposal_policy: matter_scope
+    write_policy: proposal_only
     basis: scope_basis
   - opinion_has_holding: Opinion -> Holding         # Governed: the opinion contains this holding.
     proposal_policy: holdings
+    write_policy: proposal_only
     basis: rationale
     properties: {locator: string optional}
   - holding_interprets_statute: Holding -> Statute  # Governed: the holding interprets this statute or rule.
     proposal_policy: interpretations
+    write_policy: proposal_only
     basis: rationale
     properties: {interpretation_type: enum statute_interpretation_type}
   - holding_addresses_issue: Holding -> LegalIssue  # Governed: the holding materially addresses this tracked issue.
     proposal_policy: issue_links
+    write_policy: proposal_only
     basis: rationale
     properties: {issue_fit: enum issue_fit optional}
   - opinion_treats_opinion: Opinion -> Opinion      # Governed: legally meaningful treatment of a cited opinion (the citator edge).
     proposal_policy: treatments
+    write_policy: proposal_only
     basis: rationale
     properties: {treatment: enum opinion_treatment}
   - holding_supports_argument: Holding -> Argument  # Governed: the holding supports a firm argument.
     proposal_policy: argument_impacts
+    write_policy: proposal_only
     basis: rationale
     properties: {support_strength: enum support_strength optional}
   - holding_undermines_argument: Holding -> Argument  # Governed: the holding undermines or creates risk for a firm argument.
     proposal_policy: argument_impacts
+    write_policy: proposal_only
     basis: rationale
     properties: {risk_type: enum adverse_risk_type optional}
   - opinion_affects_matter: Opinion -> Matter       # Governed: a new opinion affects a firm matter.
     proposal_policy: matter_impacts
+    write_policy: proposal_only
     basis: rationale
     properties:
       impact_level: enum matter_impact_level
       impact_type: enum matter_impact_type?
   - filing_requires_response: Filing -> Matter      # Governed: a filing creates a response obligation; deadline_date is optional because no_action carries none.
     proposal_policy: filing_obligations
+    write_policy: proposal_only
     basis: rationale
     properties:
       response_type: enum response_type?

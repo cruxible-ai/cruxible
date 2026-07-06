@@ -222,6 +222,7 @@ relationships:
   - work_item_addresses_incident: WorkItem -> Incident  # Work item responds to or mitigates an incident.
   - risk_attaches_to_supplier: Risk -> Supplier  # Governed: an operational risk attaches to a supplier.
     proposal_policy: standard_supply
+    write_policy: proposal_only
     basis: impact_basis
 
   # --- Governed cascade judgments (rule-centric trust; auto-resolve on all-support) ---
@@ -229,6 +230,7 @@ relationships:
     properties:
       match_basis: "enum supplier_match_basis?"
       rationale: string
+    write_policy: proposal_only
     proposal_policy:
       signals:
         incident_supplier_scope_match:
@@ -240,6 +242,7 @@ relationships:
     properties:
       alternate_state: "enum alternate_state?"
       rationale: string
+    write_policy: proposal_only
     proposal_policy:
       signals:
         incident_component_cascade:
@@ -252,6 +255,7 @@ relationships:
       impacted_supplier_id: string?
       alternate_state: "enum alternate_state?"
       rationale: string
+    write_policy: proposal_only
     proposal_policy:
       signals:
         incident_assembly_cascade:
