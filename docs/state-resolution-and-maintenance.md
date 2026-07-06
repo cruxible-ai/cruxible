@@ -141,8 +141,8 @@ The runtime enforces four cumulative tiers via `CRUXIBLE_MODE`
 |---|---|
 | `read_only` | queries, receipts, traces, inspect, `group list`/`get`/`status`, state health, workflow planning |
 | `governed_write` | propose groups, run/test/propose workflows, feedback and outcomes, decision records, snapshots, constraints and decision policies, state pulls |
-| `graph_write` | `entity add`/`update`, `relationship add`, batch direct write, **canonical workflow apply**, **group resolve**, **group trust** |
-| `admin` | config reload, locks, clones, backup/restore, state publish, overlays, credentials |
+| `graph_write` | `entity add`/`update`, `relationship add`, batch direct write, **canonical workflow apply**, **group resolve**, **group trust**, tightening/neutral `config refresh` |
+| `admin` | weakening `config refresh`, `config adopt`, config reload, locks, clones, backup/restore, state publish, overlays, credentials |
 
 The split to notice: an agent at `governed_write` can *propose* anything but
 *commit* nothing — resolving a group, applying a canonical preview, and
@@ -274,6 +274,32 @@ agents. Five sections, plus `captured_at` and the current `head_snapshot_id`:
   plus config/graph compatibility warnings;
 - **integrity** — orphan entities, unused entity/relationship types, and
   whether the workflow configuration is locked.
+
+### Config drift and the source pointer
+
+An instance never stores an editable config: `init --kit` writes a
+`config-source.yaml` pointer (ordered kit refs plus at most one instance
+fragment) and the runtime composes the layers at load. Config maintenance is
+therefore receipted, not edited:
+
+- **`cruxible config status`** (read-only) shows the serving composed digest,
+  each layer's current source digest, and whether recomposing the source NOW
+  differs from the last receipted init/refresh/adopt — drift — with the
+  governance classification of that drift.
+- **`cruxible config refresh`** delivers drift: it recomposes, classifies the
+  governance diff (tightening/neutral at `graph_write`, weakening escalates to
+  `admin`), rebuilds the workflow lock, and writes a `config_refresh` receipt.
+- **Un-receipted drift fails closed.** A daemon that loads a pointer whose
+  composition no longer matches the last receipted digest logs a warning at
+  startup and refuses mutations until a receipted refresh — a weakening change
+  cannot slip in by editing the kit source and restarting the daemon.
+- **`cruxible config adopt`** (admin, one-time) migrates a pre-pointer
+  instance that still carries a flattened `config.yaml`: it shows the full
+  accumulated drift since init, and on acceptance writes the pointer,
+  re-materializes the kit dirs, rebuilds the lock, receipts the migration
+  (`config_adopt`), and retires the old file as `config.materialized.bak`.
+  `config reload` is validate-only; its old replace/repoint behavior is
+  retired into refresh/adopt.
 
 ## 4. Repair: When Accepted State Is Wrong
 

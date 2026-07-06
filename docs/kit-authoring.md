@@ -207,6 +207,22 @@ Bundle behavior:
 - Consumers should not silently regenerate published bundled locks. Rebuild the
   kit lock before publishing or distributing a changed kit.
 
+Delivering kit updates to initialized instances:
+
+- `init --kit` does not fork the kit config into the instance: it writes a
+  `config-source.yaml` pointer (the ordered kit refs plus at most one
+  instance-delta fragment) and the runtime composes the layers at load.
+- To ship a config change to a live instance, update the source the ref
+  resolves to and run `cruxible config refresh` — it recomposes, classifies
+  the governance diff (weakening diffs require `admin`), rebuilds the lock,
+  and receipts the swap. `cruxible config status` shows any drift between the
+  source and the last receipted composition.
+- Instances initialized before the pointer existed (a flattened `config.yaml`)
+  migrate once with `cruxible config adopt --kit <ref>`, which also
+  re-materializes `kits/<kit_id>/` from the resolved bundles (delivering
+  provider code updates) and retires the flattened copy as
+  `config.materialized.bak`.
+
 Built-in aliases such as `kev-reference` resolve to versioned OCI kit refs in
 installed packages, with local source-checkout kits overriding those aliases
 during development. Publishing the matching OCI bundles is a 0.2 release
