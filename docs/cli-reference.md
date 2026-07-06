@@ -1866,20 +1866,24 @@ findings.
 
 **Usage:** `cruxible lock [OPTIONS]`
 
-**Purpose:** Generate a workflow lock file for the current instance config.
+**Purpose:** Generate a workflow lock file for the current instance config, or for a bare kit directory with `--kit-dir`.
 
 **Options And Arguments:**
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--force` | no | `False` | boolean | Accept live canonical artifact hashes when regenerating the lock. |
+| `--kit-dir` | no | `` | directory | Build `<kit-dir>/cruxible.lock.yaml` from `<kit-dir>/config.yaml` without loading an instance or contacting a daemon. |
 
 **Output And Side Effects:**
-- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+- Without `--kit-dir`, updates the active instance workflow lock through the local service layer or configured daemon.
+- With `--kit-dir`, performs a pure local kit lock refresh: reads the kit config, resolves overlay `target_state` through sibling kit directories or the kit catalog, writes `<kit-dir>/cruxible.lock.yaml`, and prints the lock digest.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
+- `--kit-dir` cannot be combined with explicit server transport flags or `--instance-id`, and the kit directory must contain `config.yaml`.
+- Canonical artifact digest mismatches fail unless `--force` is used to accept the on-disk hash.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
 ## cruxible outcome
