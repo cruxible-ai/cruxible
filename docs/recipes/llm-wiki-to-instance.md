@@ -84,11 +84,18 @@ source checkout.
 ## Stage 2: The Agent Brief
 
 Point an agent at the manifest and the brief below. The agent needs CLI
-access to the instance and a `graph_write` credential: entity creation and
-factual relationship rows are direct writes (GRAPH_WRITE tier), while
-governed relationship claims go through `group propose`, which
-`governed_write` alone could also do. Do not run stage 2 with an `admin`
-credential; it needs no admin surface.
+access to the instance and a `graph_write` credential — and that tier is the
+*designed* fit, not a compromise. Entities on their own encode no integrated
+knowledge: a Decision or StateNote row is a restatement of the source
+material plus metadata, verifiable against its cited chunk in seconds, and
+an orphan quality check flags anything that never integrates. Knowledge
+enters when things *connect*, and that is where governance lives:
+judgment-shaped relationship types carry `proposal_only` write policies that
+hold at **every** permission tier — a `graph_write` agent structurally
+cannot bypass review on a governed edge. So the migration's trust story is
+exact: restatement-grade rows land directly and auditable, claims land as
+reviewed proposals, regardless of the credential. Do not run stage 2 with an
+`admin` credential; it needs no admin surface.
 
 The brief is a prompt, not a program. Copy it verbatim, fill in the three
 placeholders at the top, and give the agent access to a shell with the

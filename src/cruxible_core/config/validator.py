@@ -1300,6 +1300,24 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                     produced_aliases.add(step.as_)
                 continue
 
+            if step.register_source_artifacts is not None:
+                uses_apply_steps = True
+                spec = step.register_source_artifacts
+                for ref in _iter_refs(
+                    [spec.items, spec.artifact_id, spec.content, spec.label, spec.original_uri]
+                ):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                        allow_item=True,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
             if step.assert_not_truncated is not None:
                 if step.assert_not_truncated.step not in produced_aliases:
                     errors.append(

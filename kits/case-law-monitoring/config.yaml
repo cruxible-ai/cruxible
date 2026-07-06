@@ -1113,9 +1113,23 @@ workflows:
 
   sync_corpus_update:
     type: canonical
-    description: Apply reviewed corpus rows (from refresh_corpus) as opinions, courts, judges, and citation edges.
+    description: >
+      Apply reviewed corpus rows (from refresh_corpus) as opinions, courts,
+      judges, and citation edges. Opinion texts arriving with the update are
+      pinned as source artifacts in the same apply, so treatment evidence
+      dereferences without a separate CLI registration pass.
     contract_in: CorpusSeedOutput
     steps:
+      - id: pin_texts
+        register_source_artifacts:
+          items: $input.opinion_texts
+          artifact_id: $item.source_artifact_id
+          content: $item.plain_text
+          kind: markdown
+          label: $item.opinion_id
+          original_uri: $item.source_url
+          retention: manifest_only
+        as: pinned
       - id: opinions
         make_entities:
           entity_type: Opinion
