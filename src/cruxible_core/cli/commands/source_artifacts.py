@@ -10,11 +10,18 @@ from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _emit_json,
+    console,
     json_option,
+)
+from cruxible_core.cli.formatting import (
+    source_artifact_chunks_table,
+    source_artifacts_table,
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.service import (
     service_dereference_source_evidence,
+    service_get_source_artifact,
+    service_list_source_artifacts,
     service_register_source_artifact,
 )
 
@@ -22,6 +29,74 @@ from cruxible_core.service import (
 @click.group("source")
 def source_group() -> None:
     """Register and dereference source-backed evidence."""
+
+
+@source_group.command("list")
+@click.option("--limit", default=50, type=click.IntRange(min=0), help="Max artifacts to show.")
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
+@json_option
+@handle_errors
+def list_source_artifacts(limit: int, offset: int, output_json: bool) -> None:
+    """List registered source artifacts."""
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.list_source_artifacts(
+            instance_id,
+            limit=limit,
+            offset=offset,
+        ),
+        lambda instance: service_list_source_artifacts(
+            instance,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    console.print(source_artifacts_table(result.items))
+    click.echo(f"Total: {result.total}  Truncated: {result.truncated}")
+
+
+@source_group.command("get")
+@click.argument("source_artifact_id")
+@click.option(
+    "--chunks/--no-chunks",
+    "show_chunks",
+    default=True,
+    show_default=True,
+    help="Show chunk metadata table in human output.",
+)
+@json_option
+@handle_errors
+def get_source_artifact(
+    source_artifact_id: str,
+    show_chunks: bool,
+    output_json: bool,
+) -> None:
+    """Read source artifact metadata and chunk summaries."""
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.get_source_artifact(instance_id, source_artifact_id),
+        lambda instance: service_get_source_artifact(
+            instance,
+            source_artifact_id=source_artifact_id,
+        ),
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+
+    click.echo(f"Source artifact: {result.source_artifact_id}")
+    click.echo(f"  Kind: {result.kind}")
+    click.echo(f"  Label: {result.label or ''}")
+    click.echo(f"  Original URI: {result.original_uri or ''}")
+    click.echo(f"  Retention: {result.retention}")
+    content_available = "true" if result.content_available else "false"
+    click.echo(f"  Content available: {content_available}")
+    if not result.content_available and result.content_unavailable_reason:
+        click.echo(f"  Reason: {result.content_unavailable_reason}")
+
+    if show_chunks:
+        console.print(source_artifact_chunks_table(result.chunks))
 
 
 @source_group.command("register")

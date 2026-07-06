@@ -338,6 +338,47 @@ def resolutions_table(resolutions: list[GroupResolution]) -> Table:
     return table
 
 
+def source_artifacts_table(items: list[Any]) -> Table:
+    """Build a Rich table for registered source artifact summaries."""
+    table = Table(title="Source Artifacts", expand=True)
+    table.add_column("Artifact ID", style="cyan", overflow="fold", min_width=11)
+    table.add_column("Kind", overflow="fold", min_width=4)
+    table.add_column("Label", overflow="fold", min_width=8)
+    table.add_column("Retention", overflow="fold", min_width=13)
+    table.add_column("Chunks", justify="right", overflow="fold", min_width=6)
+    table.add_column("Registered", overflow="fold", min_width=10)
+
+    for item in items:
+        table.add_row(
+            item.source_artifact_id,
+            item.kind,
+            item.label or "",
+            item.retention,
+            str(item.chunk_count),
+            item.registered_at,
+        )
+    return table
+
+
+def source_artifact_chunks_table(chunks: list[Any]) -> Table:
+    """Build a Rich table for source artifact chunk summaries."""
+    table = Table(title="Source Artifact Chunks", expand=True)
+    table.add_column("Chunk ID", style="cyan", overflow="fold", min_width=12)
+    table.add_column("Heading Path", overflow="fold", ratio=2)
+    table.add_column("Block Type")
+    table.add_column("Lines", justify="right")
+
+    for chunk in chunks:
+        heading_path = " > ".join(chunk.heading_path)
+        table.add_row(
+            chunk.chunk_id,
+            heading_path,
+            chunk.block_type,
+            f"{chunk.line_start}-{chunk.line_end}",
+        )
+    return table
+
+
 def schema_table(config: CoreConfig) -> Table:
     """Build a Rich table showing the config schema."""
     table = Table(title=f"Schema: {config.name}")
