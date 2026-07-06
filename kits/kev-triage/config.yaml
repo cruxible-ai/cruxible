@@ -188,6 +188,7 @@ relationships:
       inventory_source: string
       last_seen_at: date
       match_basis: string
+    write_policy: proposal_only
     proposal_policy:
       signals:
         software_product_match:
@@ -207,6 +208,7 @@ relationships:
       exposure_basis: string
       control_basis: string
       review_due_at: date
+    write_policy: proposal_only
     proposal_policy:
       signals:
         product_version_evidence:
@@ -226,6 +228,7 @@ relationships:
       exception_id: string
       review_due_at: date
       scope_basis: string
+    write_policy: proposal_only
     proposal_policy:
       signals:
         policy_review:
@@ -237,6 +240,7 @@ relationships:
     properties:
       basis: string
       source: string
+    write_policy: proposal_only
     proposal_policy:
       signals:
         vulnerability_classification:
@@ -262,6 +266,7 @@ relationships:
       verified_at: date
       ticket_id: string
       verification_basis: string
+    write_policy: proposal_only
     proposal_policy:
       signals:
         remediation_verification:

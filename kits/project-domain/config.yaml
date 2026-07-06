@@ -138,18 +138,22 @@ relationships:
   # --- Governed interpretation relationships for agent proposals ---
   - roadmap_item_depends_on_roadmap_item: RoadmapItem -> RoadmapItem  # Governed judgment that one roadmap item depends on another roadmap item landing, being decided, or stabilizing first.
     proposal_policy: standard_project
+    write_policy: proposal_only
     basis: dependency_basis
 
   - decision_affects_area: Decision -> ProductArea  # Governed judgment that a decision affects a product area.
     proposal_policy: standard_project
+    write_policy: proposal_only
     basis: impact_basis
 
   - decision_affects_capability: Decision -> Capability  # Governed judgment that a decision affects a capability.
     proposal_policy: standard_project
+    write_policy: proposal_only
     basis: impact_basis
 
   - decision_affects_roadmap_item: Decision -> RoadmapItem  # Governed judgment that a decision affects a roadmap item.
     proposal_policy: standard_project
+    write_policy: proposal_only
     properties:
       impact_type:
         type: string
@@ -159,14 +163,17 @@ relationships:
 
   - risk_attaches_to_area: Risk -> ProductArea  # Governed judgment that a risk attaches to a product area.
     proposal_policy: standard_project
+    write_policy: proposal_only
     basis: impact_basis
 
   - risk_blocks_roadmap_item: Risk -> RoadmapItem  # Governed judgment that a risk blocks or materially delays a roadmap item.
     proposal_policy: standard_project
+    write_policy: proposal_only
     basis: blocking_basis
 
   - open_question_blocks_roadmap_item: OpenQuestion -> RoadmapItem  # Governed judgment that an open question blocks a roadmap item.
     proposal_policy: standard_project
+    write_policy: proposal_only
     basis: blocking_basis
 
 named_queries:

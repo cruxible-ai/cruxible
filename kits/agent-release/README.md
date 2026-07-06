@@ -161,9 +161,9 @@ This layer declares no providers; state is written directly by operators and age
 <!-- CRUXIBLE:BEGIN governance-table -->
 | Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Agent Version Supersedes Version | Agent Version -> Agent Version | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | Supersession Resolution |
+| Agent Version Supersedes Version | Agent Version -> Agent Version | Proposal only (direct write refused) | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | Supersession Resolution |
 | Eval Run Certifies Version | Eval Run -> Agent Version | Proposal only (direct write refused) | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Certification Resolution |
-| Risk Attaches To Agent System | Risk -> Agent System | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Risk Attaches To Agent System | Risk -> Agent System | Proposal only (direct write refused) | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 <!-- CRUXIBLE:END governance-table -->
 
 <!-- CRUXIBLE:BEGIN mutation-guards -->

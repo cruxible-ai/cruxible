@@ -121,12 +121,14 @@ relationships:
     write_policy: proposal_only
   - agent_version_supersedes_version: AgentVersion -> AgentVersion  # Governed: one version replaces another.
     proposal_policy: standard_release
+    write_policy: proposal_only
     basis: supersession_basis
 
   # --- Seam edges into the operation layer ---
   - work_item_targets_agent_version: WorkItem -> AgentVersion  # Work item builds or changes an agent version.
   - risk_attaches_to_agent_system: Risk -> AgentSystem         # Governed: a risk attaches to an agent system.
     proposal_policy: standard_release
+    write_policy: proposal_only
     basis: impact_basis
 
 named_queries:
