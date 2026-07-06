@@ -2413,19 +2413,74 @@ evidence locators.
 
 **Subcommands:**
 
+- `cruxible source list` - List registered source artifact summaries.
+- `cruxible source get` - Read one registered source artifact's metadata and chunk map.
 - `cruxible source register` - Parse and register a local Markdown source artifact.
 - `cruxible source dereference` - Resolve a registered source-evidence locator back to source text.
 
 **Output And Side Effects:**
+- `source list`, `source get`, and `source dereference` are read-only.
 - `source register` writes a source artifact manifest, parsed chunk metadata, and
   optional archived source bytes into the current instance.
-- `source dereference` is read-only.
 
 **Common Errors:**
 - Missing local instance or stale daemon `--instance-id`.
 - Permission mode too low for governed write/read operations.
 - Unsupported source kind, missing local source path, incomplete locator, or
   drifted source content hash.
+
+## cruxible source list
+
+**Usage:** `cruxible source list [OPTIONS]`
+
+**Purpose:** List registered source artifact summaries for the current instance.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--limit` | no | `50` | integer | Max artifacts to show. |
+| `--offset` | no | `0` | integer | Rows to skip. |
+| `--json` | no | `False` | boolean | Output the full list contract payload as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Human output renders a table with artifact id, kind, label,
+  retention, chunk count, and registration timestamp, followed by total and
+  truncated pagination status.
+- With `--json`, emits the full `SourceArtifactListResult` contract payload.
+
+**Common Errors:**
+- Missing local instance or stale daemon `--instance-id`.
+- Permission mode too low for source artifact reads.
+- Invalid negative pagination values.
+
+## cruxible source get
+
+**Usage:** `cruxible source get [OPTIONS] ARTIFACT_ID`
+
+**Purpose:** Read a registered source artifact's metadata and chunk map.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `ARTIFACT_ID` | yes | `Sentinel.UNSET` | text | Source artifact ID returned by `source register`. |
+| `--chunks / --no-chunks` | no | `True` | boolean | Show or hide the chunk metadata table in human output. |
+| `--json` | no | `False` | boolean | Output the full read contract payload as JSON, including chunk text when available. |
+
+**Output And Side Effects:**
+- Read-only. Human output renders an artifact header with id, kind, label,
+  original URI, retention, and content availability; when content is unavailable,
+  the reason is shown.
+- By default, human output also renders a chunk table with chunk id, heading path,
+  block type, and line range. It does not print full chunk text; use `--json`
+  or `source dereference` when source body text is needed.
+- With `--json`, emits the full `SourceArtifactReadResult` contract payload.
+
+**Common Errors:**
+- Missing local instance or stale daemon `--instance-id`.
+- Permission mode too low for source artifact reads.
+- Unknown source artifact ID.
 
 ## cruxible source register
 
