@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import os
 from collections.abc import Mapping
 from typing import Any, TypeVar
 
@@ -22,13 +23,25 @@ from cruxible_client.errors import (
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
+def _default_timeout() -> httpx.Timeout:
+    """Connect fast-fails; reads wait for real work.
+
+    Workflow runs and applies legitimately take tens of seconds, and httpx's
+    5-second default read timeout aborted them mid-flight — while the server
+    kept going, so an "unreachable" error could follow a committed apply.
+    ``CRUXIBLE_CLIENT_TIMEOUT_S`` overrides the read/write budget.
+    """
+    read_s = float(os.environ.get("CRUXIBLE_CLIENT_TIMEOUT_S", "180"))
+    return httpx.Timeout(connect=5.0, read=read_s, write=read_s, pool=5.0)
+
+
 class _TransportGuard:
     """Proxy over an httpx.Client that translates transport-level failures.
 
-    Connection refused, timeouts, and DNS errors surface from httpx as
-    ``httpx.TransportError`` subclasses. We re-raise them as
-    ``ServerUnreachableError`` so callers (CLI, agents) get a friendly,
-    single-line message naming the target instead of a raw traceback.
+    Connection refused and DNS errors surface as ``ServerUnreachableError``
+    with the original wording. Read timeouts get DIFFERENT wording: the
+    request reached the server and may have completed — telling the caller
+    "could not reach" after a committed mutation is a trust bug.
     """
 
     def __init__(self, client: httpx.Client, target: str) -> None:
@@ -39,6 +52,17 @@ class _TransportGuard:
         request = getattr(self._client, method)
         try:
             response: httpx.Response = request(*args, **kwargs)
+        except (httpx.ReadTimeout, httpx.WriteTimeout) as exc:
+            budget = os.environ.get("CRUXIBLE_CLIENT_TIMEOUT_S", "180")
+            raise ServerUnreachableError(
+                self._target,
+                (
+                    f"no response after {budget}s — the request reached the server and "
+                    "may still be running or may already have completed. Do not assume "
+                    "failure: verify state (receipts, preview) before retrying, and "
+                    "raise CRUXIBLE_CLIENT_TIMEOUT_S for long operations"
+                ),
+            ) from exc
         except httpx.TransportError as exc:
             raise ServerUnreachableError(self._target, str(exc) or exc.__class__.__name__) from exc
         return response
@@ -79,11 +103,16 @@ class CruxibleClient:
                 base_url="http://cruxible",
                 headers=headers,
                 transport=httpx.HTTPTransport(uds=socket_path),
+                timeout=_default_timeout(),
             )
         else:
             assert base_url is not None
             target = base_url
-            raw_client = httpx.Client(base_url=base_url, headers=headers)
+            raw_client = httpx.Client(
+                base_url=base_url,
+                headers=headers,
+                timeout=_default_timeout(),
+            )
         self._client = _TransportGuard(raw_client, target)
 
     def close(self) -> None:
