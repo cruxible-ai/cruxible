@@ -79,6 +79,135 @@ while IFS=$'\t' read -r opinion_id source_url; do
 done
 ```
 
+## Run the two-act demo
+
+The kit's story runs in two acts: act one builds the pre-2024 world (the
+doctrine standing, nothing alarming), act two lands Loper Bright and the
+alarm fires. This is the complete run order for a fresh instance. Several
+steps below pause at `group resolve` — the workflow proposed judgment and
+nothing becomes accepted state until a reviewer approves it. That pause
+**is** the product working, not friction to script away.
+
+**Setup.** This kit composes over agent-operation, whose Actor type is
+auth-managed, so it needs a fresh auth-on daemon. Start one, initialize the
+composed instance with the daemon's bootstrap secret as the bearer, then
+claim the admin credential and mint a working token exactly as in the
+repository README's Get Started:
+
+```bash
+cruxible init --kit agent-operation --kit case-law-monitoring --bootstrap
+```
+
+With the connection context set and a token in
+`CRUXIBLE_SERVER_BEARER_TOKEN`, register the opinion texts using the
+`source register --id` loop from the Opinion-text evidence section above.
+
+**Act one — build the world.** Canonical workflows preview first, then
+apply:
+
+```bash
+cruxible run --workflow build_corpus --save-preview corpus-preview.json
+cruxible apply --preview-file corpus-preview.json
+```
+
+**Holdings: analyze → apply → propose.** The extractor emits one candidate
+payload; the same file seeds the inert Holding entities and the governed
+`opinion_has_holding` proposal:
+
+```bash
+cruxible run --workflow analyze_opinions_for_holdings --json \
+  | jq '{items: .output.items}' > holding-candidates.json
+
+cruxible run --workflow apply_candidate_holdings \
+  --input-file holding-candidates.json --save-preview holdings-preview.json
+cruxible apply --preview-file holdings-preview.json
+
+cruxible propose --workflow propose_holdings_from_opinion \
+  --input-file holding-candidates.json
+```
+
+The proposal lands as a pending candidate group. Review it and resolve —
+this is the pattern for every `propose` below:
+
+```bash
+cruxible group list --status pending_review
+cruxible group get --group <group-id>
+cruxible group resolve --group <group-id> --action approve \
+  --expected-pending-version <pending-version> \
+  --rationale "Verified holdings against the registered opinion text."
+```
+
+**Wire holdings to statutes, issues, and arguments.** Each layer reads the
+one before it, so resolve each group before running the next workflow:
+
+```bash
+cruxible propose --workflow propose_statute_interpretations   # then resolve
+cruxible propose --workflow propose_holding_issue_links       # then resolve
+cruxible propose --workflow propose_argument_support          # then resolve
+```
+
+`propose_argument_support` is what makes the finale reachable: the bad-law
+alarm walks matter → argument → supporting holding → treated opinion, and
+without accepted `holding_supports_argument` edges it has nothing to
+traverse.
+
+**Act-one quiet check.** Nothing negatively treats the firm's cited
+authorities yet:
+
+```bash
+cruxible query run negative_treatment_for_cited_authorities \
+  --param matter_id=matter_greengrid_epa
+```
+
+Zero results is the point — the doctrine is standing.
+
+**Act two — Loper Bright arrives.** `refresh_corpus` loads the bundled
+update fixture and returns rows for review; `sync_corpus_update` applies
+them:
+
+```bash
+cruxible run --workflow refresh_corpus --json | jq '.output' > corpus-update.json
+
+cruxible run --workflow sync_corpus_update \
+  --input-file corpus-update.json --save-preview sync-preview.json
+cruxible apply --preview-file sync-preview.json
+
+cruxible propose --workflow propose_opinion_treatment          # then resolve
+```
+
+The treatment group is the governed citator entry: the overrules /
+abrogates / limits rows arrive with quote-and-offset evidence, and negative
+treatment always requires review.
+
+**The payoff.**
+
+```bash
+cruxible query run supporting_authority_now_bad_law \
+  --param matter_id=matter_greengrid_epa
+```
+
+Loper Bright surfaces as the opinion that overruled this matter's
+supporting authority, newest treatment first, with a receipt for the whole
+traversal.
+
+**Route the review work.** The router suggests review obligations from the
+accepted treatments and impacts; applying them creates base WorkItems
+(planned, unowned) that close only through the operating layer's review
+gate:
+
+```bash
+cruxible run --workflow analyze_review_work --json \
+  | jq '{items: .output.items}' > work-candidates.json
+
+cruxible run --workflow apply_review_work_items \
+  --input-file work-candidates.json --save-preview work-preview.json
+cruxible apply --preview-file work-preview.json
+```
+
+To attach the obligations to the opinions that created them, feed the same
+payload to `cruxible propose --workflow propose_opinion_work_links
+--input-file work-candidates.json` and resolve the group.
+
 ## The agent pathway (when logic can't be bottled)
 
 The bundled analysis providers are the **zero-LLM floor**: joins over curated
@@ -92,8 +221,9 @@ For real operation, the intelligence steering the ship supplies the judgment
 through the **same contracts and the same gates**:
 
 1. **Context out.** The agent reads the registered opinion text
-   (`cruxible source read` / evidence dereference) and queries the matter
-   graph for whatever context it needs.
+   (`cruxible source dereference` for passages, `cruxible source get` for
+   an artifact's chunk manifest) and queries the matter graph for whatever
+   context it needs.
 2. **Judgment in, as contract rows.** The agent authors its own
    holding/treatment/impact rows — same shapes the providers emit (see
    Provider Contracts below) — and feeds them to the proposal workflows with
@@ -206,6 +336,10 @@ flowchart LR
 <!-- CRUXIBLE:END schema-catalog -->
 
 ## Workflows
+
+The generated diagram below lists workflows alphabetically, not in run
+order — the run order is in [Run the two-act demo](#run-the-two-act-demo)
+above.
 
 <!-- CRUXIBLE:BEGIN workflow-pipeline -->
 ```mermaid

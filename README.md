@@ -4,9 +4,9 @@
   </a>
 </p>
 
-# Cruxible Core
+# Cruxible
 
-[![PyPI version](https://img.shields.io/pypi/v/cruxible-core)](https://pypi.org/project/cruxible-core/)
+[![PyPI version](https://img.shields.io/pypi/v/cruxible)](https://pypi.org/project/cruxible/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
@@ -48,8 +48,9 @@ uv sync --extra server --extra mcp
 source .venv/bin/activate
 ```
 
-Start the daemon with runtime auth on. It binds to `127.0.0.1:8100`,
-generates a one-time bootstrap secret, and writes it to a `0600` file:
+Start the daemon with runtime auth on. It binds to `127.0.0.1:8100` (pass
+`--port` if 8100 is taken), generates a one-time bootstrap secret, and
+writes it to a `0600` file:
 
 ```bash
 CRUXIBLE_SERVER_AUTH=true CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" \
@@ -114,6 +115,10 @@ run open (no tokens) for a local experiment, start the daemon without
 agent-operation, refuse to load with an error naming exactly which config
 keys to remove, rather than silently degrading.
 
+One thing to know before moving on: once its bootstrap secret is claimed,
+an auth-on daemon cannot create additional instances in that run — the
+quickstart's `init` commands need a fresh daemon started alongside this one
+(see [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/runtime-auth-and-agent-roles.md)).
 For the full bootstrap flow, permission tiers, and hardening, see the
 [Quickstart](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/quickstart.md) and
 [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/runtime-auth-and-agent-roles.md).
@@ -353,7 +358,7 @@ CLI / HTTP client / MCP tools
   thin surfaces over the service layer
           |
           v
-Cruxible Core
+Cruxible
   deterministic runtime, no LLM inside
           |
           v
@@ -401,7 +406,7 @@ wire your own data before running the workflows.
 
 For agents, prefer a split environment:
 
-- `cruxible-core` runs in a daemon/runtime environment.
+- Cruxible runs in a daemon/runtime environment.
 - The agent environment installs `cruxible-client` or uses MCP.
 - `CRUXIBLE_REQUIRE_SERVER=1` keeps the agent on the daemon path.
 - `CRUXIBLE_SERVER_STATE_DIR` lives outside the agent's writable workspace.
@@ -462,7 +467,7 @@ expose only the client, HTTP, or MCP surface. See
 
 ## Technology
 
-Cruxible Core uses [Pydantic](https://docs.pydantic.dev/) for validation,
+Cruxible uses [Pydantic](https://docs.pydantic.dev/) for validation,
 [NetworkX](https://networkx.org/) for in-memory graph operations,
 [Polars](https://pola.rs/) for data operations, [SQLite](https://sqlite.org/)
 for local durable state, [FastAPI](https://fastapi.tiangolo.com/) for the daemon,

@@ -1,6 +1,6 @@
 # Guide For AI Agents
 
-This guide is the operating playbook for agents that use Cruxible Core. The
+This guide is the operating playbook for agents that use Cruxible. The
 agent supplies interpretation and planning. Cruxible supplies deterministic
 execution, governed state transitions, receipts, traces, review groups, and
 query surfaces.

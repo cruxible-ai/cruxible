@@ -25,7 +25,9 @@ Determinism and idempotence:
   since the old artifact's refs must keep reporting drift, not silently rebind.
 - Re-runs are idempotent: `cruxible source register --id` refuses duplicates
   ("... is already registered"), which this script records as status
-  "skipped", not an error.
+  "skipped", not an error. A skipped page's chunk manifest is not re-emitted,
+  but it is recoverable from the daemon: `cruxible source get <artifact-id>
+  --json` returns the full chunk list.
 
 Auth: the CLI reads CRUXIBLE_SERVER_BEARER_TOKEN from the environment. This
 script passes the environment through untouched and never prints the token.

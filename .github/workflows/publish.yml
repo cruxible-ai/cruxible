@@ -30,7 +30,7 @@ jobs:
 
           if core_version != client_version:
               raise SystemExit(
-                  f"Version mismatch: cruxible-core={core_version} cruxible-client={client_version}"
+                  f"Version mismatch: cruxible={core_version} cruxible-client={client_version}"
               )
           if expected not in dependencies:
               raise SystemExit(f"Missing exact dependency pin: {expected}")

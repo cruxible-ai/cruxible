@@ -44,6 +44,11 @@ receipted — with composable starter kits and a complete evidence loop.
 
 ### Changed
 
+- **The package is now `cruxible`** (was `cruxible-core`): `pip install
+  cruxible`. The import remains `cruxible_core` for 0.2. Existing 0.1.x
+  installs of `cruxible-core` are unaffected; a compatibility stub will
+  follow.
+
 - Utility workflow outputs pipe into strict contracts: core strips its own
   `source_metadata` envelope at workflow-input validation (undeclared extras
   are still refused).

@@ -61,20 +61,38 @@ credential.
 Two things to know before the first real run:
 
 - **Daemon path containment.** `source register` resolves paths on the
-  daemon side and refuses paths outside the instance root. If the wiki lives
-  elsewhere, start the daemon with `CRUXIBLE_ALLOWED_ROOTS=<wiki-root>` in
-  the daemon's environment.
+  daemon side and refuses anything outside the instance's registered
+  workspace with `source_path must stay within the registered workspace`.
+  Know what that root actually is: for an instance created with
+  `init --bootstrap` on an auth-on daemon, the workspace root is the
+  **daemon-owned instance directory** —
+  `<server-state-dir>/instances/<instance-id>` — not your checkout and not
+  the directory you ran `init` from. A wiki inside the repo checkout is
+  still outside that root, so in daemon mode expect to need
+  `CRUXIBLE_ALLOWED_ROOTS=<abs-wiki-root>` (comma-separated absolute paths)
+  in the **daemon's** environment; setting it on the client does nothing.
+  (Instances created with an explicit `--root-dir`, such as overlays, use
+  that workspace as their root instead.) Adding the variable means a daemon
+  restart, and restarting is safe: with the same state directory and
+  `CRUXIBLE_SERVER_AUTH=true`, every instance and every minted credential
+  survives — the credential store lives in the state directory, and your
+  existing bearer token keeps working.
 - **Idempotence.** Re-running the import is safe: `source register --id`
   refuses duplicate ids, and the script records those pages as `skipped`.
-  If a page's content changes after registration, its artifact keeps the old
-  pinned hash and dereferences report `drifted` — register the changed page
-  as a new artifact rather than expecting the old one to rebind.
+  A skipped page's chunk manifest is not re-emitted into the file manifest,
+  but it is never lost — `cruxible source get <artifact-id> --json` returns
+  the full chunk list from the daemon. If a page's content changes after
+  registration, its artifact keeps the old pinned hash and dereferences
+  report `drifted` — register the changed page as a new artifact rather
+  than expecting the old one to rebind.
 
 The manifest (`wiki-manifest.json`) is the handoff to stage 2. Per file it
 records the path, artifact id, byte count, status
 (`registered`/`skipped`/`failed`, or `planned` in dry-run), content hash,
 and — for freshly registered pages — the chunk manifest: deterministic chunk
-ids with heading paths and line ranges. Keep it next to the wiki.
+ids with heading paths and line ranges. Keep it next to the wiki. For
+`skipped` pages, recover the chunk manifest with
+`cruxible source get <artifact-id> --json`.
 
 Useful flags: `--include` (glob, default `**/*.md`), `--exclude` (repeatable;
 `.git`, `node_modules`, and `.obsidian` are always excluded), `--id-prefix`
@@ -129,7 +147,13 @@ chunks (chunk_id, heading_path, line ranges). Read sections with:
   cruxible ... source dereference --artifact <artifact_id> --chunk <chunk_id> --json
 
 If a page shows status "skipped" in the manifest (registered on an earlier
-run, so no chunk list), dereference by heading instead:
+run, so no chunk list there), fetch the full chunk manifest from the daemon
+and read its chunks as normal:
+
+  cruxible ... source get <artifact_id> --json
+
+The response lists every chunk with chunk_id, heading_path, block_selector,
+line ranges, and content hash. As a fallback, dereference by heading:
 
   cruxible ... source dereference --artifact <artifact_id> \
     --heading "<top heading>" --heading "<subheading>" --block-selector section --json

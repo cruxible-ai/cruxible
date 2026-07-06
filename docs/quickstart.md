@@ -7,6 +7,22 @@ The recommended `0.2` shape is a local Cruxible daemon, launched with
 owns state; the CLI, MCP server, client SDK, GUI, and agent harness talk to it
 through Cruxible surfaces.
 
+This guide assumes a **fresh daemon** with no instance yet. If you already
+have an auth-on daemon from the README's Get Started, its bootstrap secret
+is spent and it cannot create this guide's instances — `init` fails with
+`InstanceScopeError`. Leave that daemon running and start a second one
+alongside it, on its own port and state directory:
+
+```bash
+CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server-quickstart" \
+  cruxible server start --port 8101
+```
+
+Then use `http://127.0.0.1:8101` wherever the commands below say
+`http://127.0.0.1:8100`. See
+[Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md#one-daemon-one-instance-02)
+for the model behind this.
+
 ## Prerequisites
 
 - Python 3.11 or later
@@ -104,11 +120,18 @@ Every query returns a receipt ID. In MCP, fetch the full proof with
 `cruxible_receipt(instance_id, "<receipt-id>")`. The CLI `explain` command
 renders receipts in both server and direct-local modes.
 
-## Create A Local Overlay
+## Create A Local Overlay (Optional)
 
-The KEV triage kit is an overlay kit. It tracks the published KEV reference
+This section is optional — skip it if you only want the reference state. The
+KEV triage kit is an overlay kit. It tracks the published KEV reference
 state and adds local assets, services, controls, exceptions, remediation,
 incidents, findings, and governed proposal workflows.
+
+One extra prerequisite for the `--state-ref` path: the
+[oras](https://oras.land/docs/installation) CLI (`brew install oras` on
+macOS). The state catalog resolves `--state-ref` aliases to OCI refs, and
+the OCI transport shells out to `oras`. The `file://` path below needs no
+extra tooling.
 
 ```bash
 cruxible --server-url http://127.0.0.1:8100 state create-overlay \
@@ -117,10 +140,25 @@ cruxible --server-url http://127.0.0.1:8100 state create-overlay \
   --root-dir "$PWD/kev-triage-workspace"
 ```
 
-`--state-ref kev-reference` resolves through the published state catalog. In a
-source checkout before published OCI reference states are available, publish the
-reference instance to a local `file://` transport and pass `--transport-ref`
-instead of `--state-ref`.
+`--state-ref kev-reference` resolves through the published state catalog. In
+a source checkout before published OCI reference states are available (or
+without `oras`), publish the reference instance you built above to a local
+`file://` transport and pass `--transport-ref` instead of `--state-ref`:
+
+```bash
+cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> state publish \
+  --transport-ref "file://$PWD/releases/kev-reference/v1" \
+  --state-id kev-reference \
+  --release-id v1
+
+cruxible --server-url http://127.0.0.1:8100 state create-overlay \
+  --transport-ref "file://$PWD/releases/kev-reference/v1" \
+  --kit kev-triage \
+  --root-dir "$PWD/kev-triage-workspace"
+```
+
+`file://` refs must be absolute paths, and publish refuses a target that
+already exists — pick a new release directory per publish.
 
 The command returns a new overlay `instance_id` and locks the overlay as part
 of creation. Preview the local canonical state refresh and apply it:

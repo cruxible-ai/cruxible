@@ -1,6 +1,6 @@
 # Concepts
 
-Cruxible Core is a deterministic state runtime with receipts. It gives
+Cruxible is a deterministic state runtime with receipts. It gives
 agents and humans a shared, governed substrate for domain state that should
 survive beyond one prompt, one chat, or one run.
 
@@ -40,7 +40,7 @@ Permission modes are meaningful at that boundary:
 | `graph_write` | Governed write plus raw graph mutation and group resolution |
 | `admin` | Full lifecycle, including init, locks, canonical apply, ingest, and config mutation |
 
-If an agent can import `cruxible-core`, read the daemon state directory, or
+If an agent can import `cruxible_core`, read the daemon state directory, or
 control the daemon runtime, these modes are advisory. For stronger local
 separation, see [Isolated Deployment](isolated-deployment.md).
 

@@ -1,6 +1,6 @@
 # Config Reference
 
-Cruxible Core configs are YAML files that define a decision domain: entity
+Cruxible configs are YAML files that define a decision domain: entity
 types, relationships, named queries, constraints, workflows, providers,
 artifacts, quality checks, feedback profiles, outcome profiles, and decision
 policies, plus mutation guards for configured state writes. AI agents generate

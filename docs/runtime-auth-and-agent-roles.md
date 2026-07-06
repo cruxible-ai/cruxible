@@ -71,6 +71,41 @@ Runtime credential tokens are stored server-side as hashes. Plaintext token
 material is returned only when a credential is created, rotated, or bootstrap is
 claimed.
 
+## One Daemon, One Instance (0.2)
+
+On an auth-enabled daemon, only the bootstrap bearer can create an instance.
+Every runtime credential minted afterwards — including `ADMIN` — is scoped to
+exactly one instance, and the bootstrap secret is consumed by its first
+claim. The practical `0.2` model: a daemon whose bootstrap has been claimed
+serves the instance it bootstrapped, and any `init` sent with an
+instance-scoped credential fails with `InstanceScopeError` regardless of
+permission mode. The bootstrap secret cannot help at that point; it is
+already spent.
+
+To create a second instance, stand up a second daemon with its own port,
+state directory, and bootstrap file:
+
+```bash
+CRUXIBLE_SERVER_AUTH=true CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server-2" \
+  cruxible server start --port 8101 \
+  --bootstrap-secret-file "$HOME/.cruxible/bootstrap-2.secret"
+```
+
+Then bootstrap it exactly as before, pointing at the new port:
+
+```bash
+export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$HOME/.cruxible/bootstrap-2.secret")"
+cruxible --server-url http://127.0.0.1:8101 init --kit <kit> --bootstrap
+cruxible context connect --server-url http://127.0.0.1:8101 --instance-id <instance-id>
+cruxible credential claim-bootstrap --secret-file "$HOME/.cruxible/bootstrap-2.secret"
+```
+
+Alternatively, restarting an existing auth-on daemon (same state directory,
+auth still on) issues a fresh one-time bootstrap secret, which can authorize
+one more `init --kit <kit> --bootstrap` plus claim on that daemon. Existing
+instances and their credentials survive the restart untouched. Prefer the
+second daemon when other agents are mid-session; a restart interrupts them.
+
 ## Credential Custody
 
 Runtime credentials are bearer secrets. Any process that can read a token can

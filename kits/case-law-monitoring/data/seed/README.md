@@ -49,8 +49,9 @@ Acquisition happens outside the workflow boundary, at the artifact seam:
    the output matches the `sync_corpus_update` contract).
 2. Review the JSON; register each opinion text for evidence dereferencing:
    `cruxible source register <text-file> --id opinion_text_<opinion_id>`.
-3. Apply: `cruxible workflow run sync_corpus_update --input-file update.json`,
-   then run the treatment/impact proposal chain.
+3. Apply: `cruxible run --workflow sync_corpus_update --input-file update.json`
+   (preview, then `cruxible apply`), then run the treatment/impact proposal
+   chain.
 
 Workflows and providers never fetch: a live call inside a deterministic
 pipeline would vary per run while the lock pins only the code. The fetch

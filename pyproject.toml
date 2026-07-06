@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cruxible-core"
+name = "cruxible"
 version = "0.2.0"
 description = "Hard state for AI agents: typed, governed, durable state with deterministic queries, governed writes, and receipts."
 readme = "README.md"
