@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Project Overview
 
-**GitHub:** https://github.com/cruxible-ai/cruxible-core
+**GitHub:** https://github.com/cruxible-ai/cruxible
 
 Cruxible Core is a deterministic decision engine with receipts. AI agents (Codex, etc.) write configs and orchestrate workflows. Core executes deterministically with proof — no LLM inside.
 

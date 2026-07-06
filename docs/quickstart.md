@@ -37,8 +37,8 @@ works with no extra setup. (Versioned OCI kit images are planned; until they are
 published, the checkout is the canonical path.)
 
 ```bash
-git clone https://github.com/cruxible-ai/cruxible-core.git
-cd cruxible-core
+git clone https://github.com/cruxible-ai/cruxible.git
+cd cruxible
 uv sync --extra server --extra mcp
 source .venv/bin/activate
 ```

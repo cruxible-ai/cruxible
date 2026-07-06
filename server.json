@@ -3,7 +3,7 @@
   "name": "io.github.cruxible-ai/cruxible-core",
   "description": "Hard state for AI agents: typed, governed, durable state with deterministic queries, governed writes, and receipts.",
   "repository": {
-    "url": "https://github.com/cruxible-ai/cruxible-core",
+    "url": "https://github.com/cruxible-ai/cruxible",
     "source": "github"
   },
   "version": "0.2.0",

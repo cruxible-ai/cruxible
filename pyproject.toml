@@ -61,9 +61,9 @@ cruxible-mcp = "cruxible_core.mcp.server:main"
 # `cruxible-server` console-script (removed in wi-server-cli-verb-consistency).
 
 [project.urls]
-Homepage = "https://github.com/cruxible-ai/cruxible-core"
-Documentation = "https://github.com/cruxible-ai/cruxible-core/tree/main/docs"
-Repository = "https://github.com/cruxible-ai/cruxible-core"
+Homepage = "https://github.com/cruxible-ai/cruxible"
+Documentation = "https://github.com/cruxible-ai/cruxible/tree/main/docs"
+Repository = "https://github.com/cruxible-ai/cruxible"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cruxible_core"]

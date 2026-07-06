@@ -18,9 +18,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/cruxible-ai/cruxible-core"
-Documentation = "https://github.com/cruxible-ai/cruxible-core/tree/main/docs"
-Repository = "https://github.com/cruxible-ai/cruxible-core"
+Homepage = "https://github.com/cruxible-ai/cruxible"
+Documentation = "https://github.com/cruxible-ai/cruxible/tree/main/docs"
+Repository = "https://github.com/cruxible-ai/cruxible"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cruxible_client"]

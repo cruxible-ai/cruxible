@@ -5,8 +5,8 @@ Thanks for your interest in contributing! This document covers the basics.
 ## Development Setup
 
 ```bash
-git clone https://github.com/cruxible-ai/cruxible-core.git
-cd cruxible-core
+git clone https://github.com/cruxible-ai/cruxible.git
+cd cruxible
 uv sync --all-extras
 ```
 

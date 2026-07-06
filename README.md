@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://cruxible.ai">
-    <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible-core/main/assets/cruxible_logo.png" alt="Cruxible" width="400">
+    <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_logo.png" alt="Cruxible" width="400">
   </a>
 </p>
 
@@ -8,7 +8,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/cruxible)](https://pypi.org/project/cruxible/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](https://github.com/cruxible-ai/cruxible/blob/main/LICENSE)
 
 **Cruxible is hard state for AI agents.**
 
@@ -42,8 +42,8 @@ checkout (versioned OCI kit images are coming; until then the checkout is the
 canonical path):
 
 ```bash
-git clone https://github.com/cruxible-ai/cruxible-core.git
-cd cruxible-core
+git clone https://github.com/cruxible-ai/cruxible.git
+cd cruxible
 uv sync --extra server --extra mcp
 source .venv/bin/activate
 ```
@@ -118,10 +118,10 @@ keys to remove, rather than silently degrading.
 One thing to know before moving on: once its bootstrap secret is claimed,
 an auth-on daemon cannot create additional instances in that run — the
 quickstart's `init` commands need a fresh daemon started alongside this one
-(see [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/runtime-auth-and-agent-roles.md)).
+(see [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md)).
 For the full bootstrap flow, permission tiers, and hardening, see the
-[Quickstart](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/quickstart.md) and
-[Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/runtime-auth-and-agent-roles.md).
+[Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md) and
+[Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md).
 
 ## What A Governed Domain Looks Like
 
@@ -387,11 +387,13 @@ and review workflows run end to end on real data.
 
 | Kit | Kind | Status | What it models |
 |-----|------|--------|----------------|
-| [agent-operation](kits/agent-operation/) | Agent operating state | ready | Work items, review requests, decisions, risks, open questions, state notes, actors, lifecycle, and dependency context. |
-| [kev-reference](kits/kev-reference/) | Domain reference state | ready | Public known-exploited vulnerability reference data. |
-| [kev-triage](kits/kev-triage/) | Domain overlay state | ready | Local asset exposure, service impact, controls, incidents, findings, remediation, and governed vulnerability triage. |
-| [supply-chain-blast-radius](kits/supply-chain-blast-radius/) | Domain state | in_progress | Suppliers, components, assemblies, products, shipments, and incident blast radius. |
-| [case-law-monitoring](kits/case-law-monitoring/) | Domain state | in_progress | Matter-centered case-law monitoring and authority impact. |
+| [agent-operation](https://github.com/cruxible-ai/cruxible/tree/main/kits/agent-operation/) | Agent operating state | ready | Work items, review requests, decisions, risks, open questions, state notes, actors, lifecycle, and dependency context. |
+| [project-domain](https://github.com/cruxible-ai/cruxible/tree/main/kits/project-domain/) | Domain overlay state | ready | Roadmap items, milestones, release lines, and product areas composed over the agent-operation base — the project state Cruxible itself runs on. |
+| [agent-release](https://github.com/cruxible-ai/cruxible/tree/main/kits/agent-release/) | Domain overlay state | ready | Agent systems, versions, eval suites and runs, with governed certification and promotion gates. |
+| [kev-reference](https://github.com/cruxible-ai/cruxible/tree/main/kits/kev-reference/) | Domain reference state | ready | Public known-exploited vulnerability reference data. |
+| [kev-triage](https://github.com/cruxible-ai/cruxible/tree/main/kits/kev-triage/) | Domain overlay state | ready | Local asset exposure, service impact, controls, incidents, findings, remediation, and governed vulnerability triage. |
+| [supply-chain-blast-radius](https://github.com/cruxible-ai/cruxible/tree/main/kits/supply-chain-blast-radius/) | Domain state | ready | Suppliers, components, assemblies, products, shipments, and incident blast radius. |
+| [case-law-monitoring](https://github.com/cruxible-ai/cruxible/tree/main/kits/case-law-monitoring/) | Domain state | ready | Matter-centered case-law monitoring and authority impact. |
 
 Standalone kits can define a full state model. Overlay kits can extend an
 upstream state model with local state, governed proposals, and local workflows.
@@ -435,35 +437,35 @@ MCP example:
 Local permission modes are a practical hardening layer, not full sandboxing. If
 trust levels matter, keep the daemon state outside the agent workspace and
 expose only the client, HTTP, or MCP surface. See
-[Isolated Deployment](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/isolated-deployment.md).
+[Isolated Deployment](https://github.com/cruxible-ai/cruxible/blob/main/docs/isolated-deployment.md).
 
 ## Documentation
 
 **Getting started**
-- [Quickstart](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/quickstart.md) — install to first query
-- [Concepts](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/concepts.md) — architecture and primitives
+- [Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md) — install to first query
+- [Concepts](https://github.com/cruxible-ai/cruxible/blob/main/docs/concepts.md) — architecture and primitives
 
 **Modeling and authoring**
-- [Modeling State](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/modeling-state.md) — designing an ontology (entities, relationships, gates vs flags)
-- [Config Reference](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/config-reference.md) — the YAML config schema
-- [Kit Authoring](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/kit-authoring.md) — kit manifest, structure, and packaging
-- [Kit Walkthroughs](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/kit-walkthroughs.md) — building standalone and overlay kits
-- [Common Providers And Dataflow Steps](docs/common-providers.md) — provider and workflow building blocks
+- [Modeling State](https://github.com/cruxible-ai/cruxible/blob/main/docs/modeling-state.md) — designing an ontology (entities, relationships, gates vs flags)
+- [Config Reference](https://github.com/cruxible-ai/cruxible/blob/main/docs/config-reference.md) — the YAML config schema
+- [Kit Authoring](https://github.com/cruxible-ai/cruxible/blob/main/docs/kit-authoring.md) — kit manifest, structure, and packaging
+- [Kit Walkthroughs](https://github.com/cruxible-ai/cruxible/blob/main/docs/kit-walkthroughs.md) — building standalone and overlay kits
+- [Common Providers And Dataflow Steps](https://github.com/cruxible-ai/cruxible/blob/main/docs/common-providers.md) — provider and workflow building blocks
 
 **Reference**
-- [CLI Reference](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/cli-reference.md) — terminal commands
-- [MCP Tools Reference](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/mcp-tools.md) — agent tool surface
-- [AI Agent Guide](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/for-ai-agents.md) — orchestration patterns
+- [CLI Reference](https://github.com/cruxible-ai/cruxible/blob/main/docs/cli-reference.md) — terminal commands
+- [MCP Tools Reference](https://github.com/cruxible-ai/cruxible/blob/main/docs/mcp-tools.md) — agent tool surface
+- [AI Agent Guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/for-ai-agents.md) — orchestration patterns
 
 **Operating and deploying**
-- [Local State And Backups](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/local-state-and-backups.md) — SQLite, daemon state, and portability
-- [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/runtime-auth-and-agent-roles.md) — credentials, permission tiers, and bootstrap
-- [State Resolution And Maintenance](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/state-resolution-and-maintenance.md) — proposal resolution, trust grading, and maintenance signals
-- [Isolated Deployment](https://github.com/cruxible-ai/cruxible-core/blob/main/docs/isolated-deployment.md) — running the daemon with only the client/MCP surface exposed
-- [Hosted Runtime Image](docs/hosted-runtime-image.md) — the runtime container image
+- [Local State And Backups](https://github.com/cruxible-ai/cruxible/blob/main/docs/local-state-and-backups.md) — SQLite, daemon state, and portability
+- [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md) — credentials, permission tiers, and bootstrap
+- [State Resolution And Maintenance](https://github.com/cruxible-ai/cruxible/blob/main/docs/state-resolution-and-maintenance.md) — proposal resolution, trust grading, and maintenance signals
+- [Isolated Deployment](https://github.com/cruxible-ai/cruxible/blob/main/docs/isolated-deployment.md) — running the daemon with only the client/MCP surface exposed
+- [Hosted Runtime Image](https://github.com/cruxible-ai/cruxible/blob/main/docs/hosted-runtime-image.md) — the runtime container image
 
 **Guides**
-- [Skill Classification At Scale](docs/skill-classification-at-scale.md) — a worked governed-classification agent playbook
+- [Skill Classification At Scale](https://github.com/cruxible-ai/cruxible/blob/main/docs/skill-classification-at-scale.md) — a worked governed-classification agent playbook
 
 ## Technology
 
