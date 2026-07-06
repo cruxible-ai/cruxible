@@ -13,7 +13,6 @@ from click.testing import CliRunner
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
-from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
 from cruxible_core.config.loader import load_config
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
@@ -152,12 +151,17 @@ class TestWorkflowCli:
         assert "providers=2 artifacts=1" in result.output
         assert "CRUXIBLE_KIT_DEV_RESOLVE" not in os.environ
 
-    def test_lock_kit_dir_resolves_overlay_base_from_sibling(
+    def test_lock_kit_dir_pins_kit_layer_only(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # The kit-root lock pins the kit LAYER, not the manifest-composed
+        # state: composing would embed base-kit providers and machine-absolute
+        # artifact URIs into a committed, distributable file. Deliberately no
+        # base sibling here — an overlay must lock without its target_state
+        # base present.
         monkeypatch.delenv("CRUXIBLE_KIT_DEV_RESOLVE", raising=False)
-        _copy_kit(tmp_path, "agent-operation")
-        overlay_dir = _copy_kit(tmp_path, "agent-release")
+        overlay_dir = _copy_kit(tmp_path, "case-law-monitoring")
+        committed = _read_lock_yaml(overlay_dir)
         (overlay_dir / "cruxible.lock.yaml").unlink()
 
         result = runner.invoke(cli, ["lock", "--kit-dir", str(overlay_dir)])
@@ -165,12 +169,11 @@ class TestWorkflowCli:
         assert result.exit_code == 0, result.output
         lock_payload = _read_lock_yaml(overlay_dir)
         layer = load_config(overlay_dir / "config.yaml")
-        composed = compose_config_sequence(
-            resolve_config_layers(layer, config_path=(overlay_dir / "config.yaml").resolve())
-        )
-        assert "Actor" in composed.entity_types
-        assert "AgentVersion" in composed.entity_types
-        assert lock_payload["config_digest"] == compute_lock_config_digest(composed)
+        assert lock_payload["config_digest"] == compute_lock_config_digest(layer)
+        # Regen of a pristine kit copy is a noop (timestamp aside).
+        assert lock_payload["lock_digest"] == committed["lock_digest"]
+        for name, artifact in lock_payload["artifacts"].items():
+            assert not str(artifact["uri"]).startswith("/"), (name, artifact["uri"])
         assert f"digest={lock_payload['lock_digest']}" in result.output
         assert "CRUXIBLE_KIT_DEV_RESOLVE" not in os.environ
 

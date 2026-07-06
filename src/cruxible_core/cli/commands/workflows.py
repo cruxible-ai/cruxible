@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -58,19 +55,6 @@ class _KitLockResult:
     artifacts_locked: int
 
 
-@contextmanager
-def _kit_dev_resolve_enabled() -> Iterator[None]:
-    previous = os.environ.get("CRUXIBLE_KIT_DEV_RESOLVE")
-    os.environ["CRUXIBLE_KIT_DEV_RESOLVE"] = "1"
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop("CRUXIBLE_KIT_DEV_RESOLVE", None)
-        else:
-            os.environ["CRUXIBLE_KIT_DEV_RESOLVE"] = previous
-
-
 def _ensure_kit_dir_is_local_only() -> None:
     ctx = click.get_current_context(silent=True)
     root_params = ctx.find_root().params if ctx is not None else {}
@@ -93,16 +77,12 @@ def _lock_kit_dir(kit_dir: Path, *, force: bool) -> _KitLockResult:
 
     # Preserve the CLI's working import order before importing compiler machinery.
     import cruxible_core.runtime  # noqa: F401
-    from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
-    from cruxible_core.config.loader import load_config
-    from cruxible_core.workflow.compiler import LOCK_FILE_NAME, build_lock, write_lock
+    from cruxible_core.workflow.compiler import LOCK_FILE_NAME, build_kit_root_lock, write_lock
 
-    with _kit_dev_resolve_enabled():
-        layer_config = load_config(config_path)
-        config = compose_config_sequence(
-            resolve_config_layers(layer_config, config_path=config_path)
-        )
-        lock = build_lock(config, kit_root, force=force)
+    # Kit-root locks pin the kit LAYER only (no manifest composition): a
+    # composed lock would embed base-kit providers and machine-absolute
+    # artifact URIs, which is wrong for a committed, distributable kit dir.
+    lock = build_kit_root_lock(kit_root, force=force)
 
     lock_path = kit_root / LOCK_FILE_NAME
     write_lock(lock, lock_path)

@@ -1877,7 +1877,7 @@ findings.
 
 **Output And Side Effects:**
 - Without `--kit-dir`, updates the active instance workflow lock through the local service layer or configured daemon.
-- With `--kit-dir`, performs a pure local kit lock refresh: reads the kit config, resolves overlay `target_state` through sibling kit directories or the kit catalog, writes `<kit-dir>/cruxible.lock.yaml`, and prints the lock digest.
+- With `--kit-dir`, performs a pure local kit lock refresh: reads the kit's own config layer (no `target_state` composition — base-layer content is pinned by the base kit's own lock), writes `<kit-dir>/cruxible.lock.yaml` with artifact URIs preserved as written, and prints the lock digest. This is the canonical generation path for a committed kit lock; CI asserts regen-is-noop for every bundled kit.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,41 @@ from cruxible_core.workflow.types import (
 )
 
 LOCK_FILE_NAME = "cruxible.lock.yaml"
+
+# Env toggle that lets kit:// provider refs resolve against the kit directory
+# itself instead of an installed kit cache. Kit-root lock generation always
+# needs it: the kit dir IS the source of truth being pinned.
+_KIT_DEV_RESOLVE_ENV = "CRUXIBLE_KIT_DEV_RESOLVE"
+
+
+def build_kit_root_lock(kit_root: Path, *, force: bool = False) -> WorkflowLock:
+    """Build the canonical kit-root lock for a kit directory.
+
+    This is THE generation path for a committed ``kits/<id>/cruxible.lock.yaml``
+    (the CLI's ``cruxible lock --kit-dir`` and the CI freshness check both call
+    it). It locks the kit's own config LAYER only — deliberately no manifest
+    ``target_state`` composition — so the lock pins exactly what the kit
+    directory distributes: its own providers and artifacts, with URIs preserved
+    as written in ``config.yaml`` (relative to the kit root, portable across
+    machines). Base-layer content is pinned by the base kit's own lock.
+    """
+    kit_root = kit_root.resolve()
+    config_path = kit_root / "config.yaml"
+    if not config_path.exists():
+        raise ConfigError(f"kit root has no config.yaml: {config_path}")
+
+    from cruxible_core.config.loader import load_config
+
+    previous = os.environ.get(_KIT_DEV_RESOLVE_ENV)
+    os.environ[_KIT_DEV_RESOLVE_ENV] = "1"
+    try:
+        config = load_config(config_path)
+        return build_lock(config, kit_root, force=force)
+    finally:
+        if previous is None:
+            os.environ.pop(_KIT_DEV_RESOLVE_ENV, None)
+        else:
+            os.environ[_KIT_DEV_RESOLVE_ENV] = previous
 
 
 def compute_lock_config_digest(config: CoreConfig) -> str:

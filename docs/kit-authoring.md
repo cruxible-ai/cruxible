@@ -218,9 +218,11 @@ Refresh a bundled lock directly from the kit root before publishing:
 cruxible lock --kit-dir path/to/kit
 ```
 
-For overlay kits, place the target base kit in a sibling directory named for the
-overlay manifest's `target_state` (for example, `agent-operation/` next to
-`agent-release/`) so local composition resolves without a daemon.
+The lock pins the kit's own config layer only — its providers and artifacts,
+with URIs kept relative to the kit root — so an overlay kit locks without its
+`target_state` base present. Base-layer content is pinned by the base kit's
+own lock. CI asserts every bundled kit's committed lock matches a fresh regen,
+so run this after any config, provider, or seed-data change.
 
 Vocabulary:
 
