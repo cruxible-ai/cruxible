@@ -966,6 +966,18 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ReloadConfigResult)
 
+    def config_refresh(
+        self,
+        instance_id: str,
+        *,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.RefreshConfigResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/config/refresh",
+            json={"actor_context": self._actor_context_payload(actor_context)},
+        )
+        return self._parse_model(response, contracts.RefreshConfigResult)
+
     def sample(
         self,
         instance_id: str,

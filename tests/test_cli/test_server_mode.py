@@ -2985,6 +2985,56 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
     assert "Config updated on server." in result.output
 
 
+def test_config_refresh_prints_governance_diff_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def config_refresh(self, instance_id):
+            captured["instance_id"] = instance_id
+            return contracts.RefreshConfigResult(
+                pointer_digest="sha256:pointer",
+                before_composed_digest="sha256:before",
+                after_composed_digest="sha256:after",
+                classification="weakened",
+                governance_changes=[
+                    "[weakening] mutation_guard 'guarded_close': mutation guard removed"
+                ],
+                layers=[
+                    contracts.RefreshedConfigLayer(
+                        kind="kit", ref="agent-operation", digest="sha256:layer"
+                    )
+                ],
+                lock_path="/daemon/instances/inst_123/.cruxible/cruxible.lock.yaml",
+                warnings=[],
+                receipt_id="RCP-refresh",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "config",
+            "refresh",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["instance_id"] == "inst_123"
+    assert "Config refreshed: weakened" in result.output
+    assert "mutation guard removed" in result.output
+    assert "before: sha256:before" in result.output
+    assert "after:  sha256:after" in result.output
+    assert "layer [kit] agent-operation (sha256:layer)" in result.output
+    assert "Receipt: RCP-refresh" in result.output
+
+
 @pytest.mark.parametrize("command", ["add", "update"])
 def test_top_level_write_verb_groups_are_not_registered(
     runner: CliRunner,

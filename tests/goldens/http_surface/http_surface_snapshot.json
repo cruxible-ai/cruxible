@@ -20,6 +20,9 @@
   "/api/v1/validate": {
     "POST": "ValidateResult"
   },
+  "/api/v1/{instance_id}/config/refresh": {
+    "POST": "RefreshConfigResult"
+  },
   "/api/v1/{instance_id}/config/reload": {
     "POST": "ReloadConfigResult"
   },

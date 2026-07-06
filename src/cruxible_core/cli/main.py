@@ -171,6 +171,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     plan_cmd,
     propose_cmd,
     query,
+    refresh_config_cmd,
     reload_config_cmd,
     run_cmd,
     sample,
@@ -216,6 +217,7 @@ cli.add_command(inspect_group, "inspect")
 # config group: config-editing and review-surface verbs.
 config_group = click.Group("config", help="Edit, validate, and render the active config.")
 config_group.add_command(reload_config_cmd, "reload")
+config_group.add_command(refresh_config_cmd, "refresh")
 config_group.add_command(config_views_cmd, "views")
 config_group.add_command(config_expand_cmd, "expand")
 config_group.add_command(add_constraint_cmd, "add-constraint")

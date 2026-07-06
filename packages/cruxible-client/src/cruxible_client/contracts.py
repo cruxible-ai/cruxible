@@ -1137,6 +1137,24 @@ class ReloadConfigResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class RefreshedConfigLayer(BaseModel):
+    kind: str
+    ref: str
+    digest: str
+
+
+class RefreshConfigResult(BaseModel):
+    pointer_digest: str
+    before_composed_digest: str
+    after_composed_digest: str
+    classification: str
+    governance_changes: list[str] = Field(default_factory=list)
+    layers: list[RefreshedConfigLayer] = Field(default_factory=list)
+    lock_path: str
+    warnings: list[str] = Field(default_factory=list)
+    receipt_id: str | None = None
+
+
 class FeedbackProfileResult(BaseModel):
     found: bool
     relationship_type: str

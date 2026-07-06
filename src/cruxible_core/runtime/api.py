@@ -97,6 +97,7 @@ from cruxible_core.service import (
     service_pull_state_preview,
     service_query_inline_surface,
     service_query_surface,
+    service_refresh_config,
     service_register_source_artifact,
     service_reload_config,
     service_relocate_instance,
@@ -2445,6 +2446,39 @@ def reload_config(
         config_path=result.config_path,
         updated=result.updated,
         warnings=result.warnings,
+    )
+
+
+def config_refresh(
+    instance_id: str,
+    actor_context: Any | None = None,
+) -> contracts.RefreshConfigResult:
+    """Recompose the instance config from its source pointer under the asymmetric gate."""
+    check_permission("cruxible_config_refresh", instance_id=instance_id)
+    resolved_actor = _hosted_actor_context(actor_context)
+    instance = get_manager().get(instance_id)
+
+    def authorize_classification(classification: str) -> None:
+        # Tightening/neutral refreshes ride the GRAPH_WRITE gate already
+        # checked above; a weakening governance diff escalates to ADMIN.
+        if classification == "weakened":
+            check_permission("cruxible_config_refresh_weakening", instance_id=instance_id)
+
+    result = service_refresh_config(
+        instance,
+        actor_context=resolved_actor,
+        authorize_classification=authorize_classification,
+    )
+    return contracts.RefreshConfigResult(
+        pointer_digest=result.pointer_digest,
+        before_composed_digest=result.before_composed_digest,
+        after_composed_digest=result.after_composed_digest,
+        classification=result.classification,
+        governance_changes=result.governance_changes,
+        layers=[contracts.RefreshedConfigLayer(**layer) for layer in result.layers],
+        lock_path=result.lock_path,
+        warnings=result.warnings,
+        receipt_id=result.receipt_id,
     )
 
 

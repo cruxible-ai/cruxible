@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     plan_cmd: Any
     propose_cmd: Any
     query: Any
+    refresh_config_cmd: Any
     reload_config_cmd: Any
     run_cmd: Any
     sample: Any
@@ -92,6 +93,7 @@ else:
         add_entity_cmd,
         add_relationship_cmd,
         batch_direct_write_cmd,
+        refresh_config_cmd,
         reload_config_cmd,
         update_entity_cmd,
         update_relationship_cmd,
@@ -170,6 +172,7 @@ __all__ = [
     "plan_cmd",
     "propose_cmd",
     "query",
+    "refresh_config_cmd",
     "reload_config_cmd",
     "run_cmd",
     "sample",

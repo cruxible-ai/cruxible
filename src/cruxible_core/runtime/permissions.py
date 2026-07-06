@@ -165,6 +165,12 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_state_health": PermissionMode.READ_ONLY,
     "cruxible_list_source_artifacts": PermissionMode.READ_ONLY,
     "cruxible_get_source_artifact": PermissionMode.READ_ONLY,
+    # Asymmetric config-refresh gate: recomposing from the source pointer is
+    # GRAPH_WRITE for tightening/neutral governance diffs; a WEAKENING diff
+    # escalates to the companion ADMIN requirement below (checked by the
+    # runtime facade once the diff is classified).
+    "cruxible_config_refresh": PermissionMode.GRAPH_WRITE,
+    "cruxible_config_refresh_weakening": PermissionMode.ADMIN,
     "cruxible_governed_instance_lifecycle": PermissionMode.ADMIN,
     "cruxible_hosted_instance_init": PermissionMode.ADMIN,
     "cruxible_init_with_config": PermissionMode.ADMIN,

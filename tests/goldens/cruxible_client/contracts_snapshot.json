@@ -17406,6 +17406,279 @@
         "receipt_id"
       ]
     },
+    "RefreshConfigResult": {
+      "fields": {
+        "after_composed_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "after_composed_digest",
+          "required": true,
+          "schema": {
+            "title": "After Composed Digest",
+            "type": "string"
+          }
+        },
+        "before_composed_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "before_composed_digest",
+          "required": true,
+          "schema": {
+            "title": "Before Composed Digest",
+            "type": "string"
+          }
+        },
+        "classification": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "classification",
+          "required": true,
+          "schema": {
+            "title": "Classification",
+            "type": "string"
+          }
+        },
+        "governance_changes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "governance_changes",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Governance Changes",
+            "type": "array"
+          }
+        },
+        "layers": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "layers",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/RefreshedConfigLayer"
+            },
+            "title": "Layers",
+            "type": "array"
+          }
+        },
+        "lock_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "lock_path",
+          "required": true,
+          "schema": {
+            "title": "Lock Path",
+            "type": "string"
+          }
+        },
+        "pointer_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "pointer_digest",
+          "required": true,
+          "schema": {
+            "title": "Pointer Digest",
+            "type": "string"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "RefreshedConfigLayer": {
+            "properties": {
+              "digest": {
+                "title": "Digest",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "ref",
+              "digest"
+            ],
+            "title": "RefreshedConfigLayer",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "after_composed_digest": {
+            "title": "After Composed Digest",
+            "type": "string"
+          },
+          "before_composed_digest": {
+            "title": "Before Composed Digest",
+            "type": "string"
+          },
+          "classification": {
+            "title": "Classification",
+            "type": "string"
+          },
+          "governance_changes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Governance Changes",
+            "type": "array"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/$defs/RefreshedConfigLayer"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "lock_path": {
+            "title": "Lock Path",
+            "type": "string"
+          },
+          "pointer_digest": {
+            "title": "Pointer Digest",
+            "type": "string"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pointer_digest",
+          "before_composed_digest",
+          "after_composed_digest",
+          "classification",
+          "lock_path"
+        ],
+        "title": "RefreshConfigResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "after_composed_digest",
+        "before_composed_digest",
+        "classification",
+        "lock_path",
+        "pointer_digest"
+      ]
+    },
+    "RefreshedConfigLayer": {
+      "fields": {
+        "digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "digest",
+          "required": true,
+          "schema": {
+            "title": "Digest",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "ref": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "ref",
+          "required": true,
+          "schema": {
+            "title": "Ref",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref",
+          "digest"
+        ],
+        "title": "RefreshedConfigLayer",
+        "type": "object"
+      },
+      "required_fields": [
+        "digest",
+        "kind",
+        "ref"
+      ]
+    },
     "RegisterSourceArtifactResult": {
       "fields": {
         "archive_content_hash": {

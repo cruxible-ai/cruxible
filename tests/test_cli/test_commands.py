@@ -792,6 +792,18 @@ class TestStatsInspectReload:
             "config reload",
         )
 
+    def test_refresh_config_is_server_only(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _assert_local_mutation_disabled(
+            runner,
+            populated_instance.root,
+            ["config", "refresh"],
+            "config refresh",
+        )
+
 
 class TestConfigViews:
     def test_config_views_default_renders_standard_sections(
@@ -811,7 +823,10 @@ class TestConfigViews:
         assert "Recommended For" in result.output
         assert "Governed proposal" in result.output
         assert "Creation Path" in result.output
-        assert "| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |" in result.output
+        assert (
+            "| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |"
+            in result.output
+        )
         assert "No configured constraints." in result.output
         assert "No configured feedback profiles." in result.output
         assert "### Entity Types" not in result.output
@@ -3038,7 +3053,7 @@ class TestNounVerbGrouping:
     @pytest.mark.parametrize(
         "group, subcommands",
         [
-            ("config", ["reload", "views", "add-constraint", "add-decision-policy"]),
+            ("config", ["reload", "refresh", "views", "add-constraint", "add-decision-policy"]),
             ("feedback", ["record", "from-query", "batch", "profile", "analyze"]),
             ("outcome", ["record", "profile", "analyze"]),
         ],
@@ -3058,6 +3073,7 @@ class TestNounVerbGrouping:
         "command_path",
         [
             ["config", "reload", "--help"],
+            ["config", "refresh", "--help"],
             ["config", "views", "--help"],
             ["config", "add-constraint", "--help"],
             ["config", "add-decision-policy", "--help"],
@@ -3157,10 +3173,18 @@ def test_get_relationship_server_result_preserves_trust_metadata() -> None:
             result = CliRunner().invoke(
                 cli,
                 [
-                    "relationship", "get",
-                    "--from-type", "Risk", "--from-id", "risk-1",
-                    "--relationship", "risk_blocks_work_item",
-                    "--to-type", "WorkItem", "--to-id", "wi-1",
+                    "relationship",
+                    "get",
+                    "--from-type",
+                    "Risk",
+                    "--from-id",
+                    "risk-1",
+                    "--relationship",
+                    "risk_blocks_work_item",
+                    "--to-type",
+                    "WorkItem",
+                    "--to-id",
+                    "wi-1",
                     "--json",
                 ],
             )

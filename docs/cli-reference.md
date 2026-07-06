@@ -79,6 +79,7 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 **Subcommands:**
 
 - `cruxible config reload` - Validate the active config or repoint the instance to a new config file.
+- `cruxible config refresh` - Recompose the config from the instance source pointer and swap it in.
 - `cruxible config views` - Render canonical Mermaid/Markdown views for a Cruxible config.
 - `cruxible config expand` - Expand a compact authoring config to the explicit engine config.
 - `cruxible config add-constraint` - Add a constraint rule to the config.
@@ -2143,6 +2144,27 @@ cruxible query inline \
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible config refresh
+
+**Usage:** `cruxible config refresh [OPTIONS]`
+
+**Purpose:** Recompose the config from the instance source pointer (`config-source.yaml`) and swap it in. Refresh takes no config path: it re-resolves the declared layers, classifies the governance diff (tightened / neutral / weakened), rebuilds the workflow lock against the new composition, swaps the in-memory serving config, and writes a `config_refresh` receipt. Any failing step leaves the previous config serving.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+
+**Output And Side Effects:**
+- Prints the governance-diff classification and summary lines, the before/after composed digests, per-layer refs + digests, and the receipt id.
+- Writes a `config_refresh` receipt and rebuilds the instance workflow lock.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Instance has no `config-source.yaml` pointer (pre-pointer instances migrate via `config adopt`).
+- Permission mode too low: tightening/neutral refreshes need `graph_write`; a weakening governance diff requires `admin`.
+- Canonical artifact digest mismatches fail the lock rebuild (no force flag); the refresh aborts with the old config serving.
 
 ## cruxible run
 

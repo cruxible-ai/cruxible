@@ -31,6 +31,7 @@ from cruxible_core.service import (
     EntityWriteInput,
     SharedEvidenceInput,
     service_batch_direct_write,
+    service_refresh_config,
     service_reload_config,
 )
 from cruxible_core.service.lifecycle_inputs import (
@@ -1075,6 +1076,44 @@ def reload_config_cmd(config_path: str | None) -> None:
         click.echo(f"Config {status} on server.")
     else:
         click.echo(f"Config {status}: {result.config_path}")
+    for warning in result.warnings:
+        click.secho(f"  Warning: {warning}", fg="yellow")
+
+
+_REFRESH_CLASSIFICATION_COLORS = {"weakened": "red", "tightened": "green"}
+
+
+@click.command("refresh")
+@handle_errors
+def refresh_config_cmd() -> None:
+    """Recompose the config from the instance source pointer and swap it in.
+
+    Refresh takes no config path: it re-resolves the layers declared in the
+    instance's config-source.yaml, classifies the governance diff (weakening
+    refreshes require admin), rebuilds the workflow lock, and receipts the
+    swap. Any failing step leaves the previous config serving.
+    """
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.config_refresh(instance_id),
+        lambda instance: service_refresh_config(instance),
+        allow_local=False,
+        command_name="config refresh",
+    )
+    color = _REFRESH_CLASSIFICATION_COLORS.get(result.classification)
+    click.secho(f"Config refreshed: {result.classification}", fg=color, bold=True)
+    click.echo(f"  before: {result.before_composed_digest}")
+    click.echo(f"  after:  {result.after_composed_digest}")
+    for layer in result.layers:
+        layer_data = layer if isinstance(layer, dict) else layer.model_dump(mode="python")
+        click.echo(f"  layer [{layer_data['kind']}] {layer_data['ref']} ({layer_data['digest']})")
+    if result.governance_changes:
+        click.secho("Governance diff:", bold=True)
+        for line in result.governance_changes:
+            click.secho(f"  {line}", fg="red" if "[weakening]" in line else None)
+    else:
+        click.echo("Governance diff: no governance-relevant changes.")
+    if result.receipt_id:
+        click.echo(f"Receipt: {result.receipt_id}")
     for warning in result.warnings:
         click.secho(f"  Warning: {warning}", fg="yellow")
 

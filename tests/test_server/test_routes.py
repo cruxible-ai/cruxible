@@ -30,6 +30,7 @@ from cruxible_core.server.credentials import (
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.server.routes import resolve_server_instance_id
 from cruxible_core.service.snapshots import service_backup_instance
+from cruxible_core.workflow.compiler import build_kit_root_lock, write_lock
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1182,6 +1183,159 @@ def test_reload_config_route_updates_instance_path(
     assert payload["updated"] is True
     assert str(tmp_path / "alt-config.yaml") not in payload["config_path"]
     assert payload["config_path"].endswith("/.cruxible/configs/active.yaml")
+
+
+_REFRESH_KIT_CONFIG_YAML = """\
+version: '1.0'
+name: refresh-kit-config
+entity_types:
+  WorkItem:
+    properties:
+      work_item_id: {type: string, primary_key: true}
+      status: {type: string}
+mutation_guards:
+  - name: guarded_close
+    entity_type: WorkItem
+    property: status
+    new_value: closed
+    condition: {type: actor, allowed_actor_ids: [reviewer]}
+"""
+
+
+def _write_refresh_kit(kit_root: Path, *, config_yaml: str = _REFRESH_KIT_CONFIG_YAML) -> None:
+    kit_root.mkdir(parents=True, exist_ok=True)
+    (kit_root / "cruxible-kit.yaml").write_text(
+        "\n".join(
+            [
+                "schema_version: cruxible.kit.v1",
+                "kit_id: refresh-kit",
+                "version: 0.1.0",
+                "role: standalone",
+                "entry_config: config.yaml",
+                "provider_paths: []",
+                "copy_paths: []",
+                "requires_extras: []",
+            ]
+        )
+        + "\n"
+    )
+    (kit_root / "config.yaml").write_text(config_yaml)
+    write_lock(build_kit_root_lock(kit_root), kit_root / "cruxible.lock.yaml")
+
+
+def _init_refresh_kit_instance(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[str, Path]:
+    monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "kit-cache"))
+    kit_root = tmp_path / "kit-src" / "refresh-kit"
+    _write_refresh_kit(kit_root)
+    root = tmp_path / "refresh-project"
+    root.mkdir()
+    instance_id = _init_instance(client, root, config_yaml="", kit=f"file://{kit_root}")
+    return instance_id, kit_root
+
+
+def test_config_refresh_route_recomposes_and_reports_governance_diff(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_id, kit_root = _init_refresh_kit_instance(app_client, tmp_path, monkeypatch)
+    # Tighten the source kit: add a second mutation guard.
+    (kit_root / "config.yaml").write_text(
+        _REFRESH_KIT_CONFIG_YAML
+        + (
+            "  - name: guarded_reopen\n"
+            "    entity_type: WorkItem\n"
+            "    property: status\n"
+            "    new_value: open\n"
+            "    condition: {type: actor, allowed_actor_ids: [reviewer]}\n"
+        )
+    )
+
+    response = app_client.post(f"/api/v1/{instance_id}/config/refresh", json={})
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["classification"] == "tightened"
+    assert payload["before_composed_digest"] != payload["after_composed_digest"]
+    assert payload["pointer_digest"].startswith("sha256:")
+    assert any("guarded_reopen" in line for line in payload["governance_changes"])
+    assert payload["layers"] == [
+        {
+            "kind": "kit",
+            "ref": f"file://{kit_root}",
+            "digest": payload["layers"][0]["digest"],
+        }
+    ]
+    assert payload["receipt_id"]
+
+    # The daemon serves the refreshed composition.
+    instance = get_manager().get(instance_id)
+    assert {guard.name for guard in instance.load_config().mutation_guards} == {
+        "guarded_close",
+        "guarded_reopen",
+    }
+
+
+def test_config_refresh_route_weakening_requires_admin(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_id, kit_root = _init_refresh_kit_instance(app_client, tmp_path, monkeypatch)
+    # Weaken the source kit: drop the mutation guard.
+    _write_refresh_kit(
+        kit_root,
+        config_yaml=_REFRESH_KIT_CONFIG_YAML.split("mutation_guards:")[0],
+    )
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
+    reset_permissions()
+    refused = app_client.post(f"/api/v1/{instance_id}/config/refresh", json={})
+    assert refused.status_code == 403
+    # The refusal left the old composition serving.
+    instance = get_manager().get(instance_id)
+    assert [guard.name for guard in instance.load_config().mutation_guards] == ["guarded_close"]
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "admin")
+    reset_permissions()
+    allowed = app_client.post(f"/api/v1/{instance_id}/config/refresh", json={})
+    assert allowed.status_code == 200, allowed.text
+    payload = allowed.json()
+    assert payload["classification"] == "weakened"
+    assert any("guarded_close" in line for line in payload["governance_changes"])
+    assert instance.load_config().mutation_guards == []
+
+
+def test_config_refresh_route_requires_source_pointer(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(f"/api/v1/{instance_id}/config/refresh", json={})
+
+    assert response.status_code == 400
+    assert "no config source pointer" in response.json()["message"]
+
+
+def test_reload_config_route_refuses_source_pointer_instances(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_id, _kit_root = _init_refresh_kit_instance(app_client, tmp_path, monkeypatch)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/config/reload",
+        json={"config_yaml": CAR_PARTS_YAML},
+    )
+
+    assert response.status_code == 400
+    assert "config refresh" in response.json()["message"]
 
 
 def test_server_init_creates_daemon_owned_governed_instance(

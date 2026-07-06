@@ -317,6 +317,12 @@ class ReloadConfigRequest(BaseModel):
     config_yaml: str | None = None
 
 
+class RefreshConfigRequest(BaseModel):
+    """Refresh recomposes from the instance source pointer; it takes no config path."""
+
+    actor_context: contracts.GovernedActorContext | None = None
+
+
 class SnapshotCreateRequest(BaseModel):
     label: str | None = None
     actor_context: contracts.GovernedActorContext | None = None
