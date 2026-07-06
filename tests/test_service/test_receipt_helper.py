@@ -58,6 +58,11 @@ class _DummyInstance:
     def invalidate_graph_cache(self) -> None:
         pass
 
+    def verify_serving_config_receipted(self) -> None:
+        # The write-path verification chokepoint no-ops for instances without
+        # a config source pointer, which is what this dummy stands in for.
+        pass
+
 
 class TestMutationReceiptHelper:
     def test_success_attaches_receipt_id(self) -> None:
