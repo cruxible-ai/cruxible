@@ -417,7 +417,7 @@ def _install_instance_lock_from_composed_kits(
     except Exception as exc:
         raise ConfigError(
             "Bundled kit locks do not cover the composed instance config, and "
-            "regenerating the instance-local lock failed"
+            f"regenerating the instance-local lock failed: {exc}"
         ) from exc
 
 

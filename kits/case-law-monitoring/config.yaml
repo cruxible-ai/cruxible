@@ -784,7 +784,7 @@ artifacts:
   corpus_seed_bundle:
     kind: directory
     uri: ./data/seed
-    digest: sha256:31445cd96d47f74667d0719c754125d03f4c37e0851b547a7c45be9b86fd198f
+    digest: sha256:c31e43b55fd04b64a748c2ddc5eee81609daad963b6e135f91cd6c0abb3415ec
     metadata:
       description: >
         Digest-pinned two-act corpus: real public opinions (CourtListener
