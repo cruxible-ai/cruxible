@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient
 from cruxible_core.cli.main import cli
-from cruxible_core.config.loader import load_config
+from cruxible_core.config.source_pointer import compose_config_source, load_config_source
 from cruxible_core.errors import ConfigError
 from cruxible_core.kits import KitBundle, KitManifest, resolve_kit_provider_ref
 from cruxible_core.mcp.handlers import reset_client_cache
@@ -111,14 +111,18 @@ def test_bootstrap_init_composes_overlay_kit_on_auth_enabled_daemon(
     instance_id = match.group(1)
     assert "Source: kit agent-operation project-domain" in init.output
 
-    # Both bundles are materialized under kits/<kit_id>/ and the composed
-    # managed config carries both layers' entity types.
+    # Both bundles are materialized under kits/<kit_id>/ and the instance
+    # stores a source pointer whose composed config carries both layers'
+    # entity types. No flattened config is written to disk.
     record = get_registry().get(instance_id)
     assert record is not None
     root = Path(record.location)
     assert (root / "kits" / "agent-operation" / "cruxible-kit.yaml").exists()
     assert (root / "kits" / "project-domain" / "cruxible-kit.yaml").exists()
-    composed = load_config(root / ".cruxible" / "configs" / "active.yaml")
+    pointer = load_config_source(root / ".cruxible" / "config-source.yaml")
+    assert [layer.ref for layer in pointer.layers] == ["agent-operation", "project-domain"]
+    assert not (root / ".cruxible" / "configs" / "active.yaml").exists()
+    composed = compose_config_source(pointer, instance_root=root).config
     assert "WorkItem" in composed.entity_types
     assert "ReviewRequest" in composed.entity_types
     assert "ProductArea" in composed.entity_types
@@ -186,28 +190,28 @@ def _bundle(kit_id: str, role: str, target_state: str | None = None) -> KitBundl
 
 
 def test_kit_sequence_validation_names_offender_and_target() -> None:
-    from cruxible_core.service.lifecycle import _validate_kit_sequence
+    from cruxible_core.config.source_pointer import validate_kit_layer_sequence
 
     base = _bundle("base", "standalone")
     overlay = _bundle("overlay", "overlay", target_state="base")
     stranger = _bundle("stranger", "overlay", target_state="elsewhere")
 
-    _validate_kit_sequence(["base", "overlay"], [base, overlay])
+    validate_kit_layer_sequence(["base", "overlay"], [base, overlay])
 
     with pytest.raises(ConfigError, match="must be role: standalone"):
-        _validate_kit_sequence(["overlay"], [overlay])
+        validate_kit_layer_sequence(["overlay"], [overlay])
     with pytest.raises(
         ConfigError,
         match=r"'stranger' targets state 'elsewhere', which is not an earlier kit",
     ):
-        _validate_kit_sequence(["base", "stranger"], [base, stranger])
+        validate_kit_layer_sequence(["base", "stranger"], [base, stranger])
     with pytest.raises(ConfigError, match="'overlay' appears more than once"):
-        _validate_kit_sequence(
+        validate_kit_layer_sequence(
             ["base", "overlay", "overlay"],
             [base, overlay, overlay],
         )
     with pytest.raises(ConfigError, match="every kit after the first"):
-        _validate_kit_sequence(["base", "base"], [base, base])
+        validate_kit_layer_sequence(["base", "base"], [base, base])
 
 
 def test_service_composed_kev_init_resolves_workflows_queries_and_providers(

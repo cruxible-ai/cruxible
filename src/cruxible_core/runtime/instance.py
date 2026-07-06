@@ -19,8 +19,14 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_core import __version__
-from cruxible_core.config.loader import load_config, save_config
+from cruxible_core.config.loader import dump_config_yaml, load_config, save_config
 from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.source_pointer import (
+    CONFIG_SOURCE_FILE_NAME,
+    ComposedConfigSource,
+    compose_config_source,
+    load_config_source,
+)
 from cruxible_core.decision.store import DecisionStore
 from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.feedback.store import FeedbackStore
@@ -82,6 +88,8 @@ class CruxibleInstance(InstanceProtocol):
         self.metadata = self._parse_metadata(metadata)
         self._graph_cache: EntityGraph | None = None
         self._active_uow: SQLiteUnitOfWork | None = None
+        self._composed_source_cache: ComposedConfigSource | None = None
+        self._warned_materialized_config = False
 
     @classmethod
     def init(
@@ -102,7 +110,12 @@ class CruxibleInstance(InstanceProtocol):
         if not resolved_config.is_absolute():
             resolved_config = root / resolved_config
 
-        load_config(resolved_config)
+        if resolved_config.name == CONFIG_SOURCE_FILE_NAME:
+            # Source-pointer instances validate by resolving + composing the
+            # pointer; there is no flattened config file to load.
+            compose_config_source(load_config_source(resolved_config), instance_root=root)
+        else:
+            load_config(resolved_config)
 
         instance_dir = root / cls.INSTANCE_DIR
         instance_dir.mkdir(parents=True, exist_ok=True)
@@ -141,8 +154,52 @@ class CruxibleInstance(InstanceProtocol):
         raise InstanceNotFoundError(f"No .cruxible/ directory found at or above {root}")
 
     def load_config(self) -> CoreConfig:
-        """Load the CoreConfig from the stored config path."""
+        """Load the serving CoreConfig.
+
+        Source-pointer instances compose their layers at load and serve the
+        composed config from memory; pre-pointer instances read the
+        materialized config file directly during the migration window.
+        """
+        if self.has_config_source():
+            return self.load_composed_config_source().config
+        if not self._warned_materialized_config:
+            self._warned_materialized_config = True
+            logger.warning(
+                "Instance at %s serves a materialized config copy (%s) with no "
+                "%s pointer. Materialized instance configs are deprecated and "
+                "stop loading in 0.3; migrate to a config source pointer.",
+                self.root,
+                self.metadata.config_path,
+                CONFIG_SOURCE_FILE_NAME,
+            )
         return load_config(self.get_config_path())
+
+    def get_config_source_path(self) -> Path:
+        """Return the config source pointer path for the instance."""
+        return self.instance_dir / CONFIG_SOURCE_FILE_NAME
+
+    def has_config_source(self) -> bool:
+        """Return whether the instance serves its config from a source pointer."""
+        return self.get_config_source_path().exists()
+
+    def load_composed_config_source(self) -> ComposedConfigSource:
+        """Resolve + compose the source pointer, serving the cached composition.
+
+        The composition is keyed by its composed digest and cached on the
+        instance object; ``config refresh`` swaps it via
+        :meth:`set_serving_config_source`. No composed config touches disk.
+        """
+        if self._composed_source_cache is None:
+            pointer = load_config_source(self.get_config_source_path())
+            self._composed_source_cache = compose_config_source(
+                pointer,
+                instance_root=self.root,
+            )
+        return self._composed_source_cache
+
+    def set_serving_config_source(self, composed: ComposedConfigSource) -> None:
+        """Swap the in-memory serving composition (the ``config refresh`` seam)."""
+        self._composed_source_cache = composed
 
     def get_root_path(self) -> Path:
         """Return the instance root directory."""
@@ -154,6 +211,12 @@ class CruxibleInstance(InstanceProtocol):
 
     def save_config(self, config: CoreConfig) -> None:
         """Save the CoreConfig back to the YAML file on disk."""
+        if self.has_config_source():
+            raise ConfigError(
+                "This instance serves its config from a source pointer "
+                f"({CONFIG_SOURCE_FILE_NAME}); there is no editable config copy. "
+                "Change the source layers and run `cruxible config refresh`."
+            )
         save_config(config, self.get_config_path())
 
     def get_instance_mode(self) -> str:
@@ -414,12 +477,18 @@ class CruxibleInstance(InstanceProtocol):
         """Persist DB-authoritative snapshot state and export portable artifacts."""
         snapshot_id = new_id("snap", length=16, separator="_")
         config = self.load_config()
-        config_path = self.get_config_path()
+        if self.has_config_source():
+            # Source-pointer instances have no flattened config on disk; the
+            # snapshot bundle embeds the serving composition, serialized to the
+            # same canonical YAML form a materialized config would carry.
+            config_bytes = dump_config_yaml(config).encode("utf-8")
+        else:
+            config_bytes = self.get_config_path().read_bytes()
         graph_json = json.dumps(graph.to_dict(), indent=2, sort_keys=True).encode("utf-8")
         graph_digest = f"sha256:{hashlib.sha256(graph_json).hexdigest()}"
         artifacts: dict[str, bytes] = {
             "graph.json": graph_json,
-            "config.yaml": config_path.read_bytes(),
+            "config.yaml": config_bytes,
         }
 
         lock_path = resolve_lock_path(self)

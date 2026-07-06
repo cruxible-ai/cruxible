@@ -60,6 +60,7 @@ from cruxible_core.service.groups import (
 from cruxible_core.service.lifecycle import (
     service_init,
     service_init_governed_upload,
+    service_refresh_config,
     service_reload_config,
     service_validate,
 )
@@ -176,6 +177,7 @@ from cruxible_core.service.types import (
     QueryServiceResult,
     QuerySurfaceServiceResult,
     ReceiptExplanationResult,
+    RefreshConfigResult,
     RelationshipLineageResult,
     RelationshipTargetInput,
     RelationshipWriteInput,
@@ -280,6 +282,7 @@ __all__ = [
     "RelationshipLineageResult",
     "RelationshipTargetInput",
     "RelationshipWriteInput",
+    "RefreshConfigResult",
     "ReloadConfigResult",
     "ResolveGroupResult",
     "RunServiceResult",
@@ -384,6 +387,7 @@ __all__ = [
     "service_query_inline_surface",
     "service_query_surface",
     "service_register_source_artifact",
+    "service_refresh_config",
     "service_reload_config",
     "service_sample",
     "service_schema",

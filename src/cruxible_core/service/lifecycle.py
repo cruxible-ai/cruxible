@@ -3,28 +3,37 @@
 from __future__ import annotations
 
 import shutil
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Mapping
 
 import yaml
 
 from cruxible_core.config.composer import (
-    ResolvedConfigLayer,
     compose_config_sequence,
     compose_runtime_config_files,
     rebase_artifact_uri,
     resolve_config_layers,
     resolve_overlay_kit_base_layer,
 )
+from cruxible_core.config.governance_diff import Classification, diff_governance
 from cruxible_core.config.loader import load_config, load_config_from_string, save_config
 from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.source_pointer import (
+    CONFIG_SOURCE_FILE_NAME,
+    ConfigSourcePointer,
+    KitSourceLayer,
+    compose_config_source,
+    load_config_source,
+    save_config_source,
+    validate_kit_layer_sequence,
+)
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import (
     KIT_MANIFEST_FILE,
-    KitBundle,
     config_yaml_has_kit_provider_refs,
     copy_kit_runtime_files,
     is_kit_provider_ref,
@@ -36,8 +45,10 @@ from cruxible_core.kits import (
 )
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.server.config import is_server_auth_enabled
+from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.service.types import (
     InitResult,
+    RefreshConfigResult,
     ReloadConfigResult,
     ValidateServiceResult,
 )
@@ -55,6 +66,7 @@ from cruxible_core.workflow.types import LockedArtifact, LockedProvider, Workflo
 _INSTANCE_KITS_DIR = "kits"
 
 _MANAGED_CONFIG_RELATIVE_PATH = Path(CruxibleInstance.INSTANCE_DIR) / "configs" / "active.yaml"
+_CONFIG_SOURCE_RELATIVE_PATH = Path(CruxibleInstance.INSTANCE_DIR) / CONFIG_SOURCE_FILE_NAME
 
 
 def refuse_auth_managed_without_server_auth(
@@ -147,8 +159,9 @@ def service_init(
     the source config uses ``extends``, the composed config is flattened into
     the same managed path so the initialized instance has a self-contained
     config without assuming a caller-provided filename.  Kit-backed inits
-    materialize each bundle under ``kits/<kit_id>/`` and flatten the ordered
-    composition of all kit layers into the managed config.
+    materialize each bundle under ``kits/<kit_id>/`` and write a
+    ``config-source.yaml`` pointer carrying the ordered kit refs; the runtime
+    composes the layers at load, so no flattened config is written to disk.
     """
     root = Path(root_dir)
     normalized_kits = [value.strip() for value in (kits or []) if value.strip()]
@@ -159,11 +172,12 @@ def service_init(
         raise ConfigError("Provide exactly one of config_path, config_yaml, or kits")
 
     wrote_managed_config = False
+    wrote_config_source = False
     materialized_kit_dirs: list[tuple[str, Path]] = []
 
     if normalized_kits:
         bundles = [resolve_kit_ref(value) for value in normalized_kits]
-        _validate_kit_sequence(normalized_kits, bundles)
+        validate_kit_layer_sequence(normalized_kits, bundles)
         # Check each bundle's entry config from the resolved cache BEFORE
         # materialization copies any kit file into the instance root, so an
         # auth-off refusal leaves the root untouched. Composition is
@@ -177,7 +191,6 @@ def service_init(
                     instance_config_path=bundle_entry_config,
                 )
         try:
-            layers: list[ResolvedConfigLayer] = []
             for kit_ref, bundle in zip(normalized_kits, bundles):
                 kit_id = bundle.manifest.kit_id
                 kit_dir = root / _INSTANCE_KITS_DIR / kit_id
@@ -188,24 +201,27 @@ def service_init(
                 # Recorded before materialization so a partial copy is swept on
                 # failure; otherwise the leftover dir blocks every retry.
                 materialized_kit_dirs.append((kit_id, kit_dir))
-                entry_config = materialize_kit(
+                materialize_kit(
                     kit=kit_ref,
                     root=kit_dir,
                     expected_role=bundle.manifest.role,
                 )
-                layer_config = load_config(entry_config)
-                _namespace_config_kit_provider_refs(layer_config, kit_id)
-                layers.append(ResolvedConfigLayer(config=layer_config, config_path=entry_config))
-            composed = compose_config_sequence(layers)
-            # Refuse before the composed managed config is written to disk.
-            refuse_auth_managed_without_server_auth(
-                composed,
-                instance_config_path=root / _MANAGED_CONFIG_RELATIVE_PATH,
+            # The instance stores a source POINTER (the kit refs as given),
+            # never a flattened config: composition happens at load.
+            pointer = ConfigSourcePointer(
+                layers=[KitSourceLayer(ref=value) for value in normalized_kits]
             )
-            config_path = _save_managed_config(root, composed)
-            wrote_managed_config = True
+            composed_source = compose_config_source(pointer, instance_root=root)
+            # Refuse before the pointer is written to disk.
+            refuse_auth_managed_without_server_auth(
+                composed_source.config,
+                instance_config_path=root / _CONFIG_SOURCE_RELATIVE_PATH,
+            )
+            save_config_source(pointer, root / _CONFIG_SOURCE_RELATIVE_PATH)
+            wrote_config_source = True
+            config_path = str(_CONFIG_SOURCE_RELATIVE_PATH)
         except Exception:
-            _cleanup_managed_config(root)
+            _cleanup_config_source(root)
             _cleanup_materialized_kits(root, materialized_kit_dirs)
             raise
 
@@ -223,40 +239,45 @@ def service_init(
         wrote_managed_config = True
 
     assert config_path is not None
-    resolved = Path(config_path)
-    if not resolved.is_absolute():
-        resolved = root / resolved
 
-    # Compose extends overlay before init so the instance gets a self-contained config.
-    config = load_config(resolved)
-    if config.extends is not None:
-        try:
-            composed = compose_config_sequence(
-                resolve_config_layers(config, config_path=resolved),
-            )
-            # Refuse before the flattened managed config is written to disk.
-            refuse_auth_managed_without_server_auth(
-                composed,
-                instance_config_path=root / _MANAGED_CONFIG_RELATIVE_PATH,
-            )
-            config_path = _save_managed_config(root, composed)
-            wrote_managed_config = True
-        except Exception:
-            if wrote_managed_config:
-                _cleanup_managed_config(root)
-            raise
+    if not wrote_config_source:
+        resolved = Path(config_path)
+        if not resolved.is_absolute():
+            resolved = root / resolved
 
-    effective_config_path = Path(config_path)
-    if not effective_config_path.is_absolute():
-        effective_config_path = root / effective_config_path
+        # Compose extends overlay before init so the instance gets a
+        # self-contained config.
+        config = load_config(resolved)
+        if config.extends is not None:
+            try:
+                composed = compose_config_sequence(
+                    resolve_config_layers(config, config_path=resolved),
+                )
+                # Refuse before the flattened managed config is written to disk.
+                refuse_auth_managed_without_server_auth(
+                    composed,
+                    instance_config_path=root / _MANAGED_CONFIG_RELATIVE_PATH,
+                )
+                config_path = _save_managed_config(root, composed)
+                wrote_managed_config = True
+            except Exception:
+                if wrote_managed_config:
+                    _cleanup_managed_config(root)
+                raise
 
     try:
-        # Refuse before materializing the instance so an auth-off daemon does not
-        # leave behind a half-created instance pointing at a config it cannot honor.
-        refuse_auth_managed_without_server_auth(
-            load_config(effective_config_path),
-            instance_config_path=effective_config_path,
-        )
+        if not wrote_config_source:
+            effective_config_path = Path(config_path)
+            if not effective_config_path.is_absolute():
+                effective_config_path = root / effective_config_path
+            # Refuse before materializing the instance so an auth-off daemon
+            # does not leave behind a half-created instance pointing at a
+            # config it cannot honor. (Pointer inits refused on the composed
+            # source above, before the pointer was written.)
+            refuse_auth_managed_without_server_auth(
+                load_config(effective_config_path),
+                instance_config_path=effective_config_path,
+            )
         instance = CruxibleInstance.init(
             root,
             config_path,
@@ -266,6 +287,8 @@ def service_init(
     except Exception:
         if wrote_managed_config:
             _cleanup_managed_config(root)
+        if wrote_config_source:
+            _cleanup_config_source(root)
         _cleanup_materialized_kits(root, materialized_kit_dirs)
         raise
 
@@ -278,44 +301,11 @@ def service_init(
     return InitResult(instance=instance, warnings=warnings)
 
 
-def _validate_kit_sequence(kit_refs: Sequence[str], bundles: Sequence[KitBundle]) -> None:
-    """Validate a composed init kit sequence: standalone base, overlays on earlier kits."""
-    first = bundles[0].manifest
-    if first.role != "standalone":
-        raise ConfigError(
-            f"The first kit in an init sequence must be role: standalone, but "
-            f"'{first.kit_id}' is role: {first.role}"
-            + (
-                f" targeting state '{first.target_state}'. List its base kit first, "
-                f"e.g. `cruxible init --kit {first.target_state} --kit {first.kit_id}`, "
-                "or use `cruxible state create-overlay --kit` for a published state."
-                if first.role == "overlay"
-                else ""
-            )
-        )
-    seen_kit_ids = [first.kit_id]
-    for kit_ref, bundle in zip(kit_refs[1:], bundles[1:]):
-        manifest = bundle.manifest
-        if manifest.role != "overlay":
-            raise ConfigError(
-                f"Kit '{manifest.kit_id}' has role '{manifest.role}'; every kit after "
-                "the first in an init sequence must be role: overlay"
-            )
-        if manifest.kit_id in seen_kit_ids:
-            raise ConfigError(f"Kit '{manifest.kit_id}' appears more than once in the sequence")
-        if manifest.target_state not in seen_kit_ids:
-            raise ConfigError(
-                f"Kit '{manifest.kit_id}' targets state '{manifest.target_state}', which "
-                f"is not an earlier kit in the sequence [{', '.join(seen_kit_ids)}]"
-            )
-        seen_kit_ids.append(manifest.kit_id)
-
-
-def _namespace_config_kit_provider_refs(config: CoreConfig, kit_id: str) -> None:
-    """Rewrite a kit layer's kit:// provider refs to their kit-scoped form in place."""
-    for provider in config.providers.values():
-        if is_kit_provider_ref(provider.ref):
-            provider.ref = namespace_kit_provider_ref(provider.ref, kit_id)
+def _cleanup_config_source(root: Path) -> None:
+    try:
+        (root / _CONFIG_SOURCE_RELATIVE_PATH).unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def _cleanup_materialized_kits(root: Path, kit_dirs: list[tuple[str, Path]]) -> None:
@@ -581,6 +571,14 @@ def service_reload_config(
     """Validate, replace, or repoint the active config for an existing instance."""
     if config_path is not None and config_yaml is not None:
         raise ConfigError("Provide config_path or config_yaml, not both")
+    if instance.has_config_source() and (config_path is not None or config_yaml is not None):
+        # Source-pointer instances have no editable config to replace or
+        # repoint; delivering updates goes through the receipted refresh verb.
+        raise ConfigError(
+            "This instance serves its config from a source pointer "
+            f"({CONFIG_SOURCE_FILE_NAME}); `config reload` cannot replace it. "
+            "Update the source layers and run `cruxible config refresh`."
+        )
     if config_yaml is not None and config_base_dir is not None:
         config_yaml = _normalize_uploaded_config_yaml(
             config_yaml,
@@ -698,3 +696,104 @@ def service_reload_config(
         updated=False,
         warnings=warnings,
     )
+
+
+def service_refresh_config(
+    instance: InstanceProtocol,
+    *,
+    actor_context: GovernedActorContext | None = None,
+    authorize_classification: Callable[[Classification], None] | None = None,
+) -> RefreshConfigResult:
+    """Recompose the instance config from its source pointer and swap it in.
+
+    The all-or-nothing refresh flow (dd-config-by-reference-one-source):
+    resolve + recompose from ``config-source.yaml`` ONLY (refresh never takes
+    a config path — repointing the source is a separate admin operation),
+    classify the governance diff, gate through ``authorize_classification``
+    (the runtime facade escalates weakening refreshes to admin), rebuild the
+    workflow lock against the new composition (artifact digest mismatches
+    fail closed; no force flag), then swap the in-memory serving config and
+    write a ``config_refresh`` receipt. Any failing step leaves the old
+    config serving.
+    """
+    if not instance.has_config_source():
+        raise ConfigError(
+            "This instance has no config source pointer "
+            f"({CONFIG_SOURCE_FILE_NAME}); `config refresh` only serves "
+            "source-pointer instances. Materialized instances migrate through "
+            "`config adopt`."
+        )
+    serving = instance.load_composed_config_source()
+    pointer = load_config_source(instance.get_config_source_path())
+    fresh = compose_config_source(pointer, instance_root=instance.get_root_path())
+    refuse_auth_managed_without_server_auth(
+        fresh.config,
+        instance_config_path=instance.get_config_source_path(),
+    )
+    diff = diff_governance(serving.config, fresh.config)
+    classification = diff.classification
+    if authorize_classification is not None:
+        authorize_classification(classification)
+    warnings = validate_config(fresh.config)
+
+    # Rebuild the workflow lock against the new composition BEFORE anything
+    # swaps; a stale canonical artifact digest fails the whole refresh.
+    new_lock = build_lock(fresh.config, instance.get_config_path().parent)
+    lock_path = get_lock_path(instance)
+    previous_lock_bytes = lock_path.read_bytes() if lock_path.exists() else None
+
+    layer_records = [
+        {"kind": layer.kind, "ref": layer.ref, "digest": layer.digest} for layer in fresh.layers
+    ]
+    result = RefreshConfigResult(
+        pointer_digest=fresh.pointer_digest,
+        before_composed_digest=serving.composed_digest,
+        after_composed_digest=fresh.composed_digest,
+        classification=classification,
+        governance_changes=diff.summary_lines,
+        layers=layer_records,
+        lock_path=str(lock_path),
+        warnings=warnings,
+    )
+    try:
+        with mutation_receipt(
+            instance,
+            "config_refresh",
+            {
+                "pointer_digest": fresh.pointer_digest,
+                "layers": layer_records,
+                "before_composed_digest": serving.composed_digest,
+                "after_composed_digest": fresh.composed_digest,
+                "classification": classification,
+                "governance_diff": diff.summary_lines,
+            },
+            actor_context=actor_context,
+        ) as ctx:
+            assert ctx.builder is not None
+            # The semantic refresh record rides a validation node: receipt
+            # parameters are subject to mutation-payload retention (redacted
+            # to digest metadata by default), while nodes persist verbatim.
+            ctx.builder.record_validation(
+                passed=True,
+                detail={
+                    "pointer_digest": fresh.pointer_digest,
+                    "layers": layer_records,
+                    "before_composed_digest": serving.composed_digest,
+                    "after_composed_digest": fresh.composed_digest,
+                    "classification": classification,
+                    "governance_diff": diff.summary_lines,
+                },
+            )
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            write_lock(new_lock, lock_path)
+            instance.set_serving_config_source(fresh)
+            ctx.set_result(result)
+    except BaseException:
+        # Fail closed: restore the previous lock bytes and serving composition.
+        instance.set_serving_config_source(serving)
+        if previous_lock_bytes is None:
+            lock_path.unlink(missing_ok=True)
+        else:
+            lock_path.write_bytes(previous_lock_bytes)
+        raise
+    return result

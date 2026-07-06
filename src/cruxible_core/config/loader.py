@@ -156,12 +156,17 @@ def _parse_yaml(raw: str) -> dict[str, Any]:
     return data
 
 
+def dump_config_yaml(config: CoreConfig) -> str:
+    """Serialize a CoreConfig to the canonical YAML form, stamping the version."""
+    stamped = config.model_copy(update={"cruxible_version": __version__})
+    data = stamped.model_dump(mode="python", by_alias=True, exclude_none=True)
+    return yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
+
+
 def save_config(config: CoreConfig, path: str | Path) -> None:
     """Serialize a CoreConfig to YAML and write to disk atomically."""
-    stamped = config.model_copy(update={"cruxible_version": __version__})
     path = Path(path)
-    data = stamped.model_dump(mode="python", by_alias=True, exclude_none=True)
-    yaml_str = yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
+    yaml_str = dump_config_yaml(config)
     try:
         fd = tempfile.NamedTemporaryFile(
             mode="w",

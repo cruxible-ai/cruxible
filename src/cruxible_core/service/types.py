@@ -371,6 +371,21 @@ class ReloadConfigResult:
 
 
 @dataclass
+class RefreshConfigResult:
+    """Outcome of a receipted config refresh from the instance source pointer."""
+
+    pointer_digest: str
+    before_composed_digest: str
+    after_composed_digest: str
+    classification: str
+    governance_changes: list[str]
+    layers: list[dict[str, str]]
+    lock_path: str
+    warnings: list[str] = field(default_factory=list)
+    receipt_id: str | None = None
+
+
+@dataclass
 class AddConstraintServiceResult:
     name: str
     added: bool
