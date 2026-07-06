@@ -187,7 +187,7 @@ Payload shape (entities, optional factual relationships, shared evidence):
   relationships:
     - from_type: StateNote
       from_id: note_conventions_source
-      relationship: state_note_about_decision
+      relationship_type: state_note_about_decision
       to_type: Decision
       to_id: dec_redis_idempotency
       shared_evidence_keys: [wiki_passage]

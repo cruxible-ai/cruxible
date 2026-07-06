@@ -515,7 +515,7 @@ entities:
 relationships:
   - from_type: WorkItem
     from_id: wi-example
-    relationship: work_item_implements_roadmap_item
+    relationship_type: work_item_implements_roadmap_item
     to_type: RoadmapItem
     to_id: ri-example
     shared_evidence_keys: [source_section]
@@ -2493,6 +2493,7 @@ evidence locators.
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--path` | yes | `Sentinel.UNSET` | text | Local Markdown source path. Relative paths resolve from the current workspace. |
+| `--id` | no | `` | text | Caller-supplied deterministic artifact id (3-64 chars of `[A-Za-z0-9._-]`, alphanumeric start); duplicates are refused. Omit for a generated `SRC-*` id. |
 | `--kind` | no | `markdown` | choice | Source parser kind. |
 | `--retention` | no | `manifest_only` | choice | Source retention mode: `manifest_only` or `archive`. |
 | `--original-uri` | no | `` | text | Optional display/provenance URI to preserve in the manifest. |
