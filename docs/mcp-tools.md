@@ -1168,7 +1168,7 @@ error-level finding exists.
 
 **Permission:** `ADMIN`
 
-**Purpose:** Use when you need to replace or reload the active config for an instance.
+**Purpose:** Use when you need to validate the active config for an instance; reload never replaces a config (config updates go through refresh/adopt).
 
 **Arguments:**
 

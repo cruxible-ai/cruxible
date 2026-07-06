@@ -978,6 +978,30 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.RefreshConfigResult)
 
+    def config_status(self, instance_id: str) -> contracts.ConfigStatusResult:
+        response = self._client.get(f"/api/v1/{instance_id}/config/status")
+        return self._parse_model(response, contracts.ConfigStatusResult)
+
+    def config_adopt(
+        self,
+        instance_id: str,
+        *,
+        kits: builtins.list[str],
+        fragment: str | None = None,
+        accept: bool = False,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.AdoptConfigResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/config/adopt",
+            json={
+                "kits": kits,
+                "fragment": fragment,
+                "accept": accept,
+                "actor_context": self._actor_context_payload(actor_context),
+            },
+        )
+        return self._parse_model(response, contracts.AdoptConfigResult)
+
     def sample(
         self,
         instance_id: str,

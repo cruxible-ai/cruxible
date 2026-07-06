@@ -323,6 +323,15 @@ class RefreshConfigRequest(BaseModel):
     actor_context: contracts.GovernedActorContext | None = None
 
 
+class AdoptConfigRequest(BaseModel):
+    """Adopt migrates a materialized instance to a source pointer (admin, one-time)."""
+
+    kits: list[str]
+    fragment: str | None = None
+    accept: bool = False
+    actor_context: contracts.GovernedActorContext | None = None
+
+
 class SnapshotCreateRequest(BaseModel):
     label: str | None = None
     actor_context: contracts.GovernedActorContext | None = None

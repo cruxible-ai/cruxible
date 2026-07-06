@@ -386,6 +386,40 @@ class RefreshConfigResult:
 
 
 @dataclass
+class ConfigStatusResult:
+    """Read-only report on how an instance's serving config relates to its source."""
+
+    source: str  # "pointer" | "materialized (pre-pointer)"
+    serving_composed_digest: str
+    receipted_composed_digest: str | None
+    pointer_digest: str | None = None
+    layers: list[dict[str, str]] = field(default_factory=list)
+    recomposed_digest: str | None = None
+    drift: bool = False
+    drift_classification: str | None = None
+    drift_changes: list[str] = field(default_factory=list)
+    serving_matches_receipt: bool | None = None
+
+
+@dataclass
+class AdoptConfigResult:
+    """Outcome (or preview) of migrating a materialized instance to a source pointer."""
+
+    pointer_digest: str
+    before_composed_digest: str
+    after_composed_digest: str
+    classification: str
+    governance_changes: list[str]
+    layers: list[dict[str, str]]
+    lock_path: str
+    applied: bool
+    config_diff: list[str] = field(default_factory=list)
+    config_backup_path: str | None = None
+    warnings: list[str] = field(default_factory=list)
+    receipt_id: str | None = None
+
+
+@dataclass
 class AddConstraintServiceResult:
     name: str
     added: bool

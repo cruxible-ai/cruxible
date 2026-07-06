@@ -21,6 +21,11 @@ from cruxible_core.receipt.types import OperationType, Receipt
 
 logger = structlog.get_logger()
 
+# Config lifecycle operations are exempt from write-path config verification:
+# a receipted refresh/adopt is the only exit from a drifted serving config, so
+# gating them on the very digest match they exist to restore would deadlock.
+_CONFIG_LIFECYCLE_OPERATIONS = frozenset({"config_refresh", "config_adopt"})
+
 
 class SupportsReceiptId(Protocol):
     """Result objects that can be annotated with a mutation receipt."""
@@ -127,7 +132,16 @@ def mutation_receipt(
     ``actor_context`` is the token-derived actor identity for the operation; it is
     preserved onto the built receipt where available and left null on auth-off
     local paths (no actor context is fabricated).
+
+    This wrapper is the single chokepoint where governed mutations acquire the
+    instance, so it is also where write-path config verification lives: a
+    source-pointer instance whose serving composition no longer matches the
+    last receipted digest fails closed before any transaction opens. (The
+    workflow apply path is covered separately by the lock config-digest guard
+    in ``compile_workflow``.)
     """
+    if operation_type not in _CONFIG_LIFECYCLE_OPERATIONS:
+        instance.verify_serving_config_receipted()
     builder = (
         ReceiptBuilder(
             operation_type=operation_type,

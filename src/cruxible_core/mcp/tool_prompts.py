@@ -180,7 +180,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "should be handled."
     ),
     "cruxible_reload_config": (
-        "Use when you need to replace or reload the active config for an instance."
+        "Use when you need to validate the active config for an instance; "
+        "reload never replaces a config (config updates go through refresh/adopt)."
     ),
     "cruxible_propose_workflow": (
         "Use when a workflow proposes reviewable relationship changes instead of "

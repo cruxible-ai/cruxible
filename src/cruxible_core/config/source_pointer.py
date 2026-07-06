@@ -16,7 +16,7 @@ import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -283,27 +283,7 @@ def compose_config_source(
             ResolvedSourceLayer(kind="kit", ref=layer.ref, digest=bundle.digest, kit_id=kit_id)
         )
 
-    fragment = pointer.fragment_layer
-    if fragment is not None:
-        fragment_path = _resolve_fragment_path(fragment.path, instance_root=root)
-        try:
-            fragment_bytes = fragment_path.read_bytes()
-        except OSError as exc:
-            raise ConfigError(f"Failed to read config fragment: {exc}") from exc
-        fragment_config = load_config_from_string(
-            fragment_bytes.decode("utf-8"),
-            partial_layer=True,
-        )
-        resolved_layers.append(
-            ResolvedConfigLayer(config=fragment_config, config_path=fragment_path)
-        )
-        layer_records.append(
-            ResolvedSourceLayer(
-                kind="fragment",
-                ref=fragment.path,
-                digest=f"sha256:{hashlib.sha256(fragment_bytes).hexdigest()}",
-            )
-        )
+    _append_fragment_layer(pointer, root, resolved_layers, layer_records)
 
     config = compose_config_sequence(resolved_layers)
     return ComposedConfigSource(
@@ -312,6 +292,151 @@ def compose_config_source(
         config=config,
         composed_digest=compute_lock_config_digest(config),
         layers=tuple(layer_records),
+    )
+
+
+def compose_materialized_config_source(
+    pointer: ConfigSourcePointer,
+    *,
+    instance_root: str | Path,
+) -> ComposedConfigSource | None:
+    """Compose the pointer from the instance-local materialized kit copies only.
+
+    Kit layers read from ``kits/<kit_id>/`` regardless of what the refs resolve
+    to NOW, reconstructing the composition as of the last materialization
+    (init/adopt). Used to recover the receipted side of a drift classification
+    without re-resolving sources; returns ``None`` when any kit layer has no
+    usable materialized copy. The fragment layer still reads its live path, so
+    a reconstruction is only authoritative when its composed digest matches
+    the receipted digest — callers MUST verify that before trusting it.
+    """
+    from cruxible_core.kits import (
+        KIT_MANIFEST_FILE,
+        compute_bundle_digest,
+        is_kit_provider_ref,
+        load_kit_manifest,
+        namespace_kit_provider_ref,
+    )
+    from cruxible_core.workflow.compiler import compute_lock_config_digest
+
+    root = Path(instance_root).resolve()
+    kits_root = root / _INSTANCE_KITS_DIR
+    if not kits_root.is_dir():
+        return None
+    manifests = []
+    for kit_dir in sorted(kits_root.iterdir()):
+        if (kit_dir / KIT_MANIFEST_FILE).exists():
+            try:
+                manifests.append((load_kit_manifest(kit_dir), kit_dir))
+            except ConfigError:
+                return None
+    # Pointer kit refs are aliases/transport refs, not kit ids, so layers map
+    # onto materialized dirs by overlay-chain order (standalone base first,
+    # each overlay after its target) — the same order init validated. The
+    # mapping only stands when the counts line up exactly.
+    kit_layers = pointer.kit_layers
+    if len(manifests) != len(kit_layers):
+        return None
+    ordered: list[tuple[Any, Path]] = []
+    seen_kit_ids: list[str] = []
+    remaining = list(manifests)
+    while remaining:
+        placeable = [
+            entry
+            for entry in remaining
+            if (entry[0].role == "standalone" and not ordered)
+            or (entry[0].role == "overlay" and entry[0].target_state in seen_kit_ids)
+        ]
+        if len(placeable) != 1:
+            return None
+        ordered.append(placeable[0])
+        seen_kit_ids.append(placeable[0][0].kit_id)
+        remaining.remove(placeable[0])
+
+    resolved_layers: list[ResolvedConfigLayer] = []
+    layer_records: list[ResolvedSourceLayer] = []
+    for layer, (manifest, kit_dir) in zip(kit_layers, ordered):
+        entry_config = kit_dir / manifest.entry_config
+        if not entry_config.is_file():
+            return None
+        layer_config = load_config(entry_config)
+        for provider in layer_config.providers.values():
+            if is_kit_provider_ref(provider.ref):
+                provider.ref = namespace_kit_provider_ref(provider.ref, manifest.kit_id)
+        resolved_layers.append(ResolvedConfigLayer(config=layer_config, config_path=entry_config))
+        layer_records.append(
+            ResolvedSourceLayer(
+                kind="kit",
+                ref=layer.ref,
+                digest=compute_bundle_digest(kit_dir),
+                kit_id=manifest.kit_id,
+            )
+        )
+
+    _append_fragment_layer(pointer, root, resolved_layers, layer_records)
+
+    config = compose_config_sequence(resolved_layers)
+    return ComposedConfigSource(
+        pointer=pointer,
+        pointer_digest=compute_config_source_digest(pointer),
+        config=config,
+        composed_digest=compute_lock_config_digest(config),
+        layers=tuple(layer_records),
+    )
+
+
+def classify_drift_from_receipted(
+    pointer: ConfigSourcePointer,
+    *,
+    instance_root: str | Path,
+    receipted_digest: str,
+    fresh: ComposedConfigSource,
+) -> tuple[str, list[str]]:
+    """Classify drift between the last receipted composition and a fresh one.
+
+    The receipted composition is not stored anywhere (only its digest is, on
+    the lock and in receipts), so the old side is reconstructed from the
+    instance-local materialized kit copies. When the reconstruction's digest
+    matches the receipted digest exactly, the governance diff against the
+    fresh composition is authoritative; otherwise the drift cannot be
+    classified and callers must treat it conservatively (``undetermined``
+    never means safe).
+    """
+    from cruxible_core.config.governance_diff import diff_governance
+
+    reconstructed = compose_materialized_config_source(pointer, instance_root=instance_root)
+    if reconstructed is None or reconstructed.composed_digest != receipted_digest:
+        return "undetermined", []
+    diff = diff_governance(reconstructed.config, fresh.config)
+    return diff.classification, diff.summary_lines
+
+
+def _append_fragment_layer(
+    pointer: ConfigSourcePointer,
+    instance_root: Path,
+    resolved_layers: list[ResolvedConfigLayer],
+    layer_records: list[ResolvedSourceLayer],
+) -> None:
+    """Resolve and append the optional instance-delta fragment layer in place."""
+    fragment = pointer.fragment_layer
+    if fragment is None:
+        return
+    fragment_path = _resolve_fragment_path(fragment.path, instance_root=instance_root)
+    try:
+        fragment_bytes = fragment_path.read_bytes()
+    except OSError as exc:
+        raise ConfigError(f"Failed to read config fragment: {exc}") from exc
+    fragment_config = load_config_from_string(
+        fragment_bytes.decode("utf-8"),
+        partial_layer=True,
+    )
+    resolved_layers.append(ResolvedConfigLayer(config=fragment_config, config_path=fragment_path))
+    layer_records.append(
+        ResolvedSourceLayer(
+            kind="fragment",
+            ref=fragment.path,
+            digest=f"sha256:{hashlib.sha256(fragment_bytes).hexdigest()}",
+        )
     )
 
 

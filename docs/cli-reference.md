@@ -78,8 +78,10 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 
 **Subcommands:**
 
-- `cruxible config reload` - Validate the active config or repoint the instance to a new config file.
+- `cruxible config reload` - Validate the active config (validate-only; replace/repoint are retired).
 - `cruxible config refresh` - Recompose the config from the instance source pointer and swap it in.
+- `cruxible config status` - Show serving/receipted/source config digests and classify any drift.
+- `cruxible config adopt` - Migrate a materialized instance to a config source pointer (one-time, admin).
 - `cruxible config views` - Render canonical Mermaid/Markdown views for a Cruxible config.
 - `cruxible config expand` - Expand a compact authoring config to the explicit engine config.
 - `cruxible config add-constraint` - Add a constraint rule to the config.
@@ -2125,25 +2127,48 @@ cruxible query inline \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible config reload
+## cruxible config adopt
 
-**Usage:** `cruxible config reload [OPTIONS]`
+**Usage:** `cruxible config adopt [OPTIONS]`
 
-**Purpose:** Validate the active config or repoint the instance to a new config file.
+**Purpose:** One-time migration of a materialized (pre-pointer) instance to a `config-source.yaml` pointer. Declare the layer refs in the same vocabulary `init --kit` accepts; adopt composes them, shows the full diff against the currently served materialized config (the accumulated drift since init) with its governance classification, and on explicit acceptance writes the pointer, re-materializes the instance `kits/<kit_id>/` dirs from the resolved bundles, rebuilds the workflow lock, writes a `config_adopt` receipt, and renames the retired `config.yaml` to `config.materialized.bak` (never read again). Any failure leaves the instance exactly as it was.
 
 **Options And Arguments:**
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
-| `--config` | no | `` | text | Optional new config path. |
+| `--kit` | yes | `` | text | Kit layer ref (repeatable), the same refs `init --kit` accepts. |
+| `--fragment` | no | `` | text | Optional instance-delta fragment path (contained in the instance root). |
+| `--yes` | no | `False` | boolean | Accept the shown diff without prompting. |
 
 **Output And Side Effects:**
-- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+- Prints the full config diff, the governance classification, per-layer refs + digests, and (on acceptance) the receipt id and retired-config backup path.
+- Writes `config-source.yaml`, re-materializes kit dirs, rebuilds the workflow lock, and writes a `config_adopt` receipt.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
-- Permission mode too low for mutations or admin operations.
-- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+- Instance already serves from a source pointer (use `config refresh` instead).
+- Permission mode too low: adopt requires `admin`.
+
+## cruxible config reload
+
+**Usage:** `cruxible config reload [OPTIONS]`
+
+**Purpose:** Validate the active config. Reload is validate-only: replacing or repointing a config through reload is retired — deliver source-layer updates with `cruxible config refresh`, or migrate a materialized instance once with `cruxible config adopt`. On release-backed overlay instances, a plain reload still regenerates the composed active config from the tracked upstream + overlay files.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | no | `` | text | Retired; refused with guidance. |
+
+**Output And Side Effects:**
+- Validates the effective config and prints warnings; no config content is replaced.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- `--config` is refused outright with a pointer to `config adopt`.
+- Permission mode too low for admin operations.
 
 ## cruxible config refresh
 
@@ -2165,6 +2190,25 @@ cruxible query inline \
 - Instance has no `config-source.yaml` pointer (pre-pointer instances migrate via `config adopt`).
 - Permission mode too low: tightening/neutral refreshes need `graph_write`; a weakening governance diff requires `admin`.
 - Canonical artifact digest mismatches fail the lock rebuild (no force flag); the refresh aborts with the old config serving.
+
+## cruxible config status
+
+**Usage:** `cruxible config status [OPTIONS]`
+
+**Purpose:** Read-only report on how the serving config relates to its source and last receipt. Shows the serving composed digest, the source pointer layers with their current digests, and whether recomposing the source NOW yields a digest different from the last receipted init/refresh/adopt (drift), plus the governance classification of that drift. Pre-pointer instances report `materialized (pre-pointer)` with no drift computation.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only; nothing is recomposed into service and no receipt is written.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- A source layer that no longer resolves (deleted kit ref, escaped fragment) fails the recompose.
 
 ## cruxible run
 

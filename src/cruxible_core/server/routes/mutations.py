@@ -15,6 +15,7 @@ from cruxible_core.server.request_models import (
     AddDecisionPolicyRequest,
     AddEntitiesRequest,
     AddRelationshipsRequest,
+    AdoptConfigRequest,
     BatchDirectWriteRequest,
     RefreshConfigRequest,
     ReloadConfigRequest,
@@ -133,4 +134,18 @@ async def config_refresh(
     return api.config_refresh(
         instance_id=resolve_server_instance_id(instance_id),
         actor_context=req.actor_context if req is not None else None,
+    )
+
+
+@router.post("/{instance_id}/config/adopt", response_model=contracts.AdoptConfigResult)
+async def config_adopt(
+    instance_id: str,
+    req: AdoptConfigRequest,
+) -> contracts.AdoptConfigResult:
+    return api.config_adopt(
+        instance_id=resolve_server_instance_id(instance_id),
+        kits=req.kits,
+        fragment=req.fragment,
+        accept=req.accept,
+        actor_context=req.actor_context,
     )

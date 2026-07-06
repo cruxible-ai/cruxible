@@ -2919,47 +2919,19 @@ def test_feedback_and_outcome_write_commands_emit_json_in_server_mode(
     assert json.loads(outcome.output) == {"outcome_id": "OUT-json"}
 
 
-def test_reload_config_uploads_composed_yaml_in_server_mode(
+def test_reload_config_refuses_repoint_flag_in_server_mode(
     monkeypatch,
     runner: CliRunner,
     tmp_path: Path,
 ):
-    base = tmp_path / "base.yaml"
-    base.write_text(
-        'version: "1.0"\n'
-        "name: base\n"
-        "entity_types:\n"
-        "  Case:\n"
-        "    properties:\n"
-        "      case_id: {type: string, primary_key: true}\n"
-        "relationships:\n"
-        "  - name: cites\n"
-        "    from: Case\n"
-        "    to: Case\n"
-    )
     overlay = tmp_path / "overlay.yaml"
-    overlay.write_text(
-        'version: "1.0"\n'
-        "name: overlay\n"
-        "extends: base.yaml\n"
-        "entity_types: {}\n"
-        "relationships:\n"
-        "  - name: follows\n"
-        "    from: Case\n"
-        "    to: Case\n"
-    )
-    captured: dict[str, object] = {}
+    overlay.write_text('version: "1.0"\nname: overlay\nentity_types: {}\n')
+    calls: list[str] = []
 
     class StubClient:
         def reload_config(self, instance_id, *, config_path=None, config_yaml=None):
-            captured["instance_id"] = instance_id
-            captured["config_path"] = config_path
-            captured["config_yaml"] = config_yaml
-            return contracts.ReloadConfigResult(
-                config_path="/daemon/instances/inst_123/config.yaml",
-                updated=True,
-                warnings=[],
-            )
+            calls.append(instance_id)
+            raise AssertionError("reload must be refused client-side before any request")
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = runner.invoke(
@@ -2976,13 +2948,36 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
         ],
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 2
+    assert "retired" in result.output
+    assert "config adopt" in result.output
+    assert calls == []
+
+
+def test_reload_config_validates_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def reload_config(self, instance_id):
+            captured["instance_id"] = instance_id
+            return contracts.ReloadConfigResult(
+                config_path="/daemon/instances/inst_123/config.yaml",
+                updated=False,
+                warnings=[],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        ["--server-url", "http://server", "--instance-id", "inst_123", "config", "reload"],
+    )
+
+    assert result.exit_code == 0, result.output
     assert captured["instance_id"] == "inst_123"
-    assert captured["config_path"] is None
-    assert isinstance(captured["config_yaml"], str)
-    assert "extends:" not in captured["config_yaml"]
-    assert "follows" in captured["config_yaml"]
-    assert "Config updated on server." in result.output
+    assert "Config validated on server." in result.output
 
 
 def test_config_refresh_prints_governance_diff_in_server_mode(
@@ -3033,6 +3028,152 @@ def test_config_refresh_prints_governance_diff_in_server_mode(
     assert "after:  sha256:after" in result.output
     assert "layer [kit] agent-operation (sha256:layer)" in result.output
     assert "Receipt: RCP-refresh" in result.output
+
+
+def test_config_status_prints_drift_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def config_status(self, instance_id):
+            captured["instance_id"] = instance_id
+            return contracts.ConfigStatusResult(
+                source="pointer",
+                serving_composed_digest="sha256:serving",
+                receipted_composed_digest="sha256:serving",
+                pointer_digest="sha256:pointer",
+                layers=[
+                    contracts.RefreshedConfigLayer(
+                        kind="kit", ref="agent-operation", digest="sha256:layer"
+                    )
+                ],
+                recomposed_digest="sha256:fresh",
+                drift=True,
+                drift_classification="weakened",
+                drift_changes=[
+                    "[weakening] mutation_guard 'guarded_close': mutation guard removed"
+                ],
+                serving_matches_receipt=True,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        ["--server-url", "http://server", "--instance-id", "inst_123", "config", "status"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["instance_id"] == "inst_123"
+    assert "Config source: pointer" in result.output
+    assert "serving digest:   sha256:serving" in result.output
+    assert "layer [kit] agent-operation (sha256:layer)" in result.output
+    assert "recomposing the source now yields sha256:fresh" in result.output
+    assert "classification: weakened" in result.output
+    assert "mutation guard removed" in result.output
+    assert "cruxible config refresh" in result.output
+
+
+def test_config_adopt_previews_confirms_and_applies_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+):
+    calls: list[bool] = []
+
+    class StubClient:
+        def config_adopt(self, instance_id, *, kits, fragment=None, accept=False):
+            assert instance_id == "inst_123"
+            assert kits == ["agent-operation"]
+            assert fragment is None
+            calls.append(accept)
+            return contracts.AdoptConfigResult(
+                pointer_digest="sha256:pointer",
+                before_composed_digest="sha256:before",
+                after_composed_digest="sha256:after",
+                classification="tightened",
+                governance_changes=[
+                    "[tightening] mutation_guard 'guarded_reopen': mutation guard added"
+                ],
+                layers=[
+                    contracts.RefreshedConfigLayer(
+                        kind="kit", ref="agent-operation", digest="sha256:layer"
+                    )
+                ],
+                lock_path="/daemon/instances/inst_123/.cruxible/cruxible.lock.yaml",
+                applied=accept,
+                config_diff=["+  - name: guarded_reopen"] if not accept else [],
+                config_backup_path=(
+                    "/daemon/instances/inst_123/config.materialized.bak" if accept else None
+                ),
+                receipt_id="RCP-adopt" if accept else None,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "config",
+            "adopt",
+            "--kit",
+            "agent-operation",
+        ],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [False, True]
+    assert "Adopt preview: tightened" in result.output
+    assert "+  - name: guarded_reopen" in result.output
+    assert "mutation guard added" in result.output
+    assert "Config adopted: tightened" in result.output
+    assert "retired config: /daemon/instances/inst_123/config.materialized.bak" in result.output
+    assert "Receipt: RCP-adopt" in result.output
+
+
+def test_config_adopt_aborts_without_confirmation(
+    monkeypatch,
+    runner: CliRunner,
+):
+    calls: list[bool] = []
+
+    class StubClient:
+        def config_adopt(self, instance_id, *, kits, fragment=None, accept=False):
+            calls.append(accept)
+            return contracts.AdoptConfigResult(
+                pointer_digest="sha256:pointer",
+                before_composed_digest="sha256:before",
+                after_composed_digest="sha256:after",
+                classification="weakened",
+                governance_changes=[],
+                layers=[],
+                lock_path="/daemon/lock",
+                applied=False,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "config",
+            "adopt",
+            "--kit",
+            "agent-operation",
+        ],
+        input="n\n",
+    )
+
+    assert result.exit_code == 1
+    assert calls == [False]
+    assert "Aborted" in result.output
 
 
 @pytest.mark.parametrize("command", ["add", "update"])

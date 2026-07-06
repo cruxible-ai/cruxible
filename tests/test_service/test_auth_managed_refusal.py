@@ -166,33 +166,34 @@ class TestAuthManagedRefusalAtGovernedUpload:
 
 
 class TestAuthManagedRefusalAtReload:
-    def test_auth_off_refuses_auth_managed_config_at_reload(
+    def test_auth_off_refuses_auth_managed_config_at_validate_only_reload(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Create a clean instance while auth is ON, then flip auth OFF and try to
-        # reload an auth-managed config into it.
+        # Create an auth-managed instance while auth is ON, then flip auth OFF:
+        # the validate-only reload must refuse the config it can no longer honor.
         _auth_on(monkeypatch)
-        result = service_init(tmp_path / "inst", config_yaml=PLAIN_YAML)
+        result = service_init(tmp_path / "inst", config_yaml=AUTH_MANAGED_YAML)
         instance = result.instance
 
         _auth_off(monkeypatch)
         with pytest.raises(ConfigError) as exc:
-            service_reload_config(instance, config_yaml=AUTH_MANAGED_YAML)
+            service_reload_config(instance)
         message = str(exc.value)
         assert "Actor" in message
         assert "CRUXIBLE_SERVER_AUTH=true" in message
-        # The refused reload did not overwrite the instance's active config.
-        assert "Widget" in instance.load_config().entity_types
 
-    def test_auth_on_accepts_auth_managed_config_at_reload(
+    def test_reload_refuses_uploaded_yaml_regardless_of_auth(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Replacing a config through reload is retired outright; the refusal
+        # precedes any auth-managed evaluation of the uploaded content.
         _auth_on(monkeypatch)
         result = service_init(tmp_path / "inst", config_yaml=PLAIN_YAML)
         instance = result.instance
 
-        service_reload_config(instance, config_yaml=AUTH_MANAGED_YAML)
-        assert "Actor" in instance.load_config().entity_types
+        with pytest.raises(ConfigError, match="validate-only"):
+            service_reload_config(instance, config_yaml=AUTH_MANAGED_YAML)
+        assert "Widget" in instance.load_config().entity_types
 
 
 class TestAuthManagedRefusalAtRestoreAndClone:
@@ -229,9 +230,7 @@ class TestAuthManagedRefusalAtRestoreAndClone:
     ) -> None:
         artifact = self._backup_auth_managed_instance(tmp_path, monkeypatch)
 
-        restored = service_restore_instance(
-            artifact_path=artifact, root_dir=tmp_path / "restored"
-        )
+        restored = service_restore_instance(artifact_path=artifact, root_dir=tmp_path / "restored")
         assert "Actor" in restored.instance.load_config().entity_types
 
     def test_auth_off_refuses_auth_managed_config_at_snapshot_clone(
@@ -355,9 +354,7 @@ class TestAuthManagedRefusalAtOverlayAndPull:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _auth_on(monkeypatch)
-        _, release_dir = _publish_release(
-            tmp_path, config_yaml=CASE_BASE_WITH_AUTH_MANAGED_YAML
-        )
+        _, release_dir = _publish_release(tmp_path, config_yaml=CASE_BASE_WITH_AUTH_MANAGED_YAML)
 
         _auth_off(monkeypatch)
         overlay_root = tmp_path / "overlay"
@@ -385,7 +382,9 @@ class TestAuthManagedRefusalAtOverlayAndPull:
         ).instance
 
         _auth_on(monkeypatch)
-        service_reload_config(root_instance, config_yaml=CASE_BASE_WITH_AUTH_MANAGED_YAML)
+        # Replace the root instance's materialized config directly (reload no
+        # longer replaces configs; this is test arrangement, not a user flow).
+        root_instance.get_config_path().write_text(CASE_BASE_WITH_AUTH_MANAGED_YAML)
         successor_dir = tmp_path / "releases" / "successor"
         service_publish_state(
             root_instance,
@@ -432,15 +431,6 @@ class TestAuthManagedRefusalAtOverlayAndPull:
         active_config_path = overlay_instance.get_config_path()
         active_before = active_config_path.read_text()
         overlay_config_path = overlay_root / "config.yaml"
-        overlay_before = overlay_config_path.read_text()
-
-        # Uploaded-YAML upstream reload: refused BEFORE the overlay file and the
-        # composed active config are written.
-        with pytest.raises(ConfigError) as exc:
-            service_reload_config(overlay_instance, config_yaml=AUTH_MANAGED_OVERLAY_YAML)
-        assert "Actor" in str(exc.value)
-        assert overlay_config_path.read_text() == overlay_before
-        assert active_config_path.read_text() == active_before
 
         # File-based upstream reload: the overlay file on disk declares an
         # auth-managed type, but the refused reload must leave the previously

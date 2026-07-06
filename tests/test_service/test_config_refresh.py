@@ -19,6 +19,9 @@ from cruxible_core.runtime.permissions import (
     request_permission_scope,
 )
 from cruxible_core.service import (
+    EntityWriteInput,
+    service_add_entity_inputs,
+    service_config_status,
     service_init,
     service_refresh_config,
     service_reload_config,
@@ -339,3 +342,181 @@ def test_noop_refresh_is_neutral_and_receipted(kit_instance: CruxibleInstance) -
     assert result.governance_changes == []
     assert result.before_composed_digest == result.after_composed_digest
     assert result.receipt_id is not None
+
+
+# ---------------------------------------------------------------------------
+# config status
+# ---------------------------------------------------------------------------
+
+
+def test_status_on_pointer_instance_without_drift(
+    kit_instance: CruxibleInstance, kit_root: Path
+) -> None:
+    serving = kit_instance.load_composed_config_source()
+
+    result = service_config_status(kit_instance)
+
+    assert result.source == "pointer"
+    assert result.serving_composed_digest == serving.composed_digest
+    assert result.receipted_composed_digest == serving.composed_digest
+    assert result.recomposed_digest == serving.composed_digest
+    assert result.pointer_digest == serving.pointer_digest
+    assert result.layers == [
+        {"kind": "kit", "ref": f"file://{kit_root}", "digest": serving.layers[0].digest}
+    ]
+    assert result.drift is False
+    assert result.drift_classification is None
+    assert result.drift_changes == []
+    assert result.serving_matches_receipt is True
+
+
+def test_status_detects_and_classifies_source_drift(
+    kit_instance: CruxibleInstance, kit_root: Path
+) -> None:
+    serving_digest = kit_instance.load_composed_config_source().composed_digest
+    updated = dict(BASE_KIT_CONFIG)
+    updated["mutation_guards"] = [*BASE_KIT_CONFIG["mutation_guards"], EXTRA_GUARD]
+    _write_kit_config(kit_root, updated)
+
+    result = service_config_status(kit_instance)
+
+    assert result.drift is True
+    assert result.drift_classification == "tightened"
+    assert any("guarded_reopen" in line for line in result.drift_changes)
+    assert result.recomposed_digest != serving_digest
+    # Status is read-only: the serving composition did not move.
+    assert kit_instance.load_composed_config_source().composed_digest == serving_digest
+    assert result.serving_matches_receipt is True
+
+    # A receipted refresh clears the drift.
+    service_refresh_config(kit_instance)
+    assert service_config_status(kit_instance).drift is False
+
+
+def test_status_on_restarted_instance_classifies_drift_against_receipt(
+    kit_instance: CruxibleInstance, kit_root: Path
+) -> None:
+    weakened = dict(BASE_KIT_CONFIG)
+    weakened["mutation_guards"] = []
+    _write_kit_config(kit_root, weakened)
+
+    # A fresh instance object (daemon restart) serves the drifted composition,
+    # so serving == recomposed; drift is detected against the receipted digest
+    # and classified by reconstructing the receipted side from the
+    # materialized kit copies.
+    restarted = CruxibleInstance.load(kit_instance.get_root_path())
+    result = service_config_status(restarted)
+
+    assert result.drift is True
+    assert result.drift_classification == "weakened"
+    assert any("guarded_close" in line for line in result.drift_changes)
+    assert result.serving_matches_receipt is False
+
+
+def test_status_on_pre_pointer_instance_reports_materialized(tmp_path: Path) -> None:
+    project = tmp_path / "materialized-project"
+    project.mkdir()
+    (project / "config.yaml").write_text(CAR_PARTS_YAML)
+    instance = CruxibleInstance.init(project, "config.yaml")
+
+    result = service_config_status(instance)
+
+    assert result.source == "materialized (pre-pointer)"
+    assert result.serving_composed_digest.startswith("sha256:")
+    assert result.pointer_digest is None
+    assert result.layers == []
+    assert result.drift is False
+    assert result.drift_classification is None
+    assert result.serving_matches_receipt is None
+
+
+# ---------------------------------------------------------------------------
+# warn-on-start drift check
+# ---------------------------------------------------------------------------
+
+
+def test_load_warns_once_when_source_drifted_past_receipt(
+    kit_instance: CruxibleInstance,
+    kit_root: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    updated = dict(BASE_KIT_CONFIG)
+    updated["mutation_guards"] = [*BASE_KIT_CONFIG["mutation_guards"], EXTRA_GUARD]
+    _write_kit_config(kit_root, updated)
+
+    restarted = CruxibleInstance.load(kit_instance.get_root_path())
+    with caplog.at_level("WARNING", logger="cruxible_core.runtime.instance"):
+        restarted.load_config()
+        restarted.load_config()
+
+    warnings = [
+        record
+        for record in caplog.records
+        if "drifted without a receipted refresh" in record.getMessage()
+    ]
+    # Warned once per instance object, not once per load.
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert str(kit_instance.get_root_path()) in message
+    assert "classification: tightened" in message
+
+
+def test_load_does_not_warn_without_drift(
+    kit_instance: CruxibleInstance,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    restarted = CruxibleInstance.load(kit_instance.get_root_path())
+    with caplog.at_level("WARNING", logger="cruxible_core.runtime.instance"):
+        restarted.load_config()
+
+    assert not any(
+        "drifted without a receipted refresh" in record.getMessage() for record in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
+# write-path verification
+# ---------------------------------------------------------------------------
+
+
+def test_mutations_fail_closed_when_serving_config_is_not_receipted(
+    kit_instance: CruxibleInstance, kit_root: Path
+) -> None:
+    weakened = dict(BASE_KIT_CONFIG)
+    weakened["mutation_guards"] = []
+    _write_kit_config(kit_root, weakened)
+
+    # A restarted daemon serves the drifted (never-receipted) composition.
+    restarted = CruxibleInstance.load(kit_instance.get_root_path())
+    entity = EntityWriteInput(
+        entity_type="WorkItem",
+        entity_id="WI-1",
+        properties={"work_item_id": "WI-1", "status": "open"},
+    )
+
+    with pytest.raises(ConfigError, match="does not match the last receipted"):
+        service_add_entity_inputs(restarted, [entity])
+    assert restarted.load_graph().entity_count() == 0
+
+    # The receipted refresh is the exit: it is exempt from the check, and a
+    # successful refresh re-opens the write path.
+    with request_permission_scope(PermissionMode.ADMIN):
+        service_refresh_config(restarted, authorize_classification=_facade_authorize)
+    result = service_add_entity_inputs(restarted, [entity])
+    assert result.added == 1
+
+
+def test_mutations_pass_verification_on_receipted_instance(
+    kit_instance: CruxibleInstance,
+) -> None:
+    result = service_add_entity_inputs(
+        kit_instance,
+        [
+            EntityWriteInput(
+                entity_type="WorkItem",
+                entity_id="WI-1",
+                properties={"work_item_id": "WI-1", "status": "open"},
+            )
+        ],
+    )
+    assert result.added == 1

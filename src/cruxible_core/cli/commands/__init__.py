@@ -44,9 +44,11 @@ if TYPE_CHECKING:
     outcome_profile_cmd: Any
     plan_cmd: Any
     propose_cmd: Any
+    adopt_config_cmd: Any
     query: Any
     refresh_config_cmd: Any
     reload_config_cmd: Any
+    status_config_cmd: Any
     run_cmd: Any
     sample: Any
     schema: Any
@@ -92,9 +94,11 @@ else:
         add_decision_policy_cmd,
         add_entity_cmd,
         add_relationship_cmd,
+        adopt_config_cmd,
         batch_direct_write_cmd,
         refresh_config_cmd,
         reload_config_cmd,
+        status_config_cmd,
         update_entity_cmd,
         update_relationship_cmd,
     )
@@ -136,6 +140,7 @@ __all__ = [
     "add_decision_policy_cmd",
     "add_entity_cmd",
     "add_relationship_cmd",
+    "adopt_config_cmd",
     "analyze_feedback_cmd",
     "analyze_outcomes_cmd",
     "apply_cmd",
@@ -175,6 +180,7 @@ __all__ = [
     "refresh_config_cmd",
     "reload_config_cmd",
     "run_cmd",
+    "status_config_cmd",
     "sample",
     "schema",
     "server_group",

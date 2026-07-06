@@ -205,6 +205,11 @@ async def schema(instance_id: str) -> dict[str, Any]:
     return api.schema(resolve_server_instance_id(instance_id))
 
 
+@router.get("/{instance_id}/config/status", response_model=contracts.ConfigStatusResult)
+async def config_status(instance_id: str) -> contracts.ConfigStatusResult:
+    return api.config_status(resolve_server_instance_id(instance_id))
+
+
 @router.get("/{instance_id}/queries", response_model=contracts.QueryListResult)
 async def list_queries(
     instance_id: str,

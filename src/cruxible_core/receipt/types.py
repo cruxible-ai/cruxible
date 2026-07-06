@@ -24,6 +24,7 @@ OperationType = Literal[
     "add_entity",
     "add_relationship",
     "batch_direct_write",
+    "config_adopt",
     "config_refresh",
     "feedback",
     "feedback_batch",

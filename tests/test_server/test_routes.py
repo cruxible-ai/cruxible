@@ -1164,7 +1164,7 @@ def test_workflow_run_route_rejects_proposal_workflows(
     assert "cruxible propose --workflow propose_campaign_recommendations" in payload["message"]
 
 
-def test_reload_config_route_updates_instance_path(
+def test_reload_config_route_refuses_replacement_and_validates_without_args(
     app_client: TestClient,
     server_project: Path,
     tmp_path: Path,
@@ -1173,16 +1173,24 @@ def test_reload_config_route_updates_instance_path(
     new_config = tmp_path / "alt-config.yaml"
     new_config.write_text(CAR_PARTS_YAML.replace("car_parts_compatibility", "alt_name"))
 
-    response = app_client.post(
+    refused = app_client.post(
         f"/api/v1/{instance_id}/config/reload",
         json={"config_yaml": new_config.read_text()},
     )
+    assert refused.status_code == 400
+    assert "validate-only" in refused.json()["message"]
+    assert "config adopt" in refused.json()["message"]
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["updated"] is True
-    assert str(tmp_path / "alt-config.yaml") not in payload["config_path"]
-    assert payload["config_path"].endswith("/.cruxible/configs/active.yaml")
+    repoint_refused = app_client.post(
+        f"/api/v1/{instance_id}/config/reload",
+        json={"config_path": str(new_config)},
+    )
+    assert repoint_refused.status_code == 400
+    assert "validate-only" in repoint_refused.json()["message"]
+
+    validated = app_client.post(f"/api/v1/{instance_id}/config/reload", json={})
+    assert validated.status_code == 200
+    assert validated.json()["updated"] is False
 
 
 _REFRESH_KIT_CONFIG_YAML = """\
@@ -1336,6 +1344,119 @@ def test_reload_config_route_refuses_source_pointer_instances(
 
     assert response.status_code == 400
     assert "config refresh" in response.json()["message"]
+
+
+def test_config_status_route_reports_pointer_drift(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_id, kit_root = _init_refresh_kit_instance(app_client, tmp_path, monkeypatch)
+
+    clean = app_client.get(f"/api/v1/{instance_id}/config/status")
+    assert clean.status_code == 200, clean.text
+    payload = clean.json()
+    assert payload["source"] == "pointer"
+    assert payload["drift"] is False
+    assert payload["serving_matches_receipt"] is True
+    assert payload["layers"][0]["ref"] == f"file://{kit_root}"
+    assert payload["receipted_composed_digest"] == payload["serving_composed_digest"]
+
+    # Tighten the source kit without refreshing: status reports the drift.
+    (kit_root / "config.yaml").write_text(
+        _REFRESH_KIT_CONFIG_YAML
+        + (
+            "  - name: guarded_reopen\n"
+            "    entity_type: WorkItem\n"
+            "    property: status\n"
+            "    new_value: open\n"
+            "    condition: {type: actor, allowed_actor_ids: [reviewer]}\n"
+        )
+    )
+    drifted = app_client.get(f"/api/v1/{instance_id}/config/status")
+    assert drifted.status_code == 200, drifted.text
+    payload = drifted.json()
+    assert payload["drift"] is True
+    assert payload["drift_classification"] == "tightened"
+    assert any("guarded_reopen" in line for line in payload["drift_changes"])
+    assert payload["recomposed_digest"] != payload["serving_composed_digest"]
+
+
+def test_config_status_route_reports_pre_pointer_instances(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.get(f"/api/v1/{instance_id}/config/status")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["source"] == "materialized (pre-pointer)"
+    assert payload["drift"] is False
+    assert payload["pointer_digest"] is None
+    assert payload["layers"] == []
+
+
+def test_config_adopt_route_migrates_materialized_instance(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "kit-cache"))
+    kit_root = tmp_path / "kit-src" / "refresh-kit"
+    _write_refresh_kit(kit_root)
+    root = tmp_path / "adopt-project"
+    root.mkdir()
+    (root / "config.yaml").write_text(_REFRESH_KIT_CONFIG_YAML)
+    instance_id = _init_instance(app_client, root)
+
+    preview = app_client.post(
+        f"/api/v1/{instance_id}/config/adopt",
+        json={"kits": [f"file://{kit_root}"]},
+    )
+    assert preview.status_code == 200, preview.text
+    preview_payload = preview.json()
+    assert preview_payload["applied"] is False
+    assert preview_payload["receipt_id"] is None
+    instance = get_manager().get(instance_id)
+    assert not instance.has_config_source()
+
+    accepted = app_client.post(
+        f"/api/v1/{instance_id}/config/adopt",
+        json={"kits": [f"file://{kit_root}"], "accept": True},
+    )
+    assert accepted.status_code == 200, accepted.text
+    payload = accepted.json()
+    assert payload["applied"] is True
+    assert payload["receipt_id"]
+    assert payload["layers"][0]["ref"] == f"file://{kit_root}"
+    assert instance.has_config_source()
+    assert payload["config_backup_path"].endswith("config.materialized.bak")
+
+    # The adopted instance now serves the composed pointer and can refresh.
+    status = app_client.get(f"/api/v1/{instance_id}/config/status")
+    assert status.json()["source"] == "pointer"
+    refreshed = app_client.post(f"/api/v1/{instance_id}/config/refresh", json={})
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["classification"] == "neutral"
+
+
+def test_config_adopt_route_requires_admin(
+    app_client: TestClient,
+    server_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
+    reset_permissions()
+    response = app_client.post(
+        f"/api/v1/{instance_id}/config/adopt",
+        json={"kits": ["file:///tmp/some-kit"], "accept": True},
+    )
+
+    assert response.status_code == 403
 
 
 def test_server_init_creates_daemon_owned_governed_instance(

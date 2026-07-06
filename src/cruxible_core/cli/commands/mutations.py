@@ -16,7 +16,6 @@ from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _emit_json,
-    _read_validation_yaml_or_error,
     _require_instance_id,
     json_option,
 )
@@ -30,7 +29,9 @@ from cruxible_core.service import (
     BatchRelationshipWriteInput,
     EntityWriteInput,
     SharedEvidenceInput,
+    service_adopt_config,
     service_batch_direct_write,
+    service_config_status,
     service_refresh_config,
     service_reload_config,
 )
@@ -1055,19 +1056,21 @@ def add_constraint_cmd(
 
 
 @click.command("reload")
-@click.option("--config", "config_path", default=None, help="Optional new config path.")
+@click.option("--config", "config_path", default=None, help="Retired; refused with guidance.")
 @handle_errors
 def reload_config_cmd(config_path: str | None) -> None:
-    """Validate the active config or repoint the instance to a new config file."""
+    """Validate the active config (validate-only; replace/repoint are retired)."""
+    if config_path is not None:
+        raise click.UsageError(
+            "`config reload --config` is retired: reload is validate-only and "
+            "never repoints an instance config. Deliver source-layer updates "
+            "with `cruxible config refresh`, or migrate a materialized "
+            "instance once with `cruxible config adopt --kit <ref>`."
+        )
     remote = _common._get_client() is not None
     result = _dispatch_cli_instance(
-        lambda client, instance_id: client.reload_config(
-            instance_id,
-            config_yaml=(
-                _read_validation_yaml_or_error(config_path) if config_path is not None else None
-            ),
-        ),
-        lambda instance: service_reload_config(instance, config_path=config_path),
+        lambda client, instance_id: client.reload_config(instance_id),
+        lambda instance: service_reload_config(instance),
         allow_local=False,
         command_name="config reload",
     )
@@ -1103,15 +1106,171 @@ def refresh_config_cmd() -> None:
     click.secho(f"Config refreshed: {result.classification}", fg=color, bold=True)
     click.echo(f"  before: {result.before_composed_digest}")
     click.echo(f"  after:  {result.after_composed_digest}")
-    for layer in result.layers:
-        layer_data = layer if isinstance(layer, dict) else layer.model_dump(mode="python")
-        click.echo(f"  layer [{layer_data['kind']}] {layer_data['ref']} ({layer_data['digest']})")
-    if result.governance_changes:
+    for layer in _layer_dicts(result.layers):
+        click.echo(f"  layer [{layer['kind']}] {layer['ref']} ({layer['digest']})")
+    _echo_governance_diff(result.governance_changes)
+    if result.receipt_id:
+        click.echo(f"Receipt: {result.receipt_id}")
+    for warning in result.warnings:
+        click.secho(f"  Warning: {warning}", fg="yellow")
+
+
+def _layer_dicts(layers: list[Any]) -> list[dict[str, str]]:
+    """Normalize service dataclass / client model layer records to dicts."""
+    return [
+        layer if isinstance(layer, dict) else layer.model_dump(mode="python") for layer in layers
+    ]
+
+
+def _echo_governance_diff(lines: list[str]) -> None:
+    if lines:
         click.secho("Governance diff:", bold=True)
-        for line in result.governance_changes:
+        for line in lines:
             click.secho(f"  {line}", fg="red" if "[weakening]" in line else None)
     else:
         click.echo("Governance diff: no governance-relevant changes.")
+
+
+@click.command("status")
+@json_option
+@handle_errors
+def status_config_cmd(output_json: bool) -> None:
+    """Show serving/receipted/source config digests and classify any drift.
+
+    Read-only: reports the serving composed digest, the source pointer layers
+    with their current digests, and whether recomposing the source NOW yields
+    a digest different from the last receipted init/refresh/adopt (drift),
+    with the governance classification of that drift. Pre-pointer instances
+    report their materialized status with no drift computation.
+    """
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.config_status(instance_id),
+        lambda instance: service_config_status(instance),
+        command_name="config status",
+    )
+    layers = _layer_dicts(result.layers)
+    if output_json:
+        _emit_json(
+            {
+                "source": result.source,
+                "serving_composed_digest": result.serving_composed_digest,
+                "receipted_composed_digest": result.receipted_composed_digest,
+                "pointer_digest": result.pointer_digest,
+                "layers": layers,
+                "recomposed_digest": result.recomposed_digest,
+                "drift": result.drift,
+                "drift_classification": result.drift_classification,
+                "drift_changes": result.drift_changes,
+                "serving_matches_receipt": result.serving_matches_receipt,
+            }
+        )
+        return
+    click.echo(f"Config source: {result.source}")
+    click.echo(f"  serving digest:   {result.serving_composed_digest}")
+    click.echo(f"  receipted digest: {result.receipted_composed_digest or '(none)'}")
+    if result.pointer_digest is None:
+        click.echo(
+            "Drift is computed for source-pointer instances only; migrate with "
+            "`cruxible config adopt --kit <ref>`."
+        )
+        return
+    click.echo(f"  pointer digest:   {result.pointer_digest}")
+    for layer in layers:
+        click.echo(f"  layer [{layer['kind']}] {layer['ref']} ({layer['digest']})")
+    if result.drift:
+        click.secho(
+            f"Drift: recomposing the source now yields {result.recomposed_digest} "
+            f"(classification: {result.drift_classification})",
+            fg="red",
+            bold=True,
+        )
+        for line in result.drift_changes:
+            click.secho(f"  {line}", fg="red" if "[weakening]" in line else None)
+        click.echo("Deliver it with `cruxible config refresh`.")
+    else:
+        click.echo("No drift: recomposing the source now matches the last receipted digest.")
+    if result.serving_matches_receipt is False:
+        click.secho(
+            "Warning: the serving composition does not match the last receipted "
+            "digest; mutations fail closed until `cruxible config refresh`.",
+            fg="yellow",
+        )
+
+
+@click.command("adopt")
+@click.option(
+    "--kit",
+    "kits",
+    multiple=True,
+    required=True,
+    help="Kit layer ref (repeatable), the same refs `init --kit` accepts.",
+)
+@click.option(
+    "--fragment",
+    default=None,
+    help="Optional instance-delta fragment path (contained in the instance root).",
+)
+@click.option("--yes", is_flag=True, help="Accept the shown diff without prompting.")
+@handle_errors
+def adopt_config_cmd(kits: tuple[str, ...], fragment: str | None, yes: bool) -> None:
+    """Migrate a materialized instance to a config source pointer (one-time, admin).
+
+    Composes the declared layers, shows the FULL diff against the currently
+    served materialized config (the accumulated drift since init) with its
+    governance classification, and on explicit acceptance writes
+    config-source.yaml, re-materializes the kit dirs, rebuilds the workflow
+    lock, receipts the adopt, and retires config.yaml as
+    config.materialized.bak. Any failure leaves the instance as it was.
+    """
+    kit_refs = list(kits)
+    preview = _dispatch_cli_instance(
+        lambda client, instance_id: client.config_adopt(
+            instance_id, kits=kit_refs, fragment=fragment, accept=False
+        ),
+        lambda instance: service_adopt_config(instance, kits=kit_refs, fragment=fragment),
+        allow_local=False,
+        command_name="config adopt",
+    )
+    click.secho(
+        f"Adopt preview: {preview.classification}",
+        fg=_REFRESH_CLASSIFICATION_COLORS.get(preview.classification),
+        bold=True,
+    )
+    click.echo(f"  serving (materialized): {preview.before_composed_digest}")
+    click.echo(f"  proposed (composed):    {preview.after_composed_digest}")
+    for layer in _layer_dicts(preview.layers):
+        click.echo(f"  layer [{layer['kind']}] {layer['ref']} ({layer['digest']})")
+    if preview.config_diff:
+        click.secho("Full config diff (accumulated drift since init):", bold=True)
+        for line in preview.config_diff:
+            click.echo(f"  {line}")
+    else:
+        click.echo("Full config diff: the composed source matches the served config exactly.")
+    _echo_governance_diff(preview.governance_changes)
+    for warning in preview.warnings:
+        click.secho(f"  Warning: {warning}", fg="yellow")
+    if not yes:
+        click.confirm(
+            "Write the source pointer and retire the materialized config?",
+            default=False,
+            abort=True,
+        )
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.config_adopt(
+            instance_id, kits=kit_refs, fragment=fragment, accept=True
+        ),
+        lambda instance: service_adopt_config(
+            instance, kits=kit_refs, fragment=fragment, accept=True
+        ),
+        allow_local=False,
+        command_name="config adopt",
+    )
+    click.secho(f"Config adopted: {result.classification}", fg="green", bold=True)
+    click.echo(f"  pointer digest: {result.pointer_digest}")
+    click.echo(f"  composed digest: {result.after_composed_digest}")
+    click.echo(f"  lock: {result.lock_path}")
+    if result.config_backup_path:
+        click.echo(f"  retired config: {result.config_backup_path}")
     if result.receipt_id:
         click.echo(f"Receipt: {result.receipt_id}")
     for warning in result.warnings:

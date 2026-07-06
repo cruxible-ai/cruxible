@@ -171,6 +171,11 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     # runtime facade once the diff is classified).
     "cruxible_config_refresh": PermissionMode.GRAPH_WRITE,
     "cruxible_config_refresh_weakening": PermissionMode.ADMIN,
+    # Read-only source/serving/receipt digest report with drift classification.
+    "cruxible_config_status": PermissionMode.READ_ONLY,
+    # Adopt both repoints a materialized instance to a source pointer and can
+    # change semantics, so it is ADMIN outright (no asymmetric gate).
+    "cruxible_config_adopt": PermissionMode.ADMIN,
     "cruxible_governed_instance_lifecycle": PermissionMode.ADMIN,
     "cruxible_hosted_instance_init": PermissionMode.ADMIN,
     "cruxible_init_with_config": PermissionMode.ADMIN,

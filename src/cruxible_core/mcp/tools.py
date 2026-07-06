@@ -774,7 +774,7 @@ def register_tools(server: FastMCP) -> list[str]:
         config_path: str | None = None,
         config_yaml: str | None = None,
     ) -> contracts.ReloadConfigResult:
-        """Reload or replace an instance config after validation."""
+        """Validate an instance config (replace/repoint are refused by the service)."""
         return handlers.handle_reload_config(
             instance_id,
             config_path=config_path,

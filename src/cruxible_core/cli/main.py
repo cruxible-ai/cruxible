@@ -141,6 +141,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     add_decision_policy_cmd,
     add_entity_cmd,
     add_relationship_cmd,
+    adopt_config_cmd,
     analyze_feedback_cmd,
     analyze_outcomes_cmd,
     apply_cmd,
@@ -181,6 +182,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     source_group,
     state_group,
     stats_cmd,
+    status_config_cmd,
     test_cmd,
     update_entity_cmd,
     update_relationship_cmd,
@@ -218,6 +220,8 @@ cli.add_command(inspect_group, "inspect")
 config_group = click.Group("config", help="Edit, validate, and render the active config.")
 config_group.add_command(reload_config_cmd, "reload")
 config_group.add_command(refresh_config_cmd, "refresh")
+config_group.add_command(status_config_cmd, "status")
+config_group.add_command(adopt_config_cmd, "adopt")
 config_group.add_command(config_views_cmd, "views")
 config_group.add_command(config_expand_cmd, "expand")
 config_group.add_command(add_constraint_cmd, "add-constraint")

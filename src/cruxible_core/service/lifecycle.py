@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import shutil
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -17,12 +18,20 @@ from cruxible_core.config.composer import (
     resolve_overlay_kit_base_layer,
 )
 from cruxible_core.config.governance_diff import Classification, diff_governance
-from cruxible_core.config.loader import load_config, load_config_from_string, save_config
+from cruxible_core.config.loader import (
+    dump_config_yaml,
+    load_config,
+    load_config_from_string,
+    save_config,
+)
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.config.source_pointer import (
     CONFIG_SOURCE_FILE_NAME,
+    ConfigSourceLayer,
     ConfigSourcePointer,
+    FragmentSourceLayer,
     KitSourceLayer,
+    classify_drift_from_receipted,
     compose_config_source,
     load_config_source,
     save_config_source,
@@ -47,6 +56,8 @@ from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.service.types import (
+    AdoptConfigResult,
+    ConfigStatusResult,
     InitResult,
     RefreshConfigResult,
     ReloadConfigResult,
@@ -565,120 +576,53 @@ def service_reload_config(
     instance: InstanceProtocol,
     config_path: str | None = None,
     config_yaml: str | None = None,
-    *,
-    config_base_dir: str | Path | None = None,
 ) -> ReloadConfigResult:
-    """Validate, replace, or repoint the active config for an existing instance."""
-    if config_path is not None and config_yaml is not None:
-        raise ConfigError("Provide config_path or config_yaml, not both")
-    if instance.has_config_source() and (config_path is not None or config_yaml is not None):
-        # Source-pointer instances have no editable config to replace or
-        # repoint; delivering updates goes through the receipted refresh verb.
+    """Validate the active config for an existing instance (validate-only).
+
+    Replacing or repointing a config through reload is retired
+    (dd-config-by-reference-one-source): source-pointer instances deliver
+    updates through the receipted `config refresh`, and materialized instances
+    migrate once through `config adopt`. Both parameters remain on the wire so
+    old callers get the redirect instead of a schema error.
+    """
+    if config_path is not None or config_yaml is not None:
         raise ConfigError(
-            "This instance serves its config from a source pointer "
-            f"({CONFIG_SOURCE_FILE_NAME}); `config reload` cannot replace it. "
-            "Update the source layers and run `cruxible config refresh`."
-        )
-    if config_yaml is not None and config_base_dir is not None:
-        config_yaml = _normalize_uploaded_config_yaml(
-            config_yaml,
-            config_base_dir=config_base_dir,
+            "`config reload` is validate-only: it no longer replaces or "
+            "repoints an instance config. Deliver source-layer updates with "
+            "`cruxible config refresh`, or migrate a materialized instance to "
+            "a source pointer once with `cruxible config adopt --kit <ref>`."
         )
 
     upstream = instance.get_upstream_metadata()
     if upstream is not None:
-        # Release-backed overlays keep the upstream config immutable and track a
-        # local overlay file. Reload always regenerates the composed active
-        # config that the instance actually reads.
+        # Release-backed overlays keep the upstream config immutable and track
+        # a local overlay file. Reload regenerates the composed active config
+        # the instance actually reads — the overlay analog of a refresh, not a
+        # replace: both inputs are the instance's own declared sources.
         root = instance.get_root_path()
-        overlay_path = root / (config_path or upstream.overlay_config_path)
-        if not overlay_path.is_absolute():
-            overlay_path = root / overlay_path
-        if config_yaml is None and not overlay_path.exists():
+        overlay_path = root / upstream.overlay_config_path
+        if not overlay_path.exists():
             raise ConfigError(f"Overlay config not found: {overlay_path}")
 
-        base_path = root / upstream.upstream_config_path
         active_path = instance.get_config_path()
-        if config_yaml is not None:
-            # Raw uploaded overlay YAML has no source filename; use the tracked
-            # overlay path only as the base directory for relative extends and
-            # artifact references before writing it to disk.
-            overlay = load_config_from_string(config_yaml)
-            composed = compose_config_sequence(
-                resolve_config_layers(overlay, config_path=overlay_path),
-                runtime=True,
-            )
-            # Refuse BEFORE the overlay and composed active config are written so
-            # a refused reload leaves the instance on its previous config.
-            refuse_auth_managed_without_server_auth(composed, instance_config_path=active_path)
-            overlay_path.parent.mkdir(parents=True, exist_ok=True)
-            overlay_path.write_text(config_yaml)
-            active_path.parent.mkdir(parents=True, exist_ok=True)
-            save_config(composed, active_path)
-        else:
-            # Compose in memory and refuse BEFORE the composed active config is
-            # written so a refused reload leaves the instance on its previous config.
-            composed = compose_runtime_config_files(
-                base_path=base_path,
-                overlay_path=overlay_path,
-            )
-            refuse_auth_managed_without_server_auth(composed, instance_config_path=active_path)
-            active_path.parent.mkdir(parents=True, exist_ok=True)
-            save_config(composed, active_path)
+        # Compose in memory and refuse BEFORE the composed active config is
+        # written so a refused reload leaves the instance on its previous config.
+        composed = compose_runtime_config_files(
+            base_path=root / upstream.upstream_config_path,
+            overlay_path=overlay_path,
+        )
+        refuse_auth_managed_without_server_auth(composed, instance_config_path=active_path)
+        active_path.parent.mkdir(parents=True, exist_ok=True)
+        save_config(composed, active_path)
         warnings = validate_config(composed)
-        if config_path is not None:
-            # A new overlay path changes which local file is tracked, but the
-            # active config remains the generated upstream+overlay composition.
-            try:
-                overlay_config_path = str(overlay_path.relative_to(root))
-            except ValueError:
-                overlay_config_path = str(overlay_path)
-            updated = upstream.model_copy(update={"overlay_config_path": overlay_config_path})
-            instance.set_upstream_metadata(updated)
         return ReloadConfigResult(
             config_path=str(instance.get_config_path()),
             updated=True,
             warnings=warnings,
         )
 
-    if config_yaml is not None:
-        # Non-upstream raw YAML replaces the instance's active config in place.
-        # This is the daemon/server sync path for anonymous uploaded configs.
-        validation = service_validate(config_yaml=config_yaml)
-        target_path = instance.get_config_path()
-        refuse_auth_managed_without_server_auth(validation.config, instance_config_path=target_path)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        save_config(validation.config, target_path)
-        return ReloadConfigResult(
-            config_path=str(target_path),
-            updated=True,
-            warnings=validation.warnings,
-        )
-
-    if config_path is not None:
-        # Non-upstream config_path reload repoints the instance to a caller-owned
-        # file after validating the effective config. If the file uses extends,
-        # composition is for validation only; the stored pointer remains the file.
-        resolved = Path(config_path).expanduser().resolve()
-        if not resolved.is_file():
-            raise ConfigError(f"Config path '{resolved}' does not exist or is not a file")
-        config = load_config(resolved)
-        if config.extends is not None:
-            config = compose_config_sequence(
-                resolve_config_layers(config, config_path=resolved.resolve()),
-            )
-        warnings = validate_config(config)
-        refuse_auth_managed_without_server_auth(config, instance_config_path=resolved)
-        instance.set_config_path(str(resolved))
-        return ReloadConfigResult(
-            config_path=str(instance.get_config_path()),
-            updated=True,
-            warnings=warnings,
-        )
-
-    # No replacement was requested: validate whatever the instance currently
-    # points at. Extend-based configs are composed in memory so validation sees
-    # the effective surface.
+    # Validate whatever the instance currently points at. Extend-based configs
+    # are composed in memory so validation sees the effective surface.
     config = instance.load_config()
     if config.extends is not None:
         config_file = instance.get_config_path()
@@ -796,4 +740,256 @@ def service_refresh_config(
         else:
             lock_path.write_bytes(previous_lock_bytes)
         raise
+    return result
+
+
+def service_config_status(instance: InstanceProtocol) -> ConfigStatusResult:
+    """Report how the serving config relates to its source and last receipt (read-only).
+
+    Shows the serving composed digest, the pointer contents with per-layer
+    source digests, and whether recomposing the source NOW yields a digest
+    different from the last receipted init/refresh/adopt — drift — plus the
+    governance classification of that drift. Pre-pointer instances report
+    their materialized status with no drift computation.
+    """
+    receipted = instance.get_receipted_config_digest()
+    if not instance.has_config_source():
+        return ConfigStatusResult(
+            source="materialized (pre-pointer)",
+            serving_composed_digest=compute_lock_config_digest(instance.load_config()),
+            receipted_composed_digest=receipted,
+        )
+
+    serving = instance.load_composed_config_source()
+    pointer = load_config_source(instance.get_config_source_path())
+    fresh = compose_config_source(pointer, instance_root=instance.get_root_path())
+    baseline = receipted if receipted is not None else serving.composed_digest
+    drift = fresh.composed_digest != baseline
+    classification: str | None = None
+    changes: list[str] = []
+    if drift:
+        if fresh.composed_digest != serving.composed_digest:
+            # The source moved after the daemon composed: both sides in hand.
+            diff = diff_governance(serving.config, fresh.config)
+            classification, changes = diff.classification, diff.summary_lines
+        else:
+            # The daemon already serves the drifted composition (it loaded
+            # after the source changed); reconstruct the receipted side from
+            # the materialized kit copies.
+            assert receipted is not None
+            classification, changes = classify_drift_from_receipted(
+                pointer,
+                instance_root=instance.get_root_path(),
+                receipted_digest=receipted,
+                fresh=fresh,
+            )
+    return ConfigStatusResult(
+        source="pointer",
+        serving_composed_digest=serving.composed_digest,
+        receipted_composed_digest=receipted,
+        pointer_digest=fresh.pointer_digest,
+        layers=[
+            {"kind": layer.kind, "ref": layer.ref, "digest": layer.digest} for layer in fresh.layers
+        ],
+        recomposed_digest=fresh.composed_digest,
+        drift=drift,
+        drift_classification=classification,
+        drift_changes=changes,
+        serving_matches_receipt=(
+            receipted == serving.composed_digest if receipted is not None else None
+        ),
+    )
+
+
+_MATERIALIZED_CONFIG_BACKUP_NAME = "config.materialized.bak"
+_ADOPT_KIT_BACKUP_SUFFIX = ".adopt-bak"
+
+
+def service_adopt_config(
+    instance: InstanceProtocol,
+    *,
+    kits: Sequence[str],
+    fragment: str | None = None,
+    accept: bool = False,
+    actor_context: GovernedActorContext | None = None,
+) -> AdoptConfigResult:
+    """Migrate a materialized (pre-pointer) instance to a config source pointer.
+
+    The operator declares the layer refs in the same vocabulary ``init --kit``
+    accepts; adopt composes them and diffs the composition against the
+    currently served materialized config — that diff IS the accumulated drift
+    since init. Without ``accept`` this is a pure preview. On acceptance the
+    instance's ``kits/<kit_id>/`` dirs are re-materialized from the resolved
+    bundles (delivering provider code updates), ``config-source.yaml`` is
+    written, the workflow lock is rebuilt, a ``config_adopt`` receipt records
+    the pointer/layer/composed digests and classification, and the retired
+    ``config.yaml`` is renamed to ``config.materialized.bak`` (never read
+    again). Any failure leaves the instance exactly as it was.
+    """
+    if instance.has_config_source():
+        raise ConfigError(
+            "This instance already serves its config from a source pointer "
+            f"({CONFIG_SOURCE_FILE_NAME}); `config adopt` only migrates "
+            "materialized instances. Deliver source updates with "
+            "`cruxible config refresh`."
+        )
+    normalized_kits = [value.strip() for value in kits if value.strip()]
+    if not normalized_kits:
+        raise ConfigError("config adopt requires at least one kit layer ref")
+    layers: list[ConfigSourceLayer] = [KitSourceLayer(ref=value) for value in normalized_kits]
+    if fragment is not None:
+        layers.append(FragmentSourceLayer(path=fragment))
+    pointer = ConfigSourcePointer(layers=layers)
+
+    root = instance.get_root_path()
+    old_config = instance.load_config()
+    before_digest = compute_lock_config_digest(old_config)
+    proposed = compose_config_source(pointer, instance_root=root)
+    diff = diff_governance(old_config, proposed.config)
+    lock_path = get_lock_path(instance)
+
+    if not accept:
+        # The full config diff against the served materialized config IS the
+        # accumulated drift since init; the preview shows all of it, not just
+        # the governance-classified subset.
+        config_diff = list(
+            difflib.unified_diff(
+                dump_config_yaml(old_config).splitlines(),
+                dump_config_yaml(proposed.config).splitlines(),
+                fromfile="serving (materialized)",
+                tofile="proposed (composed source)",
+                lineterm="",
+            )
+        )
+        return AdoptConfigResult(
+            pointer_digest=proposed.pointer_digest,
+            before_composed_digest=before_digest,
+            after_composed_digest=proposed.composed_digest,
+            classification=diff.classification,
+            governance_changes=diff.summary_lines,
+            layers=[
+                {"kind": layer.kind, "ref": layer.ref, "digest": layer.digest}
+                for layer in proposed.layers
+            ],
+            lock_path=str(lock_path),
+            applied=False,
+            config_diff=config_diff,
+            warnings=validate_config(proposed.config),
+        )
+
+    pointer_path = root / _CONFIG_SOURCE_RELATIVE_PATH
+    # Refuse before any file changes so a refused adopt leaves no trace.
+    refuse_auth_managed_without_server_auth(proposed.config, instance_config_path=pointer_path)
+    warnings = validate_config(proposed.config)
+
+    bundles = [resolve_kit_ref(value) for value in normalized_kits]
+    materialized_config_path = instance.get_config_path()
+    backup_config_path = materialized_config_path.with_name(_MATERIALIZED_CONFIG_BACKUP_NAME)
+    if backup_config_path.exists():
+        raise ConfigError(
+            f"Refusing to overwrite an existing materialized config backup at {backup_config_path}"
+        )
+    previous_config_path_value = str(materialized_config_path)
+    previous_lock_bytes = lock_path.read_bytes() if lock_path.exists() else None
+
+    # Re-materialize each kit dir from its resolved bundle, keeping the old
+    # copy as an undo backup until the adopt commits. This is what delivers
+    # provider code updates accumulated since init.
+    rematerialized: list[tuple[str, Path, Path | None]] = []
+    config_renamed = False
+    config_path_updated = False
+    try:
+        for kit_ref, bundle in zip(normalized_kits, bundles):
+            kit_dir = root / _INSTANCE_KITS_DIR / bundle.manifest.kit_id
+            kit_backup: Path | None = None
+            if kit_dir.exists():
+                kit_backup = kit_dir.with_name(kit_dir.name + _ADOPT_KIT_BACKUP_SUFFIX)
+                if kit_backup.exists():
+                    raise ConfigError(
+                        f"Refusing to overwrite a leftover adopt backup at {kit_backup}"
+                    )
+                kit_dir.rename(kit_backup)
+            rematerialized.append((bundle.manifest.kit_id, kit_dir, kit_backup))
+            materialize_kit(kit=kit_ref, root=kit_dir, expected_role=bundle.manifest.role)
+
+        # Recompose against the re-materialized copies so composed artifact
+        # URIs are instance-local and the receipted digest matches what a
+        # fresh load of the pointer will produce.
+        final = compose_config_source(pointer, instance_root=root)
+        final_diff = diff_governance(old_config, final.config)
+        new_lock = build_lock(final.config, pointer_path.parent)
+
+        layer_records = [
+            {"kind": layer.kind, "ref": layer.ref, "digest": layer.digest} for layer in final.layers
+        ]
+        result = AdoptConfigResult(
+            pointer_digest=final.pointer_digest,
+            before_composed_digest=before_digest,
+            after_composed_digest=final.composed_digest,
+            classification=final_diff.classification,
+            governance_changes=final_diff.summary_lines,
+            layers=layer_records,
+            lock_path=str(lock_path),
+            applied=True,
+            config_backup_path=str(backup_config_path),
+            warnings=warnings,
+        )
+        with mutation_receipt(
+            instance,
+            "config_adopt",
+            {
+                "pointer_digest": final.pointer_digest,
+                "layers": layer_records,
+                "before_composed_digest": before_digest,
+                "after_composed_digest": final.composed_digest,
+                "classification": final_diff.classification,
+                "governance_diff": final_diff.summary_lines,
+            },
+            actor_context=actor_context,
+        ) as ctx:
+            assert ctx.builder is not None
+            # Mirror config_refresh: the semantic adopt record rides a
+            # validation node so it persists verbatim under mutation-payload
+            # retention (receipt parameters are redacted by default).
+            ctx.builder.record_validation(
+                passed=True,
+                detail={
+                    "pointer_digest": final.pointer_digest,
+                    "layers": layer_records,
+                    "before_composed_digest": before_digest,
+                    "after_composed_digest": final.composed_digest,
+                    "classification": final_diff.classification,
+                    "governance_diff": final_diff.summary_lines,
+                },
+            )
+            save_config_source(pointer, pointer_path)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            write_lock(new_lock, lock_path)
+            materialized_config_path.rename(backup_config_path)
+            config_renamed = True
+            instance.set_config_path(str(_CONFIG_SOURCE_RELATIVE_PATH))
+            config_path_updated = True
+            instance.set_serving_config_source(final)
+            ctx.set_result(result)
+    except BaseException:
+        # Fail closed: undo every file change in reverse order so the
+        # instance is exactly as it was.
+        if config_path_updated:
+            instance.set_config_path(previous_config_path_value)
+        if config_renamed and not materialized_config_path.exists():
+            backup_config_path.rename(materialized_config_path)
+        (root / _CONFIG_SOURCE_RELATIVE_PATH).unlink(missing_ok=True)
+        if previous_lock_bytes is None:
+            lock_path.unlink(missing_ok=True)
+        else:
+            lock_path.write_bytes(previous_lock_bytes)
+        for _kit_id, kit_dir, kit_backup in reversed(rematerialized):
+            shutil.rmtree(kit_dir, ignore_errors=True)
+            if kit_backup is not None and kit_backup.exists():
+                kit_backup.rename(kit_dir)
+        _cleanup_materialized_kits(root, [])
+        raise
+    for _kit_id, _kit_dir, kit_backup in rematerialized:
+        if kit_backup is not None:
+            shutil.rmtree(kit_backup, ignore_errors=True)
     return result

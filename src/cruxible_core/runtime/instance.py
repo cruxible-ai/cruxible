@@ -24,6 +24,7 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.config.source_pointer import (
     CONFIG_SOURCE_FILE_NAME,
     ComposedConfigSource,
+    classify_drift_from_receipted,
     compose_config_source,
     load_config_source,
 )
@@ -47,6 +48,7 @@ from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import (
     LOCK_FILE_NAME,
     compute_lock_config_digest,
+    load_lock,
     resolve_lock_path,
 )
 
@@ -90,6 +92,9 @@ class CruxibleInstance(InstanceProtocol):
         self._active_uow: SQLiteUnitOfWork | None = None
         self._composed_source_cache: ComposedConfigSource | None = None
         self._warned_materialized_config = False
+        self._warned_source_drift = False
+        self._receipted_config_digest: str | None = None
+        self._receipted_config_digest_loaded = False
 
     @classmethod
     def init(
@@ -195,11 +200,87 @@ class CruxibleInstance(InstanceProtocol):
                 pointer,
                 instance_root=self.root,
             )
+            self._warn_on_source_drift(self._composed_source_cache)
         return self._composed_source_cache
 
     def set_serving_config_source(self, composed: ComposedConfigSource) -> None:
         """Swap the in-memory serving composition (the ``config refresh`` seam)."""
         self._composed_source_cache = composed
+        # The swap follows a lock write (refresh/adopt success) or a lock
+        # restore (their failure paths); re-read the receipted digest lazily so
+        # the write-path verification tracks whatever the lock now records.
+        self._receipted_config_digest_loaded = False
+
+    def get_receipted_config_digest(self) -> str | None:
+        """Return the composed digest recorded by the last receipted init/refresh/adopt.
+
+        The workflow lock's ``config_digest`` is that record: init installs the
+        lock against the composed source, and refresh/adopt rewrite it
+        transactionally with their receipts. Read once per load/swap and cached
+        — write-path verification compares in-memory strings per request, never
+        re-hashing config.
+        """
+        if not self._receipted_config_digest_loaded:
+            lock_path = resolve_lock_path(self)
+            if not lock_path.exists():
+                # No lock yet (mid-init): report None without caching so the
+                # digest is picked up as soon as the lock is installed.
+                return None
+            self._receipted_config_digest_loaded = True
+            try:
+                self._receipted_config_digest = load_lock(lock_path).config_digest
+            except Exception:
+                self._receipted_config_digest = None
+        return self._receipted_config_digest
+
+    def verify_serving_config_receipted(self) -> None:
+        """Fail closed when the serving composition does not match the last receipt.
+
+        A source-pointer instance serves whatever its layers compose to at
+        load, so a daemon (re)started after the source drifted would otherwise
+        apply mutations under governance that never passed the receipted
+        refresh gate. Cheap bookkeeping only: both digests are recorded at
+        load/swap time and compared as strings per request.
+        """
+        if not self.has_config_source():
+            return
+        serving = self.load_composed_config_source()
+        receipted = self.get_receipted_config_digest()
+        if receipted == serving.composed_digest:
+            return
+        raise ConfigError(
+            f"Refusing to mutate: the serving composed config "
+            f"({serving.composed_digest}) does not match the last receipted "
+            f"composed digest ({receipted or 'missing — no readable workflow lock'}) "
+            f"for the instance at {self.root}. The config source drifted since "
+            "the last receipted init/refresh/adopt; review the drift with "
+            "`cruxible config status` and deliver it with `cruxible config refresh`."
+        )
+
+    def _warn_on_source_drift(self, composed: ComposedConfigSource) -> None:
+        """Warn once at load when the source composition drifted past the last receipt."""
+        if self._warned_source_drift:
+            return
+        receipted = self.get_receipted_config_digest()
+        if receipted is None or receipted == composed.composed_digest:
+            return
+        self._warned_source_drift = True
+        classification, _changes = classify_drift_from_receipted(
+            composed.pointer,
+            instance_root=self.root,
+            receipted_digest=receipted,
+            fresh=composed,
+        )
+        logger.warning(
+            "Instance at %s composed its config source to %s, but the last "
+            "receipted init/refresh digest is %s: the source drifted without a "
+            "receipted refresh (drift classification: %s). Mutations fail closed "
+            "until `cruxible config refresh` re-receipts the composition.",
+            self.root,
+            composed.composed_digest,
+            receipted,
+            classification,
+        )
 
     def get_root_path(self) -> Path:
         """Return the instance root directory."""

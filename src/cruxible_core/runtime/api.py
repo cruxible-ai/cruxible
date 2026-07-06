@@ -43,6 +43,7 @@ from cruxible_core.service import (
     service_add_decision_policy,
     service_add_entity_inputs,
     service_add_relationship_inputs,
+    service_adopt_config,
     service_analyze_feedback,
     service_analyze_outcomes,
     service_apply_workflow,
@@ -50,6 +51,7 @@ from cruxible_core.service import (
     service_batch_direct_write,
     service_clone_snapshot,
     service_config_compatibility_warnings,
+    service_config_status,
     service_create_decision_record,
     service_create_snapshot,
     service_create_state_overlay,
@@ -409,7 +411,9 @@ def init_governed(
             has_config=has_config,
             existing_with_config_error=(
                 "Governed instance already exists for this workspace root. "
-                "Edit the config locally, then use `config reload` in server mode to sync it."
+                "Deliver config updates with `cruxible config refresh` "
+                "(source-pointer instances) or migrate once with "
+                "`cruxible config adopt`."
             ),
             initialize=initialize_existing_governed,
             include_initialized_warnings=True,
@@ -2424,23 +2428,13 @@ def reload_config(
     config_path: str | None = None,
     config_yaml: str | None = None,
 ) -> contracts.ReloadConfigResult:
-    """Validate the current config or repoint the instance to a new config path."""
+    """Validate the current config; replacing or repointing through reload is retired."""
     check_permission("cruxible_reload_config", instance_id=instance_id)
-    config_base_dir: Path | None = None
-    if config_yaml is not None:
-        record = get_registry().get(instance_id)
-        if (
-            record is not None
-            and record.backend == GOVERNED_DAEMON_BACKEND
-            and record.workspace_root is not None
-        ):
-            config_base_dir = Path(record.workspace_root)
     instance = get_manager().get(instance_id)
     result = service_reload_config(
         instance,
         config_path=config_path,
         config_yaml=config_yaml,
-        config_base_dir=config_base_dir,
     )
     return contracts.ReloadConfigResult(
         config_path=result.config_path,
@@ -2477,6 +2471,60 @@ def config_refresh(
         governance_changes=result.governance_changes,
         layers=[contracts.RefreshedConfigLayer(**layer) for layer in result.layers],
         lock_path=result.lock_path,
+        warnings=result.warnings,
+        receipt_id=result.receipt_id,
+    )
+
+
+def config_status(instance_id: str) -> contracts.ConfigStatusResult:
+    """Report serving/receipted/source config digests and classify drift (read-only)."""
+    check_permission("cruxible_config_status", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_config_status(instance)
+    return contracts.ConfigStatusResult(
+        source=result.source,
+        serving_composed_digest=result.serving_composed_digest,
+        receipted_composed_digest=result.receipted_composed_digest,
+        pointer_digest=result.pointer_digest,
+        layers=[contracts.RefreshedConfigLayer(**layer) for layer in result.layers],
+        recomposed_digest=result.recomposed_digest,
+        drift=result.drift,
+        drift_classification=result.drift_classification,
+        drift_changes=result.drift_changes,
+        serving_matches_receipt=result.serving_matches_receipt,
+    )
+
+
+def config_adopt(
+    instance_id: str,
+    *,
+    kits: list[str],
+    fragment: str | None = None,
+    accept: bool = False,
+    actor_context: Any | None = None,
+) -> contracts.AdoptConfigResult:
+    """Migrate a materialized instance to a config source pointer (admin)."""
+    check_permission("cruxible_config_adopt", instance_id=instance_id)
+    resolved_actor = _hosted_actor_context(actor_context)
+    instance = get_manager().get(instance_id)
+    result = service_adopt_config(
+        instance,
+        kits=kits,
+        fragment=fragment,
+        accept=accept,
+        actor_context=resolved_actor,
+    )
+    return contracts.AdoptConfigResult(
+        pointer_digest=result.pointer_digest,
+        before_composed_digest=result.before_composed_digest,
+        after_composed_digest=result.after_composed_digest,
+        classification=result.classification,
+        governance_changes=result.governance_changes,
+        layers=[contracts.RefreshedConfigLayer(**layer) for layer in result.layers],
+        lock_path=result.lock_path,
+        applied=result.applied,
+        config_diff=result.config_diff,
+        config_backup_path=result.config_backup_path,
         warnings=result.warnings,
         receipt_id=result.receipt_id,
     )

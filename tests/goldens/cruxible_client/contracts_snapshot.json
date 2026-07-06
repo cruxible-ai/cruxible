@@ -690,6 +690,287 @@
         "updated"
       ]
     },
+    "AdoptConfigResult": {
+      "fields": {
+        "after_composed_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "after_composed_digest",
+          "required": true,
+          "schema": {
+            "title": "After Composed Digest",
+            "type": "string"
+          }
+        },
+        "applied": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "applied",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Applied",
+            "type": "boolean"
+          }
+        },
+        "before_composed_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "before_composed_digest",
+          "required": true,
+          "schema": {
+            "title": "Before Composed Digest",
+            "type": "string"
+          }
+        },
+        "classification": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "classification",
+          "required": true,
+          "schema": {
+            "title": "Classification",
+            "type": "string"
+          }
+        },
+        "config_backup_path": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "config_backup_path",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Config Backup Path"
+          }
+        },
+        "config_diff": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "config_diff",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Config Diff",
+            "type": "array"
+          }
+        },
+        "governance_changes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "governance_changes",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Governance Changes",
+            "type": "array"
+          }
+        },
+        "layers": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "layers",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/RefreshedConfigLayer"
+            },
+            "title": "Layers",
+            "type": "array"
+          }
+        },
+        "lock_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "lock_path",
+          "required": true,
+          "schema": {
+            "title": "Lock Path",
+            "type": "string"
+          }
+        },
+        "pointer_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "pointer_digest",
+          "required": true,
+          "schema": {
+            "title": "Pointer Digest",
+            "type": "string"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "RefreshedConfigLayer": {
+            "properties": {
+              "digest": {
+                "title": "Digest",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "ref",
+              "digest"
+            ],
+            "title": "RefreshedConfigLayer",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "after_composed_digest": {
+            "title": "After Composed Digest",
+            "type": "string"
+          },
+          "applied": {
+            "default": false,
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "before_composed_digest": {
+            "title": "Before Composed Digest",
+            "type": "string"
+          },
+          "classification": {
+            "title": "Classification",
+            "type": "string"
+          },
+          "config_backup_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Config Backup Path"
+          },
+          "config_diff": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Config Diff",
+            "type": "array"
+          },
+          "governance_changes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Governance Changes",
+            "type": "array"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/$defs/RefreshedConfigLayer"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "lock_path": {
+            "title": "Lock Path",
+            "type": "string"
+          },
+          "pointer_digest": {
+            "title": "Pointer Digest",
+            "type": "string"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pointer_digest",
+          "before_composed_digest",
+          "after_composed_digest",
+          "classification",
+          "lock_path"
+        ],
+        "title": "AdoptConfigResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "after_composed_digest",
+        "before_composed_digest",
+        "classification",
+        "lock_path",
+        "pointer_digest"
+      ]
+    },
     "AnalyzeFeedbackResult": {
       "fields": {
         "action_counts": {
@@ -3395,6 +3676,295 @@
       "required_fields": [
         "instance_id",
         "snapshot"
+      ]
+    },
+    "ConfigStatusResult": {
+      "fields": {
+        "drift": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "drift",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Drift",
+            "type": "boolean"
+          }
+        },
+        "drift_changes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "drift_changes",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Drift Changes",
+            "type": "array"
+          }
+        },
+        "drift_classification": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "drift_classification",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Drift Classification"
+          }
+        },
+        "layers": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "layers",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/RefreshedConfigLayer"
+            },
+            "title": "Layers",
+            "type": "array"
+          }
+        },
+        "pointer_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pointer_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pointer Digest"
+          }
+        },
+        "receipted_composed_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipted_composed_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipted Composed Digest"
+          }
+        },
+        "recomposed_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "recomposed_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Recomposed Digest"
+          }
+        },
+        "serving_composed_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "serving_composed_digest",
+          "required": true,
+          "schema": {
+            "title": "Serving Composed Digest",
+            "type": "string"
+          }
+        },
+        "serving_matches_receipt": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "serving_matches_receipt",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Serving Matches Receipt"
+          }
+        },
+        "source": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source",
+          "required": true,
+          "schema": {
+            "title": "Source",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "RefreshedConfigLayer": {
+            "properties": {
+              "digest": {
+                "title": "Digest",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "ref",
+              "digest"
+            ],
+            "title": "RefreshedConfigLayer",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "drift": {
+            "default": false,
+            "title": "Drift",
+            "type": "boolean"
+          },
+          "drift_changes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Drift Changes",
+            "type": "array"
+          },
+          "drift_classification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Drift Classification"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/$defs/RefreshedConfigLayer"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "pointer_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pointer Digest"
+          },
+          "receipted_composed_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipted Composed Digest"
+          },
+          "recomposed_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Recomposed Digest"
+          },
+          "serving_composed_digest": {
+            "title": "Serving Composed Digest",
+            "type": "string"
+          },
+          "serving_matches_receipt": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Serving Matches Receipt"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "serving_composed_digest"
+        ],
+        "title": "ConfigStatusResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "serving_composed_digest",
+        "source"
       ]
     },
     "ConstraintSuggestion": {

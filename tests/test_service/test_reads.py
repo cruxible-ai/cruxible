@@ -394,91 +394,37 @@ class TestInit:
 
 
 # ---------------------------------------------------------------------------
-# service_reload_config with extends
+# service_reload_config is validate-only (replace/repoint retired into adopt)
 # ---------------------------------------------------------------------------
 
 
-class TestReloadConfigExtends:
-    def test_reload_with_extends_composes(self, tmp_path: Path) -> None:
-        # Init with a plain config first
+class TestReloadConfigRetiredReplacement:
+    def test_reload_refuses_config_path_repoint(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
         config_file.write_text(CAR_PARTS_YAML)
-        result = service_init(tmp_path, config_path="config.yaml")
-        instance = result.instance
+        instance = service_init(tmp_path, config_path="config.yaml").instance
+        new_config = tmp_path / "alt-config.yaml"
+        new_config.write_text(CAR_PARTS_YAML.replace("car_parts_compatibility", "alt_name"))
 
-        # Create a base + overlay pair
-        base = tmp_path / "base.yaml"
-        base.write_text(
-            'version: "1.0"\n'
-            "name: base\n"
-            "entity_types:\n"
-            "  Case:\n"
-            "    properties:\n"
-            "      case_id: {type: string, primary_key: true}\n"
-            "relationships:\n"
-            "  - name: cites\n"
-            "    from: Case\n"
-            "    to: Case\n"
-        )
-        overlay = tmp_path / "overlay.yaml"
-        overlay.write_text(
-            'version: "1.0"\n'
-            "name: overlay\n"
-            "extends: base.yaml\n"
-            "entity_types: {}\n"
-            "relationships:\n"
-            "  - name: follows\n"
-            "    from: Case\n"
-            "    to: Case\n"
-        )
+        with pytest.raises(ConfigError, match="validate-only"):
+            service_reload_config(instance, config_path=str(new_config))
 
-        reload_result = service_reload_config(instance, config_path=str(overlay))
-        assert reload_result.updated is True
+        # The refused reload left the instance pointing at its config.
+        assert instance.get_config_path() == config_file
+        assert instance.load_config().name == "car_parts_compatibility"
 
-        # Note: reload with extends composes in memory but the instance
-        # still points at the overlay file. The validation passed because
-        # composition happened before validate_config.
-        assert len(reload_result.warnings) == 0 or reload_result.warnings is not None
-
-    def test_reload_uploaded_yaml_uses_config_base_dir(self, tmp_path: Path) -> None:
+    def test_reload_refuses_uploaded_yaml_replacement(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
         config_file.write_text(CAR_PARTS_YAML)
-        result = service_init(tmp_path, config_path="config.yaml")
-        instance = result.instance
+        instance = service_init(tmp_path, config_path="config.yaml").instance
 
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        base = workspace / "base.yaml"
-        base.write_text(
-            'version: "1.0"\n'
-            "name: base\n"
-            "entity_types:\n"
-            "  Case:\n"
-            "    properties:\n"
-            "      case_id: {type: string, primary_key: true}\n"
-            "relationships: []\n"
-        )
-        uploaded = (
-            'version: "1.0"\n'
-            "name: overlay\n"
-            "extends: base.yaml\n"
-            "entity_types: {}\n"
-            "relationships:\n"
-            "  - name: follows\n"
-            "    from: Case\n"
-            "    to: Case\n"
-        )
+        with pytest.raises(ConfigError, match="config adopt"):
+            service_reload_config(
+                instance,
+                config_yaml=CAR_PARTS_YAML.replace("car_parts_compatibility", "alt_name"),
+            )
 
-        reload_result = service_reload_config(
-            instance,
-            config_yaml=uploaded,
-            config_base_dir=workspace,
-        )
-
-        config = instance.load_config()
-        assert reload_result.updated is True
-        assert "Case" in config.entity_types
-        assert config.get_relationship("follows") is not None
+        assert instance.load_config().name == "car_parts_compatibility"
 
 
 # ---------------------------------------------------------------------------
@@ -594,43 +540,13 @@ class TestSchema:
         assert "Part" in config.entity_types
         assert any(r.name == "fits" for r in config.relationships)
 
-    def test_reload_config_repoints_instance_path(
-        self, populated_instance: CruxibleInstance, tmp_path: Path
+    def test_reload_config_validates_without_replacing(
+        self, populated_instance: CruxibleInstance
     ) -> None:
-        new_config = tmp_path / "alt-config.yaml"
-        new_config.write_text(CAR_PARTS_YAML.replace("car_parts_compatibility", "alt_name"))
+        result = service_reload_config(populated_instance)
 
-        result = service_reload_config(populated_instance, str(new_config))
-
-        assert result.updated is True
-        assert populated_instance.get_config_path() == new_config
-        assert populated_instance.load_config().name == "alt_name"
-
-    def test_reload_config_resolves_relative_path_from_cwd(
-        self,
-        populated_instance: CruxibleInstance,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        config_dir = tmp_path / "configs"
-        config_dir.mkdir()
-        new_config = config_dir / "alt-config.yaml"
-        new_config.write_text(CAR_PARTS_YAML.replace("car_parts_compatibility", "alt_name"))
-
-        monkeypatch.chdir(config_dir)
-        result = service_reload_config(populated_instance, "alt-config.yaml")
-
-        assert result.updated is True
-        assert populated_instance.get_config_path() == new_config.resolve()
-        assert populated_instance.load_config().name == "alt_name"
-
-    def test_reload_config_rejects_missing_path(
-        self, populated_instance: CruxibleInstance, tmp_path: Path
-    ) -> None:
-        missing_config = tmp_path / "missing.yaml"
-
-        with pytest.raises(ConfigError, match="does not exist or is not a file"):
-            service_reload_config(populated_instance, str(missing_config))
+        assert result.updated is False
+        assert populated_instance.load_config().name == "car_parts_compatibility"
 
 
 # ---------------------------------------------------------------------------

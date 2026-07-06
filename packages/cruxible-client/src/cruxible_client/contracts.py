@@ -1155,6 +1155,34 @@ class RefreshConfigResult(BaseModel):
     receipt_id: str | None = None
 
 
+class ConfigStatusResult(BaseModel):
+    source: str
+    serving_composed_digest: str
+    receipted_composed_digest: str | None = None
+    pointer_digest: str | None = None
+    layers: list[RefreshedConfigLayer] = Field(default_factory=list)
+    recomposed_digest: str | None = None
+    drift: bool = False
+    drift_classification: str | None = None
+    drift_changes: list[str] = Field(default_factory=list)
+    serving_matches_receipt: bool | None = None
+
+
+class AdoptConfigResult(BaseModel):
+    pointer_digest: str
+    before_composed_digest: str
+    after_composed_digest: str
+    classification: str
+    governance_changes: list[str] = Field(default_factory=list)
+    layers: list[RefreshedConfigLayer] = Field(default_factory=list)
+    lock_path: str
+    applied: bool = False
+    config_diff: list[str] = Field(default_factory=list)
+    config_backup_path: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    receipt_id: str | None = None
+
+
 class FeedbackProfileResult(BaseModel):
     found: bool
     relationship_type: str

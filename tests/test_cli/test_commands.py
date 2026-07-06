@@ -772,7 +772,7 @@ class TestStatsInspectReload:
         assert preview_payload["input_payload_metadata"]["retention"] == "preview"
         assert preview_payload["input_payload_metadata"]["stored_inline"] is False
 
-    def test_reload_config_repoints_instance(
+    def test_reload_config_refuses_repoint_flag(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
@@ -785,12 +785,43 @@ class TestStatsInspectReload:
             .replace("car_parts_compatibility", "alt_name")
         )
 
-        _assert_local_mutation_disabled(
+        result = _chdir_run(
             runner,
             populated_instance.root,
             ["config", "reload", "--config", str(new_config)],
-            "config reload",
         )
+
+        assert result.exit_code == 2
+        assert "retired" in result.output
+        assert "config adopt" in result.output
+
+    def test_adopt_config_is_server_only(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _assert_local_mutation_disabled(
+            runner,
+            populated_instance.root,
+            ["config", "adopt", "--kit", "file:///tmp/some-kit", "--yes"],
+            "config adopt",
+        )
+
+    def test_status_config_reports_materialized_instance_locally(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["config", "status"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Config source: materialized (pre-pointer)" in result.output
+        assert "serving digest:   sha256:" in result.output
+        assert "cruxible config adopt" in result.output
 
     def test_refresh_config_is_server_only(
         self,
@@ -3053,7 +3084,18 @@ class TestNounVerbGrouping:
     @pytest.mark.parametrize(
         "group, subcommands",
         [
-            ("config", ["reload", "refresh", "views", "add-constraint", "add-decision-policy"]),
+            (
+                "config",
+                [
+                    "reload",
+                    "refresh",
+                    "status",
+                    "adopt",
+                    "views",
+                    "add-constraint",
+                    "add-decision-policy",
+                ],
+            ),
             ("feedback", ["record", "from-query", "batch", "profile", "analyze"]),
             ("outcome", ["record", "profile", "analyze"]),
         ],
@@ -3074,6 +3116,8 @@ class TestNounVerbGrouping:
         [
             ["config", "reload", "--help"],
             ["config", "refresh", "--help"],
+            ["config", "status", "--help"],
+            ["config", "adopt", "--help"],
             ["config", "views", "--help"],
             ["config", "add-constraint", "--help"],
             ["config", "add-decision-policy", "--help"],
