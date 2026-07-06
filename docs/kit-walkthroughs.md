@@ -240,6 +240,8 @@ cruxible state create-overlay \
 
 For distribution, publish the versioned bundle as an OCI kit ref and update the
 catalog or deployment configuration that resolves the kit alias. Before
-publishing, refresh the bundled `cruxible.lock.yaml`; until `cruxible kit lock`
-exists, materialize the kit to a temp workspace, run `cruxible lock`, and copy
-the lock back into the kit directory.
+publishing, refresh the bundled `cruxible.lock.yaml` directly from the kit root:
+
+```bash
+cruxible lock --kit-dir path/to/kit
+```

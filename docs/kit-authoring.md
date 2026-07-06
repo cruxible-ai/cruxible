@@ -212,10 +212,15 @@ installed packages, with local source-checkout kits overriding those aliases
 during development. Publishing the matching OCI bundles is a 0.2 release
 precondition.
 
-Until Cruxible ships a first-class `cruxible kit lock` command, maintainers
-should refresh a bundled lock by copying or materializing the kit into a temp
-workspace, running `cruxible lock` there, and copying the resulting
-`cruxible.lock.yaml` back into the kit directory before publishing.
+Refresh a bundled lock directly from the kit root before publishing:
+
+```bash
+cruxible lock --kit-dir path/to/kit
+```
+
+For overlay kits, place the target base kit in a sibling directory named for the
+overlay manifest's `target_state` (for example, `agent-operation/` next to
+`agent-release/`) so local composition resolves without a daemon.
 
 Vocabulary:
 

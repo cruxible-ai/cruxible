@@ -4,16 +4,35 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
+from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
+from cruxible_core.config.loader import load_config
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.service import service_create_snapshot
+from cruxible_core.workflow.compiler import compute_lock_config_digest
+
+_KITS_ROOT = Path(__file__).resolve().parents[2] / "kits"
+
+
+def _copy_kit(tmp_path: Path, kit_name: str) -> Path:
+    kit_dir = tmp_path / kit_name
+    shutil.copytree(_KITS_ROOT / kit_name, kit_dir)
+    return kit_dir
+
+
+def _read_lock_yaml(kit_dir: Path) -> dict[str, object]:
+    payload = yaml.safe_load((kit_dir / "cruxible.lock.yaml").read_text())
+    assert isinstance(payload, dict)
+    return payload
 
 
 @pytest.fixture
@@ -114,6 +133,91 @@ class TestWorkflowCli:
         assert result.exit_code == 0
         assert (workflow_project.root / ".cruxible" / "cruxible.lock.yaml").exists()
         assert "digest=" in result.output
+
+    def test_lock_kit_dir_writes_standalone_kit_lock(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CRUXIBLE_KIT_DEV_RESOLVE", raising=False)
+        kit_dir = _copy_kit(tmp_path, "kev-reference")
+        (kit_dir / "cruxible.lock.yaml").unlink()
+
+        result = runner.invoke(cli, ["lock", "--kit-dir", str(kit_dir)])
+
+        assert result.exit_code == 0, result.output
+        lock_path = kit_dir / "cruxible.lock.yaml"
+        assert lock_path.exists()
+        payload = _read_lock_yaml(kit_dir)
+        assert result.output.startswith(f"Wrote lock file to {lock_path}")
+        assert f"digest={payload['lock_digest']}" in result.output
+        assert "providers=2 artifacts=1" in result.output
+        assert "CRUXIBLE_KIT_DEV_RESOLVE" not in os.environ
+
+    def test_lock_kit_dir_resolves_overlay_base_from_sibling(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CRUXIBLE_KIT_DEV_RESOLVE", raising=False)
+        _copy_kit(tmp_path, "agent-operation")
+        overlay_dir = _copy_kit(tmp_path, "agent-release")
+        (overlay_dir / "cruxible.lock.yaml").unlink()
+
+        result = runner.invoke(cli, ["lock", "--kit-dir", str(overlay_dir)])
+
+        assert result.exit_code == 0, result.output
+        lock_payload = _read_lock_yaml(overlay_dir)
+        layer = load_config(overlay_dir / "config.yaml")
+        composed = compose_config_sequence(
+            resolve_config_layers(layer, config_path=(overlay_dir / "config.yaml").resolve())
+        )
+        assert "Actor" in composed.entity_types
+        assert "AgentVersion" in composed.entity_types
+        assert lock_payload["config_digest"] == compute_lock_config_digest(composed)
+        assert f"digest={lock_payload['lock_digest']}" in result.output
+        assert "CRUXIBLE_KIT_DEV_RESOLVE" not in os.environ
+
+    def test_lock_kit_dir_refuses_artifact_digest_mismatch_without_force(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        kit_dir = _copy_kit(tmp_path, "kev-reference")
+        (kit_dir / "cruxible.lock.yaml").unlink()
+        source_data = kit_dir / "data" / "known_exploited_vulnerabilities.csv"
+        source_data.write_text(source_data.read_text() + "\n# local drift\n")
+
+        result = runner.invoke(cli, ["lock", "--kit-dir", str(kit_dir)])
+
+        assert result.exit_code == 1
+        assert not (kit_dir / "cruxible.lock.yaml").exists()
+        assert "Artifact 'public_kev_bundle' digest mismatch." in result.output
+        assert "Run 'cruxible lock --force'" in result.output
+
+    def test_lock_kit_dir_force_accepts_artifact_digest_mismatch(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        kit_dir = _copy_kit(tmp_path, "kev-reference")
+        (kit_dir / "cruxible.lock.yaml").unlink()
+        original_digest = load_config(kit_dir / "config.yaml").artifacts["public_kev_bundle"].digest
+        source_data = kit_dir / "data" / "known_exploited_vulnerabilities.csv"
+        source_data.write_text(source_data.read_text() + "\n# accepted local drift\n")
+
+        result = runner.invoke(cli, ["lock", "--kit-dir", str(kit_dir), "--force"])
+
+        assert result.exit_code == 0, result.output
+        lock_payload = _read_lock_yaml(kit_dir)
+        artifact_payload = lock_payload["artifacts"]
+        assert isinstance(artifact_payload, dict)
+        public_bundle = artifact_payload["public_kev_bundle"]
+        assert isinstance(public_bundle, dict)
+        assert public_bundle["digest"] != original_digest
+        assert str(public_bundle["digest"]).startswith("sha256:")
+        assert f"digest={lock_payload['lock_digest']}" in result.output
+
+    def test_lock_kit_dir_reports_missing_config(self, runner: CliRunner, tmp_path: Path) -> None:
+        kit_dir = tmp_path / "empty-kit"
+        kit_dir.mkdir()
+
+        result = runner.invoke(cli, ["lock", "--kit-dir", str(kit_dir)])
+
+        assert result.exit_code == 2
+        assert f"--kit-dir must contain config.yaml: {kit_dir / 'config.yaml'}" in result.output
 
     def test_plan_prints_compiled_plan(
         self,

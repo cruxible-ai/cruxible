@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -44,6 +48,72 @@ from cruxible_core.service import (
     service_validate,
 )
 from cruxible_core.temporal import format_datetime
+
+
+@dataclass(frozen=True)
+class _KitLockResult:
+    lock_path: Path
+    lock_digest: str
+    providers_locked: int
+    artifacts_locked: int
+
+
+@contextmanager
+def _kit_dev_resolve_enabled() -> Iterator[None]:
+    previous = os.environ.get("CRUXIBLE_KIT_DEV_RESOLVE")
+    os.environ["CRUXIBLE_KIT_DEV_RESOLVE"] = "1"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("CRUXIBLE_KIT_DEV_RESOLVE", None)
+        else:
+            os.environ["CRUXIBLE_KIT_DEV_RESOLVE"] = previous
+
+
+def _ensure_kit_dir_is_local_only() -> None:
+    ctx = click.get_current_context(silent=True)
+    root_params = ctx.find_root().params if ctx is not None else {}
+    if (
+        root_params.get("server_url")
+        or root_params.get("server_socket")
+        or root_params.get("instance_id")
+    ):
+        raise click.UsageError(
+            "--kit-dir is a pure local lock mode and cannot be combined with "
+            "server mode or --instance-id."
+        )
+
+
+def _lock_kit_dir(kit_dir: Path, *, force: bool) -> _KitLockResult:
+    kit_root = kit_dir.resolve()
+    config_path = kit_root / "config.yaml"
+    if not config_path.exists():
+        raise click.UsageError(f"--kit-dir must contain config.yaml: {config_path}")
+
+    # Preserve the CLI's working import order before importing compiler machinery.
+    import cruxible_core.runtime  # noqa: F401
+    from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
+    from cruxible_core.config.loader import load_config
+    from cruxible_core.workflow.compiler import LOCK_FILE_NAME, build_lock, write_lock
+
+    with _kit_dev_resolve_enabled():
+        layer_config = load_config(config_path)
+        config = compose_config_sequence(
+            resolve_config_layers(layer_config, config_path=config_path)
+        )
+        lock = build_lock(config, kit_root, force=force)
+
+    lock_path = kit_root / LOCK_FILE_NAME
+    write_lock(lock, lock_path)
+    if lock.lock_digest is None:
+        raise AssertionError("build_lock returned a lock without a digest")
+    return _KitLockResult(
+        lock_path=lock_path,
+        lock_digest=lock.lock_digest,
+        providers_locked=len(lock.providers),
+        artifacts_locked=len(lock.artifacts),
+    )
 
 
 def _write_preview_file(
@@ -334,9 +404,25 @@ def validate(config_path: str) -> None:
     is_flag=True,
     help="Accept live canonical artifact hashes when regenerating the lock.",
 )
+@click.option(
+    "--kit-dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Build a kit-root cruxible.lock.yaml from KIT_DIR/config.yaml without an instance.",
+)
 @handle_errors
-def lock_cmd(force: bool) -> None:
+def lock_cmd(force: bool, kit_dir: Path | None) -> None:
     """Generate a workflow lock file for the current instance config."""
+    if kit_dir is not None:
+        _ensure_kit_dir_is_local_only()
+        kit_result = _lock_kit_dir(kit_dir, force=force)
+        click.echo(f"Wrote lock file to {kit_result.lock_path}")
+        click.echo(
+            f"  digest={kit_result.lock_digest} providers={kit_result.providers_locked} "
+            f"artifacts={kit_result.artifacts_locked}"
+        )
+        return
+
     remote = _get_client() is not None
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.workflow_lock(instance_id, force=force),
