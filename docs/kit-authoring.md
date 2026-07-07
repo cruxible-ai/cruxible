@@ -207,10 +207,37 @@ Bundle behavior:
 - Consumers should not silently regenerate published bundled locks. Rebuild the
   kit lock before publishing or distributing a changed kit.
 
-Built-in aliases such as `kev-reference` resolve to versioned OCI kit refs in
-installed packages, with local source-checkout kits overriding those aliases
-during development. Publishing the matching OCI bundles is a 0.2 release
-precondition.
+## Published Kit Bundles
+
+Installed distributions resolve built-in aliases such as `kev-reference` from
+digest-pinned release bundles, so `cruxible init --kit <name>` works without a
+source checkout. `scripts/build_kit_bundles.py` builds a deterministic
+`dist/kits/<id>-<version>.tar.gz` for every `kits/<id>/` (byte-identical across
+runs: sorted members, zeroed timestamps and ownership, normalized permissions)
+and regenerates `src/cruxible_core/kit_distribution/manifest.json`, which ships
+in the wheel and pins each bundle by tarball sha256 and by the extracted
+directory digest — the same `compute_path_sha256` discipline kit locks use.
+The tarballs are uploaded as release assets on the `v<version>` tag; the
+regenerated manifest is committed before tagging, and CI asserts it matches a
+fresh digest of every `kits/<id>` directory (like the kit lock freshness
+check).
+
+Alias resolution order:
+
+1. Local source-checkout `kits/` directories always win (development).
+2. Published release bundles from the packaged manifest: the tarball sha256 is
+   verified before extraction, members are safe-extracted (files and
+   directories only, no absolute paths, `..`, or links), the extracted tree
+   must match the pinned directory digest, and the verified kit is installed
+   atomically into the kit cache keyed by that digest. Any mismatch deletes
+   the artifacts and refuses; a cache hit skips the network entirely.
+3. Shipped `oci://` refs cover aliases absent from the packaged manifest.
+
+An overlay kit's `target_state` base resolves through the same order, so a
+fetched overlay composes over its fetched base with no local kits present.
+`CRUXIBLE_KIT_MANIFEST_URL_BASE` overrides the manifest's release `base_url`
+(pre-publish smoke runs against a local file server); asset names and digests
+still come from the packaged manifest.
 
 Refresh a bundled lock directly from the kit root before publishing:
 
