@@ -34,7 +34,12 @@ from cruxible_core.canonical_views.models import (
     WorkflowView,
 )
 from cruxible_core.config.property_validation import enum_values
-from cruxible_core.config.schema import CoreConfig, ProviderSchema, WorkflowStepSchema
+from cruxible_core.config.schema import (
+    CoreConfig,
+    ProviderSchema,
+    WorkflowStepSchema,
+    workflow_step_kind,
+)
 from cruxible_core.group.types import CandidateGroup, GroupResolution
 
 
@@ -173,7 +178,7 @@ def build_workflow_view(config: CoreConfig) -> WorkflowView:
         applies: set[str] = set()
 
         for step in workflow.steps:
-            step_kind = _workflow_step_kind(step)
+            step_kind = workflow_step_kind(step)
             steps.append(_workflow_step_summary(step, step_kind))
             if step_kind == "query" and step.query is not None:
                 if isinstance(step.query, str):
@@ -383,7 +388,7 @@ def build_provider_contracts_view(
         # alias -> provider call objects whose row shape flows through it
         row_sources: dict[str, list[ProviderCallView]] = {}
         for step in workflow.steps:
-            step_kind = _workflow_step_kind(step)
+            step_kind = workflow_step_kind(step)
             alias = step.as_ or step.id
             alias_kinds[alias] = step_kind
             if step_kind == "provider" and step.provider is not None:
@@ -676,42 +681,6 @@ def build_overview_view(
         queries=queries,
         governance=governance,
     )
-
-
-def _workflow_step_kind(step: WorkflowStepSchema) -> str:
-    if step.query is not None:
-        return "query"
-    if step.provider is not None:
-        return "provider"
-    if step.assert_spec is not None:
-        return "assert"
-    if step.shape_items is not None:
-        return "shape_items"
-    if step.join_items is not None:
-        return "join_items"
-    if step.filter_items is not None:
-        return "filter_items"
-    if step.dedupe_items is not None:
-        return "dedupe_items"
-    if step.make_candidates is not None:
-        return "make_candidates"
-    if step.map_signals is not None:
-        return "map_signals"
-    if step.propose_relationship_group is not None:
-        return "propose_relationship_group"
-    if step.make_entities is not None:
-        return "make_entities"
-    if step.make_relationships is not None:
-        return "make_relationships"
-    if step.register_source_artifacts is not None:
-        return "register_source_artifacts"
-    if step.apply_entities is not None:
-        return "apply_entities"
-    if step.apply_relationships is not None:
-        return "apply_relationships"
-    if step.apply_all is not None:
-        return "apply_all"
-    return "unknown"
 
 
 def _workflow_step_summary(

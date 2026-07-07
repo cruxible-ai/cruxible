@@ -427,15 +427,35 @@ def _lookup_query_param_hints_server(
     instance_id: str,
     query_name: str,
 ) -> contracts.QueryParamHints | None:
-    config = CoreConfig.model_validate(client.schema(instance_id))
-    query_schema = config.named_queries.get(query_name)
-    if query_schema is None:
+    payload = client.schema(instance_id)
+    query_payload = (payload.get("named_queries") or {}).get(query_name)
+    if query_payload is None:
         return None
-    if query_schema.entry_point is None:
-        return _build_query_param_hints(config, query_name, [])
-    sample = client.sample(instance_id, query_schema.entry_point, limit=3)
+    entry_point = query_payload.get("entry_point")
+    if entry_point is None:
+        return contracts.QueryParamHints(
+            entry_point=None,
+            required_params=[],
+            primary_key=None,
+            example_ids=[],
+        )
+    entity_payload = (payload.get("entity_types") or {}).get(entry_point) or {}
+    primary_key = next(
+        (
+            prop_name
+            for prop_name, prop in (entity_payload.get("properties") or {}).items()
+            if prop.get("primary_key")
+        ),
+        None,
+    )
+    sample = client.sample(instance_id, entry_point, limit=3)
     examples = _entities_from_payload(sample.items)
-    return _build_query_param_hints(config, query_name, examples)
+    return contracts.QueryParamHints(
+        entry_point=entry_point,
+        required_params=[primary_key] if primary_key is not None else [],
+        primary_key=primary_key,
+        example_ids=sorted(entity.entity_id for entity in examples),
+    )
 
 
 # ---- payload deserializers ----

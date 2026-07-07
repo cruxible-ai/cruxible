@@ -14,6 +14,7 @@ from typing import Any, Literal, TypeVar, cast
 from pydantic import BaseModel, ValidationError
 
 from cruxible_client import contracts
+from cruxible_core.config.schema import schema_wire_payload
 from cruxible_core.errors import AuthenticationError, ConfigError
 from cruxible_core.governance.actors import (
     GovernedActorContext,
@@ -1913,7 +1914,7 @@ def schema(instance_id: str) -> dict[str, Any]:
     check_permission("cruxible_schema", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     config = service_schema(instance)
-    return config.model_dump(mode="json")
+    return schema_wire_payload(config)
 
 
 def list_queries(

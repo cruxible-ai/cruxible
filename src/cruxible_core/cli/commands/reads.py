@@ -71,7 +71,7 @@ from cruxible_core.cli.formatting import (
 )
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.schema import schema_wire_payload
 from cruxible_core.errors import CoreError
 from cruxible_core.errors import QueryNotFoundError as CoreQueryNotFoundError
 from cruxible_core.graph.types import (
@@ -782,14 +782,14 @@ def explain(receipt_id: str, fmt: str) -> None:
 @handle_errors
 def schema(output_json: bool) -> None:
     """Display the config schema for this instance."""
-    config = _dispatch_cli_instance(
-        lambda client, instance_id: CoreConfig.model_validate(client.schema(instance_id)),
-        service_schema,
+    payload = _dispatch_cli_instance(
+        lambda client, instance_id: client.schema(instance_id),
+        lambda instance: schema_wire_payload(service_schema(instance)),
     )
     if output_json:
-        _emit_json(config.model_dump(mode="python"))
+        _emit_json(payload)
         return
-    console.print(schema_table(config))
+    console.print(schema_table(payload))
 
 
 @click.command("stats")
