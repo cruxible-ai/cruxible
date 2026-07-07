@@ -265,6 +265,28 @@ def test_packaged_manifest_tarball_pin_is_reproducible(tmp_path: Path) -> None:
     assert built.tarball_sha256 == packaged["kits"]["agent-operation"]["tarball_sha256"]
 
 
+def test_committed_manifest_resolves_via_packaged_loader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fetch_env: _BundleServer,
+) -> None:
+    # Full pre-publish integrity: the REAL packaged manifest (read through
+    # importlib.resources, no monkeypatched loader) resolves a freshly rebuilt
+    # bundle — proving the committed pins match what the script publishes.
+    script = _load_bundle_script()
+    built = script.build_kit_bundle(
+        _REPO_ROOT / "kits" / "agent-operation", tmp_path / "assets", __version__
+    )
+    fetch_env.files[built.asset] = built.path.read_bytes()
+
+    resolved = resolve_published_kit("agent-operation")
+
+    manifest = kit_distribution.load_published_manifest()
+    assert manifest is not None
+    assert compute_path_sha256(resolved) == manifest.kits["agent-operation"].dir_digest
+    assert fetch_env.requests == [built.asset]
+
+
 # --- resolver: happy path, refusals, caching, precedence ---
 
 
