@@ -173,7 +173,7 @@ def create_server() -> FastMCP:
     resolve_server_settings()
     mode = init_permissions()
     server = FastMCP(
-        name=f"cruxible-core v{__version__}",
+        name=f"cruxible v{__version__}",
         instructions="",
     )
     registered = register_tools(server)
