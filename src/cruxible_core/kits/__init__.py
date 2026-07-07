@@ -127,11 +127,18 @@ def resolve_kit_ref(kit: str) -> KitBundle:
         raise ConfigError("Kit ref must not be empty")
     if "://" not in normalized:
         catalog = get_kit_catalog()
-        try:
-            normalized = catalog[normalized]
-        except KeyError as exc:
-            known = ", ".join(sorted(catalog))
-            raise ConfigError(f"Unknown kit '{kit}'. Known kits: {known or '(none)'}") from exc
+        resolved = catalog.get(normalized)
+        if resolved is None or not resolved.startswith("file://"):
+            # No local source checkout provides this alias; installed
+            # distributions resolve it from digest-pinned release bundles.
+            from cruxible_core.kit_distribution import published_kit_ids, resolve_published_kit
+
+            if normalized in published_kit_ids():
+                return _install_kit_cache(resolve_published_kit(normalized))
+            if resolved is None:
+                known = ", ".join(sorted(set(catalog) | published_kit_ids()))
+                raise ConfigError(f"Unknown kit '{kit}'. Known kits: {known or '(none)'}")
+        normalized = resolved
 
     if normalized.startswith("file://"):
         source = Path(unquote(normalized.removeprefix("file://"))).expanduser().resolve()
