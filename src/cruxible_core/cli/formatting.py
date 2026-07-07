@@ -7,7 +7,6 @@ from typing import Any
 
 from rich.table import Table
 
-from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import (
     EntityInstance,
@@ -379,48 +378,53 @@ def source_artifact_chunks_table(chunks: list[Any]) -> Table:
     return table
 
 
-def schema_table(config: CoreConfig) -> Table:
-    """Build a Rich table showing the config schema."""
-    table = Table(title=f"Schema: {config.name}")
+def schema_table(payload: dict[str, Any]) -> Table:
+    """Build a Rich table showing the schema wire payload."""
+    table = Table(title=f"Schema: {payload.get('name', '')}")
     table.add_column("Section", style="cyan")
     table.add_column("Name")
     table.add_column("Details")
 
-    for name, et in config.entity_types.items():
-        pk = et.get_primary_key() or "-"
+    for name, et in (payload.get("entity_types") or {}).items():
+        properties = et.get("properties") or {}
+        pk = next(
+            (prop_name for prop_name, prop in properties.items() if prop.get("primary_key")),
+            "-",
+        )
         props = ", ".join(
-            _format_property_name(prop_name, prop) for prop_name, prop in et.properties.items()
+            _format_property_name(prop_name, prop) for prop_name, prop in properties.items()
         )
         table.add_row("Entity", name, f"pk={pk}  props=[{props}]")
 
-    for rel in config.relationships:
+    for rel in payload.get("relationships") or []:
         prop_names = ", ".join(
-            _format_property_name(prop_name, prop) for prop_name, prop in rel.properties.items()
+            _format_property_name(prop_name, prop)
+            for prop_name, prop in (rel.get("properties") or {}).items()
         )
-        details = f"{rel.from_entity} -> {rel.to_entity}  ({rel.cardinality})"
+        details = f"{rel['from_entity']} -> {rel['to_entity']}  ({rel['cardinality']})"
         if prop_names:
             details = f"{details}  props=[{prop_names}]"
         table.add_row(
             "Relationship",
-            rel.name,
+            rel["name"],
             details,
         )
 
-    for name, q in config.named_queries.items():
-        steps = len(q.traversal)
-        table.add_row("Query", name, f"entry={q.entry_point}  steps={steps}")
+    for name, q in (payload.get("named_queries") or {}).items():
+        steps = len(q.get("traversal") or [])
+        table.add_row("Query", name, f"entry={q.get('entry_point')}  steps={steps}")
 
-    for name, contract in config.contracts.items():
+    for name, contract in (payload.get("contracts") or {}).items():
         fields = ", ".join(
             _format_property_name(field_name, field_schema)
-            for field_name, field_schema in contract.fields.items()
+            for field_name, field_schema in (contract.get("fields") or {}).items()
         )
         table.add_row("Contract", name, f"fields=[{fields}]")
 
     return table
 
 
-def _format_property_name(name: str, schema: Any) -> str:
-    if getattr(schema, "json_schema", None) is not None:
+def _format_property_name(name: str, schema: dict[str, Any]) -> str:
+    if schema.get("json_schema") is not None:
         return f"{name}{{json}}"
     return name

@@ -31,7 +31,7 @@ Hierarchy:
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, Literal, cast, get_args
 
 from pydantic import (
     BaseModel,
@@ -2081,6 +2081,43 @@ class WorkflowStepSchema(BaseModel):
         return self
 
 
+def workflow_step_kind(step: WorkflowStepSchema) -> StepKind:
+    """Return the active step kind for a validated workflow step.
+
+    ``validate_step_shape`` guarantees exactly one kind field is set.
+    """
+    for kind in get_args(StepKind):
+        field_name = "assert_spec" if kind == "assert" else kind
+        if getattr(step, field_name) is not None:
+            return cast("StepKind", kind)
+    msg = f"workflow step '{step.id}' has no active step kind"
+    raise ValueError(msg)
+
+
+def workflow_step_wire(step: WorkflowStepSchema) -> dict[str, Any]:
+    """Serialize one workflow step in the discriminated wire shape.
+
+    Emits ``{id, kind, config}`` where ``config`` is the active kind's value
+    (a string for ``provider`` and named-query references, an object
+    otherwise). Structural fields (``as``, ``params``, ``input``,
+    ``relationship_state``, ``include_source``) appear only when meaningful.
+    """
+    dumped = step.model_dump(mode="json", by_alias=True)
+    kind = workflow_step_kind(step)
+    wire: dict[str, Any] = {"id": step.id, "kind": kind, "config": dumped[kind]}
+    if step.as_ is not None:
+        wire["as"] = step.as_
+    if step.params:
+        wire["params"] = dumped["params"]
+    if step.input:
+        wire["input"] = dumped["input"]
+    if step.relationship_state is not None:
+        wire["relationship_state"] = dumped["relationship_state"]
+    if step.include_source:
+        wire["include_source"] = True
+    return wire
+
+
 class WorkflowSchema(BaseModel):
     """Declarative composition of query and provider steps."""
 
@@ -2567,3 +2604,16 @@ def _iter_config_properties(config: CoreConfig) -> list[tuple[str, PropertySchem
                         (f"workflows.{workflow_name}.{direction}.fields.{field_name}", prop)
                     )
     return properties
+
+
+def schema_wire_payload(config: CoreConfig) -> dict[str, Any]:
+    """Dump a config for the schema wire surface (HTTP /schema, MCP, CLI).
+
+    Identical to ``model_dump(mode="json")`` except each workflow step uses
+    the discriminated ``{id, kind, config, ...}`` shape instead of one
+    nullable field per step kind.
+    """
+    payload = config.model_dump(mode="json")
+    for name, workflow in config.workflows.items():
+        payload["workflows"][name]["steps"] = [workflow_step_wire(step) for step in workflow.steps]
+    return payload

@@ -45,6 +45,9 @@ from cruxible_core.config.schema import (
     WorkflowStepSchema,
     WorkflowTestExpectSchema,
     WorkflowTestSchema,
+    schema_wire_payload,
+    workflow_step_kind,
+    workflow_step_wire,
 )
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
@@ -3160,6 +3163,159 @@ def test_signal_policy_rejects_unknown_keys() -> None:
     from cruxible_core.config.schema import SignalPolicySchema
 
     with _pytest.raises(_ValidationError, match="require_evidence_on_suport"):
-        SignalPolicySchema.model_validate(
-            {"role": "required", "require_evidence_on_suport": True}
+        SignalPolicySchema.model_validate({"role": "required", "require_evidence_on_suport": True})
+
+
+class TestWorkflowStepWire:
+    """Discriminated wire shape for workflow steps (HTTP /schema, MCP, CLI)."""
+
+    def test_query_reference_step(self):
+        step = WorkflowStepSchema(
+            id="context",
+            query="get_context",
+            params={"sku": "$input.sku"},
+            **{"as": "context"},
         )
+        wire = workflow_step_wire(step)
+        assert wire == {
+            "id": "context",
+            "kind": "query",
+            "config": "get_context",
+            "as": "context",
+            "params": {"sku": "$input.sku"},
+        }
+
+    def test_provider_step_has_string_config_and_omits_empty_params(self):
+        step = WorkflowStepSchema(
+            id="lift",
+            provider="lift_predictor",
+            input={"sku": "$steps.context.results[0].entity_id"},
+            **{"as": "lift"},
+        )
+        wire = workflow_step_wire(step)
+        assert wire == {
+            "id": "lift",
+            "kind": "provider",
+            "config": "lift_predictor",
+            "as": "lift",
+            "input": {"sku": "$steps.context.results[0].entity_id"},
+        }
+
+    def test_inline_query_step_has_object_config(self):
+        step = WorkflowStepSchema(
+            id="products",
+            query={
+                "mode": "collection",
+                "result_shape": "entity",
+                "returns": "Product",
+            },
+            **{"as": "products"},
+        )
+        wire = workflow_step_wire(step)
+        assert wire["kind"] == "query"
+        assert isinstance(wire["config"], dict)
+        assert wire["config"]["returns"] == "Product"
+        assert wire["config"]["mode"] == "collection"
+
+    def test_assert_step_uses_assert_kind(self):
+        step = WorkflowStepSchema(
+            id="margin_gate",
+            **{
+                "assert": {
+                    "left": "$steps.margin.expected_margin_pct",
+                    "op": "gte",
+                    "right": 0.05,
+                    "message": "Margin below threshold",
+                }
+            },
+        )
+        wire = workflow_step_wire(step)
+        assert wire["kind"] == "assert"
+        assert wire["config"]["op"] == "gte"
+        assert wire["config"]["message"] == "Margin below threshold"
+        assert set(wire) == {"id", "kind", "config"}
+
+    def test_query_step_keeps_relationship_state_and_include_source(self):
+        step = WorkflowStepSchema(
+            id="edges",
+            query="get_edges",
+            relationship_state="all",
+            include_source=True,
+            **{"as": "edges"},
+        )
+        wire = workflow_step_wire(step)
+        assert wire["relationship_state"] == "all"
+        assert wire["include_source"] is True
+
+    def test_step_kind_covers_every_kind(self):
+        from typing import get_args
+
+        from cruxible_core.config.schema import StepKind
+
+        classified = {
+            workflow_step_kind(step)
+            for step in (
+                WorkflowStepSchema(id="q", query="get_context", **{"as": "q"}),
+                WorkflowStepSchema(
+                    id="agg",
+                    aggregate_items={
+                        "items": "$steps.q",
+                        "measures": {"n": {"count": True}},
+                    },
+                    **{"as": "agg"},
+                ),
+                WorkflowStepSchema(
+                    id="count_gate",
+                    assert_count={
+                        "step": "q",
+                        "count": "items",
+                        "op": "gte",
+                        "value": 1,
+                        "message": "empty",
+                    },
+                ),
+            )
+        }
+        assert classified == {"query", "aggregate_items", "assert_count"}
+        assert set(get_args(StepKind)) >= classified
+
+    def test_schema_wire_payload_replaces_steps_only(self):
+        config = CoreConfig(
+            name="wire_payload",
+            entity_types={
+                "Product": EntityTypeSchema(
+                    properties={"sku": PropertySchema(type="string", primary_key=True)}
+                )
+            },
+            contracts={"PromoInput": ContractSchema(fields={})},
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="PromoInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="products",
+                            query={
+                                "mode": "collection",
+                                "result_shape": "entity",
+                                "returns": "Product",
+                            },
+                            **{"as": "products"},
+                        )
+                    ],
+                    returns="products",
+                )
+            },
+        )
+        payload = schema_wire_payload(config)
+        step = payload["workflows"]["wf"]["steps"][0]
+        assert step["id"] == "products"
+        assert step["kind"] == "query"
+        assert isinstance(step["config"], dict)
+        # No per-kind nullable fields leak onto the wire.
+        assert "make_entities" not in step
+        assert "assert_spec" not in step
+        assert None not in step.values()
+        # The rest of the dump is untouched.
+        assert payload["workflows"]["wf"]["returns"] == "products"
+        assert payload["name"] == "wire_payload"
+        assert "Product" in payload["entity_types"]

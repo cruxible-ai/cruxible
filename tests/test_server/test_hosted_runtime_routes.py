@@ -1657,9 +1657,14 @@ def test_runtime_bootstrap_claim_materializes_auth_managed_entity(
     )
 
     assert response.status_code == 200
-    principal = get_manager().get(instance_id).load_graph().get_entity(
-        "Principal",
-        "bootstrap-admin",
+    principal = (
+        get_manager()
+        .get(instance_id)
+        .load_graph()
+        .get_entity(
+            "Principal",
+            "bootstrap-admin",
+        )
     )
     assert principal is not None
     assert principal.properties["kind"] == "service_account"
@@ -2754,3 +2759,39 @@ def test_auth_off_local_can_run_daemon_server_operations(
     )
     assert restore.status_code == 200
     assert restore.json()["instance_id"] == "inst_localrestore"
+
+
+def test_schema_serializes_workflow_steps_in_discriminated_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    workflow_config_yaml: str,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    project = tmp_path / "workflow-project"
+    project.mkdir()
+    (project / "config.yaml").write_text(workflow_config_yaml)
+    instance_id = _init_instance(client, project, config_yaml=workflow_config_yaml)
+
+    response = client.get(f"/api/v1/{instance_id}/schema")
+    assert response.status_code == 200
+    steps = response.json()["workflows"]["evaluate_promo"]["steps"]
+
+    assert [step["kind"] for step in steps] == ["query", "provider", "provider", "assert"]
+
+    query_step, lift_step, _, gate_step = steps
+    assert query_step == {
+        "id": "context",
+        "kind": "query",
+        "config": "get_promo_context",
+        "as": "context",
+        "params": {"sku": "$input.sku"},
+    }
+    assert lift_step["config"] == "lift_predictor"
+    assert lift_step["input"]["start_date"] == "$input.start_date"
+    assert "params" not in lift_step
+    assert gate_step["config"]["message"] == "Margin below threshold"
+    assert "as" not in gate_step
+    for step in steps:
+        assert None not in step.values()
+        assert "assert_spec" not in step
+        assert "make_entities" not in step
