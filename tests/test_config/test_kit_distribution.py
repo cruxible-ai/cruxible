@@ -326,6 +326,33 @@ def test_cache_hit_skips_network(
     assert len(fetch_env.requests) == 1
 
 
+def test_poisoned_cache_entry_is_reverified_and_healed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fetch_env: _BundleServer,
+) -> None:
+    # The digest key is publicly predictable (shipped in the wheel manifest),
+    # so a pre-planted dir at that key must never be trusted: cache hits are
+    # re-verified against dir_digest and a poisoned entry is replaced by a
+    # fresh download.
+    _publish_demo_kit(tmp_path, monkeypatch, fetch_env)
+    manifest = kit_distribution.load_published_manifest()
+    assert manifest is not None
+    entry = manifest.kits[_DEMO_KIT_ID]
+    planted = tmp_path / "kit-cache" / "published" / entry.dir_digest.removeprefix("sha256:")
+    planted.mkdir(parents=True)
+    _write_demo_kit(planted)
+    planted.joinpath("evil.py").write_text("EVIL = True\n")
+
+    resolved = resolve_published_kit(_DEMO_KIT_ID)
+
+    assert resolved == planted
+    assert not (resolved / "evil.py").exists()
+    assert compute_path_sha256(resolved) == entry.dir_digest
+    # The planted dir did not count as a cache hit; the bundle was downloaded.
+    assert fetch_env.requests == [entry.asset]
+
+
 def test_local_source_checkout_wins_over_fetch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -385,6 +412,7 @@ def test_dir_digest_mismatch_refuses_and_leaves_no_cache_entry(
         ("absolute path", [_file_member("/etc/evil")]),
         ("parent traversal", [_file_member("../evil.txt")]),
         ("nested traversal", [_file_member("providers/../../evil.txt")]),
+        ("backslash traversal", [_file_member("..\\..\\etc\\evil")]),
     ],
 )
 def test_unsafe_tar_member_paths_refused(
@@ -430,6 +458,48 @@ def test_download_size_cap_enforced(
         resolve_published_kit(_DEMO_KIT_ID)
 
     assert _published_cache_entries(tmp_path) == []
+
+
+def test_decompression_cap_bounds_inflation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fetch_env: _BundleServer,
+) -> None:
+    # A tiny download must not inflate past the extraction cap: the bound is
+    # enforced while gunzipping, before any tar member is parsed.
+    zeros = _file_member("zeros.bin", b"\0" * (256 * 1024))
+    _publish_demo_kit(tmp_path, monkeypatch, fetch_env, tarball=_tarball([zeros]))
+    monkeypatch.setattr(kit_distribution, "_MAX_EXTRACTED_BYTES", 4096)
+
+    with pytest.raises(ConfigError, match="inflates over"):
+        resolve_published_kit(_DEMO_KIT_ID)
+
+    assert _published_cache_entries(tmp_path) == []
+
+
+def test_setuid_member_mode_is_clamped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fetch_env: _BundleServer,
+) -> None:
+    # The dir digest is mode-blind, so tar-carried setuid/setgid bits must be
+    # stripped on every interpreter, including pre-data_filter ones.
+    expected = tmp_path / "expected-tree"
+    expected.mkdir()
+    expected.joinpath("payload.txt").write_bytes(b"x")
+    info, data = _file_member("payload.txt", b"x")
+    info.mode = 0o6755
+    _publish_demo_kit(
+        tmp_path,
+        monkeypatch,
+        fetch_env,
+        tarball=_tarball([(info, data)]),
+        dir_digest=compute_path_sha256(expected),
+    )
+
+    resolved = resolve_published_kit(_DEMO_KIT_ID)
+
+    assert (resolved / "payload.txt").stat().st_mode & 0o7777 == 0o644
 
 
 def test_download_failure_names_kit_url_and_clone_fallback(

@@ -30,6 +30,7 @@ import os
 import shutil
 import tarfile
 import tempfile
+import zlib
 from importlib import resources
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
@@ -101,14 +102,19 @@ def resolve_published_kit(kit_id: str) -> Path:
     digest_key = entry.dir_digest.removeprefix("sha256:")
     cache_root = _kit_cache_dir() / _PUBLISHED_CACHE_DIR
     target = cache_root / digest_key
-    if target.is_dir():
+    # The digest key is publicly predictable (it ships in the wheel manifest),
+    # so a cache hit is never trusted: re-verify the content digest before
+    # returning, and self-heal a poisoned/corrupted entry by re-downloading.
+    if target.is_dir() and compute_path_sha256(target) == entry.dir_digest:
         return target
 
     url = _bundle_url(manifest, entry, kit_id=kit_id)
     cache_root.mkdir(parents=True, exist_ok=True)
     with _file_lock(cache_root / f"{digest_key}.lock"):
         if target.is_dir():
-            return target
+            if compute_path_sha256(target) == entry.dir_digest:
+                return target
+            shutil.rmtree(target)
         data = _download_bundle(kit_id, url)
         actual_tarball = hashlib.sha256(data).hexdigest()
         if actual_tarball != entry.tarball_sha256:
@@ -179,14 +185,17 @@ def _download_bundle(kit_id: str, url: str) -> bytes:
 
 
 def _safe_extract(data: bytes, dest: Path, *, kit_id: str, url: str) -> None:
+    inflated = _inflate_with_cap(data, kit_id=kit_id, url=url)
     try:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        with tarfile.open(fileobj=io.BytesIO(inflated), mode="r:") as tar:
             members = tar.getmembers()
             total_size = 0
             for member in members:
                 _validate_member(member, kit_id=kit_id, url=url)
                 total_size += member.size
             if total_size > _MAX_EXTRACTED_BYTES:
+                # Sparse members can claim logical sizes beyond the archive
+                # bytes already bounded by _inflate_with_cap.
                 raise ConfigError(
                     f"Published kit '{kit_id}' bundle at {url} would extract {total_size} "
                     f"bytes, over the {_MAX_EXTRACTED_BYTES}-byte cap. " + _clone_hint(kit_id)
@@ -202,6 +211,38 @@ def _safe_extract(data: bytes, dest: Path, *, kit_id: str, url: str) -> None:
             f"Published kit '{kit_id}' bundle at {url} is not a valid tar.gz: {exc}. "
             + _clone_hint(kit_id)
         ) from exc
+    _normalize_extracted_modes(dest)
+
+
+def _inflate_with_cap(data: bytes, *, kit_id: str, url: str) -> bytes:
+    """Gunzip the bundle, bounding decompressed bytes before any tar parsing."""
+    decompressor = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)
+    try:
+        inflated = decompressor.decompress(data, _MAX_EXTRACTED_BYTES + 1)
+    except zlib.error as exc:
+        raise ConfigError(
+            f"Published kit '{kit_id}' bundle at {url} is not a valid tar.gz: {exc}. "
+            + _clone_hint(kit_id)
+        ) from exc
+    if len(inflated) > _MAX_EXTRACTED_BYTES:
+        raise ConfigError(
+            f"Published kit '{kit_id}' bundle at {url} inflates over the "
+            f"{_MAX_EXTRACTED_BYTES}-byte cap. " + _clone_hint(kit_id)
+        )
+    return inflated
+
+
+def _normalize_extracted_modes(dest: Path) -> None:
+    """Clamp extracted modes on every interpreter: no setuid/setgid/sticky bits.
+
+    The directory digest is mode-blind and pre-PEP-706 interpreters extract
+    without the data filter, so tar-carried mode bits must never survive.
+    """
+    for path in dest.rglob("*"):
+        if path.is_dir():
+            path.chmod(0o755)
+        elif path.is_file():
+            path.chmod(0o644)
 
 
 def _validate_member(member: tarfile.TarInfo, *, kit_id: str, url: str) -> None:
@@ -211,7 +252,9 @@ def _validate_member(member: tarfile.TarInfo, *, kit_id: str, url: str) -> None:
             f"{member.name!r} (links and special files are refused). " + _clone_hint(kit_id)
         )
     path = PurePosixPath(member.name)
-    if not member.name or path.is_absolute() or ".." in path.parts:
+    if not member.name or "\\" in member.name or path.is_absolute() or ".." in path.parts:
+        # Backslashes are rejected outright: they are real separators on
+        # Windows, where PurePosixPath would miss ``..\\..`` traversal.
         raise ConfigError(
             f"Published kit '{kit_id}' bundle at {url} contains an unsafe member path "
             f"{member.name!r}. " + _clone_hint(kit_id)
