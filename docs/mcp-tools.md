@@ -33,7 +33,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need to confirm which cruxible-core build this MCP server is running.
+**Purpose:** Use when you need to confirm which cruxible build this MCP server is running.
 
 **Arguments:** none.
 

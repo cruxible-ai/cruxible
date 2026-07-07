@@ -91,7 +91,7 @@ def handle_errors(f: Any) -> Any:
 
 
 @click.group()
-@click.version_option(package_name="cruxible-core")
+@click.version_option(package_name="cruxible")
 @click.option("--server-url", default=None, help="Remote Cruxible server base URL.")
 @click.option(
     "--server-socket",

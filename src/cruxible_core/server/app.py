@@ -60,7 +60,7 @@ _DB_ERROR_MESSAGE = "database error"
 def create_app() -> FastAPI:
     """Create and configure the Cruxible server app."""
     get_registry()
-    app = FastAPI(title="cruxible-core", responses=STANDARD_ERROR_RESPONSES)
+    app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES)
     app.middleware("http")(token_auth_middleware)
 
     @app.exception_handler(CoreError)

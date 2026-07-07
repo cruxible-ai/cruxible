@@ -39,8 +39,8 @@ jobs:
       - name: Build cruxible-client
         run: uv build --package cruxible-client
 
-      - name: Build cruxible-core
-        run: uv build --package cruxible-core
+      - name: Build cruxible
+        run: uv build --package cruxible
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

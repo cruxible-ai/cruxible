@@ -106,7 +106,7 @@ def _script_path(venv: Path, name: str) -> Path:
 
 @pytest.fixture(scope="module")
 def installed_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build the wheels and install ``cruxible-core[mcp,server]`` into a fresh venv."""
+    """Build the wheels and install ``cruxible[mcp,server]`` into a fresh venv."""
     uv = _require_uv()
     work = tmp_path_factory.mktemp("wheel-install")
     wheel_dir = work / "wheels"
@@ -114,8 +114,8 @@ def installed_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
     _build_wheels(uv, wheel_dir)
 
-    core_wheels = sorted(wheel_dir.glob("cruxible_core-*.whl"))
-    assert core_wheels, f"no cruxible_core wheel was produced in {wheel_dir}"
+    core_wheels = sorted(wheel_dir.glob("cruxible-*.whl"))
+    assert core_wheels, f"no cruxible wheel was produced in {wheel_dir}"
     core_wheel = core_wheels[-1]
 
     venv = work / "venv"
@@ -133,7 +133,7 @@ def installed_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
             str(_venv_bin(venv) / "python"),
             "--find-links",
             str(wheel_dir),
-            f"cruxible-core[mcp,server] @ {core_wheel}",
+            f"cruxible[mcp,server] @ {core_wheel}",
         ],
         capture_output=True,
         text=True,

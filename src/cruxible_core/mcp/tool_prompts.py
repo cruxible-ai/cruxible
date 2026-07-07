@@ -18,7 +18,7 @@ TOOL_PROMPT_STYLE_RULE = (
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_version": (
-        "Use when you need to confirm which cruxible-core build this MCP server is running."
+        "Use when you need to confirm which cruxible build this MCP server is running."
     ),
     "cruxible_server_info": (
         "Use when you need live daemon details such as state directory, version, "
