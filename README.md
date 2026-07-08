@@ -6,7 +6,7 @@
 
 # Cruxible
 
-[![PyPI version](https://img.shields.io/pypi/v/cruxible)](https://pypi.org/project/cruxible/)
+[![PyPI version](https://img.shields.io/pypi/v/cruxible?color=blue)](https://pypi.org/project/cruxible/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](https://github.com/cruxible-ai/cruxible/blob/main/LICENSE)
 
