@@ -124,6 +124,9 @@ def test_alias_oci_resolution_uses_shipped_ref(
     _write_minimal_kit(source, role="standalone")
     pulled: list[str] = []
     monkeypatch.setattr("cruxible_core.kits._discover_local_kit_catalog", lambda: {})
+    # Published release bundles outrank shipped oci refs for aliases; pin the
+    # oci path by resolving as if no distribution manifest were packaged.
+    monkeypatch.setattr("cruxible_core.kit_distribution.load_published_manifest", lambda: None)
     monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "cache"))
 
     def fake_pull(ref: str) -> Path:
