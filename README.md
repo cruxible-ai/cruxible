@@ -114,11 +114,13 @@ hardening live in the
 ## Why Not Markdown, RAG, Or Vector Memory?
 
 Markdown, retrieval, and vector memory give a model text to read, so every
-session it reconstructs what's true from scratch, and no amount of context
-engineering makes that reconstruction reliable. A better model reads better,
-but it cannot certify its own output. Cruxible's answer is to **model the
-domain instead of engineering the context**: the durable slice of what's true
-becomes typed, governed state, read instead of reconstructed. What changes:
+session it reconstructs what's true from scratch. For drafts, exploration,
+and one-off questions, that's fine — but for the claims that are recurring,
+shared, and expensive to get wrong, every fresh read re-rolls the
+reconstruction, and a better model reads better, but it cannot certify its
+own output. Cruxible's answer is to **model the domain instead of
+engineering the context**: the durable slice of what's true becomes typed,
+governed state, read instead of reconstructed. What changes:
 
 | Markdown · RAG · vector memory | Cruxible |
 |---|---|
@@ -131,12 +133,10 @@ becomes typed, governed state, read instead of reconstructed. What changes:
 | Static text that doesn't improve from use | Claims mature from proposed to accepted; the ontology iterates with use |
 | A better model reads better, but can't certify its own output | Guarantees come from a deterministic layer outside the model |
 
-Markdown and retrieval remain the right tools for most text (drafts,
-exploration, one-off questions), and Cruxible itself cites markdown chunks as
-source evidence. The table is about the durable slice: claims that are
-recurring, shared, and expensive to get wrong, where re-reading text re-pays
-the reconstruction cost every session and re-rolls the risk with every fresh
-read.
+Markdown and retrieval remain the right tools for most text, and Cruxible
+itself cites markdown chunks as source evidence. The table is about that
+durable slice, where re-reading text re-pays the reconstruction cost every
+session.
 
 ## What A Governed Domain Looks Like
 
