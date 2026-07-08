@@ -340,36 +340,14 @@ reviewed it, and what changed.
 
 A domain kit models the thing being worked on; an operating-state kit tracks
 the work, decisions, and reviews around it. Typed operation-to-domain edges
-(or `SubjectRef`s across instances) compose them into one queryable graph:
+(or `SubjectRef`s across instances) compose them into one queryable graph.
+This is the type map of Cruxible's own project instance — the agent-operation
+base layer with the project-domain overlay composed on top, cross-layer
+relationship types carrying live edge counts:
 
-```mermaid
-flowchart LR
-  subgraph KEV["KEV domain state"]
-    Asset["Asset: ASSET-42"]
-    Product["Product: Apache HTTP Server"]
-    CVE["Vulnerability: CVE-2021-41773"]
-  end
-
-  subgraph Ops["Agent operating layer"]
-    Owner["Actor: Agent A"]
-    Reviewer["Actor: human reviewer"]
-    Work["WorkItem: patch ASSET-42"]
-    Review["ReviewRequest: verify remediation"]
-    Decision["Decision: emergency patch window"]
-    Risk["Risk: exposed to active exploit"]
-  end
-
-  Asset -- "runs" --> Product
-  CVE -- "affects" --> Product
-  Work -- "targets" --> Asset
-  Work -- "mitigates" --> Risk
-  Risk -- "attaches to" --> CVE
-  Decision -- "constrains" --> Work
-  Work -- "owned by" --> Owner
-  Review -- "reviews" --> Work
-  Review -- "requested by" --> Owner
-  Review -- "assigned to" --> Reviewer
-```
+<p align="center">
+  <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/ui_type_map.png" alt="Cruxible type map of a composed instance: base agent-operation types and violet project-domain overlay types, with labeled cross-layer relationship types and live edge counts" width="900">
+</p>
 
 ## State That Compounds
 
