@@ -5,13 +5,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import os
 import re
 from pathlib import Path
 from types import ModuleType
 from typing import Any
-
-os.environ.setdefault("CRUXIBLE_KIT_DEV_RESOLVE", "1")
 
 from cruxible_core.config.loader import load_config
 from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
