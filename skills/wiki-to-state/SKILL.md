@@ -1,4 +1,9 @@
-# LLM Wiki To Instance
+---
+name: wiki-to-state
+description: Convert an informal LLM wiki (CLAUDE.md files, a memory-bank directory, an Obsidian vault) into governed Cruxible state through register/propose/review stages, with every claim citing the pinned wiki chunks as evidence.
+---
+
+# Wiki To State
 
 Turn an informal LLM wiki — CLAUDE.md files, a memory-bank directory, an
 Obsidian vault — into governed Cruxible state without losing the wiki or
