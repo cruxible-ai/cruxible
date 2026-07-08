@@ -21,6 +21,10 @@ context.
 You model your domain in a Terraform-like config: entity and relationship
 types, deterministic workflows, write rules. The runtime enforces it.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_architecture.svg" alt="Cruxible architecture: source systems are pinned as artifacts, workflows propose row-matched claims into domain state, the agent operation layer reviews and mints them, and reads come back as deterministic queries with receipts" width="740">
+</p>
+
 - **State enters deterministically.** Exports and tables from real systems
   are pinned as artifacts and matched row by row into proposals; model
   judgment is injected only where your pinned domain logic can't decide.
@@ -45,16 +49,6 @@ types, deterministic workflows, write rules. The runtime enforces it.
 - **The core is deterministic.** No LLM inside, no hidden API calls. It works
   with any agent or harness, points at your existing systems, and mints into
   state only the claims worth coordinating around.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_architecture.svg" alt="Cruxible architecture: source systems are pinned as artifacts, workflows propose row-matched claims into domain state, the agent operation layer reviews and mints them, and reads come back as deterministic queries with receipts" width="740">
-</p>
-
-<p align="center"><em>Sources stay where they are and get pinned. Workflows
-parse and match them into proposed claims, reading state back as they go.
-Domain state holds the typed graph, where every edge carries review status
-and its cited chunk. The operation layer is where agents and humans propose,
-review, and mint, and where work itself is typed state gated on review.</em></p>
 
 ## Get Started
 
