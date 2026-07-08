@@ -341,12 +341,12 @@ reviewed it, and what changed.
 A domain kit models the thing being worked on; an operating-state kit tracks
 the work, decisions, and reviews around it. Typed operation-to-domain edges
 (or `SubjectRef`s across instances) compose them into one queryable graph.
-This is the type map of Cruxible's own project instance — the agent-operation
-base layer with the project-domain overlay composed on top, cross-layer
-relationship types carrying live edge counts:
+This is the type map of the supply-chain instance from the walkthrough above
+— the agent-operation base layer composed under the domain overlay, every
+relationship type carrying its live edge count:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/ui_type_map.png" alt="Cruxible type map of a composed instance: base agent-operation types and violet project-domain overlay types, with labeled cross-layer relationship types and live edge counts" width="900">
+  <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/ui_type_map.png" alt="Cruxible type map of a composed supply-chain instance: base agent-operation types and violet domain overlay types, with labeled relationship types carrying live edge counts" width="900">
 </p>
 
 ## State That Compounds
@@ -406,16 +406,20 @@ item cannot close without an approved review), and every agent's writes are
 attributed to its token.
 
 The **KEV pair** is the depth proof for domain state: a public
-known-exploited-vulnerability reference state, plus a governed overlay where
-deterministic ingest, governed proposals (which assets run which products),
-and review workflows run end to end on real data.
+known-exploited-vulnerability reference state built from CISA's catalog and
+published daily as a versioned, digest-pinned bundle, plus a governed
+overlay where deterministic ingest, governed proposals (which assets run
+which products), and review workflows run end to end on real data.
+**supply-chain-blast-radius** is the walkthrough you read above;
+**case-law-monitoring** runs the same governance over opinions, holdings,
+and authority impact.
 
 | Kit | Kind | Status | What it models |
 |-----|------|--------|----------------|
 | [agent-operation](https://github.com/cruxible-ai/cruxible/tree/main/kits/agent-operation/) | Agent operating state | ready | Work items, review requests, decisions, risks, open questions, state notes, actors, lifecycle, and dependency context. |
 | [project-domain](https://github.com/cruxible-ai/cruxible/tree/main/kits/project-domain/) | Domain overlay state | ready | Roadmap items, milestones, release lines, and product areas composed over the agent-operation base — the project state Cruxible itself runs on. |
 | [agent-release](https://github.com/cruxible-ai/cruxible/tree/main/kits/agent-release/) | Domain overlay state | ready | Agent systems, versions, eval suites and runs, with governed certification and promotion gates. |
-| [kev-reference](https://github.com/cruxible-ai/cruxible/tree/main/kits/kev-reference/) | Domain reference state | ready | Public known-exploited vulnerability reference data. |
+| [kev-reference](https://github.com/cruxible-ai/cruxible/tree/main/kits/kev-reference/) | Domain reference state | ready | Public known-exploited vulnerability reference data, published daily as a versioned release bundle. |
 | [kev-triage](https://github.com/cruxible-ai/cruxible/tree/main/kits/kev-triage/) | Domain overlay state | ready | Local asset exposure, service impact, controls, incidents, findings, remediation, and governed vulnerability triage. |
 | [supply-chain-blast-radius](https://github.com/cruxible-ai/cruxible/tree/main/kits/supply-chain-blast-radius/) | Domain state | ready | Suppliers, components, assemblies, products, shipments, and incident blast radius. |
 | [case-law-monitoring](https://github.com/cruxible-ai/cruxible/tree/main/kits/case-law-monitoring/) | Domain state | ready | Matter-centered case-law monitoring and authority impact. |
@@ -423,18 +427,17 @@ and review workflows run end to end on real data.
 Standalone kits can define a full state model. Overlay kits can extend an
 upstream state model with local state, governed proposals, and local workflows.
 
-**Status** — *ready* kits ship working providers (KEV also ships public reference
-data), so their workflows execute end to end. *in_progress* means the ontology,
-governance, named queries, and feedback/outcome loops are complete and validated,
-but the data-ingest and assessment providers are placeholders; implement them or
-wire your own data before running the workflows.
+Every listed kit is *ready*: providers are implemented and its workflows
+execute end to end (KEV additionally ships public reference data).
 
 ## Agent Setup
 
-For agents, prefer a split environment:
+Mint each agent its own credential (as in Get Started) so every write is
+attributed to a token, and prefer a split environment:
 
 - Cruxible runs in a daemon/runtime environment.
-- The agent environment installs `cruxible-client` or uses MCP.
+- The agent environment installs `cruxible-client` or uses MCP — it never
+  needs the full runtime.
 - `CRUXIBLE_REQUIRE_SERVER=1` keeps the agent on the daemon path.
 - `CRUXIBLE_SERVER_STATE_DIR` lives outside the agent's writable workspace.
 
@@ -458,6 +461,12 @@ MCP example:
   }
 }
 ```
+
+`CRUXIBLE_MODE` selects one of four cumulative permission tiers —
+`read_only`, `governed_write`, `graph_write`, `admin` — and denied calls name
+the tier they need. Give an agent the lowest tier that does its job:
+`governed_write` (above) can run workflows, propose, and record feedback,
+but cannot mutate the raw graph or resolve proposals.
 
 Local permission modes are a practical hardening layer, not full sandboxing. If
 trust levels matter, keep the daemon state outside the agent workspace and
@@ -483,6 +492,7 @@ expose only the client, HTTP, or MCP surface. See
 - [AI Agent Guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/for-ai-agents.md) — orchestration patterns
 
 **Operating and deploying**
+- [Inspection UI](https://github.com/cruxible-ai/cruxible-app) — the read-only console in the screenshots above: state graph, review groups, workflows, traces, receipts
 - [Local State And Backups](https://github.com/cruxible-ai/cruxible/blob/main/docs/local-state-and-backups.md) — SQLite, daemon state, and portability
 - [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md) — credentials, permission tiers, and bootstrap
 - [State Resolution And Maintenance](https://github.com/cruxible-ai/cruxible/blob/main/docs/state-resolution-and-maintenance.md) — proposal resolution, trust grading, and maintenance signals
