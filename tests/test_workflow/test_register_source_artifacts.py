@@ -152,7 +152,7 @@ def test_register_source_artifacts_service_preview_reports_plan_without_persisti
     assert _list_source_artifacts(instance) == []
 
 
-def test_register_source_artifacts_service_apply_with_preview_digest_registers_artifacts_and_receipts(
+def test_register_source_artifacts_service_apply_with_preview_digest_registers_artifacts_and_receipts(  # noqa: E501
     tmp_path: Path,
 ) -> None:
     instance = _register_instance(tmp_path)
@@ -336,7 +336,10 @@ def test_register_source_artifacts_digest_conflict_errors(
 
     with pytest.raises(
         QueryExecutionError,
-        match="row 1 artifact_id 'opinion_text_op_alpha' already exists with different content digest",
+        match=(
+            "row 1 artifact_id 'opinion_text_op_alpha' already exists with different "
+            "content digest"
+        ),
     ):
         execute_workflow(instance, instance.load_config(), "pin_sources", {}, mode="apply")
 

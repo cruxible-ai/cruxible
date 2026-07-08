@@ -57,7 +57,10 @@ from cruxible_core.cli.main import handle_errors
 @click.option(
     "--composed-ontology",
     is_flag=True,
-    help="With --runtime on an extends config: render the full composed ontology instead of the overlay-scoped view.",
+    help=(
+        "With --runtime on an extends config: render the full composed ontology instead "
+        "of the overlay-scoped view."
+    ),
 )
 @handle_errors
 def config_views_cmd(

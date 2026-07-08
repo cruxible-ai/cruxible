@@ -520,7 +520,8 @@ def execute_register_source_artifacts_handler(
                 )
             except ConfigError as exc:
                 raise QueryExecutionError(
-                    f"register_source_artifacts row {index} artifact_id '{artifact_id}' failed: {exc}"
+                    f"register_source_artifacts row {index} artifact_id "
+                    f"'{artifact_id}' failed: {exc}"
                 ) from exc
             planned_digests[artifact_id] = result.content_hash
             registered += 1

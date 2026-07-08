@@ -93,7 +93,10 @@ def test_update_readme_default_sections_are_comprehension_views(
         "Review Policy | Feedback | Outcomes |"
     ) in updated
     assert "Workflow: Propose Campaign Recommendations" in updated
-    assert "| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |" in updated
+    assert (
+        "| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |"
+        in updated
+    )
     assert "No configured constraints." in updated
     assert "No configured feedback profiles." in updated
     # query-map is cut from the default order; the compact schema catalog and
@@ -359,7 +362,10 @@ workflows:
     assert "| Relationship | Scope | Creation Path | Signals |" in rendered
     assert "Workflow: Propose Asset Products" in rendered
     assert "Agent/manual group propose" in rendered
-    assert "| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |" in rendered
+    assert (
+        "| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |"
+        in rendered
+    )
     assert "`remediation_verification`" in rendered
     assert "Verify remediation evidence." in rendered
     assert "### Constraints" in rendered

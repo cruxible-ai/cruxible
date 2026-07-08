@@ -11,8 +11,6 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-import pytest
-
 os.environ.setdefault("CRUXIBLE_KIT_DEV_RESOLVE", "1")
 
 from cruxible_core.config.loader import load_config
@@ -27,7 +25,10 @@ CONFIG = load_config(str(KIT_DIR / "config.yaml"))
 
 
 def _load_provider() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("supply_chain_blast_radius_provider", PROVIDER_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "supply_chain_blast_radius_provider",
+        PROVIDER_PATH,
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -180,13 +181,24 @@ def test_seed_loader_expands_voron_bom_and_row_contracts() -> None:
     )
     _assert_keys(payload["product_in_shipment"], _relationship_property_keys("product_in_shipment"))
 
-    ldo_z = next(row for row in payload["components"] if row["component_id"] == "C-MOTOR-LDO-42STH40-1684AC")
+    ldo_z = next(
+        row
+        for row in payload["components"]
+        if row["component_id"] == "C-MOTOR-LDO-42STH40-1684AC"
+    )
     assert ldo_z["manufacturer"] is None
     assert ldo_z["mpn"] is None
-    ldo_ab = next(row for row in payload["components"] if row["component_id"] == "C-MOTOR-LDO-42STH48-2004MAH")
+    ldo_ab = next(
+        row
+        for row in payload["components"]
+        if row["component_id"] == "C-MOTOR-LDO-42STH48-2004MAH"
+    )
     assert ldo_ab["manufacturer"] is None
     assert ldo_ab["mpn"] is None
-    assert not any(row["component_id"] == "C-MOTION-LEADSCREW-T8-350" for row in payload["components"])
+    assert not any(
+        row["component_id"] == "C-MOTION-LEADSCREW-T8-350"
+        for row in payload["components"]
+    )
 
 
 def test_component_provenance_traces_to_pinned_voron_artifacts() -> None:
@@ -505,7 +517,10 @@ def test_component_and_assembly_cascade_inline_payloads() -> None:
         },
         _context("assess_incident_component_cascade", artifact=False),
     )
-    _assert_keys(component_payload["items"], _relationship_property_keys("incident_impacts_component"))
+    _assert_keys(
+        component_payload["items"],
+        _relationship_property_keys("incident_impacts_component"),
+    )
     by_component = {row["component_id"]: row for row in component_payload["items"]}
     assert by_component["C-MOTOR"]["alternate_state"] == "no_alternate"
     assert by_component["C-MOTOR"]["verdict"] == "support"
@@ -547,7 +562,10 @@ def test_component_and_assembly_cascade_inline_payloads() -> None:
         },
         _context("assess_incident_assembly_cascade", artifact=False),
     )
-    _assert_keys(assembly_payload["items"], _relationship_property_keys("incident_impacts_assembly"))
+    _assert_keys(
+        assembly_payload["items"],
+        _relationship_property_keys("incident_impacts_assembly"),
+    )
     assert assembly_payload["items"][0]["impacted_supplier_id"] == "S-CN-TOOLHEAD"
     assert assembly_payload["items"][0]["verdict"] == "support"
 
@@ -658,7 +676,10 @@ def test_product_exposure_inline_payload_uses_bom_and_buffer_context() -> None:
             "exposure_basis": "component_bom_path",
             "exposure_path_summary": "C-MOTOR -> A-Z -> P-350",
             "contributing_path_count": 1,
-            "rationale": "1 accepted upstream impact path(s) reach product P-350; worst buffer_state=no_buffer.",
+            "rationale": (
+                "1 accepted upstream impact path(s) reach product P-350; "
+                "worst buffer_state=no_buffer."
+            ),
             "verdict": "support",
         }
     ]
@@ -955,7 +976,11 @@ def test_seed_taiwan_rail_cascade_rows_are_unsure_with_viable_alternate() -> Non
         _context("assess_incident_component_cascade", artifact=False),
     )
 
-    rail_rows = [row for row in component_cascade["items"] if row["incident_id"] == "INC-TW-RAIL-2026-07"]
+    rail_rows = [
+        row
+        for row in component_cascade["items"]
+        if row["incident_id"] == "INC-TW-RAIL-2026-07"
+    ]
     assert {row["component_id"] for row in rail_rows} >= {
         "C-RAIL-HIWIN-MGN12H-350",
         "C-RAIL-HIWIN-MGN9H-350",
@@ -974,7 +999,10 @@ def test_closed_uk_incident_is_excluded_from_supplier_scope() -> None:
         _context("assess_incident_supplier_scope", artifact=False),
     )
 
-    assert not any(row["incident_id"] == "INC-UK-HOTEND-2026-06" for row in supplier_scope["items"])
+    assert not any(
+        row["incident_id"] == "INC-UK-HOTEND-2026-06"
+        for row in supplier_scope["items"]
+    )
     assert any(
         row["supplier_id"] == "S-UK-HOTEND" and row["component_id"] == "C-HOTEND-E3D-REVO-VORON"
         for row in seed["supplier_supplies_component"]
@@ -982,14 +1010,25 @@ def test_closed_uk_incident_is_excluded_from_supplier_scope() -> None:
 
 
 def test_operations_routing_and_supplier_risk_provider_outputs() -> None:
-    assert {"analyze_operations_routing", "apply_operations_routing", "propose_risk_attaches_to_supplier"} <= set(
-        CONFIG.workflows
-    )
+    assert {
+        "analyze_operations_routing",
+        "apply_operations_routing",
+        "propose_risk_attaches_to_supplier",
+    } <= set(CONFIG.workflows)
     routing = provider.analyze_operations_routing({}, _context("analyze_operations_routing"))
 
     _assert_keys(
         routing["work_items"],
-        {"title", "summary", "description", "rationale", "type", "status", "priority", "target_date"},
+        {
+            "title",
+            "summary",
+            "description",
+            "rationale",
+            "type",
+            "status",
+            "priority",
+            "target_date",
+        },
     )
     _assert_keys(routing["risks"], {"title", "summary", "status", "priority"})
     assert {row["work_item_id"] for row in routing["work_items"]} == {

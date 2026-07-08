@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from cruxible_core.config.loader import load_config
 
+from cruxible_core.config.loader import load_config
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = ROOT / "kits/case-law-monitoring/config.yaml"
@@ -138,7 +138,9 @@ def test_seed_loaders_emit_declared_auto_property_keys(config: Any) -> None:
                 _assert_rows_have_keys(payload[field_name], rel.properties, label=field_name)
 
 
-def test_analysis_providers_emit_auto_property_keys_and_loper_overrules_chevron(config: Any) -> None:
+def test_analysis_providers_emit_auto_property_keys_and_loper_overrules_chevron(
+    config: Any,
+) -> None:
     corpus = providers.load_corpus_seed({})
     update = providers.load_corpus_update({})
     opinions = corpus["opinions"] + update["opinions"]
@@ -262,7 +264,9 @@ def test_analysis_providers_emit_auto_property_keys_and_loper_overrules_chevron(
         label="matter_impacts",
     )
     impacted_loper_matters = {
-        row["matter_id"] for row in matter_impacts["items"] if row["opinion_id"] == "op_loper_bright"
+        row["matter_id"]
+        for row in matter_impacts["items"]
+        if row["opinion_id"] == "op_loper_bright"
     }
     assert impacted_loper_matters == all_matter_ids
 
@@ -379,7 +383,9 @@ def test_act_one_citation_treatments_are_quiet() -> None:
     })
 
     assert {
-        row["treatment"] for row in treatments["items"] if row["treatment"] in providers.NEGATIVE_TREATMENTS
+        row["treatment"]
+        for row in treatments["items"]
+        if row["treatment"] in providers.NEGATIVE_TREATMENTS
     } == set()
 
 
@@ -438,12 +444,22 @@ def test_holding_statute_and_issue_verdicts_follow_provenance() -> None:
             },
         ],
         "issues": corpus["legal_issues"],
-        "statute_edges": [{"holding_id": "hold_graph_join", "statute_id": "stat_clean_air_act_111d"}],
+        "statute_edges": [
+            {
+                "holding_id": "hold_graph_join",
+                "statute_id": "stat_clean_air_act_111d",
+            }
+        ],
         "statute_issue_edges": corpus["statute_governs_issue_edges"],
     })["items"]
     by_issue = {(row["holding_id"], row["issue_id"]): row for row in issue_links}
     assert by_issue[("hold_chevron_deference", "issue_agency_deference")]["verdict"] == "support"
-    assert by_issue[("hold_graph_join", "issue_environmental_agency_authority")]["verdict"] == "support"
+    assert (
+        by_issue[("hold_graph_join", "issue_environmental_agency_authority")][
+            "verdict"
+        ]
+        == "support"
+    )
     assert by_issue[("hold_keyword_issue", "issue_agency_deference")]["verdict"] == "unsure"
 
 
@@ -506,7 +522,12 @@ def test_treatment_argument_and_matter_scope_verdicts_follow_provenance() -> Non
     assert by_holding["hold_keyword_risk"]["support_verdict"] == "unsure"
 
     matter_scope = providers.scope_matters_to_statutes({
-        "matters": [_matter_entity("matter_harbor_noaa", "Harbor Fisheries NOAA Observer Fee Challenge")],
+        "matters": [
+            _matter_entity(
+                "matter_harbor_noaa",
+                "Harbor Fisheries NOAA Observer Fee Challenge",
+            )
+        ],
         "statutes": [
             {
                 "statute_id": "stat_chevron_doctrine",
@@ -522,7 +543,8 @@ def test_treatment_argument_and_matter_scope_verdicts_follow_provenance() -> Non
             "matter_id": "matter_harbor_noaa",
             "statute_id": "stat_chevron_doctrine",
             "scope_basis": (
-                "Curated hint keywords matched matter 'Harbor Fisheries NOAA Observer Fee Challenge' "
+                "Curated hint keywords matched matter "
+                "'Harbor Fisheries NOAA Observer Fee Challenge' "
                 "to Chevron doctrine."
             ),
             "verdict": "unsure",
@@ -609,11 +631,23 @@ def test_assess_matter_impact_handles_workflow_relationship_rows(config: Any) ->
             }
         ],
         "opinion_holding_edges": [
-            {"relationship_type": "opinion_has_holding", "from_id": "op_loper_bright", "to_id": "hold_loper_overrules_chevron"},
-            {"relationship_type": "opinion_has_holding", "from_id": "op_chevron", "to_id": "hold_chevron_deference"},
+            {
+                "relationship_type": "opinion_has_holding",
+                "from_id": "op_loper_bright",
+                "to_id": "hold_loper_overrules_chevron",
+            },
+            {
+                "relationship_type": "opinion_has_holding",
+                "from_id": "op_chevron",
+                "to_id": "hold_chevron_deference",
+            },
         ],
         "argument_matter_edges": [
-            {"relationship_type": "argument_in_matter", "from_id": "arg_harbor_chevron", "to_id": "matter_harbor_noaa"}
+            {
+                "relationship_type": "argument_in_matter",
+                "from_id": "arg_harbor_chevron",
+                "to_id": "matter_harbor_noaa",
+            }
         ],
         "treatment_edges": [
             {
@@ -624,18 +658,39 @@ def test_assess_matter_impact_handles_workflow_relationship_rows(config: Any) ->
             }
         ],
         "matter_statute_edges": [
-            {"relationship_type": "matter_turns_on_statute", "from_id": "matter_harbor_noaa", "to_id": "stat_chevron_doctrine"}
+            {
+                "relationship_type": "matter_turns_on_statute",
+                "from_id": "matter_harbor_noaa",
+                "to_id": "stat_chevron_doctrine",
+            }
         ],
         "opinion_court_edges": [
-            {"relationship_type": "opinion_from_court", "from_id": "op_loper_bright", "to_id": "court_scotus"},
-            {"relationship_type": "opinion_from_court", "from_id": "op_chevron", "to_id": "court_scotus"},
+            {
+                "relationship_type": "opinion_from_court",
+                "from_id": "op_loper_bright",
+                "to_id": "court_scotus",
+            },
+            {
+                "relationship_type": "opinion_from_court",
+                "from_id": "op_chevron",
+                "to_id": "court_scotus",
+            },
         ],
         "matter_jurisdiction_edges": [
-            {"relationship_type": "matter_in_jurisdiction", "from_id": "matter_harbor_noaa", "to_id": "court_first_cir"}
+            {
+                "relationship_type": "matter_in_jurisdiction",
+                "from_id": "matter_harbor_noaa",
+                "to_id": "court_first_cir",
+            }
         ],
     })
 
-    _assert_relationship_item_keys(config, rows["items"], "opinion_affects_matter", label="matter_impacts")
+    _assert_relationship_item_keys(
+        config,
+        rows["items"],
+        "opinion_affects_matter",
+        label="matter_impacts",
+    )
     by_pair = {(row["opinion_id"], row["matter_id"]): row for row in rows["items"]}
     assert by_pair[("op_loper_bright", "matter_harbor_noaa")]["impact_type"] == "adverse_authority"
     assert by_pair[("op_chevron", "matter_harbor_noaa")]["impact_type"] == "monitoring_only"
@@ -671,7 +726,11 @@ def test_route_review_work_handles_negative_treatment_graph_rows() -> None:
             }
         ],
         "argument_matter_edges": [
-            {"relationship_type": "argument_in_matter", "from_id": "arg_harbor_chevron", "to_id": "matter_harbor_noaa"}
+            {
+                "relationship_type": "argument_in_matter",
+                "from_id": "arg_harbor_chevron",
+                "to_id": "matter_harbor_noaa",
+            }
         ],
     })
 
@@ -710,14 +769,27 @@ def test_assess_filing_response_obligations_handles_workflow_relationship_rows(c
             }
         ],
         "filing_in_matter_edges": [
-            {"relationship_type": "filing_in_matter", "from_id": "filing_x", "to_id": "matter_harbor_noaa"}
+            {
+                "relationship_type": "filing_in_matter",
+                "from_id": "filing_x",
+                "to_id": "matter_harbor_noaa",
+            }
         ],
         "matter_deadline_edges": [
-            {"relationship_type": "matter_has_deadline", "from_id": "matter_harbor_noaa", "to_id": "deadline_harbor_supp_brief"}
+            {
+                "relationship_type": "matter_has_deadline",
+                "from_id": "matter_harbor_noaa",
+                "to_id": "deadline_harbor_supp_brief",
+            }
         ],
     })
 
-    _assert_relationship_item_keys(config, rows["items"], "filing_requires_response", label="filing_obligations")
+    _assert_relationship_item_keys(
+        config,
+        rows["items"],
+        "filing_requires_response",
+        label="filing_obligations",
+    )
     assert rows["items"] == [
         {
             "filing_id": "filing_x",

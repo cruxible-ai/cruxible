@@ -811,7 +811,10 @@ class TestConfigViews:
         assert "Recommended For" in result.output
         assert "Governed proposal" in result.output
         assert "Creation Path" in result.output
-        assert "| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |" in result.output
+        assert (
+            "| Signal Source | Role | Review Unsure | Evidence on Support | Used By | Notes |"
+            in result.output
+        )
         assert "No configured constraints." in result.output
         assert "No configured feedback profiles." in result.output
         assert "### Entity Types" not in result.output
