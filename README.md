@@ -136,13 +136,10 @@ governed state, read instead of reconstructed. What changes:
 
 Markdown and retrieval remain the right tools for most text, and Cruxible
 itself cites markdown chunks as source evidence. Version control narrows the
-gap less than it seems: git gives documents history, blame, and diff review,
-but the unit it governs is the file, not the claim. Nothing types what a
-changed line asserts, checks a status transition, or refuses an edit that
-drops its evidence. And nobody hand-tends this state: it accumulates as the
-exhaust of work agents are already doing — the abandoned-wiki failure mode is
-the thing the write path is designed against. The table is about that durable
-slice, where re-reading text re-pays the reconstruction cost every session.
+gap less than it seems: git reviews the diff, not the claim — nothing types
+what a changed line asserts or refuses an edit that drops its evidence. And
+nobody hand-tends this state: it accumulates as the exhaust of governed
+work, not as a wiki someone has to maintain.
 
 ## What A Governed Domain Looks Like
 
