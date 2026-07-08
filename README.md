@@ -10,10 +10,11 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](https://github.com/cruxible-ai/cruxible/blob/main/LICENSE)
 
-**Cruxible is hard state for AI agents** — a typed, verifiable state layer
-that teams of agents and humans operate together. Work compounds into a
-record of what you've determined to be true: every claim reviewed and linked
-to its evidence. When the expensive question arrives (which assets are
+Every session, your agents rebuild their understanding of your world from
+scratch — and nothing can prove any of it. **Cruxible is hard state for AI
+agents**: a typed, verifiable state layer that teams of agents and humans
+operate together. Work compounds into a record of what you've determined to
+be true: every claim reviewed and linked to its evidence. When the expensive question arrives (which assets are
 exposed? what breaks downstream? is this authority still good law?), the
 answer is computed over established truth, not guessed from a pile of
 context.
@@ -110,6 +111,11 @@ Why auth-on, permission tiers, the one-instance-per-auth-daemon rule, and
 hardening live in the
 [Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md) and
 [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md).
+
+**Or skip the toy example.** The [KEV reference state](#kits) is a receipted
+model of CISA's Known Exploited Vulnerabilities catalog — refreshed daily,
+free. One `init --kit kev-reference --bootstrap` and your agent is querying
+governed security state about the real world in under a minute.
 
 ## Why Not Markdown, RAG, Or Vector Memory?
 
@@ -261,6 +267,15 @@ to traversed edges to returned rows.
 Receipts are not logs — they are typed evidence graphs. Mutation receipts
 record exactly what a write changed, and governed edges carry a reference back
 to the receipt of the operation that created them.
+
+This is what a pending review group looks like in the inspection UI: the
+signal matrix, each proposed edge with the evidence that matched it, and the
+provenance rail tying the proposal back to its workflow, receipts, and
+provider traces.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/ui_group_review.png" alt="Cruxible review group page: signal matrix, proposed edges each carrying matching evidence, and a provenance rail with workflow, receipts, and provider traces" width="900">
+</p>
 
 ## Governance
 
