@@ -341,8 +341,8 @@ def isolate_cli_context(
 
 @pytest.fixture
 def configs_dir() -> Path:
-    """Path to the configs directory."""
-    return Path(__file__).parent.parent / "configs"
+    """Path to the test config fixtures directory."""
+    return Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture

@@ -56,65 +56,86 @@ types, deterministic workflows, write rules. The runtime enforces it.
 pip install cruxible
 ```
 
-Start the daemon in one shell. Auth is on because agent identity lives in
-the auth layer; the daemon writes a one-time bootstrap secret to a `0600`
-file:
+Start a local sandbox daemon in one shell. No tokens yet: sandbox writes
+attribute to a built-in `operator` identity, and per-agent credentials come
+later, when agents join:
+
+```bash
+CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/sandbox" cruxible server start
+```
+
+In a second shell, create an instance from two kits — the agent-operation
+base and the supply-chain demo domain (bundles are fetched from the release
+and digest-verified) — then build the seeded world, preview-first:
+
+```bash
+cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --kit supply-chain-blast-radius
+cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
+
+cruxible run --workflow build_seed_state        # deterministic ingest: preview...
+cruxible apply --workflow build_seed_state --from-last-preview    # ...then commit
+cruxible run --workflow ingest_incidents
+cruxible apply --workflow ingest_incidents --from-last-preview
+```
+
+Now the governed part. The incident feed can only *propose* impact edges —
+each candidate carries the signals and evidence that matched it, and lands
+in a review queue. The judgment is yours, on the record, pinned to the
+exact pending state you reviewed:
+
+```bash
+cruxible propose --workflow propose_incident_impacts_supplier
+cruxible group list --status pending_review
+cruxible group resolve --group <GRP-id> --action approve \
+  --rationale "Confirmed against supplier geography" \
+  --expected-pending-version 1
+```
+
+And ask the questions those edges now answer — with receipts:
+
+```bash
+cruxible query run open_incident_impacts --json
+cruxible query run incident_impacted_suppliers --param incident_id=INC-TW-RAIL-2026-07 --json
+```
+
+Deterministic ingest, a governed proposal, your judgment recorded with its
+rationale, and a receipted answer through the edge you admitted. And it
+compounds: the supplier impacts you approved unlock the next cascade —
+`cruxible propose --workflow propose_incident_impacts_component` puts 142
+component-level candidates in your queue, and once judged,
+`single_source_components_for_incident` names the exposed components with
+no alternative supplier.
+
+**When agents join, identity turns on.** Restart the daemon with auth and a
+bootstrap secret, claim the first admin credential, and mint each agent its
+own token — minting is what creates the agent's Actor in state, and every
+write is attributed to it:
 
 ```bash
 CRUXIBLE_SERVER_AUTH=true CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" \
   cruxible server start --bootstrap-secret-file "$HOME/.cruxible/bootstrap.secret"
-```
-
-Everything else is one paste in a second shell: create the instance from
-the **agent-operation** kit (work items, reviews, decisions, risks, actors;
-the kit bundle is fetched from the release and digest-verified), claim
-admin, mint your first agent, give it work:
-
-```bash
-# create the instance while the bootstrap secret is live
-export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$HOME/.cruxible/bootstrap.secret")"
-cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --bootstrap
-cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
-
-# claim admin, then mint the agent. Minting IS what creates the agent's
-# Actor in state; no other write path can create one.
 cruxible credential claim-bootstrap --secret-file "$HOME/.cruxible/bootstrap.secret"
-export CRUXIBLE_SERVER_BEARER_TOKEN=<admin-token>   # printed once by the claim
-cruxible credential mint --label claude --mode graph_write
-export CRUXIBLE_SERVER_BEARER_TOKEN=<claude-token>  # act as the agent from here
-
-# give the agent work; writes are validated, attributed, and receipted
-cruxible entity add WorkItem wi-first-slice \
-  --set title="Model the first slice of our domain" \
-  --set type=research --set status=active --set priority=high
-cruxible relationship add work_item_owned_by_actor WorkItem wi-first-slice Actor claude
-cruxible query run actor_work_queue --param actor_id=claude --json
+cruxible credential mint --label my-agent --mode graph_write
 ```
 
-`--kit` is repeatable: `init --kit agent-operation --kit project-domain`
-composes an overlay onto its base. A source checkout of the repo overrides
-the published bundles when you want to hack on kits.
-
-The same surface is available from Python (and MCP, below):
+`--kit` is repeatable and overlays compose over their base
+(`init --kit agent-operation --kit project-domain`). A source checkout of
+the repo overrides the published bundles when you want to hack on kits. The
+same surface is available from Python (and MCP, below):
 
 ```python
 from cruxible_client import CruxibleClient
 
-with CruxibleClient(base_url="http://127.0.0.1:8100", token="<claude-token>") as client:
-    result = client.query("<instance-id>", "actor_work_queue", {"actor_id": "claude"})
+with CruxibleClient(base_url="http://127.0.0.1:8100", token="<agent-token>") as client:
+    result = client.query("<instance-id>", "open_incident_impacts", {})
     for item in result.items:
         print(item)
 ```
 
-Why auth-on, permission tiers, the one-instance-per-auth-daemon rule, and
-hardening live in the
+Permission tiers, the one-instance-per-auth-daemon rule, and hardening live
+in the
 [Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md) and
 [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md).
-
-**Or skip the toy example.** The [KEV reference state](#kits) is a receipted
-model of CISA's Known Exploited Vulnerabilities catalog — refreshed daily,
-free. One `init --kit kev-reference --bootstrap` and your agent is querying
-governed security state about the real world in under a minute.
 
 ## Why Not Markdown, RAG, Or Vector Memory?
 

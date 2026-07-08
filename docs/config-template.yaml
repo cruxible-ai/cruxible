@@ -1,7 +1,7 @@
 # Cruxible Core Configuration Template
 # ====================================
 #
-# This file is an authoring checklist for a Cruxible world model. It is not a
+# This file is an authoring checklist for a Cruxible state model. It is not a
 # complete domain by itself: copy it, replace the empty maps/lists with your
 # domain objects, and keep only the sections you need.
 #

@@ -8,10 +8,9 @@ owns state; the CLI, MCP server, client SDK, GUI, and agent harness talk to it
 through Cruxible surfaces.
 
 This guide assumes a **fresh daemon** with no instance yet. If you already
-have an auth-on daemon from the README's Get Started, its bootstrap secret
-is spent and it cannot create this guide's instances — `init` fails with
-`InstanceScopeError`. Leave that daemon running and start a second one
-alongside it, on its own port and state directory:
+have a daemon from the README's Get Started, it holds that instance — leave
+it running and start a second daemon alongside it, on its own port and
+state directory:
 
 ```bash
 CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server-quickstart" \
@@ -31,25 +30,26 @@ for the model behind this.
 
 ## Install And Start The Daemon
 
-For `0.2`, install from a clone of the repository and run from that checkout. The
-bundled starter kits resolve straight from the source tree, so `init --kit <name>`
-works with no extra setup. (Versioned OCI kit images are planned; until they are
-published, the checkout is the canonical path.)
-
 ```bash
-git clone https://github.com/cruxible-ai/cruxible.git
-cd cruxible
-uv sync --extra server --extra mcp
-source .venv/bin/activate
+pip install cruxible
 ```
 
-Every `cruxible` command below runs in that activated environment (or prefix each
-with `uv run`). Start the local daemon from the checkout so the bundled kits are
-discoverable:
+The daemon ships in the default install, and the built-in kit aliases
+(`init --kit agent-operation`, `--kit supply-chain-blast-radius`, ...)
+resolve from digest-pinned release bundles — no checkout needed. To hack on
+kits instead, clone the repo and run from the checkout
+(`uv sync --all-extras`); a source tree's `kits/` always wins over the
+published bundles.
+
+Start the local daemon:
 
 ```bash
 CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
 ```
+
+Without auth, this is sandbox mode: writes are attributed to a built-in
+`operator` identity, visible as such in provenance. Turn auth on (below)
+when agents join and identity should be credential-backed.
 
 The daemon runs in the foreground — run the commands below from another activated
 shell, or start it in the background.
