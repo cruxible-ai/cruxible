@@ -12,8 +12,8 @@
 
 **Cruxible is hard state for AI agents** — a typed, verifiable state layer
 that teams of agents and humans operate together. Work compounds into a
-record of what you've determined to be true — typed, reviewed,
-evidence-linked — so when the expensive question arrives (which assets are
+record of what you've determined to be true: every claim reviewed and linked
+to its evidence. When the expensive question arrives (which assets are
 exposed? what breaks downstream? is this authority still good law?), the
 answer is computed over established truth, not guessed from a pile of
 context.
