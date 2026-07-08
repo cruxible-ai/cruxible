@@ -16,7 +16,6 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import compute_kit_provider_sha256, is_kit_provider_ref
 from cruxible_core.provider.registry import get_provider_entrypoint_path, resolve_provider
-from cruxible_core.runtime.execution_policy import enforce_customer_code_execution_supported
 from cruxible_core.workflow.artifacts import resolve_local_artifact_path
 from cruxible_core.workflow.contracts import (
     contract_reference_label,
@@ -587,6 +586,11 @@ def _compute_provider_entrypoint_sha256(
     *,
     config_base_path: Path | None = None,
 ) -> str | None:
+    # Imported lazily: a module-level import of runtime.execution_policy
+    # executes runtime/__init__ (the full instance stack), which imports this
+    # module back — a cycle for entry points reaching workflow before runtime.
+    from cruxible_core.runtime.execution_policy import enforce_customer_code_execution_supported
+
     enforce_customer_code_execution_supported()
     provider = config.providers[provider_name]
     if is_kit_provider_ref(provider.ref):
