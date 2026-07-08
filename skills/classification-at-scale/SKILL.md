@@ -1,4 +1,9 @@
-# Skill: Classification at Scale
+---
+name: classification-at-scale
+description: Classify an internal catalog against a standard taxonomy at scale using deterministic providers, tri-state signals, batch group review, and a trust flywheel — LLM judgment only for configs, ambiguous tails, and critique.
+---
+
+# Classification At Scale
 
 Classify entities from an internal catalog against a standard taxonomy using deterministic providers, relationship-local signal sources, batch group review, and a trust flywheel. LLM reasoning is limited to writing configs, handling ambiguous tails, and critiquing results.
 
