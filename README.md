@@ -11,9 +11,15 @@
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](https://github.com/cruxible-ai/cruxible/blob/main/LICENSE)
 
 **Cruxible is hard state for AI agents** — a typed, verifiable state layer
-that teams of agents and humans operate together. You model your domain in a
-Terraform-like config: entity and relationship types, deterministic
-workflows, write rules. The runtime enforces it.
+that teams of agents and humans operate together. Work compounds into a
+record of what you've determined to be true — typed, reviewed,
+evidence-linked — so when the expensive question arrives (which assets are
+exposed? what breaks downstream? is this authority still good law?), the
+answer is computed over established truth, not guessed from a pile of
+context.
+
+You model your domain in a Terraform-like config: entity and relationship
+types, deterministic workflows, write rules. The runtime enforces it.
 
 - **State enters deterministically.** Exports and tables from real systems
   are pinned as artifacts and matched row by row into proposals; model
@@ -48,8 +54,7 @@ workflows, write rules. The runtime enforces it.
 parse and match them into proposed claims, reading state back as they go.
 Domain state holds the typed graph, where every edge carries review status
 and its cited chunk. The operation layer is where agents and humans propose,
-review, and mint, and where work itself is typed state gated on review. All
-three layers ship in one config.</em></p>
+review, and mint, and where work itself is typed state gated on review.</em></p>
 
 ## Get Started
 
