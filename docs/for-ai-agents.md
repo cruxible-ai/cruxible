@@ -12,14 +12,14 @@ a structured adapter over the daemon, not the place where workflow policy lives.
 
 Use this split when permissions matter:
 
-- Daemon environment: `pip install "cruxible-core[server,mcp]"`
+- Daemon environment: `pip install "cruxible[mcp]"` (the daemon ships in the default install)
 - Agent/client environment: `pip install cruxible-client`
 - Agent access path: MCP or HTTP client
 - State path: daemon-owned `CRUXIBLE_SERVER_STATE_DIR`, outside the agent
   workspace
 
 Permission modes are enforced at the daemon boundary. If the agent can import
-`cruxible-core`, read daemon state files, or control the daemon runtime, local
+the `cruxible` runtime, read daemon state files, or control the daemon runtime, local
 permission modes are advisory.
 
 For auth bootstrapping, runtime credentials, and reviewer/writer identity

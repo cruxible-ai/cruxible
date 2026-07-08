@@ -280,6 +280,10 @@ entity_types:
       status: {enum_ref: asset_status}
 ```
 
+Only an enum declared with `ordered: low_to_high` (values listed lowest to
+highest) may be referenced as an `order_by` `enum_ref` in a named query;
+referencing an unordered enum there is a config validation error.
+
 Enum values must be non-empty and unique. With `extends`, overlays may add new
 enum names but may not redefine or extend upstream enum vocabularies.
 
@@ -507,6 +511,10 @@ Validation rules:
 - `mode: collection` queries omit `entry_point`, `traversal`, `include`, `max_paths`, and `max_paths_per_result`.
 - Collection queries support `result_shape: entity` with `returns` set to an entity type, or `result_shape: relationship` with `returns` set to a canonical relationship name. Reverse aliases are rejected so direction is unambiguous.
 - `mode: traversal` queries require `entry_point` and at least one traversal step. Put filters on traversal steps, include blocks, or related predicates; top-level `where` is reserved for collection queries.
+
+Collection `where` scopes:
+- `result_shape: entity`: paths start with `result` — e.g. `result.properties.status: {in: [active]}`.
+- `result_shape: relationship`: `edge.properties.<field>` filters the edge itself (field names are validated against the relationship's configured schema), and `source.` / `target.` filter the endpoint entities — e.g. `source.properties.status: {eq: open}` keeps only edges whose from-entity is an open incident. `entry`, `current`, and `candidate` are accepted aliases (entry and current resolve to the from-entity, candidate to the to-entity); prefer `source`/`target` for readability.
 - Traversal queries that intentionally return mixed entity types can set `returns: AnyEntity`; this skips homogeneous entity-type validation for entity/path rows.
 - `result_shape: entity` requires `dedupe: entity`.
 - For a traversal query with `result_shape: entity`, a concrete entity `returns` type, and `max_depth` on the final step, the engine may traverse through intermediate entity types and collect only the declared return type when at least one relationship in that final step can reach it. This is read-time typed collection, not a virtual or materialized relationship.

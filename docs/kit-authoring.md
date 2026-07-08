@@ -207,6 +207,49 @@ Bundle behavior:
 - Consumers should not silently regenerate published bundled locks. Rebuild the
   kit lock before publishing or distributing a changed kit.
 
+## Standing Views And Decision Surfaces
+
+A domain kit's read surface has three tiers, and shipping all three is what
+makes a kit feel alive rather than inert:
+
+1. **At least one standing "requiring action" view** — a parameterless
+   `mode: collection` query over the state that needs attention now (open
+   incident impacts, postures requiring action, upcoming deadlines). This is
+   the queue surface: it renders in UIs with no input and answers "what needs
+   a decision today?" Order it by the fields a triager would sort by, using
+   `ordered` enums.
+2. **Parameterized decision queries** — traversal queries anchored on the
+   entity a decision is about (`entry_point`), supplying the evidence a
+   decision report pulls: scope, exposure, alternatives, obligations.
+3. **Proposal workflows** — where interpretive claims enter as governed
+   candidates. The queue view tells you which entity needs judgment; the
+   decision queries justify it; the proposal/resolution flow records it.
+
+Reference kits (published state that consumers subscribe to) ship **no**
+standing views: the actionable views belong to the overlay that composes local
+judgment over the reference, not to the reference itself.
+
+Keep each query in its layer: a query touching only operating-layer types
+(work items, reviews, actors) belongs in the operating-state kit; queries
+joining domain types to operating types must live in the overlay, since only
+the overlay can see both vocabularies.
+
+## Seed Data Is A Worked Example
+
+A kit's `data/` ships as a pinned workflow artifact (lock-covered,
+digest-attested), and for demo kits it is fictional: a worked example so the
+kit runs end to end in minutes, not a starter dataset to build on. Adopting a
+kit for real use means **replacing the seed with your own exports** — the
+ingest workflows are the interface, the seed files are just one example input:
+
+- Point the ingest/refresh workflows at your own exports (or swap the pinned
+  artifact for your data directory and re-lock).
+- Do not run seed workflows (`build_seed_state` and friends) against an
+  instance that already carries real state; they exist to demonstrate the
+  pipeline shape.
+- Real reference data (a public catalog snapshot) is the exception: that is
+  kit content, not an example, and updates with the kit version.
+
 ## Published Kit Bundles
 
 Installed distributions resolve built-in aliases such as `kev-reference` from

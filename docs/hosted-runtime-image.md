@@ -1,6 +1,6 @@
 # Hosted Runtime Image
 
-The hosted runtime image packages `cruxible-core[server]` for private runtime
+The hosted runtime image packages `cruxible` (daemon included) for private runtime
 containers. It starts the daemon (`cruxible server start`) as a non-root
 `cruxible` user and stores mutable server state under `/var/lib/cruxible/server`.
 
@@ -28,11 +28,11 @@ This prevents hosted runtime state from being stored only in the container's
 ephemeral filesystem layer.
 
 The external Cloud control plane (the separate `cruxible-cloud-api` package, not
-`cruxible-core`) is what prepares each per-instance host state directory before
+`cruxible`) is what prepares each per-instance host state directory before
 starting the runtime container. By default it applies mode `0777`, matching the
 local smoke-test pattern above so the non-root container user can write through
 the bind mount on a normal Linux host. Tighter host-ownership modes are
-configured on that control plane, not through any `cruxible-core` environment
+configured on that control plane, not through any `cruxible` environment
 variable an operator of this image sets directly.
 
 Verify the server:

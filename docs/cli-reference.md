@@ -2276,7 +2276,7 @@ cruxible query inline \
 **Common Errors:**
 - Binding a non-loopback host without `CRUXIBLE_SERVER_AUTH=true` is refused.
 - A state dir that previously required auth is refused unless auth is re-enabled.
-- The `server` extra (`pip install "cruxible-core[server]"`) is required to launch.
+- The daemon ships in the default install (`pip install cruxible`); no extra is required.
 
 ## cruxible server status
 

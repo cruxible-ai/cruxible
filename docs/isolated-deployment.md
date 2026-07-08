@@ -8,7 +8,7 @@ It is not the default onboarding flow. The normal local setup is still the faste
 
 Use this guide if you want the agent to interact with Cruxible without being able to:
 
-- import `cruxible-core` directly
+- import the `cruxible` runtime package directly
 - read the graph files directly
 - bypass daemon permission modes by reaching into the runtime
 
@@ -18,7 +18,7 @@ If that is not a requirement, stick with the standard [Quickstart](quickstart.md
 
 At minimum, all of these need to be true:
 
-- `cruxible-core` runs as a different principal or on a different host
+- the `cruxible` runtime runs as a different principal or on a different host
 - the graph state directory is readable only by that runtime principal
 - the agent environment installs only `cruxible-client`
 - the agent talks to Cruxible over HTTP or a Unix socket, not through shared filesystem access
@@ -33,7 +33,7 @@ These are useful for convenience, but they are not sufficient for graph isolatio
 - separate `uv` environments only
 - Docker on the same machine if the agent can run `docker`
 - a named Docker volume if the agent can mount or inspect it
-- keeping `cruxible-core` installed in the agent environment
+- keeping the full `cruxible` runtime installed in the agent environment
 - a shared repo checkout visible to both the agent and the runtime
 - running the agent and the daemon as the same Unix user
 
@@ -64,8 +64,8 @@ Use a state directory the agent user cannot read. This example uses `/var/lib/cr
 ### 2. Install the daemon runtime for that user
 
 ```bash
-sudo -u cruxd python3 -m venv /opt/cruxible-core
-sudo -u cruxd /opt/cruxible-core/bin/pip install "cruxible-core[server]"
+sudo -u cruxd python3 -m venv /opt/cruxible
+sudo -u cruxd /opt/cruxible/bin/pip install cruxible
 ```
 
 ### 3. Start the server as the runtime user
@@ -77,7 +77,7 @@ sudo -u cruxd env \
   CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once \
   CRUXIBLE_HOST=127.0.0.1 \
   CRUXIBLE_PORT=8100 \
-  /opt/cruxible-core/bin/cruxible server start
+  /opt/cruxible/bin/cruxible server start
 ```
 
 Notes:
@@ -101,7 +101,7 @@ python3 -m venv .venv-agent
 pip install cruxible-client
 ```
 
-The agent environment should not have `cruxible-core` installed.
+The agent environment should not have the `cruxible` runtime installed.
 
 ### 5. Connect to the isolated daemon
 
@@ -125,26 +125,26 @@ At minimum, the agent user should not have:
 - `sudo` access to become `cruxd`
 - membership in the `docker` group
 - read access to `/var/lib/cruxible`
-- access to the `cruxible-core` source tree or runtime virtualenv
+- access to the `cruxible` source tree or runtime virtualenv
 
 ## Option 2: Separate Host or VM
 
 This is the stronger version of the same pattern.
 
-Run `cruxible-core` on a different machine and keep the state directory there. The agent machine installs only `cruxible-client` and connects over HTTP.
+Run the `cruxible` runtime on a different machine and keep the state directory there. The agent machine installs only `cruxible-client` and connects over HTTP.
 
 Daemon host:
 
 ```bash
-python3 -m venv /opt/cruxible-core
-/opt/cruxible-core/bin/pip install "cruxible-core[server]"
+python3 -m venv /opt/cruxible
+/opt/cruxible/bin/pip install cruxible
 env \
   CRUXIBLE_SERVER_STATE_DIR=/var/lib/cruxible \
   CRUXIBLE_SERVER_AUTH=true \
   CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once \
   CRUXIBLE_HOST=0.0.0.0 \
   CRUXIBLE_PORT=8100 \
-  /opt/cruxible-core/bin/cruxible server start
+  /opt/cruxible/bin/cruxible server start
 ```
 
 Agent host:
@@ -172,13 +172,13 @@ For real deployments, put the HTTP service behind normal operational controls su
 
 ## MCP Caveat
 
-Today, `cruxible-mcp` is part of `cruxible-core`.
+Today, `cruxible-mcp` is part of the `cruxible` package.
 
 That means the easiest local MCP setup still installs the full runtime package on the machine where the agent runs. It is convenient, but it is not the strongest isolation story.
 
 If you need a real boundary today, the cleanest path is:
 
-- `cruxible-core` on the isolated runtime
+- the `cruxible` runtime on the isolated host
 - `cruxible-client` in the agent environment
 - HTTP-based access from the agent side
 
