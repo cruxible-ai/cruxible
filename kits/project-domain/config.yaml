@@ -580,23 +580,6 @@ named_queries:
   # are new keys (no composer collision). The base provides the rest of the
   # operational queue surface (review_queue, blocked_work_items, active_risks,
   # open_questions_needing_review, etc.).
-  work_queue:
-    mode: collection
-    description: Active work items dispatched for implementation -- the queue an implementer or agentic loop pulls from. Curate by setting a work item's status to active.
-    returns: WorkItem
-    result_shape: entity
-    where:
-      result.properties.status:
-        in:
-          - active
-    select:
-      work_item_id: $result.entity_id
-      title: $result.properties.title
-      priority: $result.properties.priority
-      type: $result.properties.type
-      summary: $result.properties.summary
-    limit: 100
-
 mutation_guards: []
 
 quality_checks:

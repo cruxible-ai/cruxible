@@ -25,7 +25,7 @@ enums:
   component_kind: [raw_material, part]
   # Base owns lifecycle_status; catalog lifecycle gets its own vocabulary.
   catalog_status: [active, deprecated, obsolete]
-  criticality: [critical, standard, low]
+  criticality: {values: [low, standard, critical], ordered: low_to_high}
   shipment_status: [in_flight, delivered, cancelled]
   location_type: [plant, warehouse, supplier, in_transit]
   inventory_item_type: [component, assembly, product]
@@ -33,7 +33,7 @@ enums:
   rate_period: [day, week, month]
   duration_unit: [days, weeks, months]
   buffer_state: [no_buffer, partial_buffer, sufficient_buffer, unknown]
-  incident_severity: [critical, high, medium, low]
+  incident_severity: {values: [low, medium, high, critical], ordered: low_to_high}
   incident_scope_type: [supplier, geography]
   incident_status: [open, monitoring, closed]
   qualification_status: [qualified, conditional, expired, disqualified]
@@ -265,6 +265,28 @@ relationships:
       auto_resolve_when: all_support
 
 named_queries:
+  open_incident_impacts:
+    explicit: true
+    mode: collection
+    description: >
+      Suppliers impacted by open incidents through accepted impact edges --
+      the standing blast-radius work queue. Judgment-admitted impacts only;
+      pending proposals stay in the review queue.
+    returns: incident_impacts_supplier
+    result_shape: relationship
+    relationship_state: accepted
+    where:
+      source.properties.status:
+        eq: open
+    order_by:
+      - by: $from_entity.properties.severity
+        direction: desc
+        enum_ref: incident_severity
+      - by: $from_entity.entity_id
+        direction: asc
+      - by: $to_entity.entity_id
+        direction: asc
+
   incident_impacted_suppliers:
     mode: traversal
     entry_point: Incident
