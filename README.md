@@ -190,23 +190,39 @@ The ontology is only part of the config: the same file declares guards,
 proposal routing, workflows, and providers, so a domain's model, rules, and
 procedures ship together as one versioned, composable kit.
 
-Nobody types this state in by hand: it enters through the workflows the same
-config declares. A BOM ingest pins the export as an artifact and matches its
-rows into suppliers, components, and supply edges — direct writes of hard
-facts, validated against the types above:
+Nobody types this state in by hand: it enters through the pathways the
+config declares, and different state earns different treatment.
+
+Hard facts are deterministic ingest. A BOM workflow pins the export as an
+artifact and matches its rows into suppliers, components, and supply edges,
+previewed before it commits:
 
 ```bash
 cruxible run --workflow ingest_bom --input-file ./exports/bom-2026-07.csv    # preview
 cruxible apply --workflow ingest_bom --from-last-preview                     # commit
 ```
 
-The judgment call is different: `incident_impacts_supplier` is governed, so
-nothing may write it directly — not even a workflow. The incident feed's
-workflow can only *propose* impact edges, each carrying its evidence,
-resolved under the rules you declared: the flow the next section walks
-through.
+`incident_impacts_supplier` is a judgment call, so it is governed: nothing
+may write it directly, not even a workflow. The incident feed's workflow can
+only *propose*. Its candidate edges land in a review group, each carrying
+the signals and evidence that matched it:
 
-With the base facts written and the impact claim approved, an agent (or app)
+```bash
+cruxible propose --workflow propose_incident_impacts --input-file ./exports/incidents.json
+```
+
+The judgment itself stays with a human, or with an agent when the trust
+rules you declared allow it. Approval is what mints the edges into accepted
+state: attributed, rationale on record.
+
+```bash
+cruxible group list --status pending_review
+cruxible group resolve --group GRP-7f3a --action approve \
+  --rationale "Confirmed: fab flooding halts board shipments" \
+  --expected-pending-version 1   # pins the decision to the state the reviewer saw
+```
+
+With the facts ingested and the impact claim approved, an agent (or app)
 can ask for the blast radius of the incident (the components exposed through
 its impacted suppliers) without scanning spreadsheets or tracing the bill of
 materials by hand:
