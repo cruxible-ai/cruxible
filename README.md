@@ -129,6 +129,7 @@ governed state, read instead of reconstructed. What changes:
 | Retrieval returns similar chunks; it can't follow exact links | Multi-hop traversal over typed relationships, with visibility rules applied at every hop |
 | Counts and rollups are approximate summaries | Exact, repeatable counts and joins as deterministic workflow steps |
 | Each read is fresh and can disagree with the last | One accepted state: the same answer for every agent and app |
+| Freshness is unknowable: nothing says which chunks have gone stale | Claims cite dated, content-hashed sources; staleness is a queryable property, not a vibe |
 | A correction is just more text; nothing ties it to the claim it corrects | Feedback and outcomes attach to the specific claim, decision, or workflow result as typed, queryable signal |
 | Static text that doesn't improve from use | Claims mature from proposed to accepted; the ontology iterates with use |
 | A better model reads better, but can't certify its own output | Guarantees come from a deterministic layer outside the model |
@@ -138,8 +139,10 @@ itself cites markdown chunks as source evidence. Version control narrows the
 gap less than it seems: git gives documents history, blame, and diff review,
 but the unit it governs is the file, not the claim. Nothing types what a
 changed line asserts, checks a status transition, or refuses an edit that
-drops its evidence. The table is about that durable slice, where re-reading
-text re-pays the reconstruction cost every session.
+drops its evidence. And nobody hand-tends this state: it accumulates as the
+exhaust of work agents are already doing — the abandoned-wiki failure mode is
+the thing the write path is designed against. The table is about that durable
+slice, where re-reading text re-pays the reconstruction cost every session.
 
 ## What A Governed Domain Looks Like
 
@@ -190,22 +193,21 @@ The ontology is only part of the config: the same file declares guards,
 proposal routing, workflows, and providers, so a domain's model, rules, and
 procedures ship together as one versioned, composable kit.
 
-State enters through two doors. Hard facts (the bill of materials, the
-incident record) are direct writes, validated against the types above:
+Nobody types this state in by hand: it enters through the workflows the same
+config declares. A BOM ingest pins the export as an artifact and matches its
+rows into suppliers, components, and supply edges — direct writes of hard
+facts, validated against the types above:
 
 ```bash
-cruxible entity add Supplier supplier-taoyuan-fab --set name="Taoyuan Fab Co"
-cruxible entity add Component component-main-board --set name="Main board" --set criticality=high
-cruxible entity add Incident INC-42 --set title="Flooding at Taoyuan fab" --set severity=high
-cruxible relationship add supplier_supplies_component \
-  Supplier supplier-taoyuan-fab Component component-main-board
+cruxible run --workflow ingest_bom --input-file ./exports/bom-2026-07.csv    # preview
+cruxible apply --workflow ingest_bom --from-last-preview                     # commit
 ```
 
-The judgment call is different: `incident_impacts_supplier` is governed, so a
-direct write is refused. It enters through a proposal that carries its
-evidence and resolves under the rules you declared — the flow the next
-section walks through. In practice both doors are usually driven by declared
-workflows (a BOM ingest, an incident feed) rather than typed by hand.
+The judgment call is different: `incident_impacts_supplier` is governed, so
+nothing may write it directly — not even a workflow. The incident feed's
+workflow can only *propose* impact edges, each carrying its evidence,
+resolved under the rules you declared: the flow the next section walks
+through.
 
 With the base facts written and the impact claim approved, an agent (or app)
 can ask for the blast radius of the incident (the components exposed through
