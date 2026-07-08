@@ -126,9 +126,9 @@ class Receipt(BaseModel):
     actor_context: GovernedActorContext | None = Field(
         default=None,
         description=(
-            "Token-derived actor identity for the operation that produced this "
-            "receipt, when available (hosted/governed writes carry it; auth-off "
-            "local writes leave it null). Receipts predating this field load with "
-            "a null actor_context and remain valid."
+            "Runtime actor identity for the operation that produced this receipt, "
+            "when available (credential-derived under auth-on daemons; the "
+            "declared local operator under auth-off daemons). Receipts predating "
+            "this field load with a null actor_context and remain valid."
         ),
     )

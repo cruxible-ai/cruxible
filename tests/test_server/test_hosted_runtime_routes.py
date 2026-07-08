@@ -227,11 +227,9 @@ def _init_auth_managed_instance(
 ) -> str:
     """Create an auth-managed instance on an auth-ENABLED daemon.
 
-    Auth-managed configs are refused at init on an auth-off daemon, because their
-    entity types materialize only from runtime-credential mints that require
-    ``CRUXIBLE_SERVER_AUTH``. The bearer-gated HTTP init route has no credential to
-    present on a fresh daemon (bootstrap only authorizes hosted-init/server-ops), so
-    the instance is created directly as a daemon operator would, with auth enabled.
+    Auth-on instances keep auth-managed entities credential-backed: runtime
+    credential mint/rotation materializes principals. Auth-off instances use a
+    local ``operator`` identity, but these credential tests need the auth-on tier.
     """
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
@@ -1394,7 +1392,22 @@ def test_legacy_bearer_direct_write_is_rejected(
     )
     assert unauthenticated.status_code == 200
     no_auth_lookup = _lookup_fitment(client, instance_id, "NO-AUTH")
-    assert "created_actor_context" not in no_auth_lookup["metadata"]["provenance"]
+    actor_context = no_auth_lookup["metadata"]["provenance"]["created_actor_context"]
+    assert actor_context["actor_type"] == "human_user"
+    assert actor_context["actor_id"] == "operator"
+    assert actor_context["org_id"] == "local"
+    assert actor_context["operation_id"].startswith("op_")
+    receipt_id = unauthenticated.json()["receipt_id"]
+    assert receipt_id is not None
+    store = get_manager().get(instance_id).get_receipt_store()
+    try:
+        receipt = store.get_receipt(receipt_id)
+    finally:
+        store.close()
+    assert receipt is not None
+    assert receipt.actor_context is not None
+    assert receipt.actor_context.actor_id == "operator"
+    assert receipt.actor_context.operation_id == actor_context["operation_id"]
 
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     legacy_headers = {"Authorization": "Bearer legacy-token"}
@@ -2071,6 +2084,36 @@ def test_scoped_admin_runtime_credential_cannot_init_new_hosted_instance(
     assert get_registry().count_instances() == before_count
     assert get_registry().get(denied_instance_id) is None
     assert not (get_server_state_dir() / "instances" / denied_instance_id).exists()
+
+
+def test_runtime_credential_mint_operator_label_is_reserved_on_auth_on_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    store = get_runtime_credential_store()
+    admin = store.create_credential(
+        instance_id=instance_id,
+        label="instance-admin",
+        permission_mode=PermissionMode.ADMIN,
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    headers = {"Authorization": f"Bearer {admin.token}"}
+
+    response = client.post(
+        f"/api/v1/{instance_id}/runtime/credentials",
+        json={"label": "operator", "permission_mode": "read_only"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error_type"] == "ConfigError"
+    assert "reserved for the auth-off local operator identity" in payload["message"]
 
 
 def test_runtime_credential_routes_materialize_auth_managed_entity_idempotently(

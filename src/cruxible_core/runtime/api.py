@@ -202,6 +202,15 @@ def _runtime_credential_actor_context() -> GovernedActorContext | None:
         raise ConfigError("hosted governed actor context is required") from exc
 
 
+def _local_operator_actor_context(value: Any) -> GovernedActorContext:
+    from cruxible_core.server.auth_managed_entities import local_operator_actor_context
+
+    request_id = None
+    if value is not None:
+        request_id = require_hosted_actor_context(value).request_id
+    return local_operator_actor_context(request_id=request_id)
+
+
 def _record_actor_operation(actor: GovernedActorContext) -> None:
     from cruxible_core.server.auth import set_current_operation_id
 
@@ -219,8 +228,8 @@ def _require_review_promotion_actor(
     GRAPH_WRITE close-gate precondition (audit F3). When server auth is enabled the
     promotion must carry a resolved actor identity so a lower tier cannot rubber-stamp
     a review edge anonymously. When auth is off there is no tier boundary or governed
-    identity to enforce, so unattributed local promotion stays allowed (matching the
-    agent-operation review-gate stance). Legitimate ``correct``/``flag``/``reject``
+    identity to enforce, so local promotion is attributed to the declared
+    operator. Legitimate ``correct``/``flag``/``reject``
     actions are untouched.
     """
     from cruxible_core.feedback.applier import REVIEW_PROMOTION_ACTIONS
@@ -252,6 +261,13 @@ def _hosted_actor_context(value: Any) -> GovernedActorContext | None:
             actor = _reconcile_credential_actor_context(credential_actor, value)
         else:
             actor = credential_actor
+        _record_actor_operation(actor)
+        return actor
+
+    from cruxible_core.server.config import is_server_auth_enabled
+
+    if not is_server_auth_enabled():
+        actor = _local_operator_actor_context(value)
         _record_actor_operation(actor)
         return actor
     if value is None:

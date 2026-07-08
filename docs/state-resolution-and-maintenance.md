@@ -179,8 +179,9 @@ refusal is as auditable as a success.
 
 An entity type marked `auth_managed: true` + `write_policy: mint_only` (the
 agent-operation kit's `Actor` is the canonical example) is materialized
-exclusively from runtime-credential mints — `cruxible credential mint` is the
-only writer. Config-declared workflows that target a `mint_only` type are
+through the internal `token_mint` source: auth-on daemons use runtime-
+credential mints, while auth-off daemons create a declared local `operator`
+identity. Config-declared workflows that target a `mint_only` type are
 rejected at config load, and lifecycle updates are refused like any other
 write. Facts *about* such an entity belong on notes attached to it, never on
 the entity itself.
@@ -188,7 +189,8 @@ the entity itself.
 ### Provenance on every edge
 
 Every edge carries system-owned provenance: `source` (the operation),
-`source_ref`, `created_at`/`last_modified_*`, actor context when auth is on,
+`source_ref`, `created_at`/`last_modified_*`, actor context from either the
+auth-on credential or the auth-off local operator,
 and write-time `receipt_id`/`resolution_id` correlation. The `source_ref`
 classes are how you read authority off an edge:
 
