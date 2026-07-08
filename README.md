@@ -10,11 +10,10 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](https://github.com/cruxible-ai/cruxible/blob/main/LICENSE)
 
-Every session, your agents rebuild their understanding of your world from
-scratch — and nothing can prove any of it. **Cruxible is hard state for AI
-agents**: a typed, verifiable state layer that teams of agents and humans
-operate together. Work compounds into a record of what you've determined to
-be true: every claim reviewed and linked to its evidence. When the expensive question arrives (which assets are
+**Cruxible is hard state for AI agents** — a typed, verifiable state layer
+that teams of agents and humans operate together. Work compounds into a
+record of what you've determined to be true: every claim reviewed and linked
+to its evidence. When the expensive question arrives (which assets are
 exposed? what breaks downstream? is this authority still good law?), the
 answer is computed over established truth, not guessed from a pile of
 context.
