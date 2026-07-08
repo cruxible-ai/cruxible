@@ -68,7 +68,7 @@ Use this to answer:
 If the state has `named_queries`, run the ones that matter to the user's concern and inspect receipts:
 
 ```bash
-cruxible query --query <query_name> --param key=value
+cruxible query run <query_name> --param key=value
 cruxible explain --receipt <receipt_id>
 ```
 

@@ -356,7 +356,7 @@ cruxible lock
 Run every `named_query` you added and inspect its receipt:
 
 ```bash
-cruxible query --query <query_name> --param key=value
+cruxible query run <query_name> --param key=value
 cruxible explain --receipt <receipt_id>
 ```
 
