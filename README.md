@@ -186,9 +186,10 @@ named_queries:
         direction: outgoing
 ```
 
-The ontology is only part of the config: the same file declares guards,
-proposal routing, workflows, and providers, so a domain's model, rules, and
-procedures ship together as one versioned, composable kit.
+The ontology is only part of the config: the same file declares the enum
+vocabularies, guards, proposal routing, workflows, and providers, so a
+domain's model, rules, and procedures ship together as one versioned,
+composable kit.
 
 Nobody types this state in by hand: it enters through the pathways the
 config declares, and different state earns different treatment.
@@ -203,9 +204,10 @@ cruxible apply --workflow ingest_bom --from-last-preview                     # c
 ```
 
 `incident_impacts_supplier` is a judgment call, so it is governed: nothing
-may write it directly, not even a workflow. The incident feed's workflow can
-only *propose*. Its candidate edges land in a review group, each carrying
-the signals and evidence that matched it:
+may write it directly, not even a workflow. The incident feed's workflow
+records the incidents themselves as hard facts, but the impact edges it can
+only *propose*. Those candidates land in a review group, each carrying the
+signals and evidence that matched it:
 
 ```bash
 cruxible propose --workflow propose_incident_impacts --input-file ./exports/incidents.json
