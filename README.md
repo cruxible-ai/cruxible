@@ -56,85 +56,43 @@ types, deterministic workflows, write rules. The runtime enforces it.
 pip install cruxible
 ```
 
-Start a local sandbox daemon in one shell. No tokens yet: sandbox writes
-attribute to a built-in `operator` identity, and per-agent credentials come
-later, when agents join:
+**Model your own domain**: hand your agent the authoring skills in
+[`skills/`](https://github.com/cruxible-ai/cruxible/tree/main/skills)
+(`prepare-data` → `create-state` → `review-state`) with your exports
+(`wiki-to-state` converts an existing CLAUDE.md pile or Obsidian vault), or
+start from [Modeling State](https://github.com/cruxible-ai/cruxible/blob/main/docs/modeling-state.md)
+and the [config template](https://github.com/cruxible-ai/cruxible/blob/main/docs/config-template.yaml).
+
+**Or run the demo** — a seeded supply-chain world, ~3 minutes, no tokens
+(sandbox writes attribute to a built-in `operator` identity):
 
 ```bash
+# shell 1 — local sandbox daemon
 CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/sandbox" cruxible server start
-```
 
-In a second shell, create an instance from two kits — the agent-operation
-base and the supply-chain demo domain (bundles are fetched from the release
-and digest-verified) — then build the seeded world, preview-first:
-
-```bash
+# shell 2 — kit bundles are fetched from the release and digest-verified
 cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --kit supply-chain-blast-radius
 cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
 
-cruxible run --workflow build_seed_state        # deterministic ingest: preview...
-cruxible apply --workflow build_seed_state --from-last-preview    # ...then commit
-cruxible run --workflow ingest_incidents
-cruxible apply --workflow ingest_incidents --from-last-preview
-```
+# deterministic ingest: preview, then commit
+cruxible run --workflow build_seed_state && cruxible apply --workflow build_seed_state --from-last-preview
+cruxible run --workflow ingest_incidents && cruxible apply --workflow ingest_incidents --from-last-preview
 
-Now the governed part. The incident feed can only *propose* impact edges —
-each candidate carries the signals and evidence that matched it, and lands
-in a review queue. The judgment is yours, on the record, pinned to the
-exact pending state you reviewed:
-
-```bash
+# the incident feed can only PROPOSE impact edges; the judgment is yours, on the record
 cruxible propose --workflow propose_incident_impacts_supplier
 cruxible group list --status pending_review
 cruxible group resolve --group <GRP-id> --action approve \
-  --rationale "Confirmed against supplier geography" \
-  --expected-pending-version 1
-```
+  --rationale "Confirmed against supplier geography" --expected-pending-version 1
 
-And ask the questions those edges now answer — with receipts:
-
-```bash
+# receipted answers through the edges you just admitted
 cruxible query run open_incident_impacts --json
 cruxible query run incident_impacted_suppliers --param incident_id=INC-TW-RAIL-2026-07 --json
 ```
 
-Deterministic ingest, a governed proposal, your judgment recorded with its
-rationale, and a receipted answer through the edge you admitted. And it
-compounds: the supplier impacts you approved unlock the next cascade —
-`cruxible propose --workflow propose_incident_impacts_component` puts 142
-component-level candidates in your queue, and once judged,
-`single_source_components_for_incident` names the exposed components with
-no alternative supplier.
-
-**When agents join, identity turns on.** Restart the daemon with auth and a
-bootstrap secret, claim the first admin credential, and mint each agent its
-own token — minting is what creates the agent's Actor in state, and every
-write is attributed to it:
-
-```bash
-CRUXIBLE_SERVER_AUTH=true CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" \
-  cruxible server start --bootstrap-secret-file "$HOME/.cruxible/bootstrap.secret"
-cruxible credential claim-bootstrap --secret-file "$HOME/.cruxible/bootstrap.secret"
-cruxible credential mint --label my-agent --mode graph_write
-```
-
-`--kit` is repeatable and overlays compose over their base
-(`init --kit agent-operation --kit project-domain`). A source checkout of
-the repo overrides the published bundles when you want to hack on kits. The
-same surface is available from Python (and MCP, below):
-
-```python
-from cruxible_client import CruxibleClient
-
-with CruxibleClient(base_url="http://127.0.0.1:8100", token="<agent-token>") as client:
-    result = client.query("<instance-id>", "open_incident_impacts", {})
-    for item in result.items:
-        print(item)
-```
-
-Permission tiers, the one-instance-per-auth-daemon rule, and hardening live
-in the
-[Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md) and
+When agents join, identity turns on: restart with `CRUXIBLE_SERVER_AUTH=true`,
+claim the bootstrap credential, and mint each agent its own token — every
+write is attributed. Details, permission tiers, and hardening:
+[Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md) ·
 [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md).
 
 ## Why Not Markdown, RAG, Or Vector Memory?
@@ -165,7 +123,12 @@ itself cites markdown chunks as source evidence. Version control narrows the
 gap less than it seems: git reviews the diff, not the claim — nothing types
 what a changed line asserts or refuses an edit that drops its evidence. And
 nobody hand-tends this state: it accumulates as the exhaust of governed
-work, not as a wiki someone has to maintain.
+work, not as a wiki someone has to maintain. If you already have the wiki
+(a pile of CLAUDE.md files, a memory bank, an Obsidian vault), the
+[`wiki-to-state`](https://github.com/cruxible-ai/cruxible/tree/main/skills/wiki-to-state)
+skill converts it: pages become pinned evidence, an agent proposes the typed
+claims, and you review what gets minted. The wiki survives as the source of
+record; the graph becomes accountable to it.
 
 ## What A Governed Domain Looks Like
 
@@ -315,6 +278,12 @@ required to carry source evidence. Evidence requirements are enforced, not
 decorative: the write is refused unless every reference dereferences to a
 registered source chunk whose content hash matches.
 
+The agent-operation kit ships these live: a work item cannot close without
+an approved review linked, and a review verdict must co-write its rationale
+note in the same unit of work, so the work itself is typed state, gated on
+review. Each kit README renders its declared guards as a generated table
+([agent-operation's](https://github.com/cruxible-ai/cruxible/tree/main/kits/agent-operation/)).
+
 ## Workflows And Pinned Providers
 
 Workflows orchestrate reads, providers, shaping, and writes as one declared,
@@ -387,84 +356,53 @@ handoff. Three loops make the state improve with use:
    entity types, relationships, guards, and queries), so the model of the
    domain matures alongside the data.
 
-The model can change: swap vendors, upgrade, run several at once. What
+The LLM can change: swap vendors, upgrade, run several at once. What
 compounds belongs to you. State, evidence, review history, feedback,
 outcomes, and the ontology itself accumulate in a database you own, portable
 down to a single file, not in a vendor's weights or a platform's memory. The
 work agents do becomes your asset.
 
-## How It Fits
-
-```text
-AI agents and humans
-  write configs, review proposals, run workflows, record outcomes
-          |
-          v
-CLI / HTTP client / MCP tools
-  thin surfaces over the service layer
-          |
-          v
-Cruxible
-  deterministic runtime, no LLM inside
-          |
-          v
-state.db
-  graph state, receipts, traces, groups, feedback, outcomes, decisions,
-  snapshots, source artifacts
-```
-
 ## Kits
 
 A kit packages an ontology with its governance, queries, workflows, and
-providers as one versioned, composable unit.
+providers as one versioned, composable unit. Standalone kits define a full
+state model; overlay kits compose local state, proposals, and workflows over
+an upstream base. All seven ship working providers end to end.
 
-Start with **agent-operation** — the operating state layer for a team of
-agents, and the kit Cruxible is developed with. It is domain-agnostic: work
-items, review requests, decisions, risks, open questions, and actors apply
-whether your agents write code, run research, or manage a pipeline. Actors
-are auth-managed, review gates are enforced at the write chokepoint (a work
-item cannot close without an approved review), and every agent's writes are
-attributed to its token.
+Start with **agent-operation** — the domain-agnostic operating layer
+Cruxible itself is developed with. The **KEV pair** runs the whole loop on
+real CISA data ([KEV guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/kev-guide.md));
+**supply-chain-blast-radius** is the walkthrough above.
 
-The **KEV pair** is the depth proof for domain state: a public
-known-exploited-vulnerability reference state built from CISA's catalog and
-published daily as a versioned, digest-pinned bundle, plus a governed
-overlay where deterministic ingest, governed proposals (which assets run
-which products), and review workflows run end to end on real data.
-**supply-chain-blast-radius** is the walkthrough you read above;
-**case-law-monitoring** runs the same governance over opinions, holdings,
-and authority impact.
-
-| Kit | Kind | Status | What it models |
-|-----|------|--------|----------------|
-| [agent-operation](https://github.com/cruxible-ai/cruxible/tree/main/kits/agent-operation/) | Agent operating state | ready | Work items, review requests, decisions, risks, open questions, state notes, actors, lifecycle, and dependency context. |
-| [project-domain](https://github.com/cruxible-ai/cruxible/tree/main/kits/project-domain/) | Domain overlay state | ready | Roadmap items, milestones, release lines, and product areas composed over the agent-operation base — the project state Cruxible itself runs on. |
-| [agent-release](https://github.com/cruxible-ai/cruxible/tree/main/kits/agent-release/) | Domain overlay state | ready | Agent systems, versions, eval suites and runs, with governed certification and promotion gates. |
-| [kev-reference](https://github.com/cruxible-ai/cruxible/tree/main/kits/kev-reference/) | Domain reference state | ready | Public known-exploited vulnerability reference data, published daily as a versioned release bundle. |
-| [kev-triage](https://github.com/cruxible-ai/cruxible/tree/main/kits/kev-triage/) | Domain overlay state | ready | Local asset exposure, service impact, controls, incidents, findings, remediation, and governed vulnerability triage. |
-| [supply-chain-blast-radius](https://github.com/cruxible-ai/cruxible/tree/main/kits/supply-chain-blast-radius/) | Domain state | ready | Suppliers, components, assemblies, products, shipments, and incident blast radius. |
-| [case-law-monitoring](https://github.com/cruxible-ai/cruxible/tree/main/kits/case-law-monitoring/) | Domain state | ready | Matter-centered case-law monitoring and authority impact. |
-
-Standalone kits can define a full state model. Overlay kits can extend an
-upstream state model with local state, governed proposals, and local workflows.
-
-Every listed kit is *ready*: providers are implemented and its workflows
-execute end to end (KEV additionally ships public reference data).
+| Kit | Kind | What it models |
+|-----|------|----------------|
+| [agent-operation](https://github.com/cruxible-ai/cruxible/tree/main/kits/agent-operation/) | Agent operating state | Work items, review requests, decisions, risks, open questions, state notes, actors, lifecycle, and dependency context. |
+| [project-domain](https://github.com/cruxible-ai/cruxible/tree/main/kits/project-domain/) | Domain overlay state | Roadmap items, milestones, release lines, and product areas composed over the agent-operation base — the project state Cruxible itself runs on. |
+| [agent-release](https://github.com/cruxible-ai/cruxible/tree/main/kits/agent-release/) | Domain overlay state | Agent systems, versions, eval suites and runs, with governed certification and promotion gates. |
+| [kev-reference](https://github.com/cruxible-ai/cruxible/tree/main/kits/kev-reference/) | Domain reference state | Public known-exploited vulnerability reference data. Consumed as a published state release (`state create-overlay`); init the kit itself only to build offline or publish your own. |
+| [kev-triage](https://github.com/cruxible-ai/cruxible/tree/main/kits/kev-triage/) | Domain overlay state | Local asset exposure, service impact, controls, incidents, findings, remediation, and governed vulnerability triage. |
+| [supply-chain-blast-radius](https://github.com/cruxible-ai/cruxible/tree/main/kits/supply-chain-blast-radius/) | Domain state | Suppliers, components, assemblies, products, shipments, and incident blast radius. |
+| [case-law-monitoring](https://github.com/cruxible-ai/cruxible/tree/main/kits/case-law-monitoring/) | Domain state | Matter-centered case-law monitoring and authority impact. |
 
 ## Agent Setup
 
-Mint each agent its own credential (as in Get Started) so every write is
-attributed to a token, and prefer a split environment:
+`pip install cruxible` already includes the Python client
+(`import cruxible_client`); add the `[mcp]` extra for the `cruxible-mcp`
+entrypoint. Nothing else is needed when the agent shares the daemon's
+environment.
 
-- Cruxible runs in a daemon/runtime environment.
-- The agent environment installs `cruxible-client` or uses MCP — it never
-  needs the full runtime.
-- `CRUXIBLE_REQUIRE_SERVER=1` keeps the agent on the daemon path.
-- `CRUXIBLE_SERVER_STATE_DIR` lives outside the agent's writable workspace.
+Mint each agent its own credential (as in Get Started) so every write is
+attributed to a token, and for stronger isolation prefer a split
+environment: the daemon runs in its own environment, and the agent's
+environment installs **only** the slim client — no runtime, no direct
+access to state files:
 
 ```bash
-pip install cruxible-client
+pip install cruxible-client   # agent environment only; ~2 dependencies
 ```
+
+- `CRUXIBLE_REQUIRE_SERVER=1` keeps the agent on the daemon path.
+- `CRUXIBLE_SERVER_STATE_DIR` lives outside the agent's writable workspace.
 
 MCP example:
 
@@ -517,11 +455,23 @@ expose only the client, HTTP, or MCP surface. See
 - [Local State And Backups](https://github.com/cruxible-ai/cruxible/blob/main/docs/local-state-and-backups.md) — SQLite, daemon state, and portability
 - [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md) — credentials, permission tiers, and bootstrap
 - [State Resolution And Maintenance](https://github.com/cruxible-ai/cruxible/blob/main/docs/state-resolution-and-maintenance.md) — proposal resolution, trust grading, and maintenance signals
+- [Publishing And Subscribing To States](https://github.com/cruxible-ai/cruxible/blob/main/docs/publishing-states.md) — build, publish, and track reference state releases
 - [Isolated Deployment](https://github.com/cruxible-ai/cruxible/blob/main/docs/isolated-deployment.md) — running the daemon with only the client/MCP surface exposed
 - [Hosted Runtime Image](https://github.com/cruxible-ai/cruxible/blob/main/docs/hosted-runtime-image.md) — the runtime container image
 
 **Guides**
-- [Skill Classification At Scale](https://github.com/cruxible-ai/cruxible/blob/main/docs/skill-classification-at-scale.md) — a worked governed-classification agent playbook
+- [KEV Guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/kev-guide.md) — subscribe to the vulnerability reference, judge your exposures, work the queue
+
+**Agent skills** ([`skills/`](https://github.com/cruxible-ai/cruxible/tree/main/skills))
+- [prepare-data](https://github.com/cruxible-ai/cruxible/tree/main/skills/prepare-data) — profile and ready raw exports before modeling
+- [create-state](https://github.com/cruxible-ai/cruxible/tree/main/skills/create-state) — staged graph, workflow, query, and review-loop design from your data
+- [review-state](https://github.com/cruxible-ai/cruxible/tree/main/skills/review-state) — audit and harden a drafted state model
+- [overlay-and-fit](https://github.com/cruxible-ai/cruxible/tree/main/skills/overlay-and-fit) — compose and adapt overlay kits
+- [wiki-to-state](https://github.com/cruxible-ai/cruxible/tree/main/skills/wiki-to-state) — convert a CLAUDE.md pile or Obsidian vault into governed state
+- [classification-at-scale](https://github.com/cruxible-ai/cruxible/tree/main/skills/classification-at-scale) — classify a catalog against a taxonomy with signals, batch review, and a trust flywheel
+
+Kit-specific skills ship inside their kits (e.g. `kev-start` and `kev-triage`
+in kev-triage, `review-thread` in agent-operation).
 
 ## Technology
 

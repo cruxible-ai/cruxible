@@ -3,8 +3,13 @@
 Standalone Cruxible kit for building the public KEV reference state from the
 pinned CISA KEV, EPSS, and NVD CPE data in `data/`.
 
-Use this kit with `cruxible init --kit kev-reference`, then run the canonical
-`build_public_kev_reference` workflow before publishing the state release.
+Most users do not run this kit's workflows: the reference is published as a
+versioned state release, and consumers subscribe to it
+(`cruxible state create-overlay --state-ref kev-reference`), taking updates
+with `state pull-preview` / `pull-apply`. Use this kit directly — 
+`cruxible init --kit kev-reference`, then the canonical
+`build_public_kev_reference` workflow — to build the reference yourself from
+the pinned snapshot (demos, offline) or to publish your own release.
 
 ## Generated Views
 

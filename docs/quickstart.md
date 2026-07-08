@@ -81,118 +81,69 @@ import the runtime directly:
 pip install cruxible-client
 ```
 
-## Create A Reference State
+## First Instance: The Supply-Chain Demo
 
-Initialize the standalone KEV reference kit. This materializes the kit bundle,
-loads its config, and gives you an instance ID.
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 init --kit kev-reference
-```
-
-Keep the returned `instance_id`; every server-backed command after init uses it.
-Kit init installs the kit's pinned workflow lock automatically, so you can
-preview the canonical reference refresh right away:
+Create an instance from two kits — the agent-operation base and the
+supply-chain demo domain — and connect the CLI context so commands stop
+needing per-call flags:
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> run \
-  --workflow build_public_kev_reference \
-  --save-preview kev-reference-preview.json
+cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --kit supply-chain-blast-radius
+cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
 ```
 
-Canonical workflows preview state first. Apply the preview only after checking
-the `apply_digest`, changed counts, receipt ID, and trace IDs:
+Build the seeded world. Canonical workflows are preview-first: `run` executes
+against a clone and returns an apply digest; `apply` re-verifies it against
+the current config, lockfile, and head snapshot before committing:
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> apply \
-  --preview-file kev-reference-preview.json
+cruxible run --workflow build_seed_state --save-preview seed.json
+cruxible apply --preview-file seed.json
+cruxible run --workflow ingest_incidents --save-preview incidents.json
+cruxible apply --preview-file incidents.json
 ```
 
-Run a query and inspect its receipt:
+Incident-to-supplier impact is a governed relationship: nothing may write it
+directly, not even a workflow. The proposal workflow bridges its output into
+a candidate group, each member carrying the signals and evidence that
+matched it:
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> query run \
-  vulnerability_products \
-  --param cve_id=CVE-2020-1472
+cruxible propose --workflow propose_incident_impacts_supplier
+cruxible group list --status pending_review
+cruxible group get --group <group-id>
 ```
 
-Every query returns a receipt ID. In MCP, fetch the full proof with
-`cruxible_receipt(instance_id, "<receipt-id>")`. The CLI `explain` command
-renders receipts in both server and direct-local modes.
-
-## Create A Local Overlay (Optional)
-
-This section is optional — skip it if you only want the reference state. The
-KEV triage kit is an overlay kit. It tracks the published KEV reference
-state and adds local assets, services, controls, exceptions, remediation,
-incidents, findings, and governed proposal workflows.
-
-One extra prerequisite for the `--state-ref` path: the
-[oras](https://oras.land/docs/installation) CLI (`brew install oras` on
-macOS). The state catalog resolves `--state-ref` aliases to OCI refs, and
-the OCI transport shells out to `oras`. The `file://` path below needs no
-extra tooling.
+Review the thesis, member signals, and pending version, then resolve. The
+`--expected-pending-version` flag pins your decision to the exact pending
+state you reviewed — a group that changed underneath you refuses to resolve:
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 state create-overlay \
-  --state-ref kev-reference \
-  --kit kev-triage \
-  --root-dir "$PWD/kev-triage-workspace"
+cruxible group resolve --group <group-id> --action approve \
+  --rationale "Confirmed against supplier geography" \
+  --expected-pending-version <pending-version>
 ```
 
-`--state-ref kev-reference` resolves through the published state catalog. In
-a source checkout before published OCI reference states are available (or
-without `oras`), publish the reference instance you built above to a local
-`file://` transport and pass `--transport-ref` instead of `--state-ref`:
+Ask the questions those edges now answer:
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> state publish \
-  --transport-ref "file://$PWD/releases/kev-reference/v1" \
-  --state-id kev-reference \
-  --release-id v1
-
-cruxible --server-url http://127.0.0.1:8100 state create-overlay \
-  --transport-ref "file://$PWD/releases/kev-reference/v1" \
-  --kit kev-triage \
-  --root-dir "$PWD/kev-triage-workspace"
+cruxible query run open_incident_impacts --json
+cruxible query run incident_impacted_suppliers --param incident_id=INC-TW-RAIL-2026-07 --json
 ```
 
-`file://` refs must be absolute paths, and publish refuses a target that
-already exists — pick a new release directory per publish.
+Every query returns a receipt ID: the deterministic path from parameters to
+traversed edges to rows. Render it with `cruxible explain --receipt
+<receipt-id>`, or in MCP with `cruxible_receipt(instance_id, "<receipt-id>")`.
 
-The command returns a new overlay `instance_id` and locks the overlay as part
-of creation. Preview the local canonical state refresh and apply it:
+The approved supplier impacts unlock the next cascade:
+`cruxible propose --workflow propose_incident_impacts_component` fills the
+queue with component-level candidates, and once judged,
+`single_source_components_for_incident` names exposed components with no
+alternative supplier.
 
-```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> run \
-  --workflow build_local_state \
-  --save-preview kev-local-preview.json
-cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> apply \
-  --preview-file kev-local-preview.json
-```
-
-Run a governed proposal workflow and inspect the pending group:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> propose \
-  --workflow propose_asset_products
-
-cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> group list \
-  --status pending_review
-cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> group get \
-  --group <group-id>
-```
-
-Approve or reject only after reviewing the group thesis, member signals,
-receipt, trace IDs, and pending version:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> group resolve \
-  --group <group-id> \
-  --action approve \
-  --expected-pending-version <pending-version> \
-  --rationale "Reviewed source evidence and accepted the proposed mappings"
-```
+To consume a published reference state instead of a seeded demo (the KEV
+vulnerability brain), see the [KEV Guide](kev-guide.md). To publish states
+of your own, see [Publishing And Subscribing To States](publishing-states.md).
 
 ## Point An Agent At Cruxible
 
@@ -250,6 +201,8 @@ manifest and distribution rules, see [Kit Authoring And Distribution](kit-author
 ## Next Steps
 
 - [Concepts](concepts.md) - Architecture and vocabulary
+- [KEV Guide](kev-guide.md) - Subscribe to the vulnerability reference and work the triage queue
+- [Publishing And Subscribing To States](publishing-states.md) - Build, publish, and track reference states
 - [Guide For AI Agents](for-ai-agents.md) - Agent operating recipes
 - [Kit Walkthroughs](kit-walkthroughs.md) - Build and customize kits
 - [Local State And Backups](local-state-and-backups.md) - SQLite and droplet operations
