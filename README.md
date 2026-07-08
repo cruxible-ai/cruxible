@@ -251,8 +251,9 @@ Receipts are not logs — they are typed evidence graphs. Mutation receipts
 record exactly what a write changed, and governed edges carry a reference back
 to the receipt of the operation that created them.
 
-This is what a pending review group looks like in the inspection UI: the
-signal matrix, each proposed edge with the evidence that matched it, and the
+This is what a pending review group looks like in the
+[inspection UI](https://github.com/cruxible-ai/cruxible-app): the signal
+matrix, each proposed edge with the evidence that matched it, and the
 provenance rail tying the proposal back to its workflow, receipts, and
 provider traces.
 
