@@ -190,9 +190,27 @@ The ontology is only part of the config: the same file declares guards,
 proposal routing, workflows, and providers, so a domain's model, rules, and
 procedures ship together as one versioned, composable kit.
 
-An agent (or app) can now ask for the blast radius of an incident (the
-components exposed through its impacted suppliers) without scanning
-spreadsheets or tracing the bill of materials by hand:
+State enters through two doors. Hard facts (the bill of materials, the
+incident record) are direct writes, validated against the types above:
+
+```bash
+cruxible entity add Supplier supplier-taoyuan-fab --set name="Taoyuan Fab Co"
+cruxible entity add Component component-main-board --set name="Main board" --set criticality=high
+cruxible entity add Incident INC-42 --set title="Flooding at Taoyuan fab" --set severity=high
+cruxible relationship add supplier_supplies_component \
+  Supplier supplier-taoyuan-fab Component component-main-board
+```
+
+The judgment call is different: `incident_impacts_supplier` is governed, so a
+direct write is refused. It enters through a proposal that carries its
+evidence and resolves under the rules you declared — the flow the next
+section walks through. In practice both doors are usually driven by declared
+workflows (a BOM ingest, an incident feed) rather than typed by hand.
+
+With the base facts written and the impact claim approved, an agent (or app)
+can ask for the blast radius of the incident (the components exposed through
+its impacted suppliers) without scanning spreadsheets or tracing the bill of
+materials by hand:
 
 ```bash
 cruxible query run components_exposed_by_incident \
