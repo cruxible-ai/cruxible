@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from cruxible_core.canonical_views.labels import (
@@ -343,7 +344,7 @@ def _guard_requirement_label(guard: Any) -> str:
         )
     if kind == "evidence":
         return f">= {condition.min_count} source evidence ref(s)"
-    return kind
+    return str(kind)
 
 
 def render_mutation_guards_markdown(
@@ -1011,7 +1012,7 @@ def render_overview_markdown(view: OverviewView) -> str:
     return "\n".join(lines)
 
 
-def _markdown_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
+def _markdown_table(headers: tuple[str, ...], rows: Sequence[tuple[str, ...]]) -> str:
     header_row = "| " + " | ".join(headers) + " |"
     divider = "| " + " | ".join("---" for _ in headers) + " |"
     body = ["| " + " | ".join(_escape_markdown_cell(cell) for cell in row) + " |" for row in rows]

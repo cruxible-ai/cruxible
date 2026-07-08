@@ -1302,9 +1302,15 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
 
             if step.register_source_artifacts is not None:
                 uses_apply_steps = True
-                spec = step.register_source_artifacts
+                artifact_spec = step.register_source_artifacts
                 for ref in _iter_refs(
-                    [spec.items, spec.artifact_id, spec.content, spec.label, spec.original_uri]
+                    [
+                        artifact_spec.items,
+                        artifact_spec.artifact_id,
+                        artifact_spec.content,
+                        artifact_spec.label,
+                        artifact_spec.original_uri,
+                    ]
                 ):
                     _validate_workflow_ref(
                         workflow_name,
