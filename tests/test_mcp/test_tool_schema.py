@@ -231,9 +231,7 @@ class TestInputSchema:
         required = set(schema.get("required", []))
         assert "source_artifact_id" in props
         assert "source_artifact_id" not in required
-        assert any(
-            item.get("type") == "string" for item in props["source_artifact_id"]["anyOf"]
-        )
+        assert any(item.get("type") == "string" for item in props["source_artifact_id"]["anyOf"])
 
     def test_new_curated_agent_tools_have_expected_inputs(self, server):
         schemas = _get_tool_schemas(server)

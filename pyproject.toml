@@ -48,7 +48,7 @@ server = [
 dev = [
     "pytest>=8.0",
     "pytest-cov",
-    "ruff>=0.7",
+    "ruff==0.15.0",
     "mypy>=1.10",
     "fastapi>=0.100",
     "python-multipart>=0.0.9",

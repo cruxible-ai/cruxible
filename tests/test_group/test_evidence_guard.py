@@ -60,11 +60,14 @@ def _flagged_policy() -> ProposalPolicySchema:
 def test_unevidenced_support_requires_review_when_flagged() -> None:
     members = [_member()]
 
-    assert derive_review_priority(
-        members,
-        _flagged_policy(),
-        _trusted_resolution(),
-    ) == "review"
+    assert (
+        derive_review_priority(
+            members,
+            _flagged_policy(),
+            _trusted_resolution(),
+        )
+        == "review"
+    )
 
 
 def test_whitespace_only_evidence_requires_review_when_flagged() -> None:
@@ -78,11 +81,14 @@ def test_whitespace_only_evidence_requires_review_when_flagged() -> None:
         )
     ]
 
-    assert derive_review_priority(
-        members,
-        _flagged_policy(),
-        _trusted_resolution(),
-    ) == "review"
+    assert (
+        derive_review_priority(
+            members,
+            _flagged_policy(),
+            _trusted_resolution(),
+        )
+        == "review"
+    )
 
 
 def test_support_evidenced_by_refs_passes_both_gates() -> None:
@@ -130,11 +136,14 @@ def test_source_query_evidence_does_not_satisfy_review_priority_guard() -> None:
         )
     ]
 
-    assert derive_review_priority(
-        members,
-        _flagged_policy(),
-        _trusted_resolution(),
-    ) == "review"
+    assert (
+        derive_review_priority(
+            members,
+            _flagged_policy(),
+            _trusted_resolution(),
+        )
+        == "review"
+    )
 
 
 def test_source_query_evidence_does_not_satisfy_auto_resolve_guard() -> None:

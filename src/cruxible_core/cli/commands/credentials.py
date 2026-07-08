@@ -53,9 +53,7 @@ def _read_bootstrap_secret(secret_file: str | None) -> str:
         secret = (os.environ.get("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET") or "").strip()
 
     if not secret:
-        raise click.UsageError(
-            "Provide --secret-file or set CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET."
-        )
+        raise click.UsageError("Provide --secret-file or set CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET.")
     return secret
 
 

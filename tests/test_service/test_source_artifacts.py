@@ -137,6 +137,8 @@ def test_register_source_artifact_persist_false_returns_record_without_writing(
     assert registered.chunks
     assert _get_source_artifact(instance, "dry_run_fitment_doc") is None
     assert _list_source_artifacts(instance) == []
+
+
 def test_list_source_artifacts_empty_and_paginated(tmp_path: Path) -> None:
     instance = _instance(tmp_path)
 

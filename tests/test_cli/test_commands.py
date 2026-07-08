@@ -3160,10 +3160,18 @@ def test_get_relationship_server_result_preserves_trust_metadata() -> None:
             result = CliRunner().invoke(
                 cli,
                 [
-                    "relationship", "get",
-                    "--from-type", "Risk", "--from-id", "risk-1",
-                    "--relationship", "risk_blocks_work_item",
-                    "--to-type", "WorkItem", "--to-id", "wi-1",
+                    "relationship",
+                    "get",
+                    "--from-type",
+                    "Risk",
+                    "--from-id",
+                    "risk-1",
+                    "--relationship",
+                    "risk_blocks_work_item",
+                    "--to-type",
+                    "WorkItem",
+                    "--to-id",
+                    "wi-1",
                     "--json",
                 ],
             )

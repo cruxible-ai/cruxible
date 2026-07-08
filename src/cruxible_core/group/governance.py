@@ -580,9 +580,7 @@ def check_auto_resolve_signals(
             if signal.signal == "unsure" and signal_config.always_review_on_unsure:
                 return False
 
-            if signal_config.require_evidence_on_support and is_unevidenced_support_signal(
-                signal
-            ):
+            if signal_config.require_evidence_on_support and is_unevidenced_support_signal(signal):
                 return False
 
             if policy == "all_support":

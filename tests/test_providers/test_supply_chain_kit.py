@@ -182,22 +182,17 @@ def test_seed_loader_expands_voron_bom_and_row_contracts() -> None:
     _assert_keys(payload["product_in_shipment"], _relationship_property_keys("product_in_shipment"))
 
     ldo_z = next(
-        row
-        for row in payload["components"]
-        if row["component_id"] == "C-MOTOR-LDO-42STH40-1684AC"
+        row for row in payload["components"] if row["component_id"] == "C-MOTOR-LDO-42STH40-1684AC"
     )
     assert ldo_z["manufacturer"] is None
     assert ldo_z["mpn"] is None
     ldo_ab = next(
-        row
-        for row in payload["components"]
-        if row["component_id"] == "C-MOTOR-LDO-42STH48-2004MAH"
+        row for row in payload["components"] if row["component_id"] == "C-MOTOR-LDO-42STH48-2004MAH"
     )
     assert ldo_ab["manufacturer"] is None
     assert ldo_ab["mpn"] is None
     assert not any(
-        row["component_id"] == "C-MOTION-LEADSCREW-T8-350"
-        for row in payload["components"]
+        row["component_id"] == "C-MOTION-LEADSCREW-T8-350" for row in payload["components"]
     )
 
 
@@ -977,9 +972,7 @@ def test_seed_taiwan_rail_cascade_rows_are_unsure_with_viable_alternate() -> Non
     )
 
     rail_rows = [
-        row
-        for row in component_cascade["items"]
-        if row["incident_id"] == "INC-TW-RAIL-2026-07"
+        row for row in component_cascade["items"] if row["incident_id"] == "INC-TW-RAIL-2026-07"
     ]
     assert {row["component_id"] for row in rail_rows} >= {
         "C-RAIL-HIWIN-MGN12H-350",
@@ -999,10 +992,7 @@ def test_closed_uk_incident_is_excluded_from_supplier_scope() -> None:
         _context("assess_incident_supplier_scope", artifact=False),
     )
 
-    assert not any(
-        row["incident_id"] == "INC-UK-HOTEND-2026-06"
-        for row in supplier_scope["items"]
-    )
+    assert not any(row["incident_id"] == "INC-UK-HOTEND-2026-06" for row in supplier_scope["items"])
     assert any(
         row["supplier_id"] == "S-UK-HOTEND" and row["component_id"] == "C-HOTEND-E3D-REVO-VORON"
         for row in seed["supplier_supplies_component"]

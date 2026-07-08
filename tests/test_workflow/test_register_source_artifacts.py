@@ -337,8 +337,7 @@ def test_register_source_artifacts_digest_conflict_errors(
     with pytest.raises(
         QueryExecutionError,
         match=(
-            "row 1 artifact_id 'opinion_text_op_alpha' already exists with different "
-            "content digest"
+            "row 1 artifact_id 'opinion_text_op_alpha' already exists with different content digest"
         ),
     ):
         execute_workflow(instance, instance.load_config(), "pin_sources", {}, mode="apply")

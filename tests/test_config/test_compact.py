@@ -1851,9 +1851,7 @@ def test_looks_compact_distinguishes_compact_from_explicit() -> None:
                 }
             }
         },
-        "relationships": [
-            {"name": "thing_related_to_thing", "from": "Thing", "to": "Thing"}
-        ],
+        "relationships": [{"name": "thing_related_to_thing", "from": "Thing", "to": "Thing"}],
     }
     assert looks_compact(explicit) is False
 

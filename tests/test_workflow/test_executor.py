@@ -2492,9 +2492,7 @@ class TestWorkflowExecutor:
         )
         assert nested_null_result.output["items"] == [{"verdict": "support", "note": None}]
 
-    def test_workflow_input_contract_strips_reserved_source_metadata(
-        self, tmp_path: Path
-    ) -> None:
+    def test_workflow_input_contract_strips_reserved_source_metadata(self, tmp_path: Path) -> None:
         instance = json_contract_instance(
             tmp_path,
             _envelope_input_contract_yaml(),
@@ -2516,9 +2514,7 @@ class TestWorkflowExecutor:
         assert result.receipt.parameters == {"items": items}
         assert SOURCE_METADATA_KEY in payload
 
-    def test_workflow_input_contract_keeps_declared_source_metadata(
-        self, tmp_path: Path
-    ) -> None:
+    def test_workflow_input_contract_keeps_declared_source_metadata(self, tmp_path: Path) -> None:
         instance = json_contract_instance(
             tmp_path,
             _envelope_input_contract_yaml(declare_source_metadata=True),

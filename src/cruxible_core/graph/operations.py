@@ -306,9 +306,7 @@ def apply_relationship(
     rel = validated.relationship
     policy = effective_relationship_write_policy(config, rel.relationship_type)
     if not is_governed_source(source) and not pending and policy == "proposal_only":
-        raise DirectWriteRefusedError(
-            "relationship", rel.relationship_type, source, policy=policy
-        )
+        raise DirectWriteRefusedError("relationship", rel.relationship_type, source, policy=policy)
     if validated.is_update:
         incoming_evidence = rel.metadata.evidence
         existing_rel = graph.get_relationship(

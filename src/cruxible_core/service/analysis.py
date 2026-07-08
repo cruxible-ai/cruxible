@@ -228,9 +228,7 @@ def _state_health_signals(instance: InstanceProtocol) -> StateHealthSignalsSecti
     finally:
         group_store.close()
 
-    return StateHealthSignalsSection(
-        unevidenced_support_by_source=dict(sorted(counts.items()))
-    )
+    return StateHealthSignalsSection(unevidenced_support_by_source=dict(sorted(counts.items())))
 
 
 def _state_health_provenance(graph: EntityGraph) -> StateHealthProvenanceSection:

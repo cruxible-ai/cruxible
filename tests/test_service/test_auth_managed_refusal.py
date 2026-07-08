@@ -229,9 +229,7 @@ class TestAuthManagedRefusalAtRestoreAndClone:
     ) -> None:
         artifact = self._backup_auth_managed_instance(tmp_path, monkeypatch)
 
-        restored = service_restore_instance(
-            artifact_path=artifact, root_dir=tmp_path / "restored"
-        )
+        restored = service_restore_instance(artifact_path=artifact, root_dir=tmp_path / "restored")
         assert "Actor" in restored.instance.load_config().entity_types
 
     def test_auth_off_refuses_auth_managed_config_at_snapshot_clone(
@@ -355,9 +353,7 @@ class TestAuthManagedRefusalAtOverlayAndPull:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _auth_on(monkeypatch)
-        _, release_dir = _publish_release(
-            tmp_path, config_yaml=CASE_BASE_WITH_AUTH_MANAGED_YAML
-        )
+        _, release_dir = _publish_release(tmp_path, config_yaml=CASE_BASE_WITH_AUTH_MANAGED_YAML)
 
         _auth_off(monkeypatch)
         overlay_root = tmp_path / "overlay"
