@@ -2711,6 +2711,14 @@ def test_workflow_propose_snapshot_and_overlay_round_trip(
     assert group_payload["bucket_status"]["pending_group_id"] == group_id
     assert group_payload["member_review"]
 
+    actor_context = {
+        "actor_type": "human_user",
+        "actor_id": "usr_routes",
+        "org_id": "org_routes",
+        "operation_id": "op_routes_resolve",
+        "timestamp": "2026-06-05T12:00:00Z",
+        "request_id": "req_routes_resolve",
+    }
     resolve = app_client.post(
         f"/api/v1/{instance_id}/groups/{group_id}/resolve",
         json={
@@ -2718,10 +2726,20 @@ def test_workflow_propose_snapshot_and_overlay_round_trip(
             "resolved_by": "human",
             "rationale": "looks good",
             "expected_pending_version": 1,
+            "actor_context": actor_context,
         },
     )
     assert resolve.status_code == 200
     assert resolve.json()["edges_created"] == 2
+
+    status = app_client.get(f"/api/v1/{instance_id}/groups/{group_id}/status")
+    assert status.status_code == 200
+    history = status.json()["approved_history"]
+    assert len(history) == 1
+    assert history[0]["rationale"] == "looks good"
+    assert history[0]["resolved_by"] == "human"
+    expected_actor = {**actor_context, "timestamp": "2026-06-05T12:00:00+00:00"}
+    assert history[0]["resolved_actor"] == expected_actor
 
     list_edges = app_client.get(
         f"/api/v1/{instance_id}/list/edges",

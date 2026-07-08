@@ -1587,6 +1587,9 @@ class GroupStatusHistoryItem(BaseModel):
     confirmed: bool
     resolved_at: str
     tuple_count: int
+    rationale: str = ""
+    resolved_by: str = ""
+    resolved_actor: dict[str, Any] | None = None
 
 
 class GroupBucketStatusToolResult(BaseModel):

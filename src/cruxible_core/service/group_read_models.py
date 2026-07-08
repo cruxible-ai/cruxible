@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from cruxible_core.errors import ConfigError, GroupNotFoundError
+from cruxible_core.governance.actors import dump_actor_context
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
@@ -127,6 +128,9 @@ def group_status_read_model(
                     confirmed=resolution.confirmed,
                     resolved_at=str(resolution.resolved_at),
                     tuple_count=tuple_count,
+                    rationale=resolution.rationale,
+                    resolved_by=resolution.resolved_by,
+                    resolved_actor=dump_actor_context(resolution.resolved_actor_context),
                 )
             )
 
