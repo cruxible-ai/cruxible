@@ -134,9 +134,12 @@ governed state, read instead of reconstructed. What changes:
 | A better model reads better, but can't certify its own output | Guarantees come from a deterministic layer outside the model |
 
 Markdown and retrieval remain the right tools for most text, and Cruxible
-itself cites markdown chunks as source evidence. The table is about that
-durable slice, where re-reading text re-pays the reconstruction cost every
-session.
+itself cites markdown chunks as source evidence. Version control narrows the
+gap less than it seems: git gives documents history, blame, and diff review,
+but the unit it governs is the file, not the claim. Nothing types what a
+changed line asserts, checks a status transition, or refuses an edit that
+drops its evidence. The table is about that durable slice, where re-reading
+text re-pays the reconstruction cost every session.
 
 ## What A Governed Domain Looks Like
 
