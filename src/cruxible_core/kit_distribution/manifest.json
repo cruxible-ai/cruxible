@@ -18,8 +18,8 @@
     },
     "kev-reference": {
       "asset": "kev-reference-0.2.0.tar.gz",
-      "dir_digest": "sha256:9b6b9bd33ae6c23c72cdaeca6190cd206d292b3497e39f356681a084d728a8c3",
-      "tarball_sha256": "62a22a5d955b8fada6c3612c49fcc45526080e39e1655bd54552e5782d317102"
+      "dir_digest": "sha256:10bf27cf96e491fd0bea6baadd2d509e34022e04799dea83ca7ee085056f8ae7",
+      "tarball_sha256": "be770effd31916473b3bf79b683340424be1c49674d73759029d8e3bfc2dfbc9"
     },
     "kev-triage": {
       "asset": "kev-triage-0.2.0.tar.gz",
