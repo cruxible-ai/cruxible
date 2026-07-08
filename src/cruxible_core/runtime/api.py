@@ -3176,6 +3176,9 @@ def get_group_status(
                 confirmed=item.confirmed,
                 resolved_at=item.resolved_at,
                 tuple_count=item.tuple_count,
+                rationale=item.rationale,
+                resolved_by=item.resolved_by,
+                resolved_actor=item.resolved_actor,
             )
             for item in result.approved_history
         ],

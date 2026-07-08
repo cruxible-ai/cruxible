@@ -573,6 +573,9 @@ def group_status(group_id: str | None, signature: str | None, output_json: bool)
                     "confirmed": item.confirmed,
                     "resolved_at": item.resolved_at,
                     "tuple_count": item.tuple_count,
+                    "rationale": item.rationale,
+                    "resolved_by": item.resolved_by,
+                    "resolved_actor": item.resolved_actor,
                 }
                 for item in result.approved_history
             ],

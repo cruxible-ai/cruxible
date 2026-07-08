@@ -7844,12 +7844,35 @@
                 "title": "Confirmed",
                 "type": "boolean"
               },
+              "rationale": {
+                "default": "",
+                "title": "Rationale",
+                "type": "string"
+              },
               "resolution_id": {
                 "title": "Resolution Id",
                 "type": "string"
               },
+              "resolved_actor": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Resolved Actor"
+              },
               "resolved_at": {
                 "title": "Resolved At",
+                "type": "string"
+              },
+              "resolved_by": {
+                "default": "",
+                "title": "Resolved By",
                 "type": "string"
               },
               "trust_status": {
@@ -7995,6 +8018,19 @@
             "type": "boolean"
           }
         },
+        "rationale": {
+          "default": "",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "rationale",
+          "required": false,
+          "schema": {
+            "default": "",
+            "title": "Rationale",
+            "type": "string"
+          }
+        },
         "resolution_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -8005,6 +8041,27 @@
             "type": "string"
           }
         },
+        "resolved_actor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "resolved_actor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolved Actor"
+          }
+        },
         "resolved_at": {
           "has_default": false,
           "has_default_factory": false,
@@ -8012,6 +8069,19 @@
           "required": true,
           "schema": {
             "title": "Resolved At",
+            "type": "string"
+          }
+        },
+        "resolved_by": {
+          "default": "",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "resolved_by",
+          "required": false,
+          "schema": {
+            "default": "",
+            "title": "Resolved By",
             "type": "string"
           }
         },
@@ -8046,12 +8116,35 @@
             "title": "Confirmed",
             "type": "boolean"
           },
+          "rationale": {
+            "default": "",
+            "title": "Rationale",
+            "type": "string"
+          },
           "resolution_id": {
             "title": "Resolution Id",
             "type": "string"
           },
+          "resolved_actor": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolved Actor"
+          },
           "resolved_at": {
             "title": "Resolved At",
+            "type": "string"
+          },
+          "resolved_by": {
+            "default": "",
+            "title": "Resolved By",
             "type": "string"
           },
           "trust_status": {

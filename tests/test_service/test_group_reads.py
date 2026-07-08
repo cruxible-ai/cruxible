@@ -10,6 +10,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import GroupNotFoundError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
 from cruxible_core.group.signature import compute_group_signature
@@ -166,6 +167,17 @@ def _agent_signature_facts(
                 ),
             )
         ],
+    )
+
+
+def _actor_context() -> GovernedActorContext:
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id="usr_resolver",
+        org_id="org_1",
+        operation_id="op_resolve",
+        timestamp="2026-06-05T12:00:00Z",
+        request_id="req_resolve",
     )
 
 
@@ -449,6 +461,35 @@ class TestGroupStatus:
         assert status.pending_group_id is None
         assert status.thesis_text == "latest thesis"
         assert status.latest_approved_resolution_id is not None
+
+    def test_approved_history_includes_resolution_rationale_and_actor(
+        self, instance: CruxibleInstance
+    ) -> None:
+        facts = {"rule_id": "fit_rule", "rule_version": 1}
+        actor = _actor_context()
+        proposed = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="approved thesis",
+            thesis_facts=facts,
+        )
+        service_resolve_group(
+            instance,
+            proposed.group_id,
+            "approve",
+            rationale="Catalog evidence supports the fit.",
+            resolved_by="human",
+            expected_pending_version=1,
+            actor_context=actor,
+        )
+
+        status = service_group_status(instance, signature=proposed.signature)
+        assert len(status.approved_history) == 1
+        history_item = status.approved_history[0]
+        assert history_item.rationale == "Catalog evidence supports the fit."
+        assert history_item.resolved_by == "human"
+        assert history_item.resolved_actor == actor.model_dump(mode="json", exclude_none=True)
 
     def test_reference_group_thesis_text_used_without_pending_or_resolution(
         self, instance: CruxibleInstance
