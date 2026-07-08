@@ -124,9 +124,9 @@ def mutation_receipt(
 ) -> Iterator[MutationReceiptContext]:
     """Wrap local governed mutation execution with receipt persistence and tagging.
 
-    ``actor_context`` is the token-derived actor identity for the operation; it is
-    preserved onto the built receipt where available and left null on auth-off
-    local paths (no actor context is fabricated).
+    ``actor_context`` is the runtime actor identity for the operation: credential-
+    derived when auth is on, and the declared local operator when auth is off.
+    Older/local direct service calls may still leave it null.
     """
     builder = (
         ReceiptBuilder(

@@ -10,8 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from cruxible_core.config.auth_managed import LOCAL_OPERATOR_ACTOR_ID
 from cruxible_core.errors import (
     AuthenticationError,
+    ConfigError,
     InstanceNotFoundError,
     RuntimeCredentialNotFoundError,
 )
@@ -53,6 +55,14 @@ class RuntimeCredentialRecoveryBusyError(RuntimeError):
 
 class RuntimeCredentialRecoveryError(RuntimeError):
     """Raised when offline credential recovery cannot safely target an instance."""
+
+
+def _validate_credential_label(label: str) -> None:
+    if label.strip() == LOCAL_OPERATOR_ACTOR_ID:
+        raise ConfigError(
+            "Credential label 'operator' is reserved for the auth-off local "
+            "operator identity and cannot be minted."
+        )
 
 
 def _hash_token(token: str) -> str:
@@ -612,6 +622,7 @@ class RuntimeCredentialStore:
         permission_mode: PermissionMode,
         created_by: str | None,
     ) -> CreatedRuntimeCredential:
+        _validate_credential_label(label)
         credential_id = _new_credential_id()
         token = _new_token(credential_id)
         token_hash = _hash_token(token)

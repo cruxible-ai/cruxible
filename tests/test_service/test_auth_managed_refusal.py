@@ -1,9 +1,10 @@
-"""Auth-off daemons must LOUDLY refuse configs declaring auth-managed types.
+"""Auth-off daemons materialize a local operator for auth-managed types.
 
-Auth-managed entity types materialize only from runtime-credential mints, which
-require ``CRUXIBLE_SERVER_AUTH=true``. On an auth-off daemon no mint can ever
-happen, so such a type is permanently empty and unwritable. The daemon must refuse
-the config at init/reload rather than fail silently with empty queries.
+Auth-managed entity types still enter the graph only through the internal
+``token_mint`` source. With server auth enabled, runtime credentials are the
+identity source of truth. With server auth disabled, sandbox/local instances get a
+declared ``operator`` actor so auth-managed configs are usable without credential
+ceremony and provenance remains truthful.
 """
 
 from __future__ import annotations
@@ -15,10 +16,12 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.loader import load_config
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import DirectWriteRefusedError
 from cruxible_core.runtime.api import init_governed
+from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service import (
+    service_add_entity_inputs,
     service_backup_instance,
     service_clone_snapshot,
     service_create_snapshot,
@@ -33,18 +36,24 @@ from cruxible_core.service.lifecycle import (
     service_init,
     service_reload_config,
 )
+from cruxible_core.service.types import EntityWriteInput
 from cruxible_core.workflow.compiler import build_lock, write_lock
 
 AUTH_MANAGED_YAML = """
 version: "1.0"
 name: auth_managed_demo
+enums:
+  actor_kind: {values: [human, agent, service_account, system]}
+  actor_status: {values: [active, inactive]}
 entity_types:
   Actor:
     write_policy: mint_only
     auth_managed: true
     properties:
       actor_id: {type: string, primary_key: true}
-      label: {type: string, optional: true}
+      label: {type: string}
+      kind: {type: string, enum_ref: actor_kind}
+      status: {type: string, enum_ref: actor_status, default: active}
 relationships: []
 named_queries:
   all_actors:
@@ -69,16 +78,16 @@ named_queries:
     result_shape: entity
 """
 
-KIT_MANIFEST = (
-    "schema_version: cruxible.kit.v1\n"
-    "kit_id: auth-managed-kit\n"
-    "version: 0.2.0\n"
-    "role: standalone\n"
-    "entry_config: config.yaml\n"
-    "provider_paths: []\n"
-    "copy_paths: []\n"
-    "requires_extras: []\n"
-)
+KIT_MANIFEST = """\
+schema_version: cruxible.kit.v1
+kit_id: auth-managed-kit
+version: 0.2.0
+role: standalone
+entry_config: config.yaml
+provider_paths: []
+copy_paths: []
+requires_extras: []
+"""
 
 
 def _auth_off(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -89,23 +98,42 @@ def _auth_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
 
 
-class TestAuthManagedRefusalAtInit:
-    def test_auth_off_refuses_auth_managed_config_at_init(
+def _assert_operator_actor(instance: CruxibleInstance) -> None:
+    actor = instance.load_graph().get_entity("Actor", "operator")
+    assert actor is not None
+    assert actor.properties["label"] == "operator"
+    assert actor.properties["kind"] == "human"
+    assert actor.properties["status"] == "active"
+    assert actor.metadata.actor_context is not None
+    assert actor.metadata.actor_context.actor_type == "human_user"
+    assert actor.metadata.actor_context.actor_id == "operator"
+    assert actor.metadata.actor_context.org_id == "local"
+    assert actor.metadata.actor_context.operation_id.startswith("op_")
+
+
+def _assert_no_operator_actor(instance: CruxibleInstance) -> None:
+    assert instance.load_graph().get_entity("Actor", "operator") is None
+
+
+def _actor_write(entity_id: str = "manual") -> EntityWriteInput:
+    return EntityWriteInput(
+        entity_type="Actor",
+        entity_id=entity_id,
+        properties={"label": entity_id, "kind": "human"},
+    )
+
+
+class TestAuthManagedLocalOperatorAtInit:
+    def test_auth_off_materializes_operator_for_auth_managed_config_at_init(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _auth_off(monkeypatch)
-        with pytest.raises(ConfigError) as exc:
-            service_init(tmp_path / "inst", config_yaml=AUTH_MANAGED_YAML)
-        message = str(exc.value)
-        assert "Actor" in message
-        assert "CRUXIBLE_SERVER_AUTH=true" in message
-        assert "auth_managed: true" in message
-        assert "write_policy: mint_only" in message
-        # Refused before the managed config or instance is written: the root is
-        # untouched, so a corrected retry is not blocked by "already exists".
-        assert not (tmp_path / "inst").exists()
+        result = service_init(tmp_path / "inst", config_yaml=AUTH_MANAGED_YAML)
 
-    def test_auth_off_refuses_auth_managed_kit_at_init(
+        assert "Actor" in result.instance.load_config().entity_types
+        _assert_operator_actor(result.instance)
+
+    def test_auth_off_materializes_operator_for_auth_managed_kit_at_init(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _auth_off(monkeypatch)
@@ -117,85 +145,77 @@ class TestAuthManagedRefusalAtInit:
         kit_config = load_config(source / "config.yaml")
         write_lock(build_lock(kit_config, source), source / "cruxible.lock.yaml")
 
-        with pytest.raises(ConfigError) as exc:
-            service_init(tmp_path / "inst", kits=[f"file://{source}"])
-        message = str(exc.value)
-        assert "Actor" in message
-        # Refused BEFORE kit materialization: nothing was copied into the root.
-        assert not (tmp_path / "inst").exists()
+        result = service_init(tmp_path / "inst", kits=[f"file://{source}"])
 
-    def test_auth_on_accepts_auth_managed_config_at_init(
+        _assert_operator_actor(result.instance)
+
+    def test_auth_on_accepts_auth_managed_config_without_operator_at_init(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _auth_on(monkeypatch)
         result = service_init(tmp_path / "inst", config_yaml=AUTH_MANAGED_YAML)
-        assert "Actor" in result.instance.load_config().entity_types
 
-    def test_auth_off_accepts_config_without_auth_managed_types(
+        assert "Actor" in result.instance.load_config().entity_types
+        _assert_no_operator_actor(result.instance)
+
+    def test_auth_off_config_without_auth_managed_types_does_not_materialize_operator(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _auth_off(monkeypatch)
         result = service_init(tmp_path / "inst", config_yaml=PLAIN_YAML)
+
         assert "Widget" in result.instance.load_config().entity_types
+        _assert_no_operator_actor(result.instance)
 
 
-class TestAuthManagedRefusalAtGovernedUpload:
-    def test_auth_off_refuses_auth_managed_config_without_registry_row_or_root(
+class TestAuthManagedLocalOperatorAtGovernedUpload:
+    def test_auth_off_governed_upload_materializes_operator(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _auth_off(monkeypatch)
-        server_state_dir = tmp_path / "server-state"
-        monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(server_state_dir))
+        monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
         reset_registry()
+        get_manager().clear()
         workspace_root = tmp_path / "workspace"
         workspace_root.mkdir()
 
         try:
             registry = get_registry()
             before_count = registry.count_instances()
-            with pytest.raises(ConfigError) as exc:
-                init_governed(str(workspace_root), config_yaml=AUTH_MANAGED_YAML)
-            message = str(exc.value)
-            assert "Actor" in message
-            assert "CRUXIBLE_SERVER_AUTH=true" in message
-            assert registry.count_instances() == before_count
-            assert registry.get_governed_instance_by_workspace_root(workspace_root) is None
-            assert list((server_state_dir / "instances").glob("inst_*")) == []
+            result = init_governed(str(workspace_root), config_yaml=AUTH_MANAGED_YAML)
+
+            assert registry.count_instances() == before_count + 1
+            _assert_operator_actor(get_manager().get(result.instance_id))
         finally:
             reset_registry()
+            get_manager().clear()
 
 
-class TestAuthManagedRefusalAtReload:
-    def test_auth_off_refuses_auth_managed_config_at_reload(
+class TestAuthManagedLocalOperatorAtReload:
+    def test_auth_off_reload_materializes_operator(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Create a clean instance while auth is ON, then flip auth OFF and try to
-        # reload an auth-managed config into it.
-        _auth_on(monkeypatch)
-        result = service_init(tmp_path / "inst", config_yaml=PLAIN_YAML)
-        instance = result.instance
-
         _auth_off(monkeypatch)
-        with pytest.raises(ConfigError) as exc:
-            service_reload_config(instance, config_yaml=AUTH_MANAGED_YAML)
-        message = str(exc.value)
-        assert "Actor" in message
-        assert "CRUXIBLE_SERVER_AUTH=true" in message
-        # The refused reload did not overwrite the instance's active config.
-        assert "Widget" in instance.load_config().entity_types
-
-    def test_auth_on_accepts_auth_managed_config_at_reload(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _auth_on(monkeypatch)
-        result = service_init(tmp_path / "inst", config_yaml=PLAIN_YAML)
-        instance = result.instance
+        instance = service_init(tmp_path / "inst", config_yaml=PLAIN_YAML).instance
 
         service_reload_config(instance, config_yaml=AUTH_MANAGED_YAML)
+
         assert "Actor" in instance.load_config().entity_types
+        _assert_operator_actor(instance)
+
+    def test_auth_on_reload_does_not_create_operator(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _auth_on(monkeypatch)
+        instance = service_init(tmp_path / "inst", config_yaml=PLAIN_YAML).instance
+
+        service_reload_config(instance, config_yaml=AUTH_MANAGED_YAML)
+
+        assert "Actor" in instance.load_config().entity_types
+        _assert_no_operator_actor(instance)
 
 
-class TestAuthManagedRefusalAtRestoreAndClone:
+class TestAuthManagedLocalOperatorAtRestoreAndClone:
     def _backup_auth_managed_instance(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> Path:
@@ -209,30 +229,17 @@ class TestAuthManagedRefusalAtRestoreAndClone:
         )
         return artifact
 
-    def test_auth_off_refuses_auth_managed_config_at_restore(
+    def test_auth_off_restore_materializes_operator(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         artifact = self._backup_auth_managed_instance(tmp_path, monkeypatch)
 
         _auth_off(monkeypatch)
-        target = tmp_path / "restored"
-        with pytest.raises(ConfigError) as exc:
-            service_restore_instance(artifact_path=artifact, root_dir=target)
-        message = str(exc.value)
-        assert "Actor" in message
-        assert "CRUXIBLE_SERVER_AUTH=true" in message
-        # Refused before any file was staged: the restore target was never created.
-        assert not target.exists()
-
-    def test_auth_on_accepts_auth_managed_config_at_restore(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        artifact = self._backup_auth_managed_instance(tmp_path, monkeypatch)
-
         restored = service_restore_instance(artifact_path=artifact, root_dir=tmp_path / "restored")
-        assert "Actor" in restored.instance.load_config().entity_types
 
-    def test_auth_off_refuses_auth_managed_config_at_snapshot_clone(
+        _assert_operator_actor(restored.instance)
+
+    def test_auth_off_snapshot_clone_materializes_operator(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _auth_on(monkeypatch)
@@ -240,24 +247,9 @@ class TestAuthManagedRefusalAtRestoreAndClone:
         snapshot_id = service_create_snapshot(instance).snapshot.snapshot_id
 
         _auth_off(monkeypatch)
-        target = tmp_path / "clone"
-        with pytest.raises(ConfigError) as exc:
-            service_clone_snapshot(instance, snapshot_id, target)
-        message = str(exc.value)
-        assert "Actor" in message
-        assert "CRUXIBLE_SERVER_AUTH=true" in message
-        # Refused before clone_from_snapshot wrote anything into the target root.
-        assert not target.exists()
-
-    def test_auth_on_accepts_auth_managed_config_at_snapshot_clone(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _auth_on(monkeypatch)
-        instance = service_init(tmp_path / "source", config_yaml=AUTH_MANAGED_YAML).instance
-        snapshot_id = service_create_snapshot(instance).snapshot.snapshot_id
-
         cloned = service_clone_snapshot(instance, snapshot_id, tmp_path / "clone")
-        assert "Actor" in cloned.instance.load_config().entity_types
+
+        _assert_operator_actor(cloned.instance)
 
 
 CASE_BASE_YAML = """\
@@ -283,6 +275,9 @@ CASE_BASE_WITH_AUTH_MANAGED_YAML = """\
 version: "1.0"
 name: case_reference
 
+enums:
+  actor_kind: {values: [human, agent, service_account, system]}
+  actor_status: {values: [active, inactive]}
 entity_types:
   Case:
     properties:
@@ -295,12 +290,10 @@ entity_types:
     write_policy: mint_only
     auth_managed: true
     properties:
-      actor_id:
-        type: string
-        primary_key: true
-      label:
-        type: string
-        optional: true
+      actor_id: {type: string, primary_key: true}
+      label: {type: string}
+      kind: {type: string, enum_ref: actor_kind}
+      status: {type: string, enum_ref: actor_status, default: active}
 
 relationships:
   - name: cites
@@ -312,17 +305,18 @@ AUTH_MANAGED_OVERLAY_YAML = """\
 version: "1.0"
 name: case-law-overlay
 extends: .cruxible/upstream/current/config.yaml
+enums:
+  actor_kind: {values: [human, agent, service_account, system]}
+  actor_status: {values: [active, inactive]}
 entity_types:
   Actor:
     write_policy: mint_only
     auth_managed: true
     properties:
-      actor_id:
-        type: string
-        primary_key: true
-      label:
-        type: string
-        optional: true
+      actor_id: {type: string, primary_key: true}
+      label: {type: string}
+      kind: {type: string, enum_ref: actor_kind}
+      status: {type: string, enum_ref: actor_status, default: active}
 relationships: []
 """
 
@@ -348,31 +342,24 @@ def _publish_release(
     return instance, release_dir
 
 
-class TestAuthManagedRefusalAtOverlayAndPull:
-    def test_auth_off_refuses_auth_managed_base_at_overlay_create(
+class TestAuthManagedLocalOperatorAtOverlayAndPull:
+    def test_auth_off_overlay_create_materializes_operator_from_auth_managed_base(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _auth_on(monkeypatch)
         _, release_dir = _publish_release(tmp_path, config_yaml=CASE_BASE_WITH_AUTH_MANAGED_YAML)
 
         _auth_off(monkeypatch)
-        overlay_root = tmp_path / "overlay"
-        with pytest.raises(ConfigError) as exc:
-            service_create_state_overlay(
-                transport_ref=f"file://{release_dir}",
-                root_dir=overlay_root,
-            )
-        message = str(exc.value)
-        assert "Actor" in message
-        assert "CRUXIBLE_SERVER_AUTH=true" in message
-        # Refused before anything was materialized into the overlay root.
-        assert not overlay_root.exists()
+        overlay = service_create_state_overlay(
+            transport_ref=f"file://{release_dir}",
+            root_dir=tmp_path / "overlay",
+        )
 
-    def test_auth_off_refuses_auth_managed_upstream_at_pull_apply(
+        _assert_operator_actor(overlay.instance)
+
+    def test_auth_off_pull_apply_materializes_operator_from_new_auth_managed_upstream(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Publish a plain release, create the overlay while it is clean, then
-        # republish the base WITH an auth-managed type and try to pull it in.
         _auth_off(monkeypatch)
         root_instance, release_dir = _publish_release(tmp_path, config_yaml=CASE_BASE_YAML)
         overlay_instance = service_create_state_overlay(
@@ -396,53 +383,43 @@ class TestAuthManagedRefusalAtOverlayAndPull:
         _auth_off(monkeypatch)
         preview = service_pull_state_preview(overlay_instance)
         assert preview.target_release_id == "v1.1.0"
-        active_config_path = overlay_instance.get_config_path()
-        active_before = active_config_path.read_text()
+        applied = service_pull_state_apply(
+            overlay_instance,
+            expected_apply_digest=preview.apply_digest,
+        )
 
-        with pytest.raises(ConfigError) as exc:
-            service_pull_state_apply(
-                overlay_instance,
-                expected_apply_digest=preview.apply_digest,
-            )
-        message = str(exc.value)
-        assert "Actor" in message
-        assert "CRUXIBLE_SERVER_AUTH=true" in message
-        # The refused pull left the active composed config byte-identical and the
-        # overlay still tracking the previous release.
-        assert active_config_path.read_text() == active_before
+        assert applied.release_id == "v1.1.0"
         status = service_state_status(overlay_instance)
         assert status.upstream is not None
-        assert status.upstream.release_id == "v1.0.0"
+        assert status.upstream.release_id == "v1.1.0"
+        _assert_operator_actor(overlay_instance)
 
-    def test_auth_off_refuses_auth_managed_overlay_at_upstream_reload(
+    def test_auth_off_upstream_reload_materializes_operator_from_overlay(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _auth_off(monkeypatch)
         _, release_dir = _publish_release(tmp_path, config_yaml=CASE_BASE_YAML)
-        overlay_root = tmp_path / "overlay"
         overlay_instance = service_create_state_overlay(
             transport_ref=f"file://{release_dir}",
-            root_dir=overlay_root,
+            root_dir=tmp_path / "overlay",
         ).instance
 
-        active_config_path = overlay_instance.get_config_path()
-        active_before = active_config_path.read_text()
-        overlay_config_path = overlay_root / "config.yaml"
-        overlay_before = overlay_config_path.read_text()
+        service_reload_config(overlay_instance, config_yaml=AUTH_MANAGED_OVERLAY_YAML)
 
-        # Uploaded-YAML upstream reload: refused BEFORE the overlay file and the
-        # composed active config are written.
-        with pytest.raises(ConfigError) as exc:
-            service_reload_config(overlay_instance, config_yaml=AUTH_MANAGED_OVERLAY_YAML)
-        assert "Actor" in str(exc.value)
-        assert overlay_config_path.read_text() == overlay_before
-        assert active_config_path.read_text() == active_before
+        _assert_operator_actor(overlay_instance)
 
-        # File-based upstream reload: the overlay file on disk declares an
-        # auth-managed type, but the refused reload must leave the previously
-        # composed active config byte-identical.
-        overlay_config_path.write_text(AUTH_MANAGED_OVERLAY_YAML)
-        with pytest.raises(ConfigError) as exc:
-            service_reload_config(overlay_instance)
-        assert "Actor" in str(exc.value)
-        assert active_config_path.read_text() == active_before
+
+@pytest.mark.parametrize("auth_enabled", [False, True])
+def test_direct_writes_to_auth_managed_actor_remain_refused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_enabled: bool,
+) -> None:
+    if auth_enabled:
+        _auth_on(monkeypatch)
+    else:
+        _auth_off(monkeypatch)
+    instance = service_init(tmp_path / "inst", config_yaml=AUTH_MANAGED_YAML).instance
+
+    with pytest.raises(DirectWriteRefusedError):
+        service_add_entity_inputs(instance, [_actor_write()])

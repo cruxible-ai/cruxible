@@ -152,6 +152,14 @@ def app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return _make_app_client(tmp_path, monkeypatch)
 
 
+def _assert_local_operator_context(actor_context: dict[str, str]) -> None:
+    assert actor_context["actor_type"] == "human_user"
+    assert actor_context["actor_id"] == "operator"
+    assert actor_context["org_id"] == "local"
+    assert actor_context["operation_id"].startswith("op_")
+    assert actor_context["timestamp"]
+
+
 def _init_instance(
     client: TestClient,
     root: Path,
@@ -1035,7 +1043,7 @@ def test_stats_and_inspect_routes_return_expected_shapes(
     assert inspect.status_code == 200
     inspect_payload = inspect.json()
     assert inspect_payload["found"] is True
-    assert inspect_payload["metadata"] == {}
+    _assert_local_operator_context(inspect_payload["metadata"]["actor_context"])
     assert inspect_payload["total_neighbors"] == 2
     assert inspect_payload["neighbors"][0]["relationship_type"] == "fits"
     assert inspect_payload["neighbors"][0]["metadata"]["provenance"]["source"] == "http_api"
@@ -1740,8 +1748,11 @@ def test_add_entity_returns_contract_shape(app_client: TestClient, server_projec
     lookup = app_client.get(f"/api/v1/{instance_id}/entities/Vehicle/V-1")
     assert lookup.status_code == 200
     # The wire shape is the typed metadata envelope: free-form author keys are
-    # nested under "extra" (they can never sit beside the typed lifecycle slot).
-    assert lookup.json()["metadata"] == {"extra": {"source": "route-test"}}
+    # nested under "extra" (they can never sit beside the typed lifecycle slot),
+    # and auth-off writes carry the local operator provenance context.
+    metadata = lookup.json()["metadata"]
+    assert metadata["extra"] == {"source": "route-test"}
+    _assert_local_operator_context(metadata["actor_context"])
 
 
 def test_state_publish_overlay_and_status_routes(

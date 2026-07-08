@@ -140,7 +140,7 @@ printing it in prompts, shell history, or logs.
 
 ## Actor Identity
 
-For runtime credentials, Cruxible derives actor identity from the credential:
+For auth-on runtime credentials, Cruxible derives actor identity from the credential:
 
 - `actor_type`: `service_account`
 - `actor_id`: runtime credential label
@@ -158,7 +158,9 @@ writer-agent token + actor_context.actor_id = "reviewer"
 ```
 
 Mutation guards that check actor identity should use this credential-derived
-actor context.
+actor context. With server auth disabled, hosted write routes instead use a
+declared local operator context (`actor_type=human_user`, `actor_id=operator`,
+`org_id=local`) so local sandbox writes remain attributed without credentials.
 
 ## Agent Role Pattern
 

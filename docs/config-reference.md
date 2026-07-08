@@ -112,14 +112,15 @@ refuses *all* other sources, including the governed verbs `workflow_apply` /
 `group_resolve`. Because a workflow `make_entities` step would later apply through
 `workflow_apply` and bypass the chokepoint refusal, a config whose `make_entities`
 targets a `mint_only` entity type is **rejected at config load** (fail-closed).
-Use it for auth-managed identity types.
+Use it for auth-managed identity types: auth-on daemons materialize them from runtime credentials; auth-off daemons materialize a declared local `operator` identity through the same internal `token_mint` source.
 
 **Scope.** `refuse_direct_writes` governs how state is *created* — it forces the
 direct-write verbs above through the proposal/workflow path. It does **not**
 govern the `feedback` review channel: promoting an already-staged (`pending`)
 edge to live, or correcting an existing edge, goes through `feedback` — a
-separate path gated by **reviewer identity** (enforced when server auth is on;
-unattributed under auth-off local mode). So `proposal_only` guarantees that
+separate path gated by **reviewer identity** (credential-backed when server auth
+is on; attributed to the declared local `operator` when auth is off). So
+`proposal_only` guarantees that
 *creation* is governed; *promotion* of a staged edge is exactly as strong as the
 feedback review-gate, no stronger.
 
