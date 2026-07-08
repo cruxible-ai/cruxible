@@ -10,93 +10,91 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](https://github.com/cruxible-ai/cruxible/blob/main/LICENSE)
 
-**Cruxible is hard state for AI agents.**
+**Cruxible is hard state for AI agents** — a typed, verifiable state layer
+that teams of agents and humans operate together. You model your domain in a
+Terraform-like config: entity and relationship types, deterministic
+workflows, write rules. The runtime enforces it.
 
-Typed, governed, durable state that outlives any single model, session, or
-context window.
+- **State enters deterministically.** Exports and tables from real systems
+  are pinned as artifacts and matched row by row into proposals; model
+  judgment is injected only where your pinned domain logic can't decide.
 
-Agents re-derive what's true from prompts, retrieval, and chat history, and no
-amount of context engineering makes that reconstruction reliable. A better
-model reads better, but it cannot certify its own output. Cruxible's answer
-is to **model the domain instead of engineering the context**: the durable
-slice of what's true becomes typed entities and relationships with lifecycle
-and review status, and agents and humans operate on that shared state instead
-of reconstructing it.
+- **Writes are governed.** Governed relationships can only be written through
+  a proposal flow that requires declared evidence, auto-resolves only under
+  trust rules you set, and routes everything else to human review. Every
+  accepted claim is attributed and carries a receipt.
 
-The same move applies to the work itself. Reads are deterministic queries
-over typed relationships, not retrieval. Recurring procedures are declared
-workflows — previewed, locked, replayable — not agent loops gluing tool
-calls together. The model is invoked only where judgment is actually
-needed, and what it proposes passes guards and review, with a human in the
-loop where the stakes warrant it, and leaves a receipt on the way in.
+- **The model is executable.** Recurring procedures are declared workflows in
+  the same config: previewed before they apply, locked to the exact provider
+  code and artifacts they compile against, replayable from receipts. State
+  accumulates as the exhaust of governed work, and the model improves
+  iteratively: feedback and outcomes are recorded in state, and the config
+  evolves like code.
 
-The core is deterministic: no LLM inside, no hidden API calls. It works with
-any agent or harness, and rather than replacing your source systems, it points
-at them, cites specific records or chunks, and mints into state only the
-claims worth coordinating around.
+- **Reads are reproducible.** Same query, same state, same result, with a
+  receipt explaining how it was derived. Queries express structure that
+  retrieval can't: multi-hop traversals, review status, staleness against
+  cited sources.
+
+- **The core is deterministic.** No LLM inside, no hidden API calls. It works
+  with any agent or harness, points at your existing systems, and mints into
+  state only the claims worth coordinating around.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_architecture.svg" alt="Cruxible architecture: source systems are pinned as artifacts, workflows propose row-matched claims into domain state, the agent operation layer reviews and mints them, and reads come back as deterministic queries with receipts" width="740">
+</p>
+
+<p align="center"><em>Sources stay where they are and get pinned. Workflows
+parse and match them into proposed claims, reading state back as they go.
+Domain state holds the typed graph, where every edge carries review status
+and its cited chunk. The operation layer is where agents and humans propose,
+review, and mint, and where work itself is typed state gated on review. All
+three layers ship in one config.</em></p>
 
 ## Get Started
 
-For `0.2`, install from a clone so the bundled starter kits resolve from the
-checkout (versioned OCI kit images are coming; until then the checkout is the
-canonical path):
-
 ```bash
-git clone https://github.com/cruxible-ai/cruxible.git
-cd cruxible
-uv sync --extra server --extra mcp
-source .venv/bin/activate
+pip install "cruxible[server]"
 ```
 
-Start the daemon with runtime auth on. It binds to `127.0.0.1:8100` (pass
-`--port` if 8100 is taken), generates a one-time bootstrap secret, and
-writes it to a `0600` file:
+Start the daemon in one shell. Auth is on because agent identity lives in
+the auth layer; the daemon writes a one-time bootstrap secret to a `0600`
+file:
 
 ```bash
 CRUXIBLE_SERVER_AUTH=true CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" \
   cruxible server start --bootstrap-secret-file "$HOME/.cruxible/bootstrap.secret"
 ```
 
-From a second shell, initialize the **agent-operation** kit — durable
-operating state for a team of agents (work items, reviews, decisions,
-risks, actors) — and remember the connection so later commands need no
-flags:
+Everything else is one paste in a second shell — create the instance from
+the **agent-operation** kit (work items, reviews, decisions, risks, actors;
+the kit bundle is fetched from the release and digest-verified), claim
+admin, mint your first agent, give it work:
 
 ```bash
+# create the instance while the bootstrap secret is live
 export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$HOME/.cruxible/bootstrap.secret")"
 cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --bootstrap
 cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
-```
 
-`--kit` is repeatable to compose overlay kits onto a base at init, e.g.
-`cruxible init --kit agent-operation --kit project-domain`.
-
-Claim the admin credential, then mint one for your first agent. **Minting is
-what creates the agent's identity in state**: the kit's `Actor` type is
-auth-managed, so the Actor entity materializes from the mint, and no other
-write path can create one — an agent roster you can trust because it cannot
-be typo'd into existence:
-
-```bash
+# claim admin, then mint the agent. Minting IS what creates the agent's
+# Actor in state — no other write path can create one.
 cruxible credential claim-bootstrap --secret-file "$HOME/.cruxible/bootstrap.secret"
 export CRUXIBLE_SERVER_BEARER_TOKEN=<admin-token>   # printed once by the claim
-
 cruxible credential mint --label claude --mode graph_write
 export CRUXIBLE_SERVER_BEARER_TOKEN=<claude-token>  # act as the agent from here
-```
 
-Give the agent work and read its queue back. Writes are validated against
-the kit's ontology, attributed to the token's actor, and receipted:
-
-```bash
+# give the agent work; writes are validated, attributed, and receipted
 cruxible entity add WorkItem wi-first-slice \
   --set title="Model the first slice of our domain" \
   --set type=research --set status=active --set priority=high
-
 cruxible relationship add work_item_owned_by_actor WorkItem wi-first-slice Actor claude
-
 cruxible query run actor_work_queue --param actor_id=claude --json
 ```
+
+`--kit` is repeatable — `init --kit agent-operation --kit project-domain`
+composes an overlay onto its base. A source checkout of the repo overrides
+the published bundles when you want to hack on kits.
 
 The same surface is available from Python (and MCP, below):
 
@@ -109,17 +107,8 @@ with CruxibleClient(base_url="http://127.0.0.1:8100", token="<claude-token>") as
         print(item)
 ```
 
-Auth is on in this path because agent identity lives in the auth layer. To
-run open (no tokens) for a local experiment, start the daemon without
-`CRUXIBLE_SERVER_AUTH` — kits that declare auth-managed identity, like
-agent-operation, refuse to load with an error naming exactly which config
-keys to remove, rather than silently degrading.
-
-One thing to know before moving on: once its bootstrap secret is claimed,
-an auth-on daemon cannot create additional instances in that run — the
-quickstart's `init` commands need a fresh daemon started alongside this one
-(see [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md)).
-For the full bootstrap flow, permission tiers, and hardening, see the
+Why auth-on, permission tiers, the one-instance-per-auth-daemon rule, and
+hardening live in the
 [Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md) and
 [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md).
 
@@ -255,8 +244,11 @@ Declare → preview → apply, with a receipt at every step.
 ## Why Not Markdown, RAG, Or Vector Memory?
 
 Markdown, retrieval, and vector memory give a model text to read, so every
-session it reconstructs what's true from scratch. Cruxible persists it as
-typed, governed state — read, not reconstructed. What changes:
+session it reconstructs what's true from scratch, and no amount of context
+engineering makes that reconstruction reliable. A better model reads better,
+but it cannot certify its own output. Cruxible's answer is to **model the
+domain instead of engineering the context**: the durable slice of what's true
+becomes typed, governed state, read instead of reconstructed. What changes:
 
 | Markdown · RAG · vector memory | Cruxible |
 |---|---|
