@@ -113,7 +113,7 @@ hardening live in the
 
 ## Why Not Markdown, RAG, Or Vector Memory?
 
-Markdown, retrieval, and vector memory give a model text to read, so every
+Markdown, retrieval, and vector memory hand a model raw text, so every
 session it reconstructs what's true from scratch. For drafts, exploration,
 and one-off questions, that's fine — but for the claims that are recurring,
 shared, and expensive to get wrong, every fresh read re-rolls the
