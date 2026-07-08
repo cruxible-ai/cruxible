@@ -111,6 +111,33 @@ hardening live in the
 [Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md) and
 [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md).
 
+## Why Not Markdown, RAG, Or Vector Memory?
+
+Markdown, retrieval, and vector memory give a model text to read, so every
+session it reconstructs what's true from scratch, and no amount of context
+engineering makes that reconstruction reliable. A better model reads better,
+but it cannot certify its own output. Cruxible's answer is to **model the
+domain instead of engineering the context**: the durable slice of what's true
+becomes typed, governed state, read instead of reconstructed. What changes:
+
+| Markdown · RAG · vector memory | Cruxible |
+|---|---|
+| A claim is just text — no source, no review state | Claims carry provenance and review state; evidence-gated writes refuse references that don't dereference to content-hash-verified source chunks |
+| Anything can be edited; nothing enforces what may change | Writes pass typed validation, guards, review, and lifecycle rules |
+| Retrieval returns similar chunks; it can't follow exact links | Multi-hop traversal over typed relationships, with visibility rules applied at every hop |
+| Counts and rollups are approximate summaries | Exact, repeatable counts and joins as deterministic workflow steps |
+| Each read is fresh and can disagree with the last | One accepted state — the same answer for every agent and app |
+| A correction is just more text — nothing ties it to the claim it corrects | Feedback and outcomes attach to the specific claim, decision, or workflow result as typed, queryable signal |
+| Static text that doesn't improve from use | Claims mature from proposed to accepted; the ontology iterates with use |
+| A better model reads better, but can't certify its own output | Guarantees come from a deterministic layer outside the model |
+
+Markdown and retrieval remain the right tools for most text (drafts,
+exploration, one-off questions), and Cruxible itself cites markdown chunks as
+source evidence. The table is about the durable slice: claims that are
+recurring, shared, and expensive to get wrong, where re-reading text re-pays
+the reconstruction cost every session and re-rolls the risk with every fresh
+read.
+
 ## What A Governed Domain Looks Like
 
 A minimal slice of a supply-chain ontology, as authored in a kit config:
@@ -239,33 +266,6 @@ proposals run through `cruxible propose` and land in review instead of in
 live state.
 
 Declare → preview → apply, with a receipt at every step.
-
-## Why Not Markdown, RAG, Or Vector Memory?
-
-Markdown, retrieval, and vector memory give a model text to read, so every
-session it reconstructs what's true from scratch, and no amount of context
-engineering makes that reconstruction reliable. A better model reads better,
-but it cannot certify its own output. Cruxible's answer is to **model the
-domain instead of engineering the context**: the durable slice of what's true
-becomes typed, governed state, read instead of reconstructed. What changes:
-
-| Markdown · RAG · vector memory | Cruxible |
-|---|---|
-| A claim is just text — no source, no review state | Claims carry provenance and review state; evidence-gated writes refuse references that don't dereference to content-hash-verified source chunks |
-| Anything can be edited; nothing enforces what may change | Writes pass typed validation, guards, review, and lifecycle rules |
-| Retrieval returns similar chunks; it can't follow exact links | Multi-hop traversal over typed relationships, with visibility rules applied at every hop |
-| Counts and rollups are approximate summaries | Exact, repeatable counts and joins as deterministic workflow steps |
-| Each read is fresh and can disagree with the last | One accepted state — the same answer for every agent and app |
-| A correction is just more text — nothing ties it to the claim it corrects | Feedback and outcomes attach to the specific claim, decision, or workflow result as typed, queryable signal |
-| Static text that doesn't improve from use | Claims mature from proposed to accepted; the ontology iterates with use |
-| A better model reads better, but can't certify its own output | Guarantees come from a deterministic layer outside the model |
-
-Markdown and retrieval remain the right tools for most text (drafts,
-exploration, one-off questions), and Cruxible itself cites markdown chunks as
-source evidence. The table is about the durable slice: claims that are
-recurring, shared, and expensive to get wrong, where re-reading text re-pays
-the reconstruction cost every session and re-rolls the risk with every fresh
-read.
 
 ## Domain State And Operating State
 
