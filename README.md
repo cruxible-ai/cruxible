@@ -65,7 +65,7 @@ CRUXIBLE_SERVER_AUTH=true CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" \
   cruxible server start --bootstrap-secret-file "$HOME/.cruxible/bootstrap.secret"
 ```
 
-Everything else is one paste in a second shell — create the instance from
+Everything else is one paste in a second shell: create the instance from
 the **agent-operation** kit (work items, reviews, decisions, risks, actors;
 the kit bundle is fetched from the release and digest-verified), claim
 admin, mint your first agent, give it work:
@@ -77,7 +77,7 @@ cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --bootstr
 cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
 
 # claim admin, then mint the agent. Minting IS what creates the agent's
-# Actor in state — no other write path can create one.
+# Actor in state; no other write path can create one.
 cruxible credential claim-bootstrap --secret-file "$HOME/.cruxible/bootstrap.secret"
 export CRUXIBLE_SERVER_BEARER_TOKEN=<admin-token>   # printed once by the claim
 cruxible credential mint --label claude --mode graph_write
@@ -91,7 +91,7 @@ cruxible relationship add work_item_owned_by_actor WorkItem wi-first-slice Actor
 cruxible query run actor_work_queue --param actor_id=claude --json
 ```
 
-`--kit` is repeatable — `init --kit agent-operation --kit project-domain`
+`--kit` is repeatable: `init --kit agent-operation --kit project-domain`
 composes an overlay onto its base. A source checkout of the repo overrides
 the published bundles when you want to hack on kits.
 
@@ -124,12 +124,12 @@ governed state, read instead of reconstructed. What changes:
 
 | Markdown · RAG · vector memory | Cruxible |
 |---|---|
-| A claim is just text — no source, no review state | Claims carry provenance and review state; evidence-gated writes refuse references that don't dereference to content-hash-verified source chunks |
+| A claim is just text: no source, no review state | Claims carry provenance and review state; evidence-gated writes refuse references that don't dereference to content-hash-verified source chunks |
 | Anything can be edited; nothing enforces what may change | Writes pass typed validation, guards, review, and lifecycle rules |
 | Retrieval returns similar chunks; it can't follow exact links | Multi-hop traversal over typed relationships, with visibility rules applied at every hop |
 | Counts and rollups are approximate summaries | Exact, repeatable counts and joins as deterministic workflow steps |
-| Each read is fresh and can disagree with the last | One accepted state — the same answer for every agent and app |
-| A correction is just more text — nothing ties it to the claim it corrects | Feedback and outcomes attach to the specific claim, decision, or workflow result as typed, queryable signal |
+| Each read is fresh and can disagree with the last | One accepted state: the same answer for every agent and app |
+| A correction is just more text; nothing ties it to the claim it corrects | Feedback and outcomes attach to the specific claim, decision, or workflow result as typed, queryable signal |
 | Static text that doesn't improve from use | Claims mature from proposed to accepted; the ontology iterates with use |
 | A better model reads better, but can't certify its own output | Guarantees come from a deterministic layer outside the model |
 
@@ -231,21 +231,21 @@ ways:
 
 | Write mode | Use it for | What happens |
 |---|---|---|
-| **Direct write** | Asserting hard state — imports, deterministic relationships, source evidence | Live and queryable at once, with evidence when supplied, but unreviewed until a governed process approves it |
-| **Governed proposal** | Judgment calls — uncertain or interpretive relationships | Candidates are grouped under one thesis with signal evidence and routed to a human or auto-resolution policy; approval writes accepted state with provenance, rejection records why |
+| **Direct write** | Asserting hard state: imports, deterministic relationships, source evidence | Live and queryable at once, with evidence when supplied, but unreviewed until a governed process approves it |
+| **Governed proposal** | Judgment calls: uncertain or interpretive relationships | Candidates are grouped under one thesis with signal evidence and routed to a human or auto-resolution policy; approval writes accepted state with provenance, rejection records why |
 
 Guards are declared in config and enforced at a single write chokepoint.
 A relationship type can refuse direct writes entirely; a work item can be
 blocked from closing until an approved review is linked; a write can be
 required to co-create a linked entity in the same unit of work; a claim can be
 required to carry source evidence. Evidence requirements are enforced, not
-decorative — the write is refused unless every reference dereferences to a
+decorative: the write is refused unless every reference dereferences to a
 registered source chunk whose content hash matches.
 
 ## Workflows And Pinned Providers
 
 Workflows orchestrate reads, providers, shaping, and writes as one declared,
-reproducible procedure. Providers are the building blocks workflows call —
+reproducible procedure. Providers are the building blocks workflows call:
 deterministic transforms and data loaders in Python, over HTTP, or as
 commands. They are pinned, not trusted. The kit lockfile
 (`cruxible.lock.yaml`) records each provider's version, content digest, and
@@ -271,14 +271,14 @@ Declare → preview → apply, with a receipt at every step.
 
 Cruxible models two kinds of state, strongest together.
 
-**Domain state** is the durable model of the world an agent reasons about —
+**Domain state** is the durable model of the world an agent reasons about:
 assets, vulnerabilities, suppliers, products, cases, controls, policies,
 risks. It answers what is true, proposed, reviewed, or constrained. *Which
 assets are exposed to a known exploited vulnerability? Which supplier incident
 affects which products and shipments?*
 
 **Agent operating state** is the durable coordination layer for the work
-itself — work items, review requests, decisions, open questions, risks,
+itself: work items, review requests, decisions, open questions, risks,
 actors, dependencies, lineage. It tracks what's active or blocked, why, who
 reviewed it, and what changed.
 
@@ -392,7 +392,7 @@ upstream state model with local state, governed proposals, and local workflows.
 **Status** — *ready* kits ship working providers (KEV also ships public reference
 data), so their workflows execute end to end. *in_progress* means the ontology,
 governance, named queries, and feedback/outcome loops are complete and validated,
-but the data-ingest and assessment providers are placeholders — implement them or
+but the data-ingest and assessment providers are placeholders; implement them or
 wire your own data before running the workflows.
 
 ## Agent Setup
