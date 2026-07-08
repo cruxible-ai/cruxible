@@ -329,6 +329,10 @@ risks. It answers what is true, proposed, reviewed, or constrained. *Which
 assets are exposed to a known exploited vulnerability? Which supplier incident
 affects which products and shipments?*
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/ui_state_graph.png" alt="Cruxible state graph: a supply-chain domain of 780 entities and 1,734 edges, dots colored by entity type, with edge strokes carrying governance review state" width="900">
+</p>
+
 **Agent operating state** is the durable coordination layer for the work
 itself: work items, review requests, decisions, open questions, risks,
 actors, dependencies, lineage. It tracks what's active or blocked, why, who
