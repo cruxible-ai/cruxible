@@ -64,7 +64,7 @@ the guard runs identically in dry-run and reports the same rejection.
 ### Payload shape
 
 `verdict.yaml` for a `changes_requested` verdict on `RR-128`, authored by
-actor `codex-reviewer`:
+actor `reviewer-agent`:
 
 ```yaml
 entities:
@@ -96,7 +96,7 @@ relationships:
     from_id: SN-RR-128-2026-06-22-01
     relationship_type: state_note_authored_by_actor
     to_type: Actor
-    to_id: codex-reviewer
+    to_id: reviewer-agent
 ```
 
 For `approved` or `withdrawn`, change only `ReviewRequest.status` and the
