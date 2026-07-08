@@ -151,7 +151,7 @@ def _pdf_to_markdown_docling(
     path = _require_artifact_path(context, "pdf_to_markdown")
     module = _optional_import(
         "docling.document_converter",
-        "docling backend requires installing the docling package",
+        'docling backend requires the pdf extra: pip install "cruxible[pdf]"',
     )
     converter = module.DocumentConverter()
     conversion_options: dict[str, Any] = {}

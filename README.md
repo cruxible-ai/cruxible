@@ -53,7 +53,7 @@ types, deterministic workflows, write rules. The runtime enforces it.
 ## Get Started
 
 ```bash
-pip install "cruxible[server]"
+pip install cruxible
 ```
 
 Start the daemon in one shell. Auth is on because agent identity lives in

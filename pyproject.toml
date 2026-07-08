@@ -33,25 +33,27 @@ dependencies = [
     "click>=8.0",
     "rich>=13.0",
     "httpx>=0.24",
-    "docling>=2.0",
     "pypdf>=5.0",
     "markdown-it-py>=4.0",
-]
-
-[project.optional-dependencies]
-mcp = ["mcp>=1.0"]
-server = [
     "fastapi>=0.100",
     "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.20",
 ]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]
+# The daemon ships in the default install; kept as an empty alias so
+# `pip install "cruxible[server]"` from older docs keeps working.
+server = []
+# Layout-aware PDF parsing (the pdf_to_markdown docling backend) pulls the
+# docling ML stack (~1GB incl. torch); opt in when you need it.
+pdf = ["docling>=2.0"]
 dev = [
     "pytest>=8.0",
     "pytest-cov",
     "ruff==0.15.0",
     "mypy>=1.10",
-    "fastapi>=0.100",
-    "python-multipart>=0.0.9",
+    "docling>=2.0",
 ]
 
 [project.scripts]

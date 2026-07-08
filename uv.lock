@@ -405,34 +405,33 @@ source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "cruxible-client" },
-    { name = "docling" },
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "markdown-it-py" },
     { name = "networkx" },
     { name = "polars" },
     { name = "pydantic" },
     { name = "pypdf" },
+    { name = "python-multipart" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "structlog" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
 dev = [
-    { name = "fastapi" },
+    { name = "docling" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
-    { name = "python-multipart" },
     { name = "ruff" },
 ]
 mcp = [
     { name = "mcp" },
 ]
-server = [
-    { name = "fastapi" },
-    { name = "python-multipart" },
-    { name = "uvicorn", extra = ["standard"] },
+pdf = [
+    { name = "docling" },
 ]
 
 [package.dev-dependencies]
@@ -445,9 +444,9 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
     { name = "cruxible-client", editable = "packages/cruxible-client" },
-    { name = "docling", specifier = ">=2.0" },
-    { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.100" },
-    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.100" },
+    { name = "docling", marker = "extra == 'dev'", specifier = ">=2.0" },
+    { name = "docling", marker = "extra == 'pdf'", specifier = ">=2.0" },
+    { name = "fastapi", specifier = ">=0.100" },
     { name = "httpx", specifier = ">=0.24" },
     { name = "markdown-it-py", specifier = ">=4.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
@@ -458,15 +457,14 @@ requires-dist = [
     { name = "pypdf", specifier = ">=5.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
-    { name = "python-multipart", marker = "extra == 'dev'", specifier = ">=0.0.9" },
-    { name = "python-multipart", marker = "extra == 'server'", specifier = ">=0.0.9" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.0" },
     { name = "structlog", specifier = ">=24.0" },
-    { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.20" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.20" },
 ]
-provides-extras = ["mcp", "server", "dev"]
+provides-extras = ["mcp", "server", "pdf", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
