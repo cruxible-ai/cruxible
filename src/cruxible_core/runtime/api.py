@@ -267,7 +267,16 @@ def _hosted_actor_context(value: Any) -> GovernedActorContext | None:
     from cruxible_core.server.config import is_server_auth_enabled
 
     if not is_server_auth_enabled():
-        actor = _local_operator_actor_context(value)
+        # Auth-off: an explicitly supplied actor_context is honored as before
+        # (embedded and hosted callers assert identity deliberately; silently
+        # rewriting it to the operator would distort provenance). The declared
+        # local operator is the DEFAULT for requests that supply nothing, so
+        # the resolved actor stays non-None and payload-metadata actor
+        # spoofing remains overridden downstream.
+        if value is not None:
+            actor = require_hosted_actor_context(value)
+        else:
+            actor = _local_operator_actor_context(None)
         _record_actor_operation(actor)
         return actor
     if value is None:
