@@ -160,7 +160,7 @@ named_queries:
       traversed too.
     include: all_adjacent
     select:
-      properties: [agent_version_id, label, status]
+      properties: [label, status]
 
   agent_system_release_context:
     mode: traversal

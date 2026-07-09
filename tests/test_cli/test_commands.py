@@ -257,6 +257,51 @@ class TestQuery:
         assert "Receipt:" in result.output
         assert "2 result(s), 1 step(s) executed." in result.output
 
+    def test_query_projected_json_preserves_source(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        config = populated_instance.load_config()
+        config.named_queries["projected_parts_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
+            entry_point="Vehicle",
+            traversal=[
+                {
+                    "relationship": "fits",
+                    "direction": "incoming",
+                    "filter": {"verified": True},
+                }
+            ],
+            returns="list[Part]",
+            result_shape="entity",
+            select={
+                "part_number": "$result.entity_id",
+                "name": "$result.properties.name",
+            },
+        )
+        populated_instance.save_config(config)
+
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "query",
+                "run",
+                "projected_parts_for_vehicle",
+                "--param",
+                "vehicle_id=V-2024-CIVIC-EX",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        item = payload["items"][0]
+        assert item["values"]["part_number"] in {"BP-1001", "BP-1002"}
+        assert item["source"]["entity_type"] == "Part"
+        assert item["source"]["entity_id"] == item["values"]["part_number"]
+
     def test_query_bad_name(
         self,
         runner: CliRunner,

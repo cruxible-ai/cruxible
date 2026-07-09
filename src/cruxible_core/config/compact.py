@@ -713,6 +713,7 @@ def _expand_select(
     raw_select: dict[str, Any],
     *,
     anchor: str,
+    query_returns: str,
     primary_key: str | None,
     rel_index: dict[str, RelInfo],
     include_names: set[str],
@@ -726,10 +727,20 @@ def _expand_select(
     output field -> error if unaliased).
     """
     out: dict[str, Any] = {}
+    normalized_returns = _normalize_select_returns(query_returns)
+    identity_projection = normalized_returns == "AnyEntity" or normalized_returns != anchor
 
-    # `properties: [a, b, <pk>]` -> a: $result.properties.a ; <pk> -> $result.entity_id
+    if identity_projection:
+        out["entity_type"] = "$result.entity_type"
+        out["entity_id"] = "$result.entity_id"
+
+    # For homogeneous entity projections, bind the declared pk name to entity_id.
+    # Heterogeneous projections use generic identity columns and treat every
+    # property name as an opportunistic property lookup.
     for prop in raw_select.get("properties", []):
-        if primary_key is not None and prop == primary_key:
+        if identity_projection and prop in out:
+            continue
+        if not identity_projection and primary_key is not None and prop == primary_key:
             out[prop] = "$result.entity_id"
         else:
             out[prop] = f"$result.properties.{prop}"
@@ -756,6 +767,13 @@ def _expand_select(
         out[key] = value
 
     return out
+
+
+def _normalize_select_returns(returns: str) -> str:
+    value = str(returns).strip()
+    if value.startswith("list[") and value.endswith("]"):
+        return value[5:-1].strip()
+    return value
 
 
 def _iter_select_edges(
@@ -1066,6 +1084,7 @@ def _expand_named_query(
         out["select"] = _expand_select(
             select,
             anchor=include_anchor,
+            query_returns=returns,
             primary_key=primary_key,
             rel_index=rel_index,
             include_names=set(includes),

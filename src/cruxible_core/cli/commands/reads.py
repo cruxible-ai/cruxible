@@ -145,7 +145,7 @@ def _query_rows_payload(rows: list[Any]) -> list[dict[str, Any]]:
     payload: list[dict[str, Any]] = []
     for row in rows:
         if hasattr(row, "model_dump"):
-            payload.append(dump_query_row(row, mode="python"))
+            payload.append(dump_query_row(row, include_source=True, mode="python"))
         else:
             payload.append(dict(row))
     return payload
@@ -157,7 +157,7 @@ def _query_result_item_payloads(items: list[Any]) -> list[dict[str, Any]]:
         if isinstance(item, dict):
             payload.append(item)
         elif isinstance(item, ProjectedQueryRow):
-            payload.append(dump_query_row(item, mode="python"))
+            payload.append(dump_query_row(item, include_source=True, mode="python"))
         elif hasattr(item, "model_dump"):
             payload.append(item.model_dump(mode="python"))
         else:

@@ -1461,6 +1461,140 @@ class TestCoreConfigQueryValidation:
                 },
             )
 
+    def test_concrete_query_select_allows_declared_property_and_primary_key(self):
+        config = CoreConfig(
+            name="select_property_refs",
+            entity_types={
+                "Part": EntityTypeSchema(
+                    properties={
+                        "part_number": PropertySchema(primary_key=True),
+                        "brand": PropertySchema(),
+                    }
+                )
+            },
+            named_queries={
+                "parts": NamedQuerySchema(
+                    mode="collection",
+                    result_shape="entity",
+                    returns="Part",
+                    select={
+                        "part_id": "$result.entity_id",
+                        "part_number": "$result.properties.part_number",
+                        "brand": "$result.properties.brand",
+                    },
+                )
+            },
+        )
+
+        assert config.named_queries["parts"].select is not None
+
+    def test_concrete_query_select_rejects_unknown_result_property(self):
+        with pytest.raises(
+            ValidationError,
+            match=(
+                "Named query 'parts' select reference '\\$result\\.properties\\.unknown' "
+                "is not a property or primary key of return type 'Part'"
+            ),
+        ):
+            CoreConfig(
+                name="select_property_refs",
+                entity_types={
+                    "Part": EntityTypeSchema(
+                        properties={"part_number": PropertySchema(primary_key=True)}
+                    )
+                },
+                named_queries={
+                    "parts": NamedQuerySchema(
+                        mode="collection",
+                        result_shape="entity",
+                        returns="Part",
+                        select={"unknown": "$result.properties.unknown"},
+                    )
+                },
+            )
+
+    def test_anyentity_query_select_allows_opportunistic_result_property(self):
+        config = CoreConfig(
+            name="anyentity_select_property_refs",
+            entity_types={
+                "WorkItem": EntityTypeSchema(
+                    properties={"work_item_id": PropertySchema(primary_key=True)}
+                ),
+                "StateNote": EntityTypeSchema(
+                    properties={
+                        "note_id": PropertySchema(primary_key=True),
+                        "title": PropertySchema(optional=True),
+                    }
+                ),
+            },
+            relationships=[
+                RelationshipSchema(
+                    name="state_note_about_work_item",
+                    from_entity="StateNote",
+                    to_entity="WorkItem",
+                )
+            ],
+            named_queries={
+                "work_item_context": NamedQuerySchema(
+                    mode="traversal",
+                    entry_point="WorkItem",
+                    traversal=[
+                        TraversalStep(
+                            relationship="state_note_about_work_item",
+                            direction="incoming",
+                        )
+                    ],
+                    returns="AnyEntity",
+                    select={"title": "$result.properties.title"},
+                )
+            },
+        )
+
+        assert config.named_queries["work_item_context"].returns == "AnyEntity"
+
+    def test_anyentity_query_select_rejects_entry_primary_key_property(self):
+        with pytest.raises(
+            ValidationError,
+            match=(
+                "Named query 'work_item_context' select reference "
+                "'\\$result\\.properties\\.work_item_id' uses entry type 'WorkItem' "
+                "primary key 'work_item_id'; identity columns are auto-emitted for "
+                "AnyEntity returns"
+            ),
+        ):
+            CoreConfig(
+                name="anyentity_select_property_refs",
+                entity_types={
+                    "WorkItem": EntityTypeSchema(
+                        properties={"work_item_id": PropertySchema(primary_key=True)}
+                    ),
+                    "StateNote": EntityTypeSchema(
+                        properties={"note_id": PropertySchema(primary_key=True)}
+                    ),
+                },
+                relationships=[
+                    RelationshipSchema(
+                        name="state_note_about_work_item",
+                        from_entity="StateNote",
+                        to_entity="WorkItem",
+                    )
+                ],
+                named_queries={
+                    "work_item_context": NamedQuerySchema(
+                        mode="traversal",
+                        entry_point="WorkItem",
+                        traversal=[
+                            TraversalStep(
+                                relationship="state_note_about_work_item",
+                                direction="incoming",
+                            )
+                        ],
+                        returns="AnyEntity",
+                        select={"work_item_id": "$result.properties.work_item_id"},
+                    )
+                },
+            )
+
     def test_query_order_by_accepts_ordered_enum_ref(self):
         config = CoreConfig(
             name="test",

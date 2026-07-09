@@ -947,6 +947,53 @@ class TestExecuteQuery:
             ("Vehicle", "V-CIVIC"),
         }
 
+    def test_projected_anyentity_context_uses_identity_and_omits_missing_properties(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        config.named_queries["part_context_projected"] = NamedQuerySchema(
+            mode="traversal",
+            entry_point="Part",
+            traversal=[
+                TraversalStep(
+                    relationship=["fits", "replaces"],
+                    direction="both",
+                    alias="context",
+                )
+            ],
+            returns="AnyEntity",
+            result_shape="path",
+            select={
+                "entity_type": "$result.entity_type",
+                "entity_id": "$result.entity_id",
+                "part_number": "$result.properties.part_number",
+                "vehicle_id": "$result.properties.vehicle_id",
+                "brand": "$result.properties.brand",
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "part_context_projected",
+            {"part_number": "BP-1234"},
+        )
+
+        values_by_identity = {
+            (row.values["entity_type"], row.values["entity_id"]): row.values
+            for row in result.results
+            if isinstance(row, ProjectedQueryRow)
+        }
+        vehicle = values_by_identity[("Vehicle", "V-CIVIC")]
+        assert vehicle["entity_type"] == "Vehicle"
+        assert vehicle["entity_id"] == "V-CIVIC"
+        assert vehicle["vehicle_id"] == "V-CIVIC"
+        assert "part_number" not in vehicle
+        assert "brand" not in vehicle
+        part = values_by_identity[("Part", "BP-5678")]
+        assert part["part_number"] == "BP-5678"
+        assert part["brand"] == "Brembo"
+        assert "vehicle_id" not in part
+
     def test_vehicles_for_part(self, config: CoreConfig, graph: EntityGraph):
         result = execute_query(config, graph, "vehicles_for_part", {"part_number": "BP-1234"})
         vehicle_ids = {r.entity_id for r in result.results}
@@ -2981,6 +3028,11 @@ class TestPathResults:
 
 class TestProjectionOrderingAndLimit:
     def test_projected_entity_query_rows(self, config, graph):
+        config.entity_types["Part"].properties["nullable"] = PropertySchema(
+            type="string",
+            optional=True,
+        )
+        graph.update_entity_properties("Part", "BP-1234", {"nullable": None})
         config.named_queries["projected_parts"] = NamedQuerySchema(
             mode="traversal",
             entry_point="Vehicle",
@@ -2998,6 +3050,7 @@ class TestProjectionOrderingAndLimit:
                 "part_id": "$result.entity_id",
                 "brand": "$result.properties.brand",
                 "missing": "$result.properties.unknown",
+                "nullable": "$result.properties.nullable",
                 "input_vehicle": "$input.vehicle_id",
             },
         )
@@ -3010,7 +3063,8 @@ class TestProjectionOrderingAndLimit:
         assert row.values["vehicle_id"] == "V-CIVIC"
         assert row.values["part_id"] == "BP-1234"
         assert row.values["brand"] == "StopTech"
-        assert row.values["missing"] is None
+        assert "missing" not in row.values
+        assert row.values["nullable"] is None
         assert row.values["input_vehicle"] == "V-CIVIC"
         assert isinstance(row.source, EntityInstance)
         assert dump_query_row(row) == {"values": row.values}

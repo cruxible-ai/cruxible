@@ -560,13 +560,13 @@ def test_all_adjacent_does_not_alter_result_shape() -> None:
             relationship_state: reviewable
             include: all_adjacent
             select:
-              properties: [work_item_id, title]
+              properties: [title]
         """,
     )
     query = config["named_queries"]["q"]
     assert query["returns"] == "AnyEntity"
     # select owns the fields, not the include set.
-    assert set(query["select"]) == {"work_item_id", "title"}
+    assert set(query["select"]) == {"entity_type", "entity_id", "title"}
     # result_shape stays path (traversal default); include did not change it.
     assert query["result_shape"] == "path"
 
@@ -1014,9 +1014,33 @@ def test_select_properties_and_pk() -> None:
         """,
     )
     select = config["named_queries"]["q"]["select"]
+    assert list(select) == ["work_item_id", "title", "status"]
     assert select["work_item_id"] == "$result.entity_id"
     assert select["title"] == "$result.properties.title"
     assert select["status"] == "$result.properties.status"
+
+
+def test_select_anyentity_auto_identity_and_no_pk_binding() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: WorkItem
+            returns: AnyEntity
+            relationship_state: reviewable
+            include: all_adjacent
+            select:
+              properties: [work_item_id, title]
+        """,
+    )
+    select = config["named_queries"]["q"]["select"]
+    assert list(select)[:2] == ["entity_type", "entity_id"]
+    assert select["entity_type"] == "$result.entity_type"
+    assert select["entity_id"] == "$result.entity_id"
+    assert select["work_item_id"] == "$result.properties.work_item_id"
+    assert select["title"] == "$result.properties.title"
 
 
 def test_select_counts_list_and_alias() -> None:

@@ -474,6 +474,18 @@ def _split_query_ref(ref: str) -> tuple[str, str]:
     return scope, path
 
 
+def _result_property_refs(select: dict[str, Any]) -> list[tuple[str, str]]:
+    refs: list[tuple[str, str]] = []
+    for ref in _collect_query_refs(select):
+        scope, path = _split_query_ref(ref)
+        if scope != "result":
+            continue
+        parts = path.split(".")
+        if len(parts) >= 2 and parts[0] == "properties":
+            refs.append((ref, parts[1]))
+    return refs
+
+
 class TraversalStep(BaseModel):
     """A single step in a named query's traversal path.
 
@@ -2471,6 +2483,54 @@ class CoreConfig(BaseModel):
         if enum_schema.ordered != "low_to_high":
             msg = f"{location} references enum_ref '{order.enum_ref}', but that enum is not ordered"
             raise ValueError(msg)
+
+    @model_validator(mode="after")
+    def validate_query_select_property_refs(self, info: ValidationInfo) -> CoreConfig:
+        """Check selected result-property refs against declared return identity."""
+        partial_layer = self._is_partial_layer(info)
+        for query_name, query in self.named_queries.items():
+            if query.select is None or query.result_shape == "relationship":
+                continue
+            return_type = _normalize_query_entity_returns(query.returns)
+            result_property_refs = _result_property_refs(query.select)
+            if return_type == "AnyEntity":
+                entry_type = query.entry_point
+                if entry_type is None:
+                    continue
+                entry_schema = self.entity_types.get(entry_type)
+                if entry_schema is None:
+                    if partial_layer:
+                        continue
+                    continue
+                entry_pk = entry_schema.get_primary_key()
+                if entry_pk is None:
+                    continue
+                for ref, prop_name in result_property_refs:
+                    if prop_name == entry_pk:
+                        raise ValueError(
+                            f"Named query '{query_name}' select reference '{ref}' uses "
+                            f"entry type '{entry_type}' primary key '{entry_pk}'; identity "
+                            "columns are auto-emitted for AnyEntity returns"
+                        )
+                continue
+
+            entity_schema = self.entity_types.get(return_type)
+            if entity_schema is None:
+                if partial_layer:
+                    continue
+                continue
+            allowed_properties = set(entity_schema.properties)
+            primary_key = entity_schema.get_primary_key()
+            if primary_key is not None:
+                allowed_properties.add(primary_key)
+            for ref, prop_name in result_property_refs:
+                if prop_name in allowed_properties:
+                    continue
+                raise ValueError(
+                    f"Named query '{query_name}' select reference '{ref}' is not a property "
+                    f"or primary key of return type '{return_type}'"
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_relationship_query_returns(self, info: ValidationInfo) -> CoreConfig:

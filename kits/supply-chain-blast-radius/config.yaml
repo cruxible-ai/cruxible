@@ -338,7 +338,7 @@ named_queries:
     description: The incident war room — impacted suppliers/components/assemblies, response work, and anything else adjacent in the composed graph.
     include: all_adjacent
     select:
-      properties: [incident_id, title, severity, status]
+      properties: [title, severity, status]
 
   supplier_context:
     mode: traversal
@@ -348,7 +348,7 @@ named_queries:
     description: Everything attached to a supplier — supplied items, impacting incidents, attached risks.
     include: all_adjacent
     select:
-      properties: [supplier_id, name, primary_geography]
+      properties: [name, primary_geography]
 
   supplier_supplied_components:
     mode: traversal

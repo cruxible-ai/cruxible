@@ -545,7 +545,7 @@ named_queries:
       against the composed config, so base seam edges are traversed too.
     include: all_adjacent
     select:
-      properties: [matter_id, name, status]
+      properties: [name, status]
 
   opinion_context:
     mode: traversal
@@ -555,7 +555,7 @@ named_queries:
     description: Court, judges, citations, treatments, holdings, impacts, and created work for one opinion.
     include: all_adjacent
     select:
-      properties: [opinion_id, case_name, citation]
+      properties: [case_name, citation]
 
 decision_policies:
   - name: matter_scope_requires_review

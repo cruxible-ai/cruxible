@@ -26,6 +26,9 @@ if TYPE_CHECKING:
     from cruxible_core.config.schema import CoreConfig, QueryOrderSpec
 
 
+_MISSING = object()
+
+
 @dataclass(frozen=True)
 class QueryRowContext:
     """Internal base row plus evidence needed for projection and ordering."""
@@ -46,10 +49,14 @@ def project_query_row(
     params: dict[str, Any],
 ) -> ProjectedQueryRow:
     """Build a projected row while preserving the base source row."""
+    values: dict[str, Any] = {}
+    for key, value in select.items():
+        resolved = _resolve_projection_value(value, context, params)
+        if resolved is _MISSING:
+            continue
+        values[key] = resolved
     return ProjectedQueryRow(
-        values={
-            key: _resolve_projection_value(value, context, params) for key, value in select.items()
-        },
+        values=values,
         source=context.row,
     )
 
@@ -87,6 +94,8 @@ def resolve_query_row_ref(
     ref: str,
     context: QueryRowContext,
     params: dict[str, Any],
+    *,
+    missing_value: Any = None,
 ) -> Any:
     """Resolve one query row reference against base row evidence."""
     scope, path = _split_query_ref(ref)
@@ -96,31 +105,31 @@ def resolve_query_row_ref(
             raise QueryExecutionError(f"Missing query input reference '{ref}'")
         return value
     if scope == "entry":
-        return _optional_path(ref, context.entry, path)
+        return _optional_path(ref, context.entry, path, missing_value=missing_value)
     if scope == "result":
-        return _optional_path(ref, context.result, path)
+        return _optional_path(ref, context.result, path, missing_value=missing_value)
     if scope == "path":
-        return _resolve_path_ref(ref, path, context)
+        return _resolve_path_ref(ref, path, context, missing_value=missing_value)
     if scope == "include":
-        return _resolve_include_ref(ref, path, context)
+        return _resolve_include_ref(ref, path, context, missing_value=missing_value)
     if scope == "relationship":
         if not isinstance(context.row, QueryRelationshipRow):
             raise QueryExecutionError(
                 f"Query reference '{ref}' is only available for relationship rows"
             )
-        return _optional_path(ref, context.row, path)
+        return _optional_path(ref, context.row, path, missing_value=missing_value)
     if scope == "from_entity":
         if not isinstance(context.row, QueryRelationshipRow):
             raise QueryExecutionError(
                 f"Query reference '{ref}' is only available for relationship rows"
             )
-        return _optional_path(ref, context.row.from_entity, path)
+        return _optional_path(ref, context.row.from_entity, path, missing_value=missing_value)
     if scope == "to_entity":
         if not isinstance(context.row, QueryRelationshipRow):
             raise QueryExecutionError(
                 f"Query reference '{ref}' is only available for relationship rows"
             )
-        return _optional_path(ref, context.row.to_entity, path)
+        return _optional_path(ref, context.row.to_entity, path, missing_value=missing_value)
     raise QueryExecutionError(f"Unsupported query reference '{ref}'")
 
 
@@ -156,13 +165,23 @@ def _resolve_projection_value(
     params: dict[str, Any],
 ) -> Any:
     if isinstance(value, str) and value.startswith("$"):
-        return resolve_query_row_ref(value, context, params)
+        return resolve_query_row_ref(value, context, params, missing_value=_MISSING)
     if isinstance(value, list):
-        return [_resolve_projection_value(item, context, params) for item in value]
+        items: list[Any] = []
+        for item in value:
+            resolved = _resolve_projection_value(item, context, params)
+            if resolved is _MISSING:
+                continue
+            items.append(resolved)
+        return items
     if isinstance(value, dict):
-        return {
-            key: _resolve_projection_value(item, context, params) for key, item in value.items()
-        }
+        items: dict[str, Any] = {}
+        for key, item in value.items():
+            resolved = _resolve_projection_value(item, context, params)
+            if resolved is _MISSING:
+                continue
+            items[key] = resolved
+        return items
     return value
 
 
@@ -245,6 +264,8 @@ def _resolve_path_ref(
     ref: str,
     path: list[str],
     context: QueryRowContext,
+    *,
+    missing_value: Any = None,
 ) -> Any:
     if len(path) < 2:
         raise QueryExecutionError(
@@ -260,13 +281,13 @@ def _resolve_path_ref(
     if segment is None:
         return None
     if section == "edge":
-        return _optional_path(ref, segment, field_path)
+        return _optional_path(ref, segment, field_path, missing_value=missing_value)
     if section == "source":
         entity = _find_path_entity(context.entities, segment.from_type, segment.from_id)
-        return _optional_path(ref, entity, field_path)
+        return _optional_path(ref, entity, field_path, missing_value=missing_value)
     if section == "target":
         entity = _find_path_entity(context.entities, segment.to_type, segment.to_id)
-        return _optional_path(ref, entity, field_path)
+        return _optional_path(ref, entity, field_path, missing_value=missing_value)
     raise QueryExecutionError(
         f"Path query reference '{ref}' must use edge, source, or target after alias"
     )
@@ -276,6 +297,8 @@ def _resolve_include_ref(
     ref: str,
     path: list[str],
     context: QueryRowContext,
+    *,
+    missing_value: Any = None,
 ) -> Any:
     if not path:
         raise QueryExecutionError(f"Include query reference '{ref}' must include an alias")
@@ -288,7 +311,7 @@ def _resolve_include_ref(
 
     section, *rest = field_path
     if section in {"alias", "many", "exists", "count", "limit", "truncated", "items"}:
-        return _optional_path(ref, include, field_path)
+        return _optional_path(ref, include, field_path, missing_value=missing_value)
     if section not in {"edge", "source", "target"}:
         raise QueryExecutionError(
             f"Include query reference '{ref}' must use exists, count, truncated, "
@@ -302,7 +325,7 @@ def _resolve_include_ref(
     if not include.items:
         return None
     item = include.items[0]
-    return _optional_path(ref, getattr(item, section), rest)
+    return _optional_path(ref, getattr(item, section), rest, missing_value=missing_value)
 
 
 def _path_segment_by_alias(
@@ -333,7 +356,13 @@ def _find_path_entity(
     return None
 
 
-def _optional_path(ref: str, value: Any, path: list[str]) -> Any:
+def _optional_path(
+    ref: str,
+    value: Any,
+    path: list[str],
+    *,
+    missing_value: Any = None,
+) -> Any:
     if value is None:
         return None
     current = value
@@ -351,7 +380,7 @@ def _optional_path(ref: str, value: Any, path: list[str]) -> Any:
             continue
         resolved = resolve_path(current, [part])
         if is_missing_path(resolved):
-            return None
+            return missing_value
         current = resolved
     return current
 

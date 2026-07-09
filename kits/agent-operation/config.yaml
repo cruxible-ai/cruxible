@@ -248,7 +248,7 @@ named_queries:
         limit: 10
         order: created_at desc datetime
     select:
-      properties: [work_item_id, title, status, priority]
+      properties: [title, status, priority]
 
   actor_work_queue:
     mode: traversal

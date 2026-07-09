@@ -1493,7 +1493,7 @@ def _query_tool_result(
     return contracts.QueryToolResult(
         items=cast(
             list[contracts.QueryItem],
-            [dump_query_row(row, mode="json") for row in result.items],
+            [dump_query_row(row, include_source=True, mode="json") for row in result.items],
         ),
         receipt_id=result.receipt_id,
         receipt=(
