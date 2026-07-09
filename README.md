@@ -25,7 +25,7 @@ types, deterministic workflows, write rules. The runtime enforces it.
   <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_architecture.svg" alt="Cruxible architecture: source systems are pinned as artifacts, workflows propose row-matched claims into domain state, the agent operation layer reviews and mints them, and reads come back as deterministic queries with receipts" width="740">
 </p>
 
-- **State enters deterministically.** Exports and tables from real systems
+- **Ingest is deterministic.** Exports and tables from real systems
   are pinned as artifacts and matched row by row into proposals; model
   judgment is injected only where your pinned domain logic can't decide.
 
