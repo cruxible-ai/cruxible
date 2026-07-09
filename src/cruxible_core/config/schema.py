@@ -2501,7 +2501,10 @@ class CoreConfig(BaseModel):
                 if entry_schema is None:
                     if partial_layer:
                         continue
-                    continue
+                    raise ValueError(
+                        f"Named query '{query_name}' select references entry type "
+                        f"'{entry_type}', which is not a declared entity type"
+                    )
                 entry_pk = entry_schema.get_primary_key()
                 if entry_pk is None:
                     continue
@@ -2518,7 +2521,10 @@ class CoreConfig(BaseModel):
             if entity_schema is None:
                 if partial_layer:
                     continue
-                continue
+                raise ValueError(
+                    f"Named query '{query_name}' select references return type "
+                    f"'{return_type}', which is not a declared entity type"
+                )
             allowed_properties = set(entity_schema.properties)
             primary_key = entity_schema.get_primary_key()
             if primary_key is not None:

@@ -1513,6 +1513,31 @@ class TestCoreConfigQueryValidation:
                 },
             )
 
+    def test_query_select_rejects_unresolved_return_type_on_composed_config(self):
+        with pytest.raises(
+            ValidationError,
+            match=(
+                "Named query 'parts' select references return type 'Ghost', "
+                "which is not a declared entity type"
+            ),
+        ):
+            CoreConfig(
+                name="select_unresolved_return_type",
+                entity_types={
+                    "Part": EntityTypeSchema(
+                        properties={"part_number": PropertySchema(primary_key=True)}
+                    )
+                },
+                named_queries={
+                    "parts": NamedQuerySchema(
+                        mode="collection",
+                        result_shape="entity",
+                        returns="Ghost",
+                        select={"part_number": "$result.properties.part_number"},
+                    )
+                },
+            )
+
     def test_anyentity_query_select_allows_opportunistic_result_property(self):
         config = CoreConfig(
             name="anyentity_select_property_refs",

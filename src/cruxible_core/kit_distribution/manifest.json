@@ -3,18 +3,18 @@
   "kits": {
     "agent-operation": {
       "asset": "agent-operation-0.2.0.tar.gz",
-      "dir_digest": "sha256:31b38436a956f83ab37ba5223a8704ab0e50079aeadf99b020c4927723df3a63",
-      "tarball_sha256": "6e569f1d65173b64c73bf5168a8ba97e3082e6b13078a52f157e10b54f68c943"
+      "dir_digest": "sha256:5eb69412193298cdc120ec5d80d73ea346e9f41210efed94503e9df3edd7c17a",
+      "tarball_sha256": "44e38dfaf2a593a44a3aad15958afa176da75e0f76c3361ab720cc9cb923a968"
     },
     "agent-release": {
       "asset": "agent-release-0.2.0.tar.gz",
-      "dir_digest": "sha256:36f4b13645874c8fef5aa0089db8ccc88de01bc0d3bf1cda176c5c7c36f7b9f1",
-      "tarball_sha256": "021d1a4547db871f98b95e3aa42c02e58eac26d623e84b371d0d8a93072fe76c"
+      "dir_digest": "sha256:9271115abdbcf94e9d39556644cefb4a5541b5b2a145cc90afa6384935fb8ec6",
+      "tarball_sha256": "cc025b771066ac263eb1e52be0259f7004df48fe238ab6d199d614f9f0c169fe"
     },
     "case-law-monitoring": {
       "asset": "case-law-monitoring-0.2.0.tar.gz",
-      "dir_digest": "sha256:337d26793c603cf65d39149d0bf1a2622fd7bc195d587fd49ef92eb2d83dd803",
-      "tarball_sha256": "b0e42a13b8eace4ebf134afbb16c4e2f1f51b3015eb9953b687f85fcadd0cdd1"
+      "dir_digest": "sha256:ba86c06179670d6a8dda2969e39ffc8603fddc6be431a1f9794aaa48acc35d1c",
+      "tarball_sha256": "09c5aacc26bb66e2f4daf0877d1c7e9a54bb6dfa84ccd64a0b9c4ff701f8d83c"
     },
     "kev-reference": {
       "asset": "kev-reference-0.2.0.tar.gz",
@@ -33,8 +33,8 @@
     },
     "supply-chain-blast-radius": {
       "asset": "supply-chain-blast-radius-0.2.0.tar.gz",
-      "dir_digest": "sha256:20fad4ca2c9bffe3e015c8b1faf34dd3c57cf71d1db461a058f247eb317bb02d",
-      "tarball_sha256": "3d79644c50095f973ea92f28472ceea52ad1defe89adfb39c8e7fc8005d1ffac"
+      "dir_digest": "sha256:e7c44c39ad5255d8feb78612058fb49bcb9b0b4e46432218d9f42e91d0794adb",
+      "tarball_sha256": "e02d4b8106b097356113836364bd4151201082223062261c583ea170b68090c4"
     }
   },
   "version": "0.2.0"
