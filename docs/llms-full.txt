@@ -1,6 +1,6 @@
 # Cruxible Docs — full documentation
 
-> Cruxible is one shared truth for humans and AI agents: a typed, governed state layer where every write is reviewed before it is accepted and every answer carries a receipt. Open source, Apache 2.0. Kit catalog: https://cruxible.ai/kits · Skills: https://cruxible.ai/skills
+> Cruxible is one shared truth for humans and AI agents: a typed state layer where every write is governed before it is accepted and every answer carries a receipt. Open source, Apache 2.0. Kit catalog: https://cruxible.ai/kits · Skills: https://cruxible.ai/skills
 
 
 ========================================================================
@@ -9,8 +9,8 @@ SOURCE: https://docs.cruxible.ai/
 
 # Cruxible documentation
 
-Cruxible is one shared truth for humans and AI agents: a typed, governed
-state layer where every write is reviewed before it's accepted and every
+Cruxible is one shared truth for humans and AI agents: a typed
+state layer where every write is governed before it's accepted and every
 answer comes back with a receipt. These docs are built from the
 repository's `docs/` directory at the documented commit — what you read
 here is what the code ships.

@@ -24,8 +24,8 @@ DOCS = REPO_ROOT / "docs"
 SITE_URL = "https://docs.cruxible.ai"
 
 SUMMARY = (
-    "Cruxible is one shared truth for humans and AI agents: a typed, "
-    "governed state layer where every write is reviewed before it is "
+    "Cruxible is one shared truth for humans and AI agents: a typed "
+    "state layer where every write is governed before it is "
     "accepted and every answer carries a receipt. Open source, Apache 2.0. "
     "Kit catalog: https://cruxible.ai/kits · Skills: https://cruxible.ai/skills"
 )

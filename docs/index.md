@@ -1,7 +1,7 @@
 # Cruxible documentation
 
-Cruxible is one shared truth for humans and AI agents: a typed, governed
-state layer where every write is reviewed before it's accepted and every
+Cruxible is one shared truth for humans and AI agents: a typed
+state layer where every write is governed before it's accepted and every
 answer comes back with a receipt. These docs are built from the
 repository's `docs/` directory at the documented commit — what you read
 here is what the code ships.
