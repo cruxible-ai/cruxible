@@ -509,7 +509,7 @@ class TestOutputSchema:
                 "cruxible_list_snapshots",
                 {"items", "total", "limit", "offset", "truncated"},
             ),
-            ("cruxible_clone_snapshot", {"instance_id", "snapshot"}),
+            ("cruxible_clone_snapshot", {"instance_id", "snapshot", "admin_credential"}),
             (
                 "cruxible_get_entity",
                 {"found", "entity_type", "entity_id", "properties", "metadata"},
