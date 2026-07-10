@@ -2596,9 +2596,64 @@ def test_clone_snapshot_no_activate_leaves_active_instance(
 
     assert result.exit_code == 0
     assert "instance inst_clone" in result.output
+    assert "Clone admin token" not in result.output
     assert "Active instance unchanged: inst_old" in result.output
     shown = runner.invoke(cli, ["context", "show", "--json"])
     assert json.loads(shown.output)["instance_id"] == "inst_old"
+
+
+def test_clone_snapshot_prints_one_time_admin_token_from_auth_enabled_daemon(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    """The clone response's one-time ADMIN token must be surfaced or it is lost."""
+
+    class StubClient:
+        def clone_snapshot(self, instance_id, *, snapshot_id, root_dir):
+            assert instance_id == "inst_123"
+            return contracts.CloneSnapshotResult(
+                instance_id="inst_clone",
+                snapshot=contracts.SnapshotMetadata(
+                    snapshot_id=snapshot_id,
+                    created_at="2026-03-21T00:00:00Z",
+                    label=None,
+                    config_digest="sha256:abc",
+                    lock_digest=None,
+                    graph_digest="sha256:def",
+                    parent_snapshot_id=None,
+                    origin_snapshot_id=None,
+                ),
+                admin_credential=contracts.RuntimeCredentialBootstrapResult(
+                    credential_id="rcred_fake",
+                    instance_id="inst_clone",
+                    permission_mode="admin",
+                    token="crt_rcred_fake_stub-token",
+                ),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "clone",
+            "--snapshot",
+            "snap_1",
+            "--root-dir",
+            str(tmp_path / "cloned"),
+            "--no-activate",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "instance inst_clone" in result.output
+    assert "Credential ID: rcred_fake" in result.output
+    assert "Clone admin token: crt_rcred_fake_stub-token" in result.output
+    assert "Save it now" in result.output
 
 
 def test_governed_write_commands_delegate_to_client_in_server_mode(
