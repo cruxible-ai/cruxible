@@ -2448,6 +2448,7 @@ def reload_config(
     instance_id: str,
     config_path: str | None = None,
     config_yaml: str | None = None,
+    allow_orphans: bool = False,
 ) -> contracts.ReloadConfigResult:
     """Validate the current config or repoint the instance to a new config path."""
     check_permission("cruxible_reload_config", instance_id=instance_id)
@@ -2466,11 +2467,14 @@ def reload_config(
         config_path=config_path,
         config_yaml=config_yaml,
         config_base_dir=config_base_dir,
+        allow_orphans=allow_orphans,
     )
     return contracts.ReloadConfigResult(
         config_path=result.config_path,
         updated=result.updated,
         warnings=result.warnings,
+        type_delta=contracts.ConfigTypeDelta(**vars(result.type_delta)),
+        strandings=contracts.ConfigStrandingReport(**vars(result.strandings)),
     )
 
 

@@ -9,6 +9,7 @@ import pytest
 import structlog
 
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.config.loader import save_config
 from cruxible_core.errors import (
     ConfigError,
     EntityTypeNotFoundError,
@@ -50,6 +51,7 @@ from cruxible_core.service import (
 from cruxible_core.service import queries as queries_module
 from cruxible_core.service.queries import _warn_on_dropped_read
 from cruxible_core.service.types import QueryServiceResult
+from cruxible_core.snapshot.types import UpstreamMetadata
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 STATUS_HISTORY_YAML = """\
@@ -588,6 +590,137 @@ class TestConfigMutationServices:
 
 
 class TestSchema:
+    @staticmethod
+    def _vehicle_only_config(instance: CruxibleInstance, path: Path) -> Path:
+        current = instance.load_config()
+        save_config(
+            current.model_copy(
+                update={
+                    "name": "vehicle_only",
+                    "entity_types": {"Vehicle": current.entity_types["Vehicle"]},
+                    "relationships": [],
+                    # The narrowed config must itself be VALID: anything that
+                    # cross-references the dropped types (queries, workflows,
+                    # guards, checks) has to go too, or config lint refuses
+                    # before the stranding check is ever reached.
+                    "named_queries": {},
+                    "workflows": {},
+                    "mutation_guards": [],
+                    "quality_checks": [],
+                }
+            ),
+            path,
+        )
+        return path
+
+    def test_reload_refuses_stranded_stored_types(
+        self, populated_instance: CruxibleInstance, tmp_path: Path
+    ) -> None:
+        incoming = self._vehicle_only_config(populated_instance, tmp_path / "vehicle-only.yaml")
+
+        with pytest.raises(ConfigError) as exc_info:
+            service_reload_config(populated_instance, str(incoming))
+
+        message = str(exc_info.value)
+        assert "stored graph records would be stranded" in message
+        assert "Part (2)" in message
+        assert "fits (3)" in message
+        assert "replaces (1)" in message
+        assert populated_instance.get_config_path() != incoming
+
+    def test_reload_override_reports_strandings_and_type_delta(
+        self, populated_instance: CruxibleInstance, tmp_path: Path
+    ) -> None:
+        incoming = self._vehicle_only_config(populated_instance, tmp_path / "vehicle-only.yaml")
+
+        result = service_reload_config(populated_instance, str(incoming), allow_orphans=True)
+
+        assert result.strandings.entity_types == {"Part": 2}
+        assert result.strandings.relationship_types == {"fits": 3, "replaces": 1}
+        assert result.type_delta.entity_types_removed == ["Part"]
+        assert result.type_delta.relationship_types_removed == ["fits", "replaces"]
+
+    def test_clean_reload_reports_no_strandings(
+        self, populated_instance: CruxibleInstance, tmp_path: Path
+    ) -> None:
+        incoming = tmp_path / "equal.yaml"
+        incoming.write_text((populated_instance.root / "config.yaml").read_text())
+
+        result = service_reload_config(populated_instance, str(incoming))
+
+        assert result.strandings.entity_types == {}
+        assert result.strandings.relationship_types == {}
+        assert result.type_delta.entity_types_removed == []
+        assert result.type_delta.relationship_types_removed == []
+
+    def test_upstream_reload_refusal_writes_nothing(
+        self, populated_instance: CruxibleInstance, tmp_path: Path
+    ) -> None:
+        # Release-backed overlay path — the branch where the fix relocated the
+        # overlay/active-config writes below the check. A stranding refusal
+        # must leave BOTH files byte-identical, not just the config pointer.
+        root = populated_instance.root
+        upstream_base = root / ".cruxible" / "upstream" / "current" / "config.yaml"
+        upstream_base.parent.mkdir(parents=True, exist_ok=True)
+        self._vehicle_only_config(populated_instance, upstream_base)
+        overlay_path = root / "overlay.yaml"
+        overlay_path.write_text(
+            "version: '1.0'\n"
+            "name: overlay\n"
+            "entity_types:\n"
+            "  LocalNote:\n"
+            "    description: local overlay type\n"
+            "    id: note_id\n"
+            "    properties:\n"
+            "      note_id: {type: string, primary_key: true}\n"
+        )
+        populated_instance.set_upstream_metadata(
+            UpstreamMetadata(
+                transport_ref="file:///tmp/release",
+                state_id="cars",
+                release_id="v1",
+                snapshot_id="snap-1",
+                compatibility="data_only",
+                overlay_config_path="overlay.yaml",
+            )
+        )
+        active_path = populated_instance.get_config_path()
+        active_before = active_path.read_text()
+        overlay_before = overlay_path.read_text()
+
+        with pytest.raises(ConfigError, match="stranded"):
+            service_reload_config(populated_instance, None)
+
+        assert active_path.read_text() == active_before
+        assert overlay_path.read_text() == overlay_before
+
+    def test_reload_repairs_instance_with_unreadable_current_config(
+        self, populated_instance: CruxibleInstance, tmp_path: Path
+    ) -> None:
+        # Reload doubles as the repair path for a corrupted active config:
+        # the delta becomes unknown (warning) but the stranding check still
+        # runs against the stored graph, so a covering config loads cleanly.
+        good = tmp_path / "repair.yaml"
+        good.write_text((populated_instance.root / "config.yaml").read_text())
+        populated_instance.get_config_path().write_text("entity_types: [broken")
+
+        result = service_reload_config(populated_instance, str(good))
+
+        assert result.updated is True
+        assert any("type delta not computed" in w for w in result.warnings)
+        assert result.strandings.entity_types == {}
+
+    def test_empty_instance_accepts_narrower_config(
+        self, initialized_instance: CruxibleInstance, tmp_path: Path
+    ) -> None:
+        incoming = self._vehicle_only_config(initialized_instance, tmp_path / "vehicle-only.yaml")
+
+        result = service_reload_config(initialized_instance, str(incoming))
+
+        assert result.updated is True
+        assert result.strandings.entity_types == {}
+        assert result.strandings.relationship_types == {}
+
     def test_returns_config(self, populated_instance: CruxibleInstance) -> None:
         config = service_schema(populated_instance)
         assert "Vehicle" in config.entity_types

@@ -364,10 +364,26 @@ class ExportEdgesResult:
 
 
 @dataclass
+class ConfigTypeDelta:
+    entity_types_added: list[str] = field(default_factory=list)
+    entity_types_removed: list[str] = field(default_factory=list)
+    relationship_types_added: list[str] = field(default_factory=list)
+    relationship_types_removed: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ConfigStrandingReport:
+    entity_types: dict[str, int] = field(default_factory=dict)
+    relationship_types: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
 class ReloadConfigResult:
     config_path: str
     updated: bool
     warnings: list[str] = field(default_factory=list)
+    type_delta: ConfigTypeDelta = field(default_factory=ConfigTypeDelta)
+    strandings: ConfigStrandingReport = field(default_factory=ConfigStrandingReport)
 
 
 @dataclass

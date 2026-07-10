@@ -315,6 +315,7 @@ class WorkflowLockRequest(BaseModel):
 class ReloadConfigRequest(BaseModel):
     config_path: str | None = None
     config_yaml: str | None = None
+    allow_orphans: bool = False
 
 
 class SnapshotCreateRequest(BaseModel):
