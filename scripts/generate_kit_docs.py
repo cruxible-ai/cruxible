@@ -61,7 +61,7 @@ _REL_META_KEYS = {
 }
 
 
-def _rel_entry(item: dict) -> dict:
+def _rel_entry(item: dict, canonical_writes: set[str]) -> dict:
     name, span = next(
         (k, v) for k, v in item.items() if k not in _REL_META_KEYS and isinstance(v, str)
     )
@@ -72,10 +72,34 @@ def _rel_entry(item: dict) -> dict:
         "from": from_type,
         "to": to_type,
         "governed": policy == "proposal_only",
+        # Written by a type: canonical workflow — the deterministic ingest
+        # lane. Verified disjoint from governed edges across all kits.
+        "deterministic": name in canonical_writes and policy != "proposal_only",
         "write_policy": policy,
         "description": item.get("description"),
         "property_names": sorted((item.get("properties") or {}).keys()),
     }
+
+
+def _canonical_relationship_writes(workflows: dict) -> set[str]:
+    """Relationship types written by canonical (deterministic) workflows."""
+    acc: set[str] = set()
+
+    def walk(obj) -> None:
+        if isinstance(obj, dict):
+            rt = obj.get("relationship_type")
+            if isinstance(rt, str):
+                acc.add(rt)
+            for value in obj.values():
+                walk(value)
+        elif isinstance(obj, list):
+            for value in obj:
+                walk(value)
+
+    for spec in workflows.values():
+        if (spec or {}).get("type") == "canonical":
+            walk((spec or {}).get("steps"))
+    return acc
 
 
 def _entity_entry(name: str, spec: dict) -> dict:
@@ -143,7 +167,9 @@ def build_kit(slug: str, config: dict) -> dict:
             "guards": len(guards),
         },
         "entity_types": [_entity_entry(n, s or {}) for n, s in entity_types.items()],
-        "relationships": [_rel_entry(r) for r in relationships],
+        "relationships": [
+            _rel_entry(r, _canonical_relationship_writes(workflows)) for r in relationships
+        ],
         "named_queries": [
             _query_entry(n, s or {}) for n, s in queries.items() if "$" not in n
         ],

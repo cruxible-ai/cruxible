@@ -1,0 +1,52 @@
+name: docs
+
+# docs.cruxible.ai — build MkDocs from docs/ on main and deploy to
+# GitHub Pages. Manual one-time setup: repo Settings -> Pages ->
+# Source: GitHub Actions; custom domain docs.cruxible.ai (DNS CNAME to
+# cruxible-ai.github.io) with HTTPS enforced.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'scripts/generate_llms_txt.py'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Regenerate llms.txt (fails if drifted from committed copy)
+        run: |
+          uv run --with pyyaml python scripts/generate_llms_txt.py
+          git diff --exit-code docs/llms.txt docs/llms-full.txt || {
+            echo "::error::docs/llms*.txt are stale — run scripts/generate_llms_txt.py and commit"; exit 1; }
+      - name: Build site
+        run: uvx --python 3.12 --with 'mkdocs-material>=9.5,<10' mkdocs build --strict
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

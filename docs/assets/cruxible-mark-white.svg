@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="3 9 120 124" fill="none">
+  <!-- Cruxible mark (F5, locked 2026-07-09; weight raised 5 -> 8, ports
+       rescaled to match). White — for dark backgrounds.
+       Forge hexagon ported at three crossings; C formed by the broken
+       leads and chevron; transistor stem through the left opening.
+       Apex x=47 aligns with the hexagon's left corners. -->
+  <g stroke="#F2F0EA" stroke-width="8" stroke-linecap="butt" stroke-linejoin="round">
+    <path d="M 83 30.2 L 93 30.2 L 116 70 L 93 109.8 L 83 109.8"/>
+    <path d="M 67 109.8 L 47 109.8 L 37 92.5"/>
+    <path d="M 37 47.5 L 47 30.2 L 67 30.2"/>
+  </g>
+  <g stroke="#F2F0EA" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 37 47.5 L 29.6 60.4"/>
+    <path d="M 37 92.5 L 29.6 79.6"/>
+    <path d="M 75 14.2 L 75 52 L 47 70 L 75 88 L 75 125.8"/>
+    <path d="M 47 70 L 8 70"/>
+  </g>
+</svg>

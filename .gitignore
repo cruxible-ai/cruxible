@@ -27,3 +27,4 @@ demos/**/wiki/
 kits/**/wiki/
 smoke-test-bundles/
 .claude/settings.local.json
+site/

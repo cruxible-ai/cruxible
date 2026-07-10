@@ -1,0 +1,85 @@
+# docs.cruxible.ai — built from this repo's docs/ at the documented
+# commit, so the site mirrors the repo by construction.
+# Local preview:  uvx --with mkdocs-material mkdocs serve
+# Build:          uvx --with mkdocs-material mkdocs build
+
+site_name: Cruxible Docs
+site_url: https://docs.cruxible.ai
+site_description: >-
+  Documentation for Cruxible — one shared truth for humans and AI agents.
+  Quickstart, concepts, kits, CLI and config reference, MCP tools, and
+  operations guides.
+repo_url: https://github.com/cruxible-ai/cruxible
+repo_name: cruxible-ai/cruxible
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+exclude_docs: |
+  dev/
+
+theme:
+  name: material
+  logo: assets/cruxible-mark-white.svg
+  favicon: assets/favicon.png
+  palette:
+    scheme: slate
+    primary: custom
+    accent: custom
+  font:
+    text: Roboto Flex
+    code: JetBrains Mono
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+extra_css:
+  - assets/brand.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/cruxible-ai/cruxible
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/cruxible/
+  generator: false
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Quickstart: quickstart.md
+      - Concepts: concepts.md
+      - Modeling state: modeling-state.md
+      - For AI agents: for-ai-agents.md
+  - Kits:
+      - Kit walkthroughs: kit-walkthroughs.md
+      - Kit authoring: kit-authoring.md
+      - KEV guide: kev-guide.md
+  - Reference:
+      - CLI reference: cli-reference.md
+      - Config reference: config-reference.md
+      - MCP tools: mcp-tools.md
+      - Common providers: common-providers.md
+  - Operations:
+      - Local state and backups: local-state-and-backups.md
+      - Auth and agent roles: runtime-auth-and-agent-roles.md
+      - State resolution and maintenance: state-resolution-and-maintenance.md
+      - Publishing states: publishing-states.md
+      - Isolated deployment: isolated-deployment.md
+      - Hosted runtime image: hosted-runtime-image.md
