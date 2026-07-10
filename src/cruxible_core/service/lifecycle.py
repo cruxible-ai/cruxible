@@ -38,6 +38,8 @@ from cruxible_core.server.auth_managed_entities import (
     materialize_local_operator_auth_managed_entities,
 )
 from cruxible_core.service.types import (
+    ConfigStrandingReport,
+    ConfigTypeDelta,
     InitResult,
     ReloadConfigResult,
     ValidateServiceResult,
@@ -56,6 +58,71 @@ from cruxible_core.workflow.types import LockedArtifact, LockedProvider, Workflo
 _INSTANCE_KITS_DIR = "kits"
 
 _MANAGED_CONFIG_RELATIVE_PATH = Path(CruxibleInstance.INSTANCE_DIR) / "configs" / "active.yaml"
+
+
+def _reload_type_report(
+    instance: InstanceProtocol,
+    incoming: CoreConfig,
+    *,
+    allow_orphans: bool,
+) -> tuple[ConfigTypeDelta, ConfigStrandingReport, list[str]]:
+    incoming_entities = set(incoming.entity_types)
+    incoming_relationships = {relationship.name for relationship in incoming.relationships}
+    # The delta needs the CURRENT config; the stranding check below does not
+    # (it compares the stored graph against the incoming config). Keep reload
+    # usable as the repair path for a corrupted active config: if the current
+    # config won't load, report an unknown delta instead of refusing.
+    report_warnings: list[str] = []
+    try:
+        current = instance.load_config()
+    except ConfigError as exc:
+        report_warnings.append(f"current config unreadable ({exc}); type delta not computed")
+        delta = ConfigTypeDelta()
+    else:
+        current_entities = set(current.entity_types)
+        current_relationships = {relationship.name for relationship in current.relationships}
+        delta = ConfigTypeDelta(
+            entity_types_added=sorted(incoming_entities - current_entities),
+            entity_types_removed=sorted(current_entities - incoming_entities),
+            relationship_types_added=sorted(incoming_relationships - current_relationships),
+            relationship_types_removed=sorted(current_relationships - incoming_relationships),
+        )
+
+    entity_counts: dict[str, int] = {}
+    relationship_counts: dict[str, int] = {}
+    graph = instance.load_graph()
+    for entity in graph.iter_all_entities():
+        if entity.entity_type not in incoming_entities:
+            entity_counts[entity.entity_type] = entity_counts.get(entity.entity_type, 0) + 1
+    for relationship in graph.iter_relationships():
+        if relationship.relationship_type not in incoming_relationships:
+            relationship_counts[relationship.relationship_type] = (
+                relationship_counts.get(relationship.relationship_type, 0) + 1
+            )
+    strandings = ConfigStrandingReport(
+        entity_types=dict(sorted(entity_counts.items())),
+        relationship_types=dict(sorted(relationship_counts.items())),
+    )
+    if (entity_counts or relationship_counts) and not allow_orphans:
+        details = []
+        if entity_counts:
+            details.append(
+                "entity types: "
+                + ", ".join(f"{name} ({count})" for name, count in sorted(entity_counts.items()))
+            )
+        if relationship_counts:
+            details.append(
+                "relationship types: "
+                + ", ".join(
+                    f"{name} ({count})" for name, count in sorted(relationship_counts.items())
+                )
+            )
+        raise ConfigError(
+            "Config reload refused because stored graph records would be stranded; "
+            + "; ".join(details)
+            + ". Re-run with allow_orphans=true (CLI: --allow-orphans) to proceed."
+        )
+    return delta, strandings, report_warnings
 
 
 def ensure_auth_managed_runtime_identity(instance: InstanceProtocol) -> list[str]:
@@ -510,6 +577,7 @@ def service_reload_config(
     config_yaml: str | None = None,
     *,
     config_base_dir: str | Path | None = None,
+    allow_orphans: bool = False,
 ) -> ReloadConfigResult:
     """Validate, replace, or repoint the active config for an existing instance."""
     if config_path is not None and config_yaml is not None:
@@ -543,18 +611,20 @@ def service_reload_config(
                 resolve_config_layers(overlay, config_path=overlay_path),
                 runtime=True,
             )
-            overlay_path.parent.mkdir(parents=True, exist_ok=True)
-            overlay_path.write_text(config_yaml)
-            active_path.parent.mkdir(parents=True, exist_ok=True)
-            save_config(composed, active_path)
         else:
             composed = compose_runtime_config_files(
                 base_path=base_path,
                 overlay_path=overlay_path,
             )
-            active_path.parent.mkdir(parents=True, exist_ok=True)
-            save_config(composed, active_path)
         warnings = validate_config(composed)
+        type_delta, strandings, report_warnings = _reload_type_report(
+            instance, composed, allow_orphans=allow_orphans
+        )
+        if config_yaml is not None:
+            overlay_path.parent.mkdir(parents=True, exist_ok=True)
+            overlay_path.write_text(config_yaml)
+        active_path.parent.mkdir(parents=True, exist_ok=True)
+        save_config(composed, active_path)
         if config_path is not None:
             # A new overlay path changes which local file is tracked, but the
             # active config remains the generated upstream+overlay composition.
@@ -568,13 +638,18 @@ def service_reload_config(
         return ReloadConfigResult(
             config_path=str(instance.get_config_path()),
             updated=True,
-            warnings=warnings,
+            warnings=[*warnings, *report_warnings],
+            type_delta=type_delta,
+            strandings=strandings,
         )
 
     if config_yaml is not None:
         # Non-upstream raw YAML replaces the instance's active config in place.
         # This is the daemon/server sync path for anonymous uploaded configs.
         validation = service_validate(config_yaml=config_yaml)
+        type_delta, strandings, report_warnings = _reload_type_report(
+            instance, validation.config, allow_orphans=allow_orphans
+        )
         target_path = instance.get_config_path()
         target_path.parent.mkdir(parents=True, exist_ok=True)
         save_config(validation.config, target_path)
@@ -582,13 +657,20 @@ def service_reload_config(
         return ReloadConfigResult(
             config_path=str(target_path),
             updated=True,
-            warnings=validation.warnings,
+            warnings=[*validation.warnings, *report_warnings],
+            type_delta=type_delta,
+            strandings=strandings,
         )
 
     if config_path is not None:
         # Non-upstream config_path reload repoints the instance to a caller-owned
         # file after validating the effective config. If the file uses extends,
         # composition is for validation only; the stored pointer remains the file.
+        # KNOWN SEAM: the stranding check below compares against the COMPOSED
+        # schema, but runtime reads load the raw pointed file without composing
+        # (runtime/instance.py load_config) - a type declared only in a base
+        # layer passes the check yet is invisible to reads. Pre-existing
+        # read-side behavior; revisit if reads ever compose.
         resolved = Path(config_path).expanduser().resolve()
         if not resolved.is_file():
             raise ConfigError(f"Config path '{resolved}' does not exist or is not a file")
@@ -598,12 +680,17 @@ def service_reload_config(
                 resolve_config_layers(config, config_path=resolved.resolve()),
             )
         warnings = validate_config(config)
+        type_delta, strandings, report_warnings = _reload_type_report(
+            instance, config, allow_orphans=allow_orphans
+        )
         instance.set_config_path(str(resolved))
         ensure_auth_managed_runtime_identity(instance)
         return ReloadConfigResult(
             config_path=str(instance.get_config_path()),
             updated=True,
-            warnings=warnings,
+            warnings=[*warnings, *report_warnings],
+            type_delta=type_delta,
+            strandings=strandings,
         )
 
     # No replacement was requested: validate whatever the instance currently

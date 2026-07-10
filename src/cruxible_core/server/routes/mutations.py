@@ -121,4 +121,5 @@ async def reload_config(
         instance_id=resolve_server_instance_id(instance_id),
         config_path=req.config_path,
         config_yaml=req.config_yaml,
+        allow_orphans=req.allow_orphans,
     )

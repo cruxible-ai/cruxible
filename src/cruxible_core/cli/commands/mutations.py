@@ -1055,8 +1055,13 @@ def add_constraint_cmd(
 
 @click.command("reload")
 @click.option("--config", "config_path", default=None, help="Optional new config path.")
+@click.option(
+    "--allow-orphans",
+    is_flag=True,
+    help="Allow stored graph types absent from the incoming config.",
+)
 @handle_errors
-def reload_config_cmd(config_path: str | None) -> None:
+def reload_config_cmd(config_path: str | None, allow_orphans: bool) -> None:
     """Validate the active config or repoint the instance to a new config file."""
     remote = _common._get_client() is not None
     result = _dispatch_cli_instance(
@@ -1065,8 +1070,11 @@ def reload_config_cmd(config_path: str | None) -> None:
             config_yaml=(
                 _read_validation_yaml_or_error(config_path) if config_path is not None else None
             ),
+            **({"allow_orphans": True} if allow_orphans else {}),
         ),
-        lambda instance: service_reload_config(instance, config_path=config_path),
+        lambda instance: service_reload_config(
+            instance, config_path=config_path, allow_orphans=allow_orphans
+        ),
         allow_local=False,
         command_name="config reload",
     )
@@ -1077,6 +1085,34 @@ def reload_config_cmd(config_path: str | None) -> None:
         click.echo(f"Config {status}: {result.config_path}")
     for warning in result.warnings:
         click.secho(f"  Warning: {warning}", fg="yellow")
+    delta = result.type_delta
+    changed = any(
+        (
+            delta.entity_types_added,
+            delta.entity_types_removed,
+            delta.relationship_types_added,
+            delta.relationship_types_removed,
+        )
+    )
+    if changed:
+        names = lambda values: ", ".join(values) if values else "none"  # noqa: E731
+        click.echo(
+            "Type delta: "
+            f"entities added [{names(delta.entity_types_added)}] "
+            f"removed [{names(delta.entity_types_removed)}]; "
+            f"relationships added [{names(delta.relationship_types_added)}] "
+            f"removed [{names(delta.relationship_types_removed)}]"
+        )
+    if result.strandings.entity_types or result.strandings.relationship_types:
+        counts = lambda pairs: ", ".join(  # noqa: E731
+            f"{name} ({count})" for name, count in sorted(pairs.items())
+        )
+        click.secho(
+            "Strandings allowed: "
+            f"entities [{counts(result.strandings.entity_types)}]; "
+            f"relationships [{counts(result.strandings.relationship_types)}]",
+            fg="yellow",
+        )
 
 
 @click.command("add-decision-policy")

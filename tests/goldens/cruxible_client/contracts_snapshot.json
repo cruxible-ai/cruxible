@@ -3456,6 +3456,148 @@
         "snapshot"
       ]
     },
+    "ConfigStrandingReport": {
+      "fields": {
+        "entity_types": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "entity_types",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Entity Types",
+            "type": "object"
+          }
+        },
+        "relationship_types": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "relationship_types",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Relationship Types",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "entity_types": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Entity Types",
+            "type": "object"
+          },
+          "relationship_types": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Relationship Types",
+            "type": "object"
+          }
+        },
+        "title": "ConfigStrandingReport",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "ConfigTypeDelta": {
+      "fields": {
+        "entity_types_added": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "entity_types_added",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entity Types Added",
+            "type": "array"
+          }
+        },
+        "entity_types_removed": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "entity_types_removed",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entity Types Removed",
+            "type": "array"
+          }
+        },
+        "relationship_types_added": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "relationship_types_added",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Relationship Types Added",
+            "type": "array"
+          }
+        },
+        "relationship_types_removed": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "relationship_types_removed",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Relationship Types Removed",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "entity_types_added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entity Types Added",
+            "type": "array"
+          },
+          "entity_types_removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entity Types Removed",
+            "type": "array"
+          },
+          "relationship_types_added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Relationship Types Added",
+            "type": "array"
+          },
+          "relationship_types_removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Relationship Types Removed",
+            "type": "array"
+          }
+        },
+        "title": "ConfigTypeDelta",
+        "type": "object"
+      },
+      "required_fields": []
+    },
     "ConstraintSuggestion": {
       "fields": {
         "description": {
@@ -18663,6 +18805,24 @@
             "type": "string"
           }
         },
+        "strandings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "strandings",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/ConfigStrandingReport"
+          }
+        },
+        "type_delta": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "type_delta",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/ConfigTypeDelta"
+          }
+        },
         "updated": {
           "has_default": false,
           "has_default_factory": false,
@@ -18688,10 +18848,72 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "ConfigStrandingReport": {
+            "properties": {
+              "entity_types": {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "title": "Entity Types",
+                "type": "object"
+              },
+              "relationship_types": {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "title": "Relationship Types",
+                "type": "object"
+              }
+            },
+            "title": "ConfigStrandingReport",
+            "type": "object"
+          },
+          "ConfigTypeDelta": {
+            "properties": {
+              "entity_types_added": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Entity Types Added",
+                "type": "array"
+              },
+              "entity_types_removed": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Entity Types Removed",
+                "type": "array"
+              },
+              "relationship_types_added": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Relationship Types Added",
+                "type": "array"
+              },
+              "relationship_types_removed": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Relationship Types Removed",
+                "type": "array"
+              }
+            },
+            "title": "ConfigTypeDelta",
+            "type": "object"
+          }
+        },
         "properties": {
           "config_path": {
             "title": "Config Path",
             "type": "string"
+          },
+          "strandings": {
+            "$ref": "#/$defs/ConfigStrandingReport"
+          },
+          "type_delta": {
+            "$ref": "#/$defs/ConfigTypeDelta"
           },
           "updated": {
             "title": "Updated",

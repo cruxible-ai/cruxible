@@ -959,10 +959,17 @@ class CruxibleClient:
         *,
         config_path: str | None = None,
         config_yaml: str | None = None,
+        allow_orphans: bool = False,
     ) -> contracts.ReloadConfigResult:
+        payload: dict[str, Any] = {
+            "config_path": config_path,
+            "config_yaml": config_yaml,
+        }
+        if allow_orphans:
+            payload["allow_orphans"] = True
         response = self._client.post(
             f"/api/v1/{instance_id}/config/reload",
-            json={"config_path": config_path, "config_yaml": config_yaml},
+            json=payload,
         )
         return self._parse_model(response, contracts.ReloadConfigResult)
 

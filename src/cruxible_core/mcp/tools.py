@@ -773,12 +773,14 @@ def register_tools(server: FastMCP) -> list[str]:
         instance_id: str,
         config_path: str | None = None,
         config_yaml: str | None = None,
+        allow_orphans: bool = False,
     ) -> contracts.ReloadConfigResult:
         """Reload or replace an instance config after validation."""
         return handlers.handle_reload_config(
             instance_id,
             config_path=config_path,
             config_yaml=config_yaml,
+            allow_orphans=allow_orphans,
         )
 
     @_tool

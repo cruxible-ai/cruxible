@@ -1128,6 +1128,7 @@ def handle_reload_config(
     *,
     config_path: str | None = None,
     config_yaml: str | None = None,
+    allow_orphans: bool = False,
 ) -> contracts.ReloadConfigResult:
     """Reload or replace an instance config."""
     uploaded_yaml = config_yaml
@@ -1138,11 +1139,13 @@ def handle_reload_config(
             instance_id,
             config_path=None,
             config_yaml=uploaded_yaml,
+            **({"allow_orphans": True} if allow_orphans else {}),
         ),
         lambda: api.reload_config(
             instance_id,
             config_path=config_path,
             config_yaml=config_yaml,
+            allow_orphans=allow_orphans,
         ),
         allow_local=False,
         operation_name="cruxible_reload_config",

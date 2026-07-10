@@ -461,7 +461,10 @@ class TestOutputSchema:
                 },
             ),
             ("cruxible_test_workflow", {"total", "passed", "failed", "cases"}),
-            ("cruxible_reload_config", {"config_path", "updated", "warnings"}),
+            (
+                "cruxible_reload_config",
+                {"config_path", "updated", "warnings", "type_delta", "strandings"},
+            ),
             (
                 "cruxible_propose_workflow",
                 {

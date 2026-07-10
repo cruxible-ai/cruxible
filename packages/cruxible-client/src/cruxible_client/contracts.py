@@ -1131,10 +1131,24 @@ class CanonicalViewResult(BaseModel):
     payload: dict[str, Any]
 
 
+class ConfigTypeDelta(BaseModel):
+    entity_types_added: list[str] = Field(default_factory=list)
+    entity_types_removed: list[str] = Field(default_factory=list)
+    relationship_types_added: list[str] = Field(default_factory=list)
+    relationship_types_removed: list[str] = Field(default_factory=list)
+
+
+class ConfigStrandingReport(BaseModel):
+    entity_types: dict[str, int] = Field(default_factory=dict)
+    relationship_types: dict[str, int] = Field(default_factory=dict)
+
+
 class ReloadConfigResult(BaseModel):
     config_path: str
     updated: bool
     warnings: list[str] = Field(default_factory=list)
+    type_delta: ConfigTypeDelta = Field(default_factory=ConfigTypeDelta)
+    strandings: ConfigStrandingReport = Field(default_factory=ConfigStrandingReport)
 
 
 class FeedbackProfileResult(BaseModel):
