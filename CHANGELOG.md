@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Every user-visible fix or feature adds its entry here in the same change
+that lands it; entries move under a version heading when the release is
+tagged. Work items for these changes live on the `release-0.2.1` line in
+the project's own state instance.
+
+### Fixed
+
+- **Heterogeneous query returns are labeled correctly**: queries returning
+  `AnyEntity` now project `entity_type` and `entity_id` for every row
+  instead of mislabeling rows under the entry point's key, and composed
+  configs that select keys from unresolved return types fail config lint
+  instead of silently disabling the check.
+
 ## 0.2.0 — 2026-07-07
 
 The first broadly usable release: hard state for AI agents — typed, governed,
