@@ -9,6 +9,12 @@ the project's own state instance.
 
 ### Fixed
 
+- **Snapshot clones are reachable on auth-enabled daemons**: cloning used
+  to mint a new instance with no credentials at all — instance-scoped
+  source credentials couldn't reach it and nothing could be claimed or
+  recovered. The clone response now returns a one-time ADMIN credential
+  for the new instance (same conventions as `credential claim-bootstrap`);
+  auth-disabled daemons are unchanged.
 - **Heterogeneous query returns are labeled correctly**: queries returning
   `AnyEntity` now project `entity_type` and `entity_id` for every row
   instead of mislabeling rows under the entry point's key, and composed

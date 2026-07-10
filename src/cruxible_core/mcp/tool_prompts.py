@@ -255,7 +255,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "its expected content hash."
     ),
     "cruxible_clone_snapshot": (
-        "Use when you need a new local instance created from an existing snapshot."
+        "Use when you need a new local instance created from an existing snapshot. "
+        "On auth-enabled daemons the result carries a one-time admin_credential "
+        "token for the new instance - save it immediately; it is never shown again."
     ),
     "cruxible_state_status": (
         "Use when you need to see whether an overlay is connected to an upstream state "
