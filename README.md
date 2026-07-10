@@ -13,6 +13,13 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](https://github.com/cruxible-ai/cruxible/blob/main/LICENSE)
 
+<p align="center">
+  <a href="https://cruxible.ai">cruxible.ai</a> ·
+  <a href="https://docs.cruxible.ai">docs</a> ·
+  <a href="https://cruxible.ai/kits">kits</a> ·
+  <a href="https://cruxible.ai/skills">skills</a>
+</p>
+
 **Cruxible is hard state for AI agents** — a typed, verifiable state layer
 that teams of agents and humans operate together. Work compounds into a
 record of what you've determined to be true: every claim governed and linked
