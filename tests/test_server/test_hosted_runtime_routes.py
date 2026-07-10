@@ -1740,6 +1740,170 @@ def test_runtime_bootstrap_claim_token_is_scoped_to_target_instance(
     assert denied.json()["error_type"] == "InstanceScopeError"
 
 
+def _snapshot_and_clone(
+    client: TestClient,
+    instance_id: str,
+    clone_root: Path,
+    *,
+    headers: dict[str, str] | None = None,
+) -> dict:
+    snapshot = client.post(
+        f"/api/v1/{instance_id}/snapshots",
+        json={"label": "clone-source"},
+        headers=headers or {},
+    )
+    assert snapshot.status_code == 200
+    snapshot_id = snapshot.json()["snapshot"]["snapshot_id"]
+    clone = client.post(
+        f"/api/v1/{instance_id}/snapshots/clone",
+        json={"snapshot_id": snapshot_id, "root_dir": str(clone_root)},
+        headers=headers or {},
+    )
+    assert clone.status_code == 200
+    return clone.json()
+
+
+def test_clone_snapshot_on_auth_enabled_daemon_returns_reachable_admin_credential(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    """Regression: wi-snapshot-clone-credential-lockout.
+
+    On an auth-enabled daemon a snapshot clone mints a new instance; the source
+    credential is instance-scoped and cannot reach it, so the clone response must
+    return a one-time ADMIN credential that does.
+    """
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.ADMIN,
+    )
+
+    payload = _snapshot_and_clone(client, instance_id, tmp_path / "auth-clone", headers=headers)
+
+    clone_instance_id = payload["instance_id"]
+    assert clone_instance_id != instance_id
+    credential = payload["admin_credential"]
+    assert credential is not None
+    assert set(credential) == {"credential_id", "instance_id", "permission_mode", "token"}
+    assert credential["instance_id"] == clone_instance_id
+    assert credential["permission_mode"] == "admin"
+    assert credential["token"].startswith(f"crt_{credential['credential_id']}_")
+
+    # The lockout premise: the source-scoped credential cannot reach the clone.
+    denied = client.get(f"/api/v1/{clone_instance_id}/schema", headers=headers)
+    assert denied.status_code == 403
+    assert denied.json()["error_type"] == "InstanceScopeError"
+
+    # The invariant: the returned credential reaches the clone through normal auth.
+    clone_headers = {"Authorization": f"Bearer {credential['token']}"}
+    allowed = client.get(f"/api/v1/{clone_instance_id}/schema", headers=clone_headers)
+    assert allowed.status_code == 200
+
+
+def test_clone_admin_credential_plaintext_is_returned_exactly_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.ADMIN,
+    )
+
+    payload = _snapshot_and_clone(client, instance_id, tmp_path / "auth-clone", headers=headers)
+
+    clone_instance_id = payload["instance_id"]
+    credential = payload["admin_credential"]
+
+    # Only the hash is stored server-side.
+    stored = get_runtime_credential_store().get(credential["credential_id"])
+    assert stored is not None
+    assert stored.instance_id == clone_instance_id
+    assert stored.permission_mode is PermissionMode.ADMIN
+    assert stored.created_by is not None
+    assert stored.token_hash != credential["token"]
+    assert credential["token"] not in stored.token_hash
+
+    # The management surface never returns the plaintext again.
+    clone_headers = {"Authorization": f"Bearer {credential['token']}"}
+    listed = client.get(
+        f"/api/v1/{clone_instance_id}/runtime/credentials",
+        headers=clone_headers,
+    )
+    assert listed.status_code == 200
+    listed_credentials = listed.json()["credentials"]
+    assert [item["credential_id"] for item in listed_credentials] == [credential["credential_id"]]
+    assert all("token" not in item for item in listed_credentials)
+
+
+def test_clone_snapshot_on_auth_disabled_daemon_mints_no_credential(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+
+    payload = _snapshot_and_clone(
+        app_client,
+        instance_id,
+        server_project.parent / "plain-clone",
+    )
+
+    clone_instance_id = payload["instance_id"]
+    assert payload["admin_credential"] is None
+    # No credential rows are minted and the daemon is not flipped into
+    # auth-required mode by an auth-off clone.
+    store = get_runtime_credential_store()
+    assert store.list_for_instance(clone_instance_id) == []
+    assert store.is_auth_required() is False
+    read = app_client.get(f"/api/v1/{clone_instance_id}/schema")
+    assert read.status_code == 200
+
+
+def test_clone_admin_credential_materializes_auth_managed_entity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "auth-managed-clone-project"
+    project.mkdir()
+    (project / "config.yaml").write_text(AUTH_MANAGED_PRINCIPAL_YAML)
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_auth_managed_instance(monkeypatch, project)
+    headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.ADMIN,
+    )
+
+    payload = _snapshot_and_clone(
+        client,
+        instance_id,
+        tmp_path / "auth-managed-clone",
+        headers=headers,
+    )
+
+    principal = (
+        get_manager()
+        .get(payload["instance_id"])
+        .load_graph()
+        .get_entity(
+            "Principal",
+            "clone-admin",
+        )
+    )
+    assert principal is not None
+    assert principal.properties["kind"] == "service_account"
+    assert principal.properties["permission_mode"] == "admin"
+    assert principal.metadata.actor_context is not None
+    assert principal.metadata.actor_context.actor_id == "clone-admin"
+
+
 def test_shared_hosted_profile_rejects_workflow_provider_execution_with_public_error_body(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

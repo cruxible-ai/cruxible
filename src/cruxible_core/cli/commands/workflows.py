@@ -867,6 +867,13 @@ def clone_cmd(snapshot_id: str, root_dir: str, activate: bool) -> None:
         click.echo(
             f"Cloned snapshot {result.snapshot.snapshot_id} into instance {result.instance_id}"
         )
+        if result.admin_credential is not None:
+            # Auth-enabled daemon: the clone's initial ADMIN token is returned
+            # exactly once (claim-bootstrap convention); surface it or it is lost.
+            from cruxible_core.cli.commands.credentials import _echo_token_once
+
+            click.echo(f"Credential ID: {result.admin_credential.credential_id}")
+            _echo_token_once(result.admin_credential.token, label="Clone admin token")
         if activate:
             _print_active_instance_change(_activate_server_instance(result.instance_id))
         else:

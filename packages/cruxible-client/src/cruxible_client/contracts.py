@@ -1243,6 +1243,10 @@ class SnapshotListResult(ListEnvelopeFields):
 class CloneSnapshotResult(BaseModel):
     instance_id: str
     snapshot: SnapshotMetadata
+    # One-time initial ADMIN credential for the cloned instance, present only on
+    # auth-enabled daemons. Mirrors the claim-bootstrap contract: the plaintext
+    # token is returned exactly once here and only its hash is stored.
+    admin_credential: RuntimeCredentialBootstrapResult | None = None
 
 
 class InstanceBackupManifest(BaseModel):

@@ -3277,6 +3277,25 @@
     },
     "CloneSnapshotResult": {
       "fields": {
+        "admin_credential": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "admin_credential",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RuntimeCredentialBootstrapResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "instance_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -3299,6 +3318,35 @@
       },
       "json_schema": {
         "$defs": {
+          "RuntimeCredentialBootstrapResult": {
+            "properties": {
+              "credential_id": {
+                "title": "Credential Id",
+                "type": "string"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "permission_mode": {
+                "const": "admin",
+                "title": "Permission Mode",
+                "type": "string"
+              },
+              "token": {
+                "title": "Token",
+                "type": "string"
+              }
+            },
+            "required": [
+              "credential_id",
+              "instance_id",
+              "permission_mode",
+              "token"
+            ],
+            "title": "RuntimeCredentialBootstrapResult",
+            "type": "object"
+          },
           "SnapshotMetadata": {
             "properties": {
               "config_digest": {
@@ -3377,6 +3425,17 @@
           }
         },
         "properties": {
+          "admin_credential": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RuntimeCredentialBootstrapResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "instance_id": {
             "title": "Instance Id",
             "type": "string"
