@@ -13,8 +13,8 @@
     },
     "case-law-monitoring": {
       "asset": "case-law-monitoring-0.2.0.tar.gz",
-      "dir_digest": "sha256:ba86c06179670d6a8dda2969e39ffc8603fddc6be431a1f9794aaa48acc35d1c",
-      "tarball_sha256": "09c5aacc26bb66e2f4daf0877d1c7e9a54bb6dfa84ccd64a0b9c4ff701f8d83c"
+      "dir_digest": "sha256:a0df5d4e5ad16b2408dc12cbad74b757fd2160345ec64b7f96034dec2ee6affe",
+      "tarball_sha256": "5f5bff315926e110c1dace3cfdd56338b8e56d9d6673bee2bf44007400452f76"
     },
     "kev-reference": {
       "asset": "kev-reference-0.2.0.tar.gz",
