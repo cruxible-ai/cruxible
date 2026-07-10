@@ -9,6 +9,14 @@ the project's own state instance.
 
 ### Fixed
 
+- **Config reload refuses to strand stored graph records**: reloading a
+  config that no longer declares entity or relationship types present in
+  the stored graph used to succeed silently and break every read of
+  those records. Reload now refuses before any write, listing the
+  stranded types with counts; `--allow-orphans` proceeds explicitly and
+  the response carries the stranding report. Every successful reload now
+  reports its type delta, and a reload with a corrupted current config
+  still works as the repair path (delta reported as unknown).
 - **Snapshot clones are reachable on auth-enabled daemons**: cloning used
   to mint a new instance with no credentials at all — instance-scoped
   source credentials couldn't reach it and nothing could be claimed or
