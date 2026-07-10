@@ -151,6 +151,19 @@ alarm walks matter → argument → supporting holding → treated opinion, and
 without accepted `holding_supports_argument` edges it has nothing to
 traverse.
 
+**Establish the baseline citator state.** Propose and resolve the treatment
+relationships already present in the act-one corpus before checking that the
+matter is quiet:
+
+```bash
+cruxible propose --workflow propose_opinion_treatment          # then resolve
+```
+
+The fresh seed produces 11 `follows` members. Resolving them makes those
+baseline tuples live, so the act-two proposal below contains only treatment
+relationships introduced by the corpus update rather than replaying the
+entire citation history.
+
 **Act-one quiet check.** Nothing negatively treats the firm's cited
 authorities yet:
 
@@ -177,7 +190,10 @@ cruxible propose --workflow propose_opinion_treatment          # then resolve
 
 The treatment group is the governed citator entry: the overrules /
 abrogates / limits rows arrive with quote-and-offset evidence, and negative
-treatment always requires review.
+treatment always requires review. With the baseline treatments resolved in
+act one, this group contains exactly three new Loper Bright members:
+`abrogates` Brand X, `overrules` Chevron, and `limits` Mead. Each member has a
+registered opinion-text evidence ref.
 
 **The payoff.**
 
@@ -189,6 +205,14 @@ cruxible query run supporting_authority_now_bad_law \
 Loper Bright surfaces as the opinion that overruled this matter's
 supporting authority, newest treatment first, with a receipt for the whole
 traversal.
+
+The GreenGrid seed matter returns three paths, one through each affected
+supporting authority. Render the returned receipt to show the full derivation:
+
+```bash
+cruxible explain --receipt <receipt-id> --format markdown
+cruxible explain --receipt <receipt-id> --format mermaid
+```
 
 **Route the review work.** The router suggests review obligations from the
 accepted treatments and impacts; applying them creates base WorkItems
