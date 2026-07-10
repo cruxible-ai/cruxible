@@ -1666,6 +1666,33 @@ cruxible state pull-apply
 Your local judgments, exceptions, and controls persist across pulls; only
 the upstream reference layer moves.
 
+## Offline demo without a published reference
+
+To exercise both layers from the pinned files bundled with the kits, compose
+the reference and triage kits into one disposable instance, then build each
+layer in order:
+
+```bash
+cruxible init --kit kev-reference --kit kev-triage
+
+cruxible run --workflow build_public_kev_reference \
+  --save-preview kev-reference.json
+cruxible apply --preview-file kev-reference.json
+
+cruxible run --workflow build_local_state --save-preview kev-local.json
+cruxible apply --preview-file kev-local.json
+
+cruxible propose --workflow propose_asset_products
+# Review and approve the pending asset_runs_product group, then:
+cruxible propose --workflow propose_asset_exposure
+# Review and approve the pending asset_vulnerability_posture group, then:
+cruxible query run asset_vulnerability_postures_requiring_action --json
+```
+
+This route proves the ontology and governed triage flow without requiring an
+OCI registry or network fetch. It is a demo/build path, not a subscription:
+use the overlay flow above when the reference should advance independently.
+
 ## Building or publishing your own reference
 
 `init --kit kev-reference` plus the `build_public_kev_reference` workflow
@@ -2316,6 +2343,10 @@ shared_evidence:
 | `--activate / --no-activate` | no | `True` | boolean | Make the cloned server instance the active CLI context instance. |
 
 **Output And Side Effects:**
+- On an auth-enabled daemon the clone is minted its own one-time ADMIN
+  runtime credential (label `clone-admin`) and the plaintext token is
+  printed exactly once — save it immediately; only its hash is stored and
+  it is never shown again. Auth-disabled daemons mint nothing.
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
 
 **Common Errors:**
@@ -3816,8 +3847,18 @@ cruxible query inline \
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | no | `` | text | Optional new config path. |
+| `--allow-orphans` | no | `False` | flag | Allow stored graph types absent from the incoming config. |
 
 **Output And Side Effects:**
+- Refuses the reload (before any file or pointer changes) if the incoming
+  config no longer declares entity or relationship types present in the
+  stored graph; the error lists each stranded type with its stored count.
+  `--allow-orphans` proceeds anyway and the output carries the stranding
+  report.
+- Successful reloads print the type delta (entity/relationship types added
+  and removed) so a reload is never a silent schema change. A reload whose
+  *current* config is unreadable still works as the repair path; the delta
+  is reported as unknown via a warning.
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
 
 **Common Errors:**
@@ -7777,8 +7818,9 @@ error-level finding exists.
 | `instance_id` | yes | string |  |
 | `config_path` | no | string | null |  |
 | `config_yaml` | no | string | null |  |
+| `allow_orphans` | no | boolean | Allow stored graph types absent from the incoming config (default false: strandings refuse the reload with per-type counts). |
 
-**Returns:** Top-level fields: `config_path`, `updated`, `warnings`
+**Returns:** Top-level fields: `config_path`, `updated`, `warnings`, `type_delta`, `strandings`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -8264,7 +8306,7 @@ error-level finding exists.
 
 **Permission:** `ADMIN`
 
-**Purpose:** Use when you need a new local instance created from an existing snapshot.
+**Purpose:** Use when you need a new local instance created from an existing snapshot. On auth-enabled daemons the result carries a one-time admin_credential token for the new instance - save it immediately; it is never shown again.
 
 **Arguments:**
 
@@ -8274,7 +8316,7 @@ error-level finding exists.
 | `snapshot_id` | yes | string |  |
 | `root_dir` | yes | string |  |
 
-**Returns:** Top-level fields: `instance_id`, `snapshot`
+**Returns:** Top-level fields: `instance_id`, `snapshot`, `admin_credential` (auth-enabled daemons only: a one-time ADMIN token for the new instance — deliver it to the operator immediately; it is never shown again)
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 

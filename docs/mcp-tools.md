@@ -1177,8 +1177,9 @@ error-level finding exists.
 | `instance_id` | yes | string |  |
 | `config_path` | no | string | null |  |
 | `config_yaml` | no | string | null |  |
+| `allow_orphans` | no | boolean | Allow stored graph types absent from the incoming config (default false: strandings refuse the reload with per-type counts). |
 
-**Returns:** Top-level fields: `config_path`, `updated`, `warnings`
+**Returns:** Top-level fields: `config_path`, `updated`, `warnings`, `type_delta`, `strandings`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1664,7 +1665,7 @@ error-level finding exists.
 
 **Permission:** `ADMIN`
 
-**Purpose:** Use when you need a new local instance created from an existing snapshot.
+**Purpose:** Use when you need a new local instance created from an existing snapshot. On auth-enabled daemons the result carries a one-time admin_credential token for the new instance - save it immediately; it is never shown again.
 
 **Arguments:**
 
@@ -1674,7 +1675,7 @@ error-level finding exists.
 | `snapshot_id` | yes | string |  |
 | `root_dir` | yes | string |  |
 
-**Returns:** Top-level fields: `instance_id`, `snapshot`
+**Returns:** Top-level fields: `instance_id`, `snapshot`, `admin_credential` (auth-enabled daemons only: a one-time ADMIN token for the new instance — deliver it to the operator immediately; it is never shown again)
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 

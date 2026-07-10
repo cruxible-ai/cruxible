@@ -635,6 +635,10 @@ shared_evidence:
 | `--activate / --no-activate` | no | `True` | boolean | Make the cloned server instance the active CLI context instance. |
 
 **Output And Side Effects:**
+- On an auth-enabled daemon the clone is minted its own one-time ADMIN
+  runtime credential (label `clone-admin`) and the plaintext token is
+  printed exactly once — save it immediately; only its hash is stored and
+  it is never shown again. Auth-disabled daemons mint nothing.
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
 
 **Common Errors:**
@@ -2135,8 +2139,18 @@ cruxible query inline \
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | no | `` | text | Optional new config path. |
+| `--allow-orphans` | no | `False` | flag | Allow stored graph types absent from the incoming config. |
 
 **Output And Side Effects:**
+- Refuses the reload (before any file or pointer changes) if the incoming
+  config no longer declares entity or relationship types present in the
+  stored graph; the error lists each stranded type with its stored count.
+  `--allow-orphans` proceeds anyway and the output carries the stranding
+  report.
+- Successful reloads print the type delta (entity/relationship types added
+  and removed) so a reload is never a silent schema change. A reload whose
+  *current* config is unreadable still works as the repair path; the delta
+  is reported as unknown via a warning.
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
 
 **Common Errors:**
