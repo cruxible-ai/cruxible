@@ -1,6 +1,9 @@
 <p align="center">
   <a href="https://cruxible.ai">
-    <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_logo.png" alt="Cruxible" width="400">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/brand/cruxible-wordmark-white.svg">
+      <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/brand/cruxible-wordmark-black.svg" alt="Cruxible" width="360">
+    </picture>
   </a>
 </p>
 

@@ -2,16 +2,16 @@
   <!-- Cruxible mark (F6, locked 2026-07-10; weight raised 8 -> 11 to match
        the Instrument Sans 600 wordmark stems, ports rescaled per the
        construction: top/bottom cut half-width 1.0*sw, left opening 1.2*sw).
-       White - for dark backgrounds.
+       Black - for light backgrounds.
        Forge hexagon ported at three crossings; C formed by the broken
        leads and chevron; transistor stem through the left opening.
        Apex x=47 aligns with the hexagon's left corners. -->
-  <g stroke="#F2F0EA" stroke-width="11" stroke-linecap="butt" stroke-linejoin="round" fill="none">
+  <g stroke="#0B0B0D" stroke-width="11" stroke-linecap="butt" stroke-linejoin="round" fill="none">
     <path d="M 86 30.2 L 93 30.2 L 116 70 L 93 109.8 L 86 109.8"/>
     <path d="M 64 109.8 L 47 109.8 L 37 92.5"/>
     <path d="M 37 47.5 L 47 30.2 L 64 30.2"/>
   </g>
-  <g stroke="#F2F0EA" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none">
+  <g stroke="#0B0B0D" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none">
     <path d="M 37 47.5 L 31.6 56.8"/>
     <path d="M 37 92.5 L 31.6 83.2"/>
     <path d="M 75 14.2 L 75 52 L 47 70 L 75 88 L 75 125.8"/>
