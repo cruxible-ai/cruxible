@@ -109,18 +109,14 @@ class TestCheckPermission:
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_add_entity")
         # ...but a config-declared governed_write requirement passes.
-        check_permission(
-            "cruxible_add_entity", required_override=PermissionMode.GOVERNED_WRITE
-        )
+        check_permission("cruxible_add_entity", required_override=PermissionMode.GOVERNED_WRITE)
 
     def test_required_override_can_still_deny(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
         reset_permissions()
         init_permissions()
         with pytest.raises(PermissionDeniedError):
-            check_permission(
-                "cruxible_add_entity", required_override=PermissionMode.GRAPH_WRITE
-            )
+            check_permission("cruxible_add_entity", required_override=PermissionMode.GRAPH_WRITE)
 
     def test_required_override_requires_registered_tool(self, monkeypatch):
         """The override adjusts the tier; it never bypasses tool registration."""
@@ -128,9 +124,7 @@ class TestCheckPermission:
         reset_permissions()
         init_permissions()
         with pytest.raises(ConfigError):
-            check_permission(
-                "cruxible_not_a_tool", required_override=PermissionMode.READ_ONLY
-            )
+            check_permission("cruxible_not_a_tool", required_override=PermissionMode.READ_ONLY)
 
     def test_governed_write_tool_in_read_only(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")

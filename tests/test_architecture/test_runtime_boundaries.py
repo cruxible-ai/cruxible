@@ -138,9 +138,7 @@ def test_runtime_api_overrides_permission_tiers_only_in_direct_write_gate():
     tree = ast.parse(source, filename=str(path))
     offenders: list[str] = []
     for function in (
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ):
         for node in ast.walk(function):
             if not (
@@ -154,8 +152,7 @@ def test_runtime_api_overrides_permission_tiers_only_in_direct_write_gate():
             # using either outside the sanctioned gates is an unaudited or
             # unreviewed permission path (second-review finding, 2026-07-11).
             has_gate_power = any(
-                keyword.arg in ("required_override", "audit_success")
-                for keyword in node.keywords
+                keyword.arg in ("required_override", "audit_success") for keyword in node.keywords
             )
             if has_gate_power and function.name not in _TIER_OVERRIDE_FUNCTIONS:
                 offenders.append(f"{function.name}:{node.lineno}")
@@ -172,18 +169,16 @@ def test_runtime_api_tier_branching_confined_to_the_gate():
     tree = ast.parse(path.read_text(), filename=str(path))
     offenders: list[str] = []
     for function in (
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ):
         if function.name in _TIER_OVERRIDE_FUNCTIONS:
             continue
         for node in ast.walk(function):
             if isinstance(node, ast.Name) and node.id in ("PermissionMode", "get_current_mode"):
                 offenders.append(f"{function.name}:{node.lineno}")
-            if (
-                isinstance(node, ast.Attribute)
-                and node.attr in ("PermissionMode", "get_current_mode")
+            if isinstance(node, ast.Attribute) and node.attr in (
+                "PermissionMode",
+                "get_current_mode",
             ):
                 offenders.append(f"{function.name}:{node.lineno}")
     assert offenders == []
