@@ -3006,10 +3006,13 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
     captured: dict[str, object] = {}
 
     class StubClient:
-        def reload_config(self, instance_id, *, config_path=None, config_yaml=None):
+        def reload_config(
+            self, instance_id, *, config_path=None, config_yaml=None, allow_orphans=False
+        ):
             captured["instance_id"] = instance_id
             captured["config_path"] = config_path
             captured["config_yaml"] = config_yaml
+            captured["allow_orphans"] = allow_orphans
             return contracts.ReloadConfigResult(
                 config_path="/daemon/instances/inst_123/config.yaml",
                 updated=True,
