@@ -105,7 +105,7 @@ flowchart LR
 | `OpenQuestion` | `question_id: string (pk)`, `title: string?`, `summary: string?`, `status: lifecycle_status?`, `due_date: date?` | Open question that can block work or decisions until answered. |
 | `ReviewRequest` | `review_request_id: string (pk)`, `title: string?`, `status: review_status?`, `summary: string?`, `change_repo: string?`, `change_base: string?`, `change_head: string?`, `requested_at: datetime?`, `resolved_at: datetime?` | Review checkpoint that can gate completion of a work item. |
 | `Risk` | `risk_id: string (pk)`, `title: string?`, `summary: string?`, `status: lifecycle_status?`, `priority: priority?` | Operational risk that can block or materially delay work. |
-| `StateNote` | `note_id: string (pk)`, `kind: state_note_kind?`, `title: string?`, `summary: string?`, `body: string?`, `created_at: datetime?` | Durable dated note about operation state (corrections, field notes, rationale updates, implementation notes, review notes). Preserves evolving interpretation without turning current entity summaries into changelogs. |
+| `StateNote` | `note_id: string (pk)`, `kind: state_note_kind?`, `title: string?`, `summary: string?`, `body: string?`, `created_at: datetime?` | Durable dated note about operation state (corrections, field notes, rationale updates, implementation notes, review notes) plus low-trust scratchpad notes (kind=scratchpad): an implementer's mid-flight working state, excluded from curated note reads. Preserves evolving interpretation without turning current entity summaries into changelogs. |
 | `SubjectRef` | `subject_ref_id: string (pk)`, `label: string?`, `subject_type: string?`, `subject_id: string?`, `state_ref: string?`, `summary: string?` | Lightweight reference to an external/cross-instance/not-yet-modeled subject. In a composed same-instance graph, prefer explicit typed operation-to-domain relationships over wrapping modeled domain entities in SubjectRef. |
 | `WorkItem` | `work_item_id: string (pk)`, `title: string?`, `summary: string?`, `description: string?`, `rationale: string?`, `type: work_item_type?`, `status: lifecycle_status?`, `priority: priority?`, `target_date: date?` | Execution-level item an agent or human can work, review, close, defer, or supersede. |
 
@@ -119,7 +119,7 @@ flowchart LR
 | `lifecycle_status` | planned, active, blocked, watching, deferred, closed |
 | `priority` | low, medium, high, critical |
 | `review_status` | requested, in_review, changes_requested, approved, withdrawn |
-| `state_note_kind` | correction, field_note, rationale_update, implementation_note, review_note |
+| `state_note_kind` | correction, field_note, rationale_update, implementation_note, review_note, scratchpad |
 | `work_item_type` | feature, bug, cleanup, research, docs, test, infrastructure, operations |
 <!-- CRUXIBLE:END schema-catalog -->
 
@@ -169,10 +169,27 @@ evidence-backed when proposed by agents.
 <!-- CRUXIBLE:BEGIN mutation-guards -->
 | Guard | Fires On | Refused Unless | Message |
 | --- | --- | --- | --- |
+| `decision_acceptance_requires_authorized_actor` | `Decision.status` -> `accepted` | authenticated actor in: authorized-reviewer | Accepting a Decision requires the authenticated reviewer actor (not a writer credential or spoofed body actor). Proposed decisions stay writable at the Decision type's normal tier. |
 | `review_request_approval_requires_authorized_actor` | `ReviewRequest.status` -> `approved` | authenticated actor in: authorized-reviewer | ReviewRequest approvals require the authenticated reviewer actor (not a writer credential or spoofed body actor). |
 | `review_verdict_requires_rationale_note` | `ReviewRequest.status` -> `changes_requested, approved, withdrawn` | same write creates `StateNote` (kind=review_note) linked via `state_note_about_review_request` | A ReviewRequest verdict must co-write a new StateNote(kind=review_note) linked via state_note_about_review_request in the same write. Status can't advance without recording why. |
 | `work_item_closed_requires_approved_review` | `WorkItem.status` -> `closed` | query `approved_reviews_for_work_item` returns >= 1 result(s) | Work items cannot be closed until an approved ReviewRequest reviews them. |
 <!-- CRUXIBLE:END mutation-guards -->
+
+### Note-Surface Trust Boundary
+
+`StateNote` and its attachment edges are writable at `governed_write` so
+implementer agents can record working notes without a `graph_write`
+credential. Know what that tier can and cannot do: governance decisions
+stay protected (review verdicts, work-item closes, and Decision
+acceptance are all actor-guarded), but the note surface itself — every
+kind, creates AND updates — is governed_write territory. A
+governed_write actor can rewrite or re-kind an existing note, including
+a reviewer's rationale note (re-kinding to `scratchpad` hides it from
+curated reads), fabricate `review_note`-kind notes on any review
+request, and assert `state_note_authored_by_actor` edges to any actor.
+Treat note *content* as governed_write-trust; verdicts and lifecycle
+remain the guarded record. Tighter semantics (create-only tiers or
+per-kind write surfaces) are a tracked core follow-up.
 
 ### Signal Policy Notes
 
@@ -201,38 +218,40 @@ evidence-backed when proposed by agents.
 | Changes Requested Reviews | collection | Review Request | reviewable |  | Review requests sent back with changes requested -- the implementer's rework queue, distinct from the reviewer-facing review_queue. |
 | Open Questions Needing Review | collection | Open Question | live |  | Planned/active open questions needing review. |
 | Proposed Decisions | collection | Decision | live |  | Proposed decisions awaiting acceptance/rejection/deferral. |
-| Recent State Notes | collection | State Note | reviewable |  | Recent operation-state notes, corrections, rationale/implementation/review notes. |
+| Recent State Notes | collection | State Note | reviewable |  | Recent operation-state notes, corrections, rationale/implementation/review notes. Curated read: excludes kind=scratchpad working notes (see work_item_scratchpad). |
 | Review Queue | collection | Review Request | reviewable |  | Review requests awaiting a reviewer -- requested or in review. Reviews sent back for rework live in changes_requested_reviews. |
 | Superseded Decisions | collection | Decision | not-live |  | Decision retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
 | Superseded Work Items | collection | Work Item | not-live |  | WorkItem retired/superseded on the canonical entity-lifecycle axis (lifecycle.status != live), gated out of live reads. Supersession is not a domain status value. |
+| Work Queue | collection | Work Item | live |  | Active work items dispatched for implementation -- the queue an implementer or agentic loop pulls from. Curate by setting a work item's status to active. |
 
 ### Review Request
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| State Notes For Review Request | traversal | State Note | reviewable | State Note About Review Request (Incoming) | The review thread: verdict and finding notes attached to a review request, newest first. This is the read that replaces scrolling a notes blob. |
+| State Notes For Review Request | traversal | State Note | reviewable | State Note About Review Request (Incoming) | The review thread: verdict and finding notes attached to a review request, newest first. This is the read that replaces scrolling a notes blob. Excludes kind=scratchpad working notes. |
 
 ### State Note
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| State Note Context | traversal | Any Entity | reviewable | State Note Authored By Actor \| State Note About Work Item \| State Note About Review Request \| State Note About Decision \| State Note About Risk \| State Note About Open Question \| State Note About Subject \| State Note About Actor \| State Note Supersedes State Note \| State Note Resolves State Note (Both) | Full context for a state note (targets, author, supersession). |
+| State Note Context | traversal | Any Entity | reviewable | State Note Authored By Actor \| State Note About Work Item \| State Note About Review Request \| State Note About Decision \| State Note About Risk \| State Note About Open Question \| State Note About Subject \| State Note About Actor \| State Note Supersedes State Note \| State Note Resolves State Note (Both) | Full context for a state note (targets, author, supersession). Curated read: adjacent scratchpad notes are excluded from the incoming supersession/resolution sets. The entry note itself is fetched by id and is not kind-gated; use work_item_scratchpad for scratchpad pickup. |
 
 ### Subject Ref
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Subject Operation Context | traversal | Any Entity | reviewable | State Note About Subject \| Work Item Targets Subject \| Decision Affects Subject \| Risk Attaches To Subject \| Open Question Concerns Subject (Both) | Work, decisions, risks, open questions attached to a subject ref. |
+| Subject Operation Context | traversal | Any Entity | reviewable | State Note About Subject \| Work Item Targets Subject \| Decision Affects Subject \| Risk Attaches To Subject \| Open Question Concerns Subject (Both) | Work, decisions, risks, open questions attached to a subject ref. Curated read: the bounded note set excludes kind=scratchpad. |
 
 ### Work Item
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Approved Reviews For Work Item | traversal | Review Request | live | Review Request For Work Item (Incoming) | Approved review requests for a work item. Used by the closed-transition guard. |
-| State Notes For Work Item | traversal | State Note | reviewable | State Note About Work Item (Incoming) | State notes attached to a work item, newest first. |
+| State Notes For Work Item | traversal | State Note | reviewable | State Note About Work Item (Incoming) | Curated state notes attached to a work item, newest first. Excludes kind=scratchpad working notes (see work_item_scratchpad). |
 | Work Item Context | traversal | Any Entity | reviewable | Work Item Owned By Actor \| Review Request For Work Item \| State Note About Work Item \| Work Item Depends On Work Item \| Work Item Part Of Work Item \| Work Item Spawned From Work Item \| Work Item Supersedes Work Item \| Risk Blocks Work Item \| Open Question Blocks Work Item \| Work Item Mitigates Risk \| Work Item Answers Open Question \| Decision Constrains Work Item \| Work Item Targets Subject (Both) | From a work item, inspect dependencies, blockers, reviews, composition, lineage, decisions, owner, subjects. all_adjacent expands against the final composed config, so on a composed instance this query also traverses overlay seam edges (e.g. project-domain's roadmap, release, milestone, and area relationships). |
 | Work Item Lineage Context | traversal | Work Item | reviewable | Work Item Spawned From Work Item \| Work Item Supersedes Work Item (Both, depth=5) | Work item lineage/replacement context, excluding sequencing deps. |
 | Work Item Rollup Context | traversal | Work Item | reviewable | Work Item Part Of Work Item (Incoming, depth=5) | Child/descendant work items under a parent. |
+| Work Item Scratchpad | traversal | State Note | reviewable | State Note About Work Item (Incoming) | A work item's scratchpad notes (kind=scratchpad only) in created order -- an implementer's mid-flight working state, replayed chronologically to pick a work item back up. The inverse of the curated note reads, which exclude scratchpad. |
 <!-- CRUXIBLE:END query-catalog -->
 
 ## Quality Rules

@@ -286,6 +286,43 @@ class TestEntityTypeSchema:
                 write_policy="refuse",
             )
 
+    def test_write_tier_defaults_to_none(self):
+        entity = EntityTypeSchema(properties={"name": PropertySchema(type="string")})
+        assert entity.write_tier is None
+
+    @pytest.mark.parametrize("tier", ["governed_write", "graph_write"])
+    def test_write_tier_accepts_write_tiers(self, tier):
+        entity = EntityTypeSchema(
+            properties={"name": PropertySchema(type="string")},
+            write_tier=tier,
+        )
+        assert entity.write_tier == tier
+
+    @pytest.mark.parametrize("tier", ["read_only", "admin", "bogus"])
+    def test_write_tier_rejects_non_write_tiers(self, tier):
+        with pytest.raises(ValidationError, match="write_tier must be one of"):
+            EntityTypeSchema(
+                properties={"name": PropertySchema(type="string")},
+                write_tier=tier,
+            )
+
+    @pytest.mark.parametrize("policy", ["proposal_only", "mint_only"])
+    def test_write_tier_conflicts_with_non_direct_write_policy(self, policy):
+        with pytest.raises(ValidationError, match="conflicts with write_policy"):
+            EntityTypeSchema(
+                properties={"name": PropertySchema(type="string")},
+                write_policy=policy,
+                write_tier="governed_write",
+            )
+
+    def test_write_tier_allowed_with_explicit_direct_write_policy(self):
+        entity = EntityTypeSchema(
+            properties={"name": PropertySchema(type="string")},
+            write_policy="direct",
+            write_tier="governed_write",
+        )
+        assert entity.write_tier == "governed_write"
+
 
 class TestRelationshipSchema:
     def test_from_alias(self):
@@ -328,6 +365,32 @@ class TestRelationshipSchema:
             {"name": "r", "from": "A", "to": "B", "write_policy": "proposal_only"}
         )
         assert rel.write_policy == "proposal_only"
+
+    @pytest.mark.parametrize("tier", ["governed_write", "graph_write"])
+    def test_write_tier_accepts_write_tiers(self, tier):
+        rel = RelationshipSchema(name="r", from_entity="A", to_entity="B", write_tier=tier)
+        assert rel.write_tier == tier
+
+    @pytest.mark.parametrize("tier", ["read_only", "admin", "bogus"])
+    def test_write_tier_rejects_non_write_tiers(self, tier):
+        with pytest.raises(ValidationError, match="write_tier must be one of"):
+            RelationshipSchema(name="r", from_entity="A", to_entity="B", write_tier=tier)
+
+    def test_write_tier_conflicts_with_proposal_only(self):
+        with pytest.raises(ValidationError, match="conflicts with write_policy"):
+            RelationshipSchema(
+                name="r",
+                from_entity="A",
+                to_entity="B",
+                write_policy="proposal_only",
+                write_tier="governed_write",
+            )
+
+    def test_write_tier_parses_under_extra_forbid(self):
+        rel = RelationshipSchema.model_validate(
+            {"name": "r", "from": "A", "to": "B", "write_tier": "governed_write"}
+        )
+        assert rel.write_tier == "governed_write"
 
     def test_relationship_properties_default_optional_and_string(self):
         rel = RelationshipSchema(

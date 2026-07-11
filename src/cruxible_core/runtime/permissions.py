@@ -342,6 +342,8 @@ def check_permission(
     *,
     instance_id: str | None = None,
     enforce_instance_scope: bool = True,
+    required_override: PermissionMode | None = None,
+    audit_success: bool = True,
 ) -> None:
     """Check whether the current mode permits calling *tool_name*.
 
@@ -351,6 +353,18 @@ def check_permission(
         enforce_instance_scope: Whether to reject when request credentials are scoped
             to a different instance. Disable only for legacy root-dir lifecycle checks
             that authorize scope before calling the runtime facade.
+        required_override: Replace the static tool->tier requirement for this call.
+            Used by the direct-write facades whose effective requirement is
+            config-declared per payload type (``write_tier``): they first gate at
+            the ``GOVERNED_WRITE`` write floor (before any instance access, so the
+            scope gate still runs first), then re-check at the payload's computed
+            requirement. The tool must still exist in the static permission map —
+            the override adjusts the tier, never bypasses registration.
+        audit_success: Emit the ``mutation_allowed`` audit record on success. Set
+            False ONLY for a pre-gate whose caller immediately re-checks (and
+            audits) the same tool at its final computed requirement, so each
+            mutation yields exactly one authoritative success record. Denials
+            and scope violations are always logged regardless.
 
     Raises:
         PermissionDeniedError: If the current mode is insufficient.
@@ -358,7 +372,9 @@ def check_permission(
     current = get_current_mode()
     if tool_name not in PERMISSION_REQUIREMENTS:
         raise ConfigError(f"Tool '{tool_name}' has no entry in permission requirements")
-    effective = PERMISSION_REQUIREMENTS[tool_name]
+    effective = (
+        required_override if required_override is not None else PERMISSION_REQUIREMENTS[tool_name]
+    )
 
     if current < effective:
         _log.warning(
@@ -386,7 +402,7 @@ def check_permission(
         raise InstanceScopeError(instance_id, credential_scope)
 
     # Audit log for mutations
-    if effective >= PermissionMode.GOVERNED_WRITE:
+    if audit_success and effective >= PermissionMode.GOVERNED_WRITE:
         _log.info(
             "mutation_allowed",
             tool=tool_name,

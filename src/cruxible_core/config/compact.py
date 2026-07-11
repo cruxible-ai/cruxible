@@ -279,7 +279,15 @@ def _expand_entity_types(raw_entities: dict[str, Any]) -> dict[str, Any]:
         _reject_unknown_keys(
             f"entity '{type_name}'",
             body,
-            {"description", "id", "properties", "write_policy", "auth_managed", "constraints"},
+            {
+                "description",
+                "id",
+                "properties",
+                "write_policy",
+                "write_tier",
+                "auth_managed",
+                "constraints",
+            },
         )
 
         entity: dict[str, Any] = {}
@@ -312,6 +320,8 @@ def _expand_entity_types(raw_entities: dict[str, Any]) -> dict[str, Any]:
         entity["properties"] = props
         if "write_policy" in body:
             entity["write_policy"] = body["write_policy"]
+        if "write_tier" in body:
+            entity["write_tier"] = body["write_tier"]
         if "auth_managed" in body:
             entity["auth_managed"] = body["auth_managed"]
         if "constraints" in body:
@@ -363,7 +373,15 @@ def _expand_relationships(
         _reject_unknown_keys(
             f"relationship '{name}'",
             item,
-            {name, "proposal_policy", "basis", "description", "properties", "write_policy"},
+            {
+                name,
+                "proposal_policy",
+                "basis",
+                "description",
+                "properties",
+                "write_policy",
+                "write_tier",
+            },
         )
 
         match = _SIG_RE.match(sig)
@@ -425,6 +443,8 @@ def _expand_relationships(
 
         if "write_policy" in item:
             rel["write_policy"] = item["write_policy"]
+        if "write_tier" in item:
+            rel["write_tier"] = item["write_tier"]
 
         out.append(rel)
         index[name] = RelInfo(name=name, from_entity=from_entity, to_entity=to_entity)
@@ -440,7 +460,14 @@ def _find_signature(item: dict[str, Any]) -> tuple[str, str]:
     structured fields and are skipped -- so a block ``description`` whose text
     contains ``->`` is not mistaken for a second signature.
     """
-    structured = {"proposal_policy", "basis", "description", "properties", "write_policy"}
+    structured = {
+        "proposal_policy",
+        "basis",
+        "description",
+        "properties",
+        "write_policy",
+        "write_tier",
+    }
     candidates = [
         (key, value)
         for key, value in item.items()

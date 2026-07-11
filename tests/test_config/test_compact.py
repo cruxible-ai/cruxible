@@ -388,6 +388,44 @@ def test_relationship_omitted_write_policy_absent() -> None:
     assert "write_policy" not in config["relationships"][0]
 
 
+def test_relationship_write_tier_passes_through() -> None:
+    config = _expand(
+        _REL_HEADER,
+        """
+        relationships:
+          - work_item_owned_by_actor: WorkItem -> Actor
+            write_tier: governed_write
+        """,
+    )
+    assert config["relationships"][0]["write_tier"] == "governed_write"
+
+
+def test_relationship_omitted_write_tier_absent() -> None:
+    config = _expand(
+        _REL_HEADER,
+        """
+        relationships:
+          - work_item_owned_by_actor: WorkItem -> Actor
+        """,
+    )
+    assert "write_tier" not in config["relationships"][0]
+
+
+def test_entity_write_tier_passes_through() -> None:
+    config = _expand(
+        """
+        name: k
+        entity_types:
+          StateNote:
+            id: note_id
+            write_tier: governed_write
+            properties:
+              title: string
+        """
+    )
+    assert config["entity_types"]["StateNote"]["write_tier"] == "governed_write"
+
+
 def test_relationship_explicit_properties_block() -> None:
     config = _expand(
         _REL_HEADER,

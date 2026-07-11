@@ -30,7 +30,9 @@ from cruxible_core.query.types import dump_query_row
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import (
+    PermissionMode,
     check_permission,
+    get_current_mode,
     require_unscoped_operator,
     validate_root_dir,
 )
@@ -114,6 +116,7 @@ from cruxible_core.service import (
     service_update_trust_status,
     service_validate,
 )
+from cruxible_core.service.direct_write_policy import required_direct_write_tier
 from cruxible_core.service.lifecycle_inputs import (
     entity_metadata_with_lifecycle,
     relationship_lifecycle_state,
@@ -2496,6 +2499,50 @@ def sample(
     )
 
 
+# Write floor for the direct-write verbs: every config-declarable write_tier is
+# at least GOVERNED_WRITE, so sub-floor callers (read_only) are denied before any
+# instance access, and the instance-scope gate runs at the same point it always
+# has — ahead of the manager lookup.
+_DIRECT_WRITE_FLOOR = PermissionMode.GOVERNED_WRITE
+
+
+def _direct_write_tier_gate(
+    tool_names: tuple[str, ...],
+    instance_id: str,
+    *,
+    entity_types: frozenset[str] | set[str],
+    relationship_types: frozenset[str] | set[str],
+) -> Any:
+    """Second stage of the direct-write permission gate; returns the instance.
+
+    Callers MUST have already run the silent floor pre-gate
+    (``check_permission`` with ``required_override=_DIRECT_WRITE_FLOOR`` and
+    ``audit_success=False``) for every tool in ``tool_names`` so the
+    instance-scope gate and the write floor precede any instance access. This
+    stage performs the single AUDITED permission check:
+
+    * at or above ``graph_write``: the static tool requirement, unchanged from
+      the classic behavior (declared tiers only ever lower the requirement
+      below ``graph_write``, never raise it — no config read needed);
+    * below ``graph_write``: the payload's config-declared requirement — each
+      touched type contributes its ``write_tier`` (default ``graph_write``),
+      so a mixed payload is gated at the strictest member.
+    """
+    instance = get_manager().get(instance_id)
+    if get_current_mode() >= PermissionMode.GRAPH_WRITE:
+        for tool_name in tool_names:
+            check_permission(tool_name, instance_id=instance_id)
+        return instance
+    required = required_direct_write_tier(
+        instance.load_config(),
+        entity_types=entity_types,
+        relationship_types=relationship_types,
+    )
+    for tool_name in tool_names:
+        check_permission(tool_name, instance_id=instance_id, required_override=required)
+    return instance
+
+
 def _direct_write_group_interaction_to_contract(
     interaction: Any,
 ) -> contracts.DirectWriteGroupInteraction:
@@ -2523,9 +2570,19 @@ def add_relationships_with_provenance(
     actor_context: Any | None = None,
 ) -> contracts.AddRelationshipResult:
     """Add or update one or more relationships in the graph (upsert)."""
-    check_permission("cruxible_add_relationship", instance_id=instance_id)
+    check_permission(
+        "cruxible_add_relationship",
+        instance_id=instance_id,
+        required_override=_DIRECT_WRITE_FLOOR,
+        audit_success=False,
+    )
     actor = _hosted_actor_context(actor_context)
-    instance = get_manager().get(instance_id)
+    instance = _direct_write_tier_gate(
+        ("cruxible_add_relationship",),
+        instance_id,
+        entity_types=frozenset(),
+        relationship_types={edge.relationship_type for edge in relationships},
+    )
 
     inputs = [_relationship_input_to_service(edge) for edge in relationships]
     result = service_add_relationship_inputs(
@@ -2643,10 +2700,25 @@ def batch_direct_write(
     actor_context: Any | None = None,
 ) -> contracts.BatchDirectWriteResult:
     """Validate or apply one direct entity/relationship write payload."""
-    check_permission("cruxible_add_relationship", instance_id=instance_id)
-    check_permission("cruxible_add_entity", instance_id=instance_id)
+    check_permission(
+        "cruxible_add_relationship",
+        instance_id=instance_id,
+        required_override=_DIRECT_WRITE_FLOOR,
+        audit_success=False,
+    )
+    check_permission(
+        "cruxible_add_entity",
+        instance_id=instance_id,
+        required_override=_DIRECT_WRITE_FLOOR,
+        audit_success=False,
+    )
     actor = _hosted_actor_context(actor_context)
-    instance = get_manager().get(instance_id)
+    instance = _direct_write_tier_gate(
+        ("cruxible_add_relationship", "cruxible_add_entity"),
+        instance_id,
+        entity_types={entity.entity_type for entity in payload.entities},
+        relationship_types={edge.relationship_type for edge in payload.relationships},
+    )
     result = service_batch_direct_write(
         instance,
         _batch_payload_to_service(payload),
@@ -2684,9 +2756,19 @@ def add_entities(
     actor_context: Any | None = None,
 ) -> contracts.AddEntityResult:
     """Add or update one or more entities in the graph (upsert)."""
-    check_permission("cruxible_add_entity", instance_id=instance_id)
+    check_permission(
+        "cruxible_add_entity",
+        instance_id=instance_id,
+        required_override=_DIRECT_WRITE_FLOOR,
+        audit_success=False,
+    )
     actor = _hosted_actor_context(actor_context)
-    instance = get_manager().get(instance_id)
+    instance = _direct_write_tier_gate(
+        ("cruxible_add_entity",),
+        instance_id,
+        entity_types={entity.entity_type for entity in entities},
+        relationship_types=frozenset(),
+    )
 
     inputs = [
         EntityWriteInput(

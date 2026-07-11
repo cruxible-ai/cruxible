@@ -100,6 +100,38 @@ class TestCheckPermission:
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_add_entity")
 
+    def test_required_override_lowers_requirement(self, monkeypatch):
+        """The direct-write facades may replace the static tier for a call."""
+        monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+        reset_permissions()
+        init_permissions()
+        # Static requirement (graph_write) denies...
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_add_entity")
+        # ...but a config-declared governed_write requirement passes.
+        check_permission(
+            "cruxible_add_entity", required_override=PermissionMode.GOVERNED_WRITE
+        )
+
+    def test_required_override_can_still_deny(self, monkeypatch):
+        monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+        reset_permissions()
+        init_permissions()
+        with pytest.raises(PermissionDeniedError):
+            check_permission(
+                "cruxible_add_entity", required_override=PermissionMode.GRAPH_WRITE
+            )
+
+    def test_required_override_requires_registered_tool(self, monkeypatch):
+        """The override adjusts the tier; it never bypasses tool registration."""
+        monkeypatch.setenv("CRUXIBLE_MODE", "admin")
+        reset_permissions()
+        init_permissions()
+        with pytest.raises(ConfigError):
+            check_permission(
+                "cruxible_not_a_tool", required_override=PermissionMode.READ_ONLY
+            )
+
     def test_governed_write_tool_in_read_only(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
         reset_permissions()

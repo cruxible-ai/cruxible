@@ -194,6 +194,46 @@ def _apply_graph_property_defaults(
 # Entity Type Schema
 # ---------------------------------------------------------------------------
 
+# Tiers a type may declare as its direct-write requirement. Deliberately NOT the
+# full permission ladder: ``read_only`` is not a write tier, and raising the
+# requirement above ``graph_write`` is the job of ``write_policy``
+# (proposal_only / mint_only are hard constraints, not tier checks).
+_WRITE_TIER_VALUES = ("governed_write", "graph_write")
+
+
+def _validate_write_tier_value(value: Any) -> Any:
+    """Pre-validate ``write_tier`` with an actionable lint message."""
+    if value is None or value in _WRITE_TIER_VALUES:
+        return value
+    allowed = ", ".join(f"'{tier}'" for tier in _WRITE_TIER_VALUES)
+    msg = (
+        f"write_tier must be one of {allowed} (got {value!r}). It declares the "
+        "minimum permission tier allowed to direct-write this type; 'read_only' "
+        "is not a write tier, and restricting writes harder than 'graph_write' "
+        "is expressed with write_policy (proposal_only / mint_only), not a tier."
+    )
+    raise ValueError(msg)
+
+
+def _reject_write_tier_on_non_direct_type(
+    write_tier: str | None,
+    write_policy: str | None,
+) -> None:
+    """Reject ``write_tier`` on types whose explicit policy refuses direct writes.
+
+    A declared ``write_tier`` opens a direct-write surface; an explicit
+    ``proposal_only``/``mint_only`` ``write_policy`` refuses that surface for
+    every tier. Declaring both is contradictory config — fail at lint rather
+    than ship a write_tier that can never take effect.
+    """
+    if write_tier is not None and write_policy in {"proposal_only", "mint_only"}:
+        msg = (
+            f"write_tier '{write_tier}' conflicts with write_policy "
+            f"'{write_policy}': a type that refuses direct writes cannot "
+            "declare a direct-write tier"
+        )
+        raise ValueError(msg)
+
 
 class EntityTypeSchema(BaseModel):
     """Schema for an entity type definition."""
@@ -224,10 +264,29 @@ class EntityTypeSchema(BaseModel):
     marker must be paired with ``write_policy: mint_only`` so no config-declared
     write path can author credential identities.
     """
+    write_tier: Literal["governed_write", "graph_write"] | None = None
+    """Minimum permission tier whose holders may direct-write this type.
+
+    ``None`` keeps the direct-write verbs at their default ``graph_write``
+    requirement. ``"governed_write"`` opens this type's direct-write surface to
+    ``governed_write`` actors (a kit-declared low-trust write surface);
+    ``"graph_write"`` is an explicit restatement of the default. The tier can
+    only be lowered below ``graph_write`` — restricting writes harder than the
+    tier ladder is ``write_policy``'s job, so ``read_only``/``admin`` are
+    rejected. Mutation guards and ``write_policy`` still apply after the tier
+    check. Resolved by ``service/direct_write_policy.required_direct_write_tier``
+    and enforced at the ``runtime/api.py`` direct-write facades.
+    """
+
+    @field_validator("write_tier", mode="before")
+    @classmethod
+    def validate_write_tier(cls, value: Any) -> Any:
+        return _validate_write_tier_value(value)
 
     @model_validator(mode="after")
     def apply_graph_property_defaults(self) -> EntityTypeSchema:
         self.properties = _apply_graph_property_defaults(self.properties)
+        _reject_write_tier_on_non_direct_type(self.write_tier, self.write_policy)
         return self
 
     def get_primary_key(self) -> str | None:
@@ -296,8 +355,23 @@ class RelationshipSchema(BaseModel):
     ``service/direct_write_policy.py`` and enforced at the
     ``graph/operations.py`` chokepoint.
     """
+    write_tier: Literal["governed_write", "graph_write"] | None = None
+    """Minimum permission tier whose holders may direct-write this relationship.
+
+    Same semantics as ``EntityTypeSchema.write_tier``: ``None`` keeps the
+    default ``graph_write`` requirement; ``"governed_write"`` opens direct edge
+    writes of this type to ``governed_write`` actors. Endpoint entity types are
+    NOT part of the check — an edge write mutates only the edge, so a
+    governed-tier relationship may attach to entities the caller could not
+    write directly. Mutation guards and ``write_policy`` still apply.
+    """
 
     model_config = {"populate_by_name": True, "extra": "forbid"}
+
+    @field_validator("write_tier", mode="before")
+    @classmethod
+    def validate_write_tier(cls, value: Any) -> Any:
+        return _validate_write_tier_value(value)
 
     @model_validator(mode="after")
     def validate_proposal_identity(self) -> RelationshipSchema:
@@ -307,6 +381,7 @@ class RelationshipSchema(BaseModel):
                 "proposal_identity 'relationship_tuple' requires a governed proposal_policy section"
             )
             raise ValueError(msg)
+        _reject_write_tier_on_non_direct_type(self.write_tier, self.write_policy)
         return self
 
 
