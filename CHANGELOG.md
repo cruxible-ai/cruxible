@@ -7,6 +7,20 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+### Added
+
+- **Approval actor separation (`distinct_from_creation_actor`)**: mutation
+  guards can now require that the acting actor differ from the actor that
+  created the target entity — anchored on the creation receipt's
+  server-derived actor identity, never on writable properties. Fail-closed:
+  entities with no committed creation receipt or no recorded creation actor
+  refuse the guarded transition, and create-with-guarded-value is always
+  refused. The agent-operation kit's review-approval guard now combines its
+  allow-list with separation, so the actor that files a ReviewRequest can
+  no longer approve it. Consequence: importing records in an
+  already-approved state is refused — land reviews as `requested` and
+  approve under a second credential.
+
 ### Security
 
 - **Feedback channel now honors write-tier boundaries**
