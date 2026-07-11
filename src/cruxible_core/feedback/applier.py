@@ -88,15 +88,17 @@ _ACTION_PAST: dict[str, RelationshipReviewStatus] = {
     "reject": "rejected",
 }
 
-# Feedback actions that promote a relationship's review status to ``approved``,
-# making a previously non-live (pending/rejected) edge live and able to satisfy a
-# review-mediated close-gate precondition. Both ``approve`` and ``correct`` set the
-# status to ``approved`` (the ``correct`` branch in ``apply_feedback`` below calls
-# ``_review_metadata(..., status="approved")``), so both must carry a resolved actor
-# identity under the governed runtime; otherwise a lower
-# (GOVERNED_WRITE) tier could promote a review edge anonymously via ``correct``.
+# Feedback actions that transition a relationship's review state. ``approve``
+# and ``correct`` promote the status to ``approved`` (the ``correct`` branch in
+# ``apply_feedback`` below calls ``_review_metadata(..., status="approved")``),
+# making a previously non-live edge live and able to satisfy a review-mediated
+# close-gate precondition. ``reject`` (-> ``rejected``) and ``flag``
+# (-> ``pending``) move an edge OUT of live review state — an anonymous
+# retraction is as much a governance hole as an anonymous promotion
+# (wi-feedback-write-tier-bypass, mechanism 2). Every transition must therefore
+# carry a resolved actor identity under the governed (auth-on) runtime.
 # See ``runtime.api`` for the enforcement point.
-REVIEW_PROMOTION_ACTIONS: frozenset[str] = frozenset({"approve", "correct"})
+REVIEW_TRANSITION_ACTIONS: frozenset[str] = frozenset({"approve", "correct", "reject", "flag"})
 
 
 def _review_metadata(

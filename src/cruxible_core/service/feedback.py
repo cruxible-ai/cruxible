@@ -962,6 +962,35 @@ def service_feedback_input(
     )
 
 
+def service_resolve_feedback_query_target(
+    instance: InstanceProtocol,
+    *,
+    receipt_id: str,
+    result_index: int,
+    path_index: int | None = None,
+    path_alias: str | None = None,
+) -> RelationshipInstance:
+    """Resolve the relationship target a query-receipt feedback call selects.
+
+    Read-only companion to ``service_feedback_from_query_result`` so the
+    runtime facade can tier-gate ``correct`` property corrections against the
+    resolved relationship type BEFORE any mutation happens. Uses the same
+    receipt/result selection rules as the mutating path.
+    """
+    receipt = service_get_receipt(instance, receipt_id)
+    if receipt.operation_type != "query":
+        raise ConfigError(
+            f"Receipt '{receipt_id}' has operation_type '{receipt.operation_type}', not 'query'"
+        )
+    target, _ = _feedback_target_from_query_result(
+        receipt,
+        result_index=result_index,
+        path_index=path_index,
+        path_alias=path_alias,
+    )
+    return target
+
+
 def service_feedback_from_query_result(
     instance: InstanceProtocol,
     *,

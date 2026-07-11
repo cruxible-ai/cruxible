@@ -117,14 +117,20 @@ def test_runtime_api_does_not_construct_graph_or_feedback_domain_models():
 # Config-declared write tiers (``write_tier``) make the direct-write facades'
 # effective requirement payload-dependent: they pre-gate at the GOVERNED_WRITE
 # floor (scope first, before any instance access), then check the payload's
-# computed requirement via ``_direct_write_tier_gate``. Nothing else in the
-# facade may adjust a tier — additions to this set need an architecture review.
+# computed requirement via ``_direct_write_tier_gate``. Feedback ``correct``
+# applies edge property corrections — the same mutation as a direct
+# relationship write — so ``_feedback_correction_tier_gate`` holds the same
+# power for the feedback facades (wi-feedback-write-tier-bypass): after the
+# facades' audited static check, it gates corrections at the strictest
+# corrected type's ``write_tier``. Nothing else in the facade may adjust a
+# tier — additions to this set need an architecture review.
 _TIER_OVERRIDE_FUNCTIONS = frozenset(
     {
         "add_entities",
         "add_relationships_with_provenance",
         "batch_direct_write",
         "_direct_write_tier_gate",
+        "_feedback_correction_tier_gate",
     }
 )
 
@@ -202,6 +208,52 @@ def test_gate_powers_never_leave_the_permission_module_and_api_gates():
         if "required_override" in text or "audit_success" in text:
             offenders.append(str(path.relative_to(src_root)))
     assert offenders == []
+
+
+def test_feedback_channel_mutates_relationships_only():
+    """The feedback correction tier gate covers relationship types only.
+
+    That is sound ONLY while the feedback channel cannot write entity
+    properties. Pin both halves: every feedback target is a relationship
+    instance, and the channel's sole graph WRITE verb is
+    ``update_relationship_state``. If feedback ever grows entity corrections,
+    this fails loudly and ``_feedback_correction_tier_gate`` must gain
+    entity-side coverage before the assertion is relaxed."""
+    from cruxible_core.feedback.types import FeedbackBatchItem, FeedbackRecord
+    from cruxible_core.graph.types import RelationshipInstance
+    from cruxible_core.service.types import FeedbackItemInput, RelationshipTargetInput
+
+    assert FeedbackRecord.model_fields["target"].annotation is RelationshipInstance
+    assert FeedbackBatchItem.model_fields["target"].annotation is RelationshipInstance
+    assert FeedbackItemInput.__dataclass_fields__["target"].type in (
+        RelationshipTargetInput,
+        "RelationshipTargetInput",
+    )
+
+    allowed_graph_verbs = {
+        # Reads used to normalize/snapshot feedback context.
+        "get_relationship",
+        "relationship_count_between",
+        "get_entity",
+        # The single write verb of the channel: edge state only.
+        "update_relationship_state",
+    }
+    for module in (
+        "src/cruxible_core/feedback/applier.py",
+        "src/cruxible_core/service/feedback.py",
+    ):
+        path = _repo_root() / module
+        tree = ast.parse(path.read_text(), filename=str(path))
+        used = {
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "graph"
+        }
+        unexpected = sorted(used - allowed_graph_verbs)
+        assert used <= allowed_graph_verbs, f"{module}: unexpected graph verbs {unexpected}"
 
 
 def test_runtime_api_scoped_permission_checks_include_instance_id():

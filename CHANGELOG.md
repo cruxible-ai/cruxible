@@ -7,6 +7,24 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+### Security
+
+- **Feedback channel now honors write-tier boundaries**
+  (wi-feedback-write-tier-bypass): a `governed_write` feedback `correct`
+  could apply arbitrary edge property corrections to relationship types
+  whose direct-write surface requires `graph_write`, and `reject`/`flag`
+  could move an edge out of live review state with no actor identity under
+  server auth. Corrections are now gated at the corrected relationship
+  type's config-declared `write_tier` (default `graph_write`) across
+  `feedback`, `feedback_batch` (strictest corrected type in a mixed batch),
+  and `feedback_from_query` (target resolved from the receipt before the
+  check), refusing with the same `PermissionDeniedError` as the direct-write
+  facades. Under server auth, **every** feedback action (`approve` /
+  `correct` / `reject` / `flag`) now requires a resolved actor identity —
+  anonymous retraction ends alongside anonymous promotion. Auth-off local
+  behavior is unchanged, as are governed corrections on types that declare
+  `write_tier: governed_write`.
+
 ## 0.2.1 — 2026-07-11
 
 ### Added
