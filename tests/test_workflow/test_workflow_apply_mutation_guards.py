@@ -88,6 +88,9 @@ def _instance_with_close_workflow(tmp_path: Path) -> CruxibleInstance:
     return instance
 
 
+_IMPLEMENTER = "implementer"
+
+
 def _actor_context(actor_id: str = "authorized-reviewer") -> GovernedActorContext:
     return GovernedActorContext(
         actor_type="human_user",
@@ -118,14 +121,18 @@ def _seed_work_item(instance: CruxibleInstance, status: str = "active") -> None:
 
 
 def _seed_approved_review(instance: CruxibleInstance) -> None:
-    """Add an approved ReviewRequest linked to wi-gated in one governed batch.
+    """Add an approved ReviewRequest linked to wi-gated across two governed writes.
 
-    agent-operation gates approval with two stricter guards than the legacy
+    agent-operation gates approval with three guards stricter than the legacy
     project-state kit: the approving actor must be ``authorized-reviewer``
-    (``review_request_approval_requires_authorized_actor``) and the verdict must
+    (``review_request_approval_requires_authorized_actor``); the verdict must
     co-write a ``StateNote(kind=review_note)`` linked via
     ``state_note_about_review_request`` in the same write
-    (``review_verdict_requires_rationale_note``). The batch below satisfies both.
+    (``review_verdict_requires_rationale_note``); and the approver must differ
+    from the actor recorded in the ReviewRequest's creation receipt
+    (``distinct_from_creation_actor``), which makes create-with-approved
+    impossible. So the review is seeded in two steps: created ``requested`` by
+    the implementer actor, then approved by the ``authorized-reviewer`` actor.
     """
     service_batch_direct_write(
         instance,
@@ -137,8 +144,30 @@ def _seed_approved_review(instance: CruxibleInstance) -> None:
                     properties={
                         "review_request_id": "rr-gated",
                         "title": "Review gated work item",
-                        "status": "approved",
+                        "status": "requested",
                     },
+                ),
+            ],
+            relationships=[
+                BatchRelationshipWriteInput(
+                    from_type="ReviewRequest",
+                    from_id="rr-gated",
+                    relationship_type="review_request_for_work_item",
+                    to_type="WorkItem",
+                    to_id="wi-gated",
+                ),
+            ],
+        ),
+        actor_context=_actor_context(_IMPLEMENTER),
+    )
+    service_batch_direct_write(
+        instance,
+        BatchDirectWriteInput(
+            entities=[
+                EntityWriteInput(
+                    entity_type="ReviewRequest",
+                    entity_id="rr-gated",
+                    properties={"status": "approved"},
                 ),
                 EntityWriteInput(
                     entity_type="StateNote",
@@ -154,13 +183,6 @@ def _seed_approved_review(instance: CruxibleInstance) -> None:
                 ),
             ],
             relationships=[
-                BatchRelationshipWriteInput(
-                    from_type="ReviewRequest",
-                    from_id="rr-gated",
-                    relationship_type="review_request_for_work_item",
-                    to_type="WorkItem",
-                    to_id="wi-gated",
-                ),
                 BatchRelationshipWriteInput(
                     from_type="StateNote",
                     from_id="sn-gated",
