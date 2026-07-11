@@ -23,7 +23,7 @@ enums:
   decision_status: [proposed, accepted, rejected, deferred]
   decision_impact_type: [prioritizes, deprioritizes, blocks, unblocks, scopes, constrains]
   review_status: [requested, in_review, changes_requested, approved, withdrawn]
-  state_note_kind: [correction, field_note, rationale_update, implementation_note, review_note]
+  state_note_kind: [correction, field_note, rationale_update, implementation_note, review_note, scratchpad]
 
 entity_types:
   Actor:
@@ -113,9 +113,15 @@ entity_types:
   StateNote:
     description: >
       Durable dated note about operation state (corrections, field notes,
-      rationale updates, implementation notes, review notes). Preserves evolving
+      rationale updates, implementation notes, review notes) plus low-trust
+      scratchpad notes (kind=scratchpad): an implementer's mid-flight working
+      state, excluded from curated note reads. Preserves evolving
       interpretation without turning current entity summaries into changelogs.
     id: note_id
+    # StateNotes are the kit's low-trust write surface: governed_write actors
+    # (implementer agents) may direct-write notes and their attachment edges
+    # without holding graph_write over the rest of the operation graph.
+    write_tier: governed_write
     properties:
       kind: enum state_note_kind
       title: string indexed
@@ -132,16 +138,26 @@ relationships:
   - risk_owned_by_actor: Risk -> Actor                         # Actor accountable for a risk.
   - open_question_owned_by_actor: OpenQuestion -> Actor        # Actor accountable for answering it.
   - state_note_authored_by_actor: StateNote -> Actor           # Actor that authored/recorded the note.
+    write_tier: governed_write
 
-  # --- Review gate + state annotations (state_note_about_* are self-evident: no description) ---
+  # --- Review gate + state annotations (state_note_about_* are self-evident: no description).
+  # --- StateNote attachment edges share the note's governed_write tier so a
+  # --- governed_write actor can write a note AND attach it in one payload.
   - review_request_for_work_item: ReviewRequest -> WorkItem    # Reviews a work item for completion/acceptance.
   - state_note_about_work_item: StateNote -> WorkItem
+    write_tier: governed_write
   - state_note_about_review_request: StateNote -> ReviewRequest
+    write_tier: governed_write
   - state_note_about_decision: StateNote -> Decision
+    write_tier: governed_write
   - state_note_about_risk: StateNote -> Risk
+    write_tier: governed_write
   - state_note_about_open_question: StateNote -> OpenQuestion
+    write_tier: governed_write
   - state_note_about_subject: StateNote -> SubjectRef
+    write_tier: governed_write
   - state_note_about_actor: StateNote -> Actor              # Editorial facts about a mint-only actor live here, never on the entity.
+    write_tier: governed_write
   - state_note_supersedes_state_note: StateNote -> StateNote   # Supersedes/corrects an earlier note.
     basis: supersession_basis
   - state_note_resolves_state_note: StateNote -> StateNote
@@ -247,6 +263,10 @@ named_queries:
       state_note_about_work_item:
         limit: 10
         order: created_at desc datetime
+        # Curated context: keep scratchpad working notes out of the bounded
+        # note set (path rows from the all_adjacent fan-out are unfiltered --
+        # the compact grammar has no per-relationship path filter here).
+        where: {kind: {not_in: [scratchpad]}}
     select:
       properties: [title, status, priority]
 
@@ -319,7 +339,11 @@ named_queries:
     mode: collection
     returns: StateNote
     relationship_state: reviewable
-    description: Recent operation-state notes, corrections, rationale/implementation/review notes.
+    description: >-
+      Recent operation-state notes, corrections, rationale/implementation/review
+      notes. Curated read: excludes kind=scratchpad working notes (see
+      work_item_scratchpad).
+    where: {kind: {not_in: [scratchpad]}}
     select:
       properties: [note_id, kind, title, summary, created_at]
       counts:
@@ -340,8 +364,21 @@ named_queries:
     returns: AnyEntity
     relationship_state: reviewable
     max_paths: 200
-    description: Full context for a state note (targets, author, supersession).
+    description: >-
+      Full context for a state note (targets, author, supersession). Curated
+      read: adjacent scratchpad notes are excluded from the incoming
+      supersession/resolution sets. The entry note itself is fetched by id and
+      is not kind-gated; use work_item_scratchpad for scratchpad pickup.
     include: all_adjacent
+    bound:
+      # Keep scratchpad noise out of the note-to-note context sets. The compact
+      # grammar's include `where` filters the edge SOURCE, so only the incoming
+      # ('<') sets are filterable; outgoing edges from a curated note to a
+      # scratchpad note do not occur in practice (scratchpad is a leaf surface).
+      state_note_supersedes_state_note<:
+        where: {kind: {not_in: [scratchpad]}}
+      state_note_resolves_state_note<:
+        where: {kind: {not_in: [scratchpad]}}
 
   state_notes_for_work_item:
     mode: traversal
@@ -349,10 +386,13 @@ named_queries:
     returns: StateNote
     relationship_state: reviewable
     max_paths: 200
-    description: State notes attached to a work item, newest first.
+    description: >-
+      Curated state notes attached to a work item, newest first. Excludes
+      kind=scratchpad working notes (see work_item_scratchpad).
     traverse:
       - relationship: state_note_about_work_item
         as: state_note
+        where: {kind: {not_in: [scratchpad]}}
     order: created_at desc datetime
 
   state_notes_for_review_request:
@@ -364,10 +404,29 @@ named_queries:
     description: >-
       The review thread: verdict and finding notes attached to a review request,
       newest first. This is the read that replaces scrolling a notes blob.
+      Excludes kind=scratchpad working notes.
     traverse:
       - relationship: state_note_about_review_request
         as: state_note
+        where: {kind: {not_in: [scratchpad]}}
     order: created_at desc datetime
+
+  work_item_scratchpad:
+    mode: traversal
+    entry_point: WorkItem
+    returns: StateNote
+    relationship_state: reviewable
+    max_paths: 200
+    description: >-
+      A work item's scratchpad notes (kind=scratchpad only) in created order --
+      an implementer's mid-flight working state, replayed chronologically to
+      pick a work item back up. The inverse of the curated note reads, which
+      exclude scratchpad.
+    traverse:
+      - relationship: state_note_about_work_item
+        as: scratchpad_note
+        where: {kind: {eq: scratchpad}}
+    order: created_at asc datetime
 
   approved_reviews_for_work_item:
     mode: traversal
@@ -429,8 +488,13 @@ named_queries:
     returns: AnyEntity
     relationship_state: reviewable
     max_paths_per_result: 100
-    description: Work, decisions, risks, open questions attached to a subject ref.
+    description: >-
+      Work, decisions, risks, open questions attached to a subject ref.
+      Curated read: the bounded note set excludes kind=scratchpad.
     include: all_adjacent
+    bound:
+      state_note_about_subject:
+        where: {kind: {not_in: [scratchpad]}}
 
   active_risks:
     mode: collection
@@ -474,6 +538,13 @@ mutation_guards:
       when: ReviewRequest.status -> approved
       require: {allowed_actors: [authorized-reviewer]}
       message: ReviewRequest approvals require the authenticated reviewer actor (not a writer credential or spoofed body actor).
+  - decision_acceptance_requires_authorized_actor:
+      when: Decision.status -> accepted
+      require: {allowed_actors: [authorized-reviewer]}
+      message: >-
+        Accepting a Decision requires the authenticated reviewer actor (not a
+        writer credential or spoofed body actor). Proposed decisions stay
+        writable at the Decision type's normal tier.
   - work_item_closed_requires_approved_review:
       when: WorkItem.status -> closed
       require:

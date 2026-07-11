@@ -18,6 +18,19 @@ the project's own state instance.
   rejects non-write tiers (`read_only`, `admin`) and tier declarations on
   `proposal_only`/`mint_only` types. See "Config-Declared Write Tiers"
   in the config reference.
+- **agent-operation kit: scratchpad notes + Decision acceptance guard**:
+  `state_note_kind` gains `scratchpad` — an implementer's mid-flight
+  working state. StateNote and its attachment edges declare
+  `write_tier: governed_write`, so implementer agents can write notes
+  without `graph_write`. Curated note reads (`recent_state_notes`,
+  `state_notes_for_work_item`, `state_notes_for_review_request`, and the
+  bounded note sets of the context queries) exclude scratchpad notes; the
+  new `work_item_scratchpad` query replays a work item's scratchpad notes
+  in created order for mid-flight pickup. A new
+  `decision_acceptance_requires_authorized_actor` mutation guard requires
+  the `authorized-reviewer` actor to move a Decision to `accepted` —
+  including create-with-accepted (proposed decisions stay writable at the
+  normal tier).
 
 ### Fixed
 
