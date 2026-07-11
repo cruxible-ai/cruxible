@@ -163,6 +163,19 @@ def _blocks_edge_severity(instance_id: str) -> str:
     return edge.properties["severity"]
 
 
+def _note_edge_confidence(instance_id: str) -> float:
+    with request_permission_scope(PermissionMode.ADMIN):
+        edge = api.get_relationship(
+            instance_id,
+            from_type="Note",
+            from_id="n-1",
+            relationship_type="note_about_task",
+            to_type="Task",
+            to_id="t-1",
+        )
+    return edge.properties["confidence"]
+
+
 def _batch_item(
     receipt_id: str, *, on_note_edge: bool, corrections: dict
 ) -> contracts.FeedbackBatchItemInput:
@@ -285,6 +298,7 @@ class TestFeedbackBatchTierGate:
         blocks_receipt = self._query_receipt(
             feedback_tier_instance_id, "blocking_edges", {"task_id": "t-2"}
         )
+        confidence_before = _note_edge_confidence(feedback_tier_instance_id)
         items = [
             _batch_item(note_receipt, on_note_edge=True, corrections={"confidence": 0.7}),
             _batch_item(blocks_receipt, on_note_edge=False, corrections={"severity": "low"}),
@@ -292,7 +306,11 @@ class TestFeedbackBatchTierGate:
         with request_permission_scope(PermissionMode.GOVERNED_WRITE):
             with pytest.raises(PermissionDeniedError, match="GRAPH_WRITE"):
                 api.feedback_batch(feedback_tier_instance_id, items, source="human")
+        # All-or-nothing: neither the graph_write edge nor the governed-tier
+        # edge (which a per-item gate would have let through) may be touched.
         assert _blocks_edge_severity(feedback_tier_instance_id) == "high"
+        assert _note_edge_confidence(feedback_tier_instance_id) == confidence_before
+        assert _note_edge_confidence(feedback_tier_instance_id) != 0.7
 
     def test_batch_of_governed_tier_corrections_allowed(self, feedback_tier_instance_id):
         note_receipt = self._query_receipt(
