@@ -536,8 +536,12 @@ mutation_guards:
         state_note_about_review_request in the same write. Status can't advance without recording why.
   - review_request_approval_requires_authorized_actor:
       when: ReviewRequest.status -> approved
-      require: {allowed_actors: [authorized-reviewer]}
-      message: ReviewRequest approvals require the authenticated reviewer actor (not a writer credential or spoofed body actor).
+      require: {allowed_actors: [authorized-reviewer], distinct_from_creation_actor: true}
+      message: >-
+        ReviewRequest approvals require the authenticated reviewer actor (not a
+        writer credential or spoofed body actor), and the approver must differ
+        from the actor recorded in the ReviewRequest's creation receipt — the
+        review's creator can never approve it, including create-with-approved.
   - decision_acceptance_requires_authorized_actor:
       when: Decision.status -> accepted
       require: {allowed_actors: [authorized-reviewer]}

@@ -334,7 +334,10 @@ def _guard_requirement_label(guard: Any) -> str:
         return f"query `{condition.query_name}` returns {' and '.join(bounds)} result(s)"
     if kind == "actor":
         actors = ", ".join(condition.allowed_actor_ids)
-        return f"authenticated actor in: {actors}"
+        label = f"authenticated actor in: {actors}"
+        if condition.distinct_from_creation_actor:
+            label += "; actor differs from the entity's creation actor"
+        return label
     if kind == "co_write":
         requires = condition.requires
         kind_note = f"(kind={requires.kind}) " if requires.kind else ""

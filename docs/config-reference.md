@@ -1216,7 +1216,8 @@ mutation_guards:
     condition:
       type: actor
       allowed_actor_ids: [authorized-reviewer]
-    message: "ReviewRequest approvals require an authorized actor."
+      distinct_from_creation_actor: true   # optional: approver must not be the entity's creator
+    message: "ReviewRequest approvals require an authorized actor distinct from the review's creator."
 
   - name: work_item_closed_requires_co_written_review
     entity_type: WorkItem
@@ -1311,12 +1312,45 @@ transition-only in practice.
 |-------|------|----------|---------|-------------|
 | `type` | `actor` | **yes** | — | Condition discriminator |
 | `allowed_actor_ids` | list[string] | **yes** | — | Actor ids allowed to perform the guarded transition |
+| `distinct_from_creation_actor` | bool (strict) | no | `false` | When `true`, the acting actor must additionally differ from the actor recorded in the target entity's committed creation receipt |
 
 Actor identity conditions compare the current write's
 `GovernedActorContext.actor_id` to `allowed_actor_ids`. Missing actor context
 fails the guard. This condition is useful for guarded approval transitions where
 the authority comes from authenticated runtime credential identity or a Cloud
 control-plane supplied actor context.
+
+`distinct_from_creation_actor: true` layers creator/approver separation on top
+of the allow-list: the transition is refused when the acting actor is the actor
+who **created** the target entity. The comparison anchors on the entity's
+committed creation receipt — system-stamped from the authenticated credential —
+never on a writable property or the last-writer metadata stamp, so an agent
+cannot launder self-approval by rewriting a `requested_by`-style property or by
+having another actor touch the entity afterwards. Actors compare by actor id
+(the credential label): rotating or re-minting a credential keeps the label, so
+creator identity survives rotation, and minting a new label is an admin-tier
+operation.
+
+The condition passes only on positive proof of separation. Everything else
+fails closed:
+
+- no actor context on the write, or the actor is not in `allowed_actor_ids`
+- the guarded value is set in the same write that creates the entity
+  (creator == actor trivially, so create-with-approved is always refused)
+- the entity has no committed creation receipt (e.g. records materialized from
+  a clone/import bundle, which carries no receipts)
+- the creation receipt records no actor (pre-auth records)
+- the creation-provenance lookup fails
+- the creation actor equals the acting actor
+
+The key is strictly boolean (`true`/`false`); string or integer values are
+refused, as are unknown fields on the condition.
+
+In compact kit configs the key rides alongside `allowed_actors`:
+
+```yaml
+require: {allowed_actors: [authorized-reviewer], distinct_from_creation_actor: true}
+```
 
 ### CoWriteGuardCondition (`type: co_write`)
 
