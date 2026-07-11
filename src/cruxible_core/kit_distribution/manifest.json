@@ -3,8 +3,8 @@
   "kits": {
     "agent-operation": {
       "asset": "agent-operation-0.2.0.tar.gz",
-      "dir_digest": "sha256:01084cf91e8a5aebea06060595aa3e90cef6f371d7389001bfa751efbf5e7d03",
-      "tarball_sha256": "29085d2598dbcc64064b9d715ade25fc7dea0abb39d097a2ae41c7cc9a7f44b8"
+      "dir_digest": "sha256:e04d1d781cf7f591b145212fcbf5dd25b9a048b82b2b7b14673ae9cf0287d7f1",
+      "tarball_sha256": "ae51840684254105596ac22cc421dea199b1db8fa136a9ed280ad972425fa029"
     },
     "agent-release": {
       "asset": "agent-release-0.2.0.tar.gz",
@@ -33,8 +33,8 @@
     },
     "supply-chain-blast-radius": {
       "asset": "supply-chain-blast-radius-0.2.0.tar.gz",
-      "dir_digest": "sha256:e7c44c39ad5255d8feb78612058fb49bcb9b0b4e46432218d9f42e91d0794adb",
-      "tarball_sha256": "e02d4b8106b097356113836364bd4151201082223062261c583ea170b68090c4"
+      "dir_digest": "sha256:742b8dc4a55f939c9abe827ed8fe345734d880e3a735f398118bb4778b526e8d",
+      "tarball_sha256": "5299c547ae01ae00c207d0d80a98f9d6ffc4d97a6e916fdc5bb37862bc857673"
     }
   },
   "version": "0.2.0"
