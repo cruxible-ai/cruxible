@@ -800,54 +800,47 @@ def _review_actor_context() -> GovernedActorContext:
     )
 
 
-class TestReviewPromotionActorGuard:
-    """Unit coverage for the runtime feedback-approve actor guard (audit F3)."""
+class TestReviewTransitionActorGuard:
+    """Unit coverage for the runtime feedback review-transition actor guard.
 
-    def test_auth_on_approve_without_actor_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from cruxible_core.errors import AuthenticationError
-        from cruxible_core.runtime.api import _require_review_promotion_actor
+    Originally the approve/correct promotion guard (audit F3); extended by
+    wi-feedback-write-tier-bypass (mechanism 2) to ``reject``/``flag`` so an
+    edge cannot be moved out of live review state anonymously either.
+    """
 
-        monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
-        with pytest.raises(AuthenticationError, match="requires a resolved actor identity"):
-            _require_review_promotion_actor("approve", None)
-
-    def test_auth_on_correct_without_actor_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from cruxible_core.errors import AuthenticationError
-        from cruxible_core.runtime.api import _require_review_promotion_actor
-
-        # ``correct`` also sets the review status to ``approved`` (a full peer of
-        # ``approve`` for the close-gate), so it must carry a resolved actor too.
-        monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
-        with pytest.raises(AuthenticationError, match="requires a resolved actor identity"):
-            _require_review_promotion_actor("correct", None)
-
-    @pytest.mark.parametrize("action", ["approve", "correct"])
-    def test_auth_on_promotion_with_actor_allowed(
+    @pytest.mark.parametrize("action", ["approve", "correct", "reject", "flag"])
+    def test_auth_on_transition_without_actor_rejected(
         self, monkeypatch: pytest.MonkeyPatch, action: str
     ) -> None:
-        from cruxible_core.runtime.api import _require_review_promotion_actor
+        from cruxible_core.errors import AuthenticationError
+        from cruxible_core.runtime.api import _require_review_transition_actor
+
+        # ``approve``/``correct`` promote to approved/live (close-gate peers);
+        # ``reject``/``flag`` retract an edge from live review state. All four
+        # transitions require a resolved actor under a governed runtime —
+        # anonymous retraction ended with wi-feedback-write-tier-bypass.
+        monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+        with pytest.raises(AuthenticationError, match="requires a resolved actor identity"):
+            _require_review_transition_actor(action, None)
+
+    @pytest.mark.parametrize("action", ["approve", "correct", "reject", "flag"])
+    def test_auth_on_transition_with_actor_allowed(
+        self, monkeypatch: pytest.MonkeyPatch, action: str
+    ) -> None:
+        from cruxible_core.runtime.api import _require_review_transition_actor
 
         monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
         # Returns without raising when a resolved actor is present.
-        _require_review_promotion_actor(action, _review_actor_context())
+        _require_review_transition_actor(action, _review_actor_context())
 
-    def test_auth_off_approve_without_actor_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from cruxible_core.runtime.api import _require_review_promotion_actor
-
-        monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
-        _require_review_promotion_actor("approve", None)
-
-    @pytest.mark.parametrize("action", ["reject", "flag"])
-    def test_non_promotion_actions_never_gated(
+    @pytest.mark.parametrize("action", ["approve", "correct", "reject", "flag"])
+    def test_auth_off_transition_without_actor_allowed(
         self, monkeypatch: pytest.MonkeyPatch, action: str
     ) -> None:
-        from cruxible_core.runtime.api import _require_review_promotion_actor
+        from cruxible_core.runtime.api import _require_review_transition_actor
 
-        # ``reject`` -> rejected and ``flag`` -> pending neither make a non-live edge
-        # live, so even under auth they never require actor context and legitimate
-        # flag/reject feedback is untouched. (``correct`` DOES promote -> gated above.)
-        monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
-        _require_review_promotion_actor(action, None)
+        monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+        _require_review_transition_actor(action, None)
 
 
 def test_auth_off_approve_promotes_without_actor_context(

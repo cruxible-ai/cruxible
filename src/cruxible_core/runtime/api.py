@@ -103,6 +103,7 @@ from cruxible_core.service import (
     service_register_source_artifact,
     service_reload_config,
     service_relocate_instance,
+    service_resolve_feedback_query_target,
     service_resolve_group,
     service_restore_instance,
     service_run,
@@ -220,31 +221,32 @@ def _record_actor_operation(actor: GovernedActorContext) -> None:
     set_current_operation_id(actor.operation_id)
 
 
-def _require_review_promotion_actor(
+def _require_review_transition_actor(
     action: str,
     actor: GovernedActorContext | None,
 ) -> None:
-    """Reject anonymous review-state promotion under an auth-on governed runtime.
+    """Reject anonymous review-state transitions under an auth-on governed runtime.
 
-    ``cruxible_feedback`` is a GOVERNED_WRITE tool, but an ``approve`` promotes a
-    relationship's review status to ``approved``/live, which can satisfy a
-    GRAPH_WRITE close-gate precondition (audit F3). When server auth is enabled the
-    promotion must carry a resolved actor identity so a lower tier cannot rubber-stamp
-    a review edge anonymously. When auth is off there is no tier boundary or governed
-    identity to enforce, so local promotion is attributed to the declared
-    operator. Legitimate ``correct``/``flag``/``reject``
-    actions are untouched.
+    ``cruxible_feedback`` is a GOVERNED_WRITE tool, but every feedback action
+    transitions a relationship's review state: ``approve``/``correct`` promote it
+    to ``approved``/live, which can satisfy a GRAPH_WRITE close-gate precondition
+    (audit F3), and ``reject``/``flag`` move an edge OUT of live review state — an
+    anonymous retraction (wi-feedback-write-tier-bypass, mechanism 2). When server
+    auth is enabled the transition must carry a resolved actor identity so a lower
+    tier can neither rubber-stamp nor retract a review edge anonymously. When auth
+    is off there is no tier boundary or governed identity to enforce, so local
+    review transitions are attributed to the declared operator.
     """
-    from cruxible_core.feedback.applier import REVIEW_PROMOTION_ACTIONS
+    from cruxible_core.feedback.applier import REVIEW_TRANSITION_ACTIONS
     from cruxible_core.server.config import is_server_auth_enabled
 
-    if action not in REVIEW_PROMOTION_ACTIONS:
+    if action not in REVIEW_TRANSITION_ACTIONS:
         return
     if actor is not None:
         return
     if is_server_auth_enabled():
         raise AuthenticationError(
-            f"Feedback action '{action}' promotes a relationship review to approved "
+            f"Feedback action '{action}' transitions a relationship's review state "
             "and requires a resolved actor identity (actor_context) under a governed "
             "runtime"
         )
@@ -1612,8 +1614,14 @@ def feedback(
     """Record feedback on an edge."""
     check_permission("cruxible_feedback", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
-    _require_review_promotion_actor(action, actor)
-    instance = get_manager().get(instance_id)
+    _require_review_transition_actor(action, actor)
+    instance = _feedback_correction_tier_gate(
+        ("cruxible_feedback",),
+        instance_id,
+        relationship_types=(
+            {relationship_type} if action == "correct" and corrections else frozenset()
+        ),
+    )
 
     target = RelationshipTargetInput(
         from_type=from_type,
@@ -1656,8 +1664,16 @@ def feedback_batch(
     check_permission("cruxible_feedback_batch", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
     for item in items:
-        _require_review_promotion_actor(item.action, actor)
-    instance = get_manager().get(instance_id)
+        _require_review_transition_actor(item.action, actor)
+    instance = _feedback_correction_tier_gate(
+        ("cruxible_feedback_batch",),
+        instance_id,
+        relationship_types={
+            item.target.relationship_type
+            for item in items
+            if item.action == "correct" and item.corrections
+        },
+    )
     result = service_feedback_batch_inputs(
         instance,
         [
@@ -1710,8 +1726,25 @@ def feedback_from_query(
     """Record edge feedback by selecting relationship evidence from a query receipt."""
     check_permission("cruxible_feedback_from_query", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
-    _require_review_promotion_actor(action, actor)
+    _require_review_transition_actor(action, actor)
     instance = get_manager().get(instance_id)
+    corrected_relationship_types: set[str] = set()
+    if action == "correct" and corrections:
+        # The corrected edge is chosen by receipt coordinates, so resolve the
+        # target (read-only) to learn its relationship type BEFORE any mutation.
+        resolved_target = service_resolve_feedback_query_target(
+            instance,
+            receipt_id=receipt_id,
+            result_index=result_index,
+            path_index=path_index,
+            path_alias=path_alias,
+        )
+        corrected_relationship_types = {resolved_target.relationship_type}
+    _feedback_correction_tier_gate(
+        ("cruxible_feedback_from_query",),
+        instance_id,
+        relationship_types=corrected_relationship_types,
+    )
     result = service_feedback_from_query_result(
         instance,
         receipt_id=receipt_id,
@@ -2538,6 +2571,58 @@ def _direct_write_tier_gate(
         entity_types=entity_types,
         relationship_types=relationship_types,
     )
+    for tool_name in tool_names:
+        check_permission(tool_name, instance_id=instance_id, required_override=required)
+    return instance
+
+
+def _feedback_correction_tier_gate(
+    tool_names: tuple[str, ...],
+    instance_id: str,
+    *,
+    relationship_types: frozenset[str] | set[str],
+) -> Any:
+    """Tier-gate feedback property corrections; returns the instance.
+
+    A feedback ``correct`` applies arbitrary edge ``property_updates`` — the
+    same mutation a direct relationship write performs — so it must honor the
+    touched type's config-declared direct-write tier instead of riding the
+    tool's static GOVERNED_WRITE requirement (wi-feedback-write-tier-bypass,
+    mechanism 1). Callers MUST have already run the audited static
+    ``check_permission`` for every tool in ``tool_names`` (instance scope and
+    the GOVERNED_WRITE requirement, ahead of any instance access).
+
+    ``relationship_types`` carries the relationship types touched by
+    ``correct`` actions with non-empty corrections. The feedback channel
+    mutates relationships only — every target is a relationship instance and
+    the applier writes exclusively through ``update_relationship_state`` — so
+    no entity types participate (pinned by an architecture test). When the set
+    is empty the payload transitions review state only and the static check is
+    the whole requirement. Otherwise, mirroring ``_direct_write_tier_gate``:
+
+    * at or above ``graph_write``: permitted — the classic direct-write tier
+      covers every declarable requirement, no config read needed;
+    * below ``graph_write``: the payload's config-declared requirement — each
+      corrected type contributes its ``write_tier`` (default ``graph_write``),
+      so a mixed batch is gated at the strictest corrected type and the check
+      refuses with ``PermissionDeniedError`` below it. Types at the
+      GOVERNED_WRITE floor are already covered by the callers' static check,
+      so only a stricter requirement issues the audited override check.
+    """
+    instance = get_manager().get(instance_id)
+    if not relationship_types:
+        return instance
+    if get_current_mode() >= PermissionMode.GRAPH_WRITE:
+        return instance
+    required = required_direct_write_tier(
+        instance.load_config(),
+        entity_types=(),
+        relationship_types=relationship_types,
+    )
+    if required <= _DIRECT_WRITE_FLOOR:
+        # The facade's audited static check already enforced the floor;
+        # re-checking here would only duplicate the audit record.
+        return instance
     for tool_name in tool_names:
         check_permission(tool_name, instance_id=instance_id, required_override=required)
     return instance
