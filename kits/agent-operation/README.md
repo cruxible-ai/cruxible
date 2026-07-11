@@ -175,6 +175,22 @@ evidence-backed when proposed by agents.
 | `work_item_closed_requires_approved_review` | `WorkItem.status` -> `closed` | query `approved_reviews_for_work_item` returns >= 1 result(s) | Work items cannot be closed until an approved ReviewRequest reviews them. |
 <!-- CRUXIBLE:END mutation-guards -->
 
+### Note-Surface Trust Boundary
+
+`StateNote` and its attachment edges are writable at `governed_write` so
+implementer agents can record working notes without a `graph_write`
+credential. Know what that tier can and cannot do: governance decisions
+stay protected (review verdicts, work-item closes, and Decision
+acceptance are all actor-guarded), but the note surface itself — every
+kind, creates AND updates — is governed_write territory. A
+governed_write actor can rewrite or re-kind an existing note, including
+a reviewer's rationale note (re-kinding to `scratchpad` hides it from
+curated reads), fabricate `review_note`-kind notes on any review
+request, and assert `state_note_authored_by_actor` edges to any actor.
+Treat note *content* as governed_write-trust; verdicts and lifecycle
+remain the guarded record. Tighter semantics (create-only tiers or
+per-kind write surfaces) are a tracked core follow-up.
+
 ### Signal Policy Notes
 
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->

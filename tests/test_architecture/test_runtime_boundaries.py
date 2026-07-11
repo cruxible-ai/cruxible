@@ -137,7 +137,11 @@ def test_runtime_api_overrides_permission_tiers_only_in_direct_write_gate():
 
     tree = ast.parse(source, filename=str(path))
     offenders: list[str] = []
-    for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)):
+    for function in (
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
         for node in ast.walk(function):
             if not (
                 isinstance(node, ast.Call)
@@ -145,9 +149,63 @@ def test_runtime_api_overrides_permission_tiers_only_in_direct_write_gate():
                 and node.func.id == "check_permission"
             ):
                 continue
-            has_override = any(keyword.arg == "required_override" for keyword in node.keywords)
-            if has_override and function.name not in _TIER_OVERRIDE_FUNCTIONS:
+            # required_override adjusts a tool's tier; audit_success silences
+            # the mutation_allowed record. BOTH are gate-only powers - a call
+            # using either outside the sanctioned gates is an unaudited or
+            # unreviewed permission path (second-review finding, 2026-07-11).
+            has_gate_power = any(
+                keyword.arg in ("required_override", "audit_success")
+                for keyword in node.keywords
+            )
+            if has_gate_power and function.name not in _TIER_OVERRIDE_FUNCTIONS:
                 offenders.append(f"{function.name}:{node.lineno}")
+    assert offenders == []
+
+
+def test_runtime_api_tier_branching_confined_to_the_gate():
+    """Homegrown tier logic that skips check_permission entirely is invisible
+    to the override test above - the old broad ban on the PermissionMode
+    string caught that class by accident. Pin it deliberately: outside the
+    sanctioned gate functions, api.py may not compare or branch on
+    PermissionMode / get_current_mode at all."""
+    path = _repo_root() / "src/cruxible_core/runtime/api.py"
+    tree = ast.parse(path.read_text(), filename=str(path))
+    offenders: list[str] = []
+    for function in (
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
+        if function.name in _TIER_OVERRIDE_FUNCTIONS:
+            continue
+        for node in ast.walk(function):
+            if isinstance(node, ast.Name) and node.id in ("PermissionMode", "get_current_mode"):
+                offenders.append(f"{function.name}:{node.lineno}")
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr in ("PermissionMode", "get_current_mode")
+            ):
+                offenders.append(f"{function.name}:{node.lineno}")
+    assert offenders == []
+
+
+def test_gate_powers_never_leave_the_permission_module_and_api_gates():
+    """Repo-wide: required_override / audit_success appear only in the
+    permission module (definition) and runtime/api.py (the gates) - closes
+    the import-check_permission-elsewhere hole the api.py-only AST walk
+    leaves open."""
+    src_root = _repo_root() / "src"
+    allowed = {
+        src_root / "cruxible_core" / "runtime" / "permissions.py",
+        src_root / "cruxible_core" / "runtime" / "api.py",
+    }
+    offenders: list[str] = []
+    for path in src_root.rglob("*.py"):
+        if path in allowed:
+            continue
+        text = path.read_text()
+        if "required_override" in text or "audit_success" in text:
+            offenders.append(str(path.relative_to(src_root)))
     assert offenders == []
 
 

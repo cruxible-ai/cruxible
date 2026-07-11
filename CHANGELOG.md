@@ -30,7 +30,10 @@ the project's own state instance.
   `decision_acceptance_requires_authorized_actor` mutation guard requires
   the `authorized-reviewer` actor to move a Decision to `accepted` —
   including create-with-accepted (proposed decisions stay writable at the
-  normal tier).
+  normal tier). Trust boundary, on the record: the note surface (all
+  kinds, creates and updates) is now governed_write territory — note
+  content is governed_write-trust while verdicts and lifecycle stay
+  actor-guarded; see the kit README's Note-Surface Trust Boundary.
 
 ### Fixed
 
