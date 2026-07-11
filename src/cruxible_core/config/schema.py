@@ -910,37 +910,101 @@ class ConstraintSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class GateSchema(BaseModel):
-    """Declared repo gate: which state must pin a commit SHA before it passes.
+GATE_KINDS = frozenset({"git-pre-push"})
+"""Source-adapter kinds a gate may declare. v1's only member is git-pre-push.
 
-    A gate names the coupling between an external checkpoint (e.g. a git
-    pre-push) and state: a candidate SHA is satisfied when at least one
-    entity of ``entity_type`` carries the candidate in ``sha_property`` AND
-    matches every ``predicate`` property. Core knows no ontology — the
-    declaration supplies it.
+The kind names the SOURCE of candidate values (which adapter derives them),
+never the evaluation: evaluation is always the declared condition against
+state. Config lint rejects kinds outside this set; the CLI additionally fails
+closed (exit 2) if it is ever asked to check a gate whose kind it has no
+adapter for.
+"""
+
+_GATE_CONDITION_RESERVED_KEYS = frozenset({"query"})
+"""Condition keys reserved for future variants.
+
+``condition`` today is a property-equality predicate (every key is an entity
+property that must equal its value). The key ``query`` is reserved — and
+refused — so a future named-query condition variant
+(``condition: {query: <named-query>}``) can be added WITHOUT a breaking
+schema change: no existing declaration can already be using the spelling.
+"""
+
+
+class GitPrePushAdapterSchema(BaseModel):
+    """Adapter config for gates of kind ``git-pre-push``.
+
+    Branch scoping belongs to the SOURCE, not the gate: which pushed refs are
+    in scope is a property of how candidates are derived from the pre-push
+    protocol, so the pattern lives here rather than on the core gate.
     """
 
+    branch_pattern: str
+    """Glob over remote ref names (e.g. ``refs/heads/main``); only pushed
+    refs matching it are gated."""
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_pattern(self) -> GitPrePushAdapterSchema:
+        if not self.branch_pattern.strip():
+            msg = "branch_pattern must be a non-empty ref pattern (e.g. refs/heads/main)"
+            raise ValueError(msg)
+        return self
+
+
+class GateSchema(BaseModel):
+    """Declared repo gate: state must agree before the world may act.
+
+    Doctrine: a GUARD blocks a write INTO state (inbound); a GATE lets the
+    world act only if state agrees (outbound). Gates are outbound
+    exclusively.
+
+    A gate is kind-based: ``kind`` names the source adapter that derives
+    candidate values (v1: ``git-pre-push`` reads git's pre-push protocol and
+    yields merged-in parent SHAs). A candidate is satisfied when at least one
+    entity of ``entity_type`` carries the candidate in ``match_property`` AND
+    matches the declared ``condition``. Core knows no ontology — the
+    declaration supplies it; domain knowledge lives in the condition
+    (declarative), never in the adapter (plumbing).
+    """
+
+    kind: str
     entity_type: str
-    sha_property: str
-    predicate: dict[str, str | int | float | bool]
-    applies_to: str
+    match_property: str
+    condition: dict[str, str | int | float | bool]
+    adapter: GitPrePushAdapterSchema | None = None
     description: str | None = None
 
     model_config = {"extra": "forbid"}
 
     @model_validator(mode="after")
     def validate_gate_shape(self) -> GateSchema:
-        if not self.predicate:
-            msg = "predicate must declare at least one property=value pair"
+        if not self.kind.strip():
+            msg = "kind must name a gate source adapter (e.g. git-pre-push)"
             raise ValueError(msg)
-        if self.sha_property in self.predicate:
+        if not self.condition:
+            msg = "condition must declare at least one property=value pair"
+            raise ValueError(msg)
+        reserved = _GATE_CONDITION_RESERVED_KEYS.intersection(self.condition)
+        if reserved:
             msg = (
-                "predicate may not constrain sha_property "
-                f"'{self.sha_property}'; the candidate SHA supplies that value"
+                f"condition key(s) {sorted(reserved)} are reserved for a future "
+                "named-query condition variant and cannot be used as property "
+                "predicates"
             )
             raise ValueError(msg)
-        if not self.applies_to.strip():
-            msg = "applies_to must be a non-empty ref pattern (e.g. refs/heads/main)"
+        if self.match_property in self.condition:
+            msg = (
+                "condition may not constrain match_property "
+                f"'{self.match_property}'; the candidate value supplies that value"
+            )
+            raise ValueError(msg)
+        if self.kind == "git-pre-push" and self.adapter is None:
+            msg = (
+                "gates of kind git-pre-push require an adapter config "
+                "(adapter: {branch_pattern: refs/heads/main})"
+            )
             raise ValueError(msg)
         return self
 

@@ -1,4 +1,4 @@
-"""Tests for the gate verb group: list, check, input adapters, fail-closed paths."""
+"""Tests for the gate verb group: list, check, source adapters, fail-closed paths."""
 
 from __future__ import annotations
 
@@ -11,8 +11,10 @@ import pytest
 from click.testing import CliRunner, Result
 
 from cruxible_client.errors import AuthenticationError
+from cruxible_core.cli.commands._gate_adapters import _ADAPTERS
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
+from cruxible_core.config.schema import GATE_KINDS
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
 
@@ -37,15 +39,22 @@ entity_types:
 gates:
   merge-review:
     description: Merges to main need an approved review pinning the merged tip.
+    kind: git-pre-push
     entity_type: ReviewRequest
-    sha_property: change_head
-    predicate: {status: approved}
-    applies_to: refs/heads/main
+    match_property: change_head
+    condition: {status: approved}
+    adapter: {branch_pattern: refs/heads/main}
 """
 
 APPROVED_SHA = "a" * 40
 REQUESTED_SHA = "b" * 40
 UNKNOWN_SHA = "c" * 40
+
+
+def test_every_declared_kind_has_an_adapter() -> None:
+    # GATE_KINDS (config schema) and the adapter registry must stay in sync:
+    # lint admits exactly the kinds the CLI can actually evaluate.
+    assert set(_ADAPTERS) == set(GATE_KINDS)
 
 
 @pytest.fixture(autouse=True)
@@ -103,16 +112,18 @@ class TestGateList:
         result = _chdir_run(runner, gated_instance.root, ["gate", "list"])
         assert result.exit_code == 0
         assert (
-            "merge-review: ReviewRequest.change_head where status=approved "
-            "(applies_to refs/heads/main)" in result.output
+            "merge-review [git-pre-push]: ReviewRequest.change_head where "
+            "status=approved (branch_pattern refs/heads/main)" in result.output
         )
 
     def test_list_json_shape(self, runner: CliRunner, gated_instance: CruxibleInstance) -> None:
         result = _chdir_run(runner, gated_instance.root, ["gate", "list", "--json"])
         assert result.exit_code == 0
         payload = json.loads(result.output)
-        assert payload["merge-review"]["sha_property"] == "change_head"
-        assert payload["merge-review"]["predicate"] == {"status": "approved"}
+        assert payload["merge-review"]["kind"] == "git-pre-push"
+        assert payload["merge-review"]["match_property"] == "change_head"
+        assert payload["merge-review"]["condition"] == {"status": "approved"}
+        assert payload["merge-review"]["adapter"] == {"branch_pattern": "refs/heads/main"}
 
     def test_list_without_gates_says_so(
         self, runner: CliRunner, initialized_project: CruxibleInstance
@@ -122,37 +133,39 @@ class TestGateList:
         assert "No gates declared" in result.output
 
 
-class TestGateCheckSha:
-    def test_approved_sha_satisfied(
+class TestGateCheckValueOverride:
+    """--value is a hidden diagnostic override, bypassing the source adapter."""
+
+    def test_approved_value_satisfied(
         self, runner: CliRunner, gated_instance: CruxibleInstance
     ) -> None:
         result = _chdir_run(
             runner,
             gated_instance.root,
-            ["gate", "check", "merge-review", "--sha", APPROVED_SHA],
+            ["gate", "check", "merge-review", "--value", APPROVED_SHA],
         )
         assert result.exit_code == 0
         assert f"merge-review {APPROVED_SHA} satisfied" in result.output
 
-    def test_pinned_but_unapproved_sha_unsatisfied(
+    def test_pinned_but_unapproved_value_unsatisfied(
         self, runner: CliRunner, gated_instance: CruxibleInstance
     ) -> None:
         result = _chdir_run(
             runner,
             gated_instance.root,
-            ["gate", "check", "merge-review", "--sha", REQUESTED_SHA],
+            ["gate", "check", "merge-review", "--value", REQUESTED_SHA],
         )
         assert result.exit_code == 1
         assert f"merge-review {REQUESTED_SHA} unsatisfied" in result.output
         assert "REFUSED" in result.stderr
 
-    def test_unknown_sha_unsatisfied(
+    def test_unknown_value_unsatisfied(
         self, runner: CliRunner, gated_instance: CruxibleInstance
     ) -> None:
         result = _chdir_run(
             runner,
             gated_instance.root,
-            ["gate", "check", "merge-review", "--sha", UNKNOWN_SHA],
+            ["gate", "check", "merge-review", "--value", UNKNOWN_SHA],
         )
         assert result.exit_code == 1
 
@@ -166,9 +179,9 @@ class TestGateCheckSha:
                 "gate",
                 "check",
                 "merge-review",
-                "--sha",
+                "--value",
                 APPROVED_SHA,
-                "--sha",
+                "--value",
                 REQUESTED_SHA,
             ],
         )
@@ -182,10 +195,28 @@ class TestGateCheckSha:
         result = _chdir_run(
             runner,
             gated_instance.root,
-            ["gate", "check", "merge-review", "--sha", REQUESTED_SHA],
+            ["gate", "check", "merge-review", "--value", REQUESTED_SHA],
         )
         assert f"merge-review {REQUESTED_SHA} unsatisfied" not in result.stderr
         assert "REFUSED" in result.stderr
+
+    def test_value_bypasses_adapter_even_with_stdin(
+        self, runner: CliRunner, gated_instance: CruxibleInstance
+    ) -> None:
+        # The override never consults the adapter: protocol garbage on stdin
+        # is ignored when explicit values are given.
+        result = _chdir_run(
+            runner,
+            gated_instance.root,
+            ["gate", "check", "merge-review", "--value", APPROVED_SHA],
+            stdin="not a protocol line\n",
+        )
+        assert result.exit_code == 0
+
+    def test_value_option_is_hidden(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["gate", "check", "--help"])
+        assert result.exit_code == 0
+        assert "--value" not in result.output
 
 
 class TestGateCheckFailClosed:
@@ -193,7 +224,7 @@ class TestGateCheckFailClosed:
         result = _chdir_run(
             runner,
             gated_instance.root,
-            ["gate", "check", "release-review", "--sha", APPROVED_SHA],
+            ["gate", "check", "release-review", "--value", APPROVED_SHA],
         )
         assert result.exit_code == 2
         assert "no gate named 'release-review'" in result.stderr
@@ -205,10 +236,49 @@ class TestGateCheckFailClosed:
         result = _chdir_run(
             runner,
             initialized_project.root,
-            ["gate", "check", "merge-review", "--sha", APPROVED_SHA],
+            ["gate", "check", "merge-review", "--value", APPROVED_SHA],
         )
         assert result.exit_code == 2
         assert "declares no gates element" in result.stderr
+
+    def test_unknown_kind_fails_closed(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A gate declaring a kind this build has no adapter for must refuse
+        # (exit 2), never silently pass. GateSchema keeps kind permissive so
+        # the declaration still parses; dispatch is the fail-closed point.
+        def _future_schema(self: object, instance_id: str) -> dict[str, object]:
+            return {
+                "gates": {
+                    "deploy-approved": {
+                        "kind": "ci-status",
+                        "entity_type": "ReviewRequest",
+                        "match_property": "change_head",
+                        "condition": {"status": "approved"},
+                    }
+                }
+            }
+
+        monkeypatch.setattr("cruxible_client.CruxibleClient.schema", _future_schema)
+        result = _chdir_run(
+            runner,
+            tmp_path,
+            [
+                "--server-url",
+                "http://127.0.0.1:9",
+                "--instance-id",
+                "inst_x",
+                "gate",
+                "check",
+                "deploy-approved",
+            ],
+            stdin="irrelevant\n",
+        )
+        assert result.exit_code == 2
+        assert "no source adapter for gate kind 'ci-status'" in result.stderr
 
     def test_daemon_unreachable(self, runner: CliRunner, tmp_path: Path) -> None:
         result = _chdir_run(
@@ -222,7 +292,7 @@ class TestGateCheckFailClosed:
                 "gate",
                 "check",
                 "merge-review",
-                "--sha",
+                "--value",
                 APPROVED_SHA,
             ],
         )
@@ -250,7 +320,7 @@ class TestGateCheckFailClosed:
                 "gate",
                 "check",
                 "merge-review",
-                "--sha",
+                "--value",
                 APPROVED_SHA,
             ],
         )
@@ -258,28 +328,25 @@ class TestGateCheckFailClosed:
         assert "cannot evaluate" in result.stderr
         assert "AuthenticationError" in result.stderr
 
-    def test_no_candidate_source_is_usage_error(
+    def test_empty_stdin_fails_closed(
         self, runner: CliRunner, gated_instance: CruxibleInstance
     ) -> None:
-        result = _chdir_run(runner, gated_instance.root, ["gate", "check", "merge-review"])
-        assert result.exit_code == 2
-        assert "--sha or --git-pre-push" in result.stderr
-
-    def test_both_candidate_sources_is_usage_error(
-        self, runner: CliRunner, gated_instance: CruxibleInstance
-    ) -> None:
+        # No --value override and nothing on stdin: the git-pre-push adapter
+        # has no protocol input, so the check cannot evaluate.
         result = _chdir_run(
             runner,
             gated_instance.root,
-            ["gate", "check", "merge-review", "--sha", APPROVED_SHA, "--git-pre-push"],
+            ["gate", "check", "merge-review"],
+            stdin="",
         )
         assert result.exit_code == 2
+        assert "empty pre-push stdin" in result.stderr
 
     def test_malformed_stdin(self, runner: CliRunner, gated_instance: CruxibleInstance) -> None:
         result = _chdir_run(
             runner,
             gated_instance.root,
-            ["gate", "check", "merge-review", "--git-pre-push"],
+            ["gate", "check", "merge-review"],
             stdin="refs/heads/main only-two-fields\n",
         )
         assert result.exit_code == 2
@@ -291,7 +358,7 @@ class TestGateCheckFailClosed:
         result = _chdir_run(
             runner,
             gated_instance.root,
-            ["gate", "check", "merge-review", "--git-pre-push"],
+            ["gate", "check", "merge-review"],
             stdin=stdin,
         )
         assert result.exit_code == 2
@@ -348,6 +415,8 @@ def _approve(instance: CruxibleInstance, sha: str) -> None:
 
 
 class TestGateCheckGitPrePush:
+    """The gate's declared kind (git-pre-push) drives candidates; no flag."""
+
     def test_approved_merge_tip_passes(
         self,
         runner: CliRunner,
@@ -359,7 +428,7 @@ class TestGateCheckGitPrePush:
         result = _chdir_run(
             runner,
             instance.root,
-            ["gate", "check", "merge-review", "--git-pre-push"],
+            ["gate", "check", "merge-review"],
             stdin=stdin,
         )
         assert result.exit_code == 0
@@ -376,7 +445,7 @@ class TestGateCheckGitPrePush:
         result = _chdir_run(
             runner,
             instance.root,
-            ["gate", "check", "merge-review", "--git-pre-push"],
+            ["gate", "check", "merge-review"],
             stdin=stdin,
         )
         assert result.exit_code == 1
@@ -395,7 +464,7 @@ class TestGateCheckGitPrePush:
         result = _chdir_run(
             runner,
             instance.root,
-            ["gate", "check", "merge-review", "--git-pre-push"],
+            ["gate", "check", "merge-review"],
             stdin=stdin,
         )
         assert result.exit_code == 1
@@ -411,7 +480,7 @@ class TestGateCheckGitPrePush:
         result = _chdir_run(
             runner,
             instance.root,
-            ["gate", "check", "merge-review", "--git-pre-push"],
+            ["gate", "check", "merge-review"],
             stdin=stdin,
         )
         assert result.exit_code == 0
@@ -427,7 +496,7 @@ class TestGateCheckGitPrePush:
         result = _chdir_run(
             runner,
             instance.root,
-            ["gate", "check", "merge-review", "--git-pre-push"],
+            ["gate", "check", "merge-review"],
             stdin=stdin,
         )
         assert result.exit_code == 0
@@ -442,7 +511,7 @@ class TestGateCheckGitPrePush:
         result = _chdir_run(
             runner,
             gated_instance.root,
-            ["gate", "check", "merge-review", "--git-pre-push"],
+            ["gate", "check", "merge-review"],
             stdin=stdin,
         )
         assert result.exit_code == 2
@@ -460,7 +529,7 @@ class TestGateCheckGitPrePush:
         result = _chdir_run(
             runner,
             instance.root,
-            ["gate", "check", "merge-review", "--git-pre-push"],
+            ["gate", "check", "merge-review"],
             stdin=stdin,
         )
         assert result.exit_code == 0
@@ -514,7 +583,7 @@ class TestGateCheckOctopusMerge:
         result = _chdir_run(
             runner,
             instance.root,
-            ["gate", "check", "merge-review", "--git-pre-push"],
+            ["gate", "check", "merge-review"],
             stdin=stdin,
         )
         assert result.exit_code == 1
@@ -536,7 +605,7 @@ class TestGateCheckOctopusMerge:
         result = _chdir_run(
             runner,
             instance.root,
-            ["gate", "check", "merge-review", "--git-pre-push"],
+            ["gate", "check", "merge-review"],
             stdin=stdin,
         )
         assert result.exit_code == 0
@@ -558,7 +627,7 @@ class TestGateCheckEvaluationHardening:
         result = _chdir_run(
             runner,
             instance.root,
-            ["gate", "check", "merge-review", "--sha", APPROVED_SHA],
+            ["gate", "check", "merge-review", "--value", APPROVED_SHA],
         )
         assert result.exit_code == 1
         assert f"merge-review {APPROVED_SHA} unsatisfied" in result.output
@@ -591,9 +660,9 @@ class TestGateCheckEvaluationHardening:
                 "gate",
                 "check",
                 "merge-review",
-                "--sha",
+                "--value",
                 APPROVED_SHA,
-                "--sha",
+                "--value",
                 REQUESTED_SHA,
             ],
         )
@@ -617,7 +686,7 @@ class TestGateCheckEvaluationHardening:
         result = _chdir_run(
             runner,
             tmp_path,
-            [*server_args, "gate", "check", "merge-review", "--sha", APPROVED_SHA],
+            [*server_args, "gate", "check", "merge-review", "--value", APPROVED_SHA],
         )
         assert result.exit_code == 2
         assert "failed validation" in result.stderr

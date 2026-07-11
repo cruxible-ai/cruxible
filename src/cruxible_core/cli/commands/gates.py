@@ -1,30 +1,27 @@
 """CLI verb group for declared repo gates.
 
-Gates are named config declarations (see the ``gates:`` config element) that
-couple an external checkpoint to state: a candidate commit SHA is satisfied
-when at least one entity of the declared type pins it in the declared SHA
-property and matches the declared predicate. The verb evaluates the
-declaration; it never hardcodes ontology.
+Doctrine: a GUARD blocks a write INTO state (inbound); a GATE lets the world
+act only if state agrees (outbound). Gates are outbound exclusively.
+
+Gates are named, kind-based config declarations (see the ``gates:`` config
+element). A gate's ``kind`` names the source adapter that derives candidate
+values (v1: ``git-pre-push``); a candidate is satisfied when at least one
+entity of the declared type carries it in the declared match property and
+matches the declared condition. The verb evaluates the declaration; it never
+hardcodes ontology, and generality comes from source-adapter kinds plus
+declarative conditions — not from CLI flags.
 
 ``gate check`` exit codes are a machine contract:
   0  every candidate satisfied
   1  at least one candidate unsatisfied
-  2  cannot evaluate (unknown gate, no gates declared, server unreachable,
-     auth failure, malformed input, git failure)
-
-Candidate sources are input adapter FLAGS on ``gate check`` (``--sha``,
-``--git-pre-push``), never subcommands: a future CI adapter is another flag
-against the same evaluation.
+  2  cannot evaluate (unknown gate, no gates declared, unknown kind, adapter
+     failure, server unreachable, auth failure, malformed input, git failure)
 """
 # mypy: disable-error-code=untyped-decorator
 
 from __future__ import annotations
 
-import fnmatch
-import re
-import subprocess
 import sys
-from dataclasses import dataclass
 from typing import Any
 
 import click
@@ -38,6 +35,12 @@ from cruxible_core.cli.commands._common import (
     _emit_json,
     json_option,
 )
+from cruxible_core.cli.commands._gate_adapters import (
+    Candidate,
+    GateCheckError,
+    GateInvocationContext,
+    adapter_for,
+)
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.config.schema import CoreConfig, GateSchema
 from cruxible_core.service import service_list, service_schema
@@ -45,24 +48,6 @@ from cruxible_core.service import service_list, service_schema
 EXIT_SATISFIED = 0
 EXIT_UNSATISFIED = 1
 EXIT_CANNOT_EVALUATE = 2
-
-_ZERO_SHA = "0" * 40
-# Full 40-hex object names only (the all-zeros sentinel matches too). Enforced
-# on every protocol token before it can reach git argv: a token like
-# `--max-count=0` must refuse loudly, never silence evaluation.
-_SHA_RE = re.compile(r"[0-9a-f]{40}")
-
-
-class GateCheckError(Exception):
-    """A gate check that cannot be evaluated. Always fails closed (exit 2)."""
-
-
-@dataclass(frozen=True)
-class _Candidate:
-    """One SHA to evaluate, with optional provenance for verdict lines."""
-
-    sha: str
-    context: str | None = None
 
 
 def _load_gates() -> dict[str, GateSchema]:
@@ -102,15 +87,15 @@ def _resolve_gate(name: str) -> GateSchema:
     return gate
 
 
-def _predicate_label(gate: GateSchema) -> str:
-    return " AND ".join(f"{prop}={value}" for prop, value in gate.predicate.items())
+def _condition_label(gate: GateSchema) -> str:
+    return " AND ".join(f"{prop}={value}" for prop, value in gate.condition.items())
 
 
-def _candidate_satisfied(gate: GateSchema, sha: str) -> bool:
-    """Query state: does any live entity pin *sha* and match the predicate?"""
-    where: dict[str, dict[str, Any]] = {gate.sha_property: {"eq": sha}}
-    for prop, value in gate.predicate.items():
-        where[prop] = {"eq": value}
+def _candidate_satisfied(gate: GateSchema, value: str) -> bool:
+    """Query state: does any live entity match the candidate AND the condition?"""
+    where: dict[str, dict[str, Any]] = {gate.match_property: {"eq": value}}
+    for prop, condition_value in gate.condition.items():
+        where[prop] = {"eq": condition_value}
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
             instance_id,
@@ -130,82 +115,14 @@ def _candidate_satisfied(gate: GateSchema, sha: str) -> bool:
     return result.total >= 1
 
 
-def _git_lines(args: list[str]) -> list[str]:
-    """Run a git command, failing closed on any error."""
-    try:
-        proc = subprocess.run(
-            ["git", *args],
-            capture_output=True,
-            text=True,
-            check=True,
+def _read_stdin() -> str:
+    """Read the invocation's stdin for a source adapter, failing closed at a TTY."""
+    if sys.stdin.isatty():
+        raise GateCheckError(
+            "stdin is a terminal; gate check derives candidates from its "
+            "kind's input stream (run from the hook, or pipe protocol lines)"
         )
-    except FileNotFoundError as exc:
-        raise GateCheckError("git executable not found") from exc
-    except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or "").strip() or f"exit code {exc.returncode}"
-        raise GateCheckError(f"git {' '.join(args)} failed: {detail}") from exc
-    return [line for line in proc.stdout.splitlines() if line.strip()]
-
-
-def _pre_push_candidates(gate: GateSchema, stdin_text: str) -> list[_Candidate]:
-    """Derive candidate SHAs from git's pre-push stdin protocol.
-
-    Protocol lines are ``<local_ref> <local_sha> <remote_ref> <remote_sha>``.
-    Only lines whose remote ref matches the gate's ``applies_to`` pattern are
-    gated. Ref deletions (all-zeros local SHA) are skipped. For a new remote
-    branch (all-zeros remote SHA) the pushed range is ``local_sha --not
-    --remotes``: every merge commit not already reachable from a
-    remote-tracking ref. EVERY merged-in parent (``^2`` .. ``^N``) of each
-    merge commit is a candidate — an octopus merge passes only when all of
-    its merged tips are pinned. v1 gates merge commits only; squash and
-    fast-forward merges mint or reuse SHAs no merge commit records.
-    """
-    candidates: list[_Candidate] = []
-    seen: set[tuple[str, str, str]] = set()
-    for line in stdin_text.splitlines():
-        if not line.strip():
-            continue
-        fields = line.split()
-        if len(fields) != 4:
-            raise GateCheckError(
-                "malformed pre-push stdin line (expected "
-                f"'<local_ref> <local_sha> <remote_ref> <remote_sha>'): {line!r}"
-            )
-        _local_ref, local_sha, remote_ref, remote_sha = fields
-        for token in (local_sha, remote_sha):
-            if not _SHA_RE.fullmatch(token):
-                raise GateCheckError(
-                    f"invalid commit SHA {token!r} in pre-push stdin line {line!r}; "
-                    "expected 40 hex characters or the all-zeros sentinel"
-                )
-        if not fnmatch.fnmatchcase(remote_ref, gate.applies_to):
-            continue
-        if local_sha == _ZERO_SHA:
-            continue  # ref deletion: nothing new enters the gated branch
-        if remote_sha == _ZERO_SHA:
-            range_args = [local_sha, "--not", "--remotes"]
-        else:
-            range_args = [f"{remote_sha}..{local_sha}"]
-        # --parents emits '<merge> <parent1> <parent2> [...]' per line; the
-        # trailing -- keeps every argument in revision position.
-        for merge_line in _git_lines(["rev-list", "--merges", "--parents", *range_args, "--"]):
-            merge_sha, *parents = merge_line.split()
-            if len(parents) < 2:
-                raise GateCheckError(
-                    f"expected a merge commit with two or more parents, got: {merge_line!r}"
-                )
-            for parent_number, tip_sha in enumerate(parents[1:], start=2):
-                key = (tip_sha, merge_sha, remote_ref)
-                if key in seen:
-                    continue
-                seen.add(key)
-                candidates.append(
-                    _Candidate(
-                        sha=tip_sha,
-                        context=f"merge {merge_sha[:9]}^{parent_number} -> {remote_ref}",
-                    )
-                )
-    return candidates
+    return sys.stdin.read()
 
 
 @click.group("gate")
@@ -230,9 +147,10 @@ def gate_list(output_json: bool) -> None:
         click.echo("No gates declared in the active instance config.")
         return
     for name, gate in sorted(gates.items()):
+        scope = f" (branch_pattern {gate.adapter.branch_pattern})" if gate.adapter else ""
         click.echo(
-            f"{name}: {gate.entity_type}.{gate.sha_property} "
-            f"where {_predicate_label(gate)} (applies_to {gate.applies_to})"
+            f"{name} [{gate.kind}]: {gate.entity_type}.{gate.match_property} "
+            f"where {_condition_label(gate)}{scope}"
         )
         if gate.description:
             click.echo(f"  {gate.description}")
@@ -241,67 +159,60 @@ def gate_list(output_json: bool) -> None:
 @gate_group.command("check")
 @click.argument("name")
 @click.option(
-    "--sha",
-    "shas",
+    "--value",
+    "values",
     multiple=True,
-    help="Candidate commit SHA to evaluate. Repeatable.",
-)
-@click.option(
-    "--git-pre-push",
-    is_flag=True,
+    hidden=True,
     help=(
-        "Input adapter: derive candidates from git's pre-push stdin protocol "
-        "(lines of '<local_ref> <local_sha> <remote_ref> <remote_sha>'). "
-        "Run from the repository root, as git hooks do. Pushed refs are "
-        "filtered to the gate's applies_to pattern; every merged-in parent "
-        "(^2..^N) of each merge commit in the pushed range is a candidate, "
-        "so an octopus merge passes only when all merged tips are pinned. "
-        "A new remote branch (all-zeros remote SHA) evaluates merges not "
-        "reachable from any remote-tracking ref; a ref deletion (all-zeros "
-        "local SHA) is skipped."
+        "Diagnostic/test-only override: evaluate these candidate values "
+        "directly, bypassing the gate's declared source adapter. Repeatable. "
+        "Not a general primitive — real invocations let the gate's kind "
+        "derive candidates."
     ),
 )
-def gate_check(name: str, shas: tuple[str, ...], git_pre_push: bool) -> None:
-    """Evaluate gate NAME: is every candidate SHA pinned by satisfying state?
+def gate_check(name: str, values: tuple[str, ...]) -> None:
+    """Evaluate gate NAME: is every candidate value pinned by satisfying state?
 
-    Prints one verdict line per candidate on stdout
-    ('<gate> <sha> satisfied|unsatisfied ...'); errors go to stderr.
+    Resolves the named declaration, invokes its declared kind's source
+    adapter for candidate values (e.g. git-pre-push reads the pre-push
+    protocol on stdin), and evaluates each candidate against state. Prints
+    one verdict line per candidate on stdout
+    ('<gate> <value> satisfied|unsatisfied ...'); errors go to stderr.
 
     \b
     Exit codes:
       0  every candidate satisfied
       1  at least one candidate unsatisfied
-      2  cannot evaluate (unknown gate, no gates declared, server
-         unreachable, auth failure, malformed input, git failure)
+      2  cannot evaluate (unknown gate, no gates declared, unknown kind,
+         adapter failure, server unreachable, auth failure, malformed
+         input, git failure)
 
-    v1 evaluates merge commits only: squash merges mint new SHAs no review
-    pins, and fast-forward pushes record no merge commit.
+    v1's only kind is git-pre-push, and it evaluates merge commits only:
+    squash merges mint new SHAs no review pins, and fast-forward pushes
+    record no merge commit.
     """
-    if git_pre_push and shas:
-        raise click.UsageError("Provide either --sha or --git-pre-push, not both.")
-    if not git_pre_push and not shas:
-        raise click.UsageError("Provide candidate SHAs via --sha or --git-pre-push.")
-
     try:
         gate = _resolve_gate(name)
-        if git_pre_push:
-            candidates = _pre_push_candidates(gate, sys.stdin.read())
+        if values:
+            # Hidden diagnostic override; see --value help text.
+            candidates = [Candidate(value=value) for value in values]
+        else:
+            adapter = adapter_for(gate)
+            context = GateInvocationContext(read_stdin=_read_stdin)
+            candidates = adapter.candidates(gate, context)
             if not candidates:
                 click.echo(
-                    f"gate {name}: no merge commits target {gate.applies_to} "
-                    "in this push; nothing to evaluate",
+                    f"gate {name}: no candidates from {gate.kind} input; nothing to evaluate",
                     err=True,
                 )
                 sys.exit(EXIT_SATISFIED)
-        else:
-            candidates = [_Candidate(sha=sha) for sha in shas]
 
         unsatisfied = 0
         for candidate in candidates:
-            satisfied = _candidate_satisfied(gate, candidate.sha)
+            satisfied = _candidate_satisfied(gate, candidate.value)
             verdict = "satisfied" if satisfied else "unsatisfied"
             suffix = f" ({candidate.context})" if candidate.context else ""
-            click.echo(f"{name} {candidate.sha} {verdict}{suffix}")
+            click.echo(f"{name} {candidate.value} {verdict}{suffix}")
             if not satisfied:
                 unsatisfied += 1
     except GateCheckError as exc:
@@ -328,7 +239,7 @@ def gate_check(name: str, shas: tuple[str, ...], git_pre_push: bool) -> None:
     if unsatisfied:
         click.secho(
             f"gate check: REFUSED - {unsatisfied} of {len(candidates)} candidate(s) "
-            f"not pinned by {gate.entity_type} where {_predicate_label(gate)} "
+            f"not pinned by {gate.entity_type} where {_condition_label(gate)} "
             f"(gate '{name}'). Satisfy the gate in state or bypass deliberately.",
             fg="red",
             err=True,

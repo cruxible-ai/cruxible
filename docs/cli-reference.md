@@ -1299,11 +1299,13 @@ findings.
 
 **Purpose:** Evaluate declared repo gates against state.
 
-Gates are named config declarations (the `gates:` config element) that couple an external checkpoint to state: a candidate commit SHA is satisfied when at least one entity of the declared type pins it in the declared SHA property and matches the declared predicate. The verb evaluates the declaration; it never hardcodes ontology.
+Doctrine: a **guard** blocks a write INTO state (inbound; the `mutation_guards` config element); a **gate** lets the world act only if state agrees (outbound). Gates are outbound exclusively.
+
+Gates are named, kind-based config declarations (the `gates:` config element). A gate's `kind` names the source adapter that derives candidate values (v1's only kind is `git-pre-push`); a candidate is satisfied when at least one entity of the declared type carries it in the declared match property and matches the declared condition. The verb evaluates the declaration; it never hardcodes ontology, and generality comes from source-adapter kinds plus declarative conditions.
 
 **Subcommands:**
 
-- `cruxible gate check` - Evaluate a named gate against candidate SHAs.
+- `cruxible gate check` - Evaluate a named gate against its kind's candidate values.
 - `cruxible gate list` - Show the active instance's declared gates.
 
 **Output And Side Effects:**
@@ -1317,17 +1319,18 @@ Gates are named config declarations (the `gates:` config element) that couple an
 
 **Usage:** `cruxible gate check [OPTIONS] NAME`
 
-**Purpose:** Evaluate gate NAME: is every candidate SHA pinned by satisfying state?
+**Purpose:** Evaluate gate NAME: is every candidate value pinned by satisfying state?
 
-Resolves the named declaration from the active instance config, queries state for each candidate (entities of the declared type whose SHA property equals the candidate AND matching the declared predicate), and prints one verdict line per candidate on stdout (`<gate> <sha> satisfied|unsatisfied ...`). Errors go to stderr. Candidate sources are input adapter flags, never subcommands: a future CI adapter is another flag against the same evaluation.
+Resolves the named declaration from the active instance config, invokes its declared `kind`'s source adapter for candidate values, queries state for each candidate (entities of the declared type whose match property equals the candidate AND matching the declared condition), and prints one verdict line per candidate on stdout (`<gate> <value> satisfied|unsatisfied ...`). Errors go to stderr. The candidate source is part of the gate's declaration, never a CLI flag: a future source (CI status, webhook) is a new gate kind against the same evaluation.
+
+The `git-pre-push` kind reads git's pre-push stdin protocol (lines of `<local_ref> <local_sha> <remote_ref> <remote_sha>`); run it from the repository root, as git hooks do. Pushed refs are filtered to the adapter config's `branch_pattern`; every merged-in parent (`^2`..`^N`) of each merge commit in the pushed range is a candidate, so an octopus merge passes only when all merged tips are pinned. SHA tokens must be full 40-hex object names (or the all-zeros sentinel); anything else refuses with exit 2. A new remote branch (all-zeros remote SHA) evaluates merges not reachable from any remote-tracking ref; a ref deletion (all-zeros local SHA) is skipped.
 
 **Options And Arguments:**
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `NAME` | yes | | argument | Declared gate name (see `cruxible gate list`). |
-| `--sha` | no | | text | Candidate commit SHA to evaluate. Repeatable. |
-| `--git-pre-push` | no | `False` | boolean | Input adapter: derive candidates from git's pre-push stdin protocol (lines of `<local_ref> <local_sha> <remote_ref> <remote_sha>`). Run from the repository root, as git hooks do. Pushed refs are filtered to the gate's `applies_to` pattern; every merged-in parent (`^2`..`^N`) of each merge commit in the pushed range is a candidate, so an octopus merge passes only when all merged tips are pinned. SHA tokens must be full 40-hex object names (or the all-zeros sentinel); anything else refuses with exit 2. A new remote branch (all-zeros remote SHA) evaluates merges not reachable from any remote-tracking ref; a ref deletion (all-zeros local SHA) is skipped. |
+| `--value` | no | | text | Hidden diagnostic/test-only override: evaluate these candidate values directly, bypassing the gate's declared source adapter. Repeatable. Not a general primitive — real invocations let the gate's kind derive candidates. |
 
 **Exit Codes (machine contract):**
 
@@ -1335,26 +1338,27 @@ Resolves the named declaration from the active instance config, queries state fo
 | --- | --- |
 | 0 | every candidate satisfied |
 | 1 | at least one candidate unsatisfied |
-| 2 | cannot evaluate (unknown gate, no gates declared, server unreachable, auth failure, malformed input, git failure) |
+| 2 | cannot evaluate (unknown gate, no gates declared, unknown kind, adapter failure, server unreachable, auth failure, malformed input, git failure) |
 
-The gate fails closed: every path that cannot produce a verdict exits nonzero with an instructive error on stderr. A gate that silently passes when unconfigured is forbidden.
+The gate fails closed: every path that cannot produce a verdict exits nonzero with an instructive error on stderr. A gate that silently passes when unconfigured — or whose kind this build cannot evaluate — is forbidden.
 
 Hook one-liner (replaces hand-rolled pre-push scripts):
 
 ```bash
 # .git/hooks/pre-push
-exec cruxible gate check merge-review --git-pre-push
+exec cruxible gate check merge-review
 ```
 
-v1 evaluates merge commits only: squash merges mint new SHAs no review pins, and fast-forward pushes record no merge commit.
+v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash merges mint new SHAs no review pins, and fast-forward pushes record no merge commit.
 
 **Output And Side Effects:**
 - Verdict lines on stdout; errors and notices on stderr. Read-only.
 
 **Common Errors:**
 - Unknown gate name, or no `gates:` element declared (exit 2).
+- Gate kind with no source adapter in this build (exit 2).
 - Daemon unreachable or missing/invalid token in server mode (exit 2).
-- Malformed pre-push stdin or failing git commands with `--git-pre-push` (exit 2).
+- Empty or malformed pre-push stdin, or failing git commands (exit 2).
 
 ## cruxible gate list
 
@@ -1369,7 +1373,7 @@ v1 evaluates merge commits only: squash merges mint new SHAs no review pins, and
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
-- Read-only output: one line per declared gate (`<name>: <EntityType>.<sha_property> where <predicate> (applies_to <pattern>)`).
+- Read-only output: one line per declared gate (`<name> [<kind>]: <EntityType>.<match_property> where <condition> (branch_pattern <pattern>)`).
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

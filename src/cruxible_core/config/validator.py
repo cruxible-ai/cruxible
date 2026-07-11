@@ -16,6 +16,7 @@ from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.property_validation import normalize_value
 from cruxible_core.config.schema import (
     BUILTIN_CONTRACTS,
+    GATE_KINDS,
     BoundsQualityCheck,
     CardinalityQualityCheck,
     ContractSchema,
@@ -297,24 +298,29 @@ def _validate_constraints(
 
 
 def _validate_gates(config: CoreConfig, errors: list[str]) -> None:
-    """Check that gate declarations reference declared types and properties."""
+    """Check gate kinds and that declarations reference declared types/properties."""
     for gate_name, gate in config.gates.items():
+        if gate.kind not in GATE_KINDS:
+            known = ", ".join(sorted(GATE_KINDS))
+            errors.append(
+                f"Gate '{gate_name}': unknown kind '{gate.kind}' "
+                f"(known source-adapter kinds: {known})"
+            )
         entity = config.get_entity_type(gate.entity_type)
         if entity is None:
             errors.append(
-                f"Gate '{gate_name}': entity type '{gate.entity_type}' "
-                "not defined in entity_types"
+                f"Gate '{gate_name}': entity type '{gate.entity_type}' not defined in entity_types"
             )
             continue
-        if gate.sha_property not in entity.properties:
+        if gate.match_property not in entity.properties:
             errors.append(
-                f"Gate '{gate_name}': sha_property '{gate.sha_property}' "
+                f"Gate '{gate_name}': match_property '{gate.match_property}' "
                 f"not found on entity type '{gate.entity_type}'"
             )
-        for prop_name in gate.predicate:
+        for prop_name in gate.condition:
             if prop_name not in entity.properties:
                 errors.append(
-                    f"Gate '{gate_name}': predicate property '{prop_name}' "
+                    f"Gate '{gate_name}': condition property '{prop_name}' "
                     f"not found on entity type '{gate.entity_type}'"
                 )
 
