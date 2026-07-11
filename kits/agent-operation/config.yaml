@@ -619,14 +619,15 @@ quality_checks:
 constraints: []
 
 # Repo gates: `cruxible gate check <name>` evaluates these declarations.
-# merge-review holds the repo to the state: a merge enters main only when its
-# second parent (the exact tip merged) is pinned by an approved ReviewRequest.
+# merge-review holds the repo to the state: a merge enters main only when
+# every merged-in tip (all parents ^2..^N) is pinned by an approved
+# ReviewRequest.
 gates:
   merge-review:
     description: >
-      Every merge commit entering main must merge a tip pinned by an approved
-      ReviewRequest (change_head). Enforce from a pre-push hook with
-      `cruxible gate check merge-review --git-pre-push`.
+      Every tip merged into main (all merged-in parents of each merge commit)
+      must be pinned by an approved ReviewRequest (change_head). Enforce from
+      a pre-push hook with `cruxible gate check merge-review --git-pre-push`.
     entity_type: ReviewRequest
     sha_property: change_head
     predicate: {status: approved}

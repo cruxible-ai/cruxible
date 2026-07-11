@@ -21,6 +21,7 @@ against the same evaluation.
 from __future__ import annotations
 
 import fnmatch
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from typing import Any
 
 import click
 import httpx
+from pydantic import ValidationError
 
 from cruxible_client.errors import CoreError as ClientCoreError
 from cruxible_client.errors import ServerUnreachableError
@@ -45,6 +47,10 @@ EXIT_UNSATISFIED = 1
 EXIT_CANNOT_EVALUATE = 2
 
 _ZERO_SHA = "0" * 40
+# Full 40-hex object names only (the all-zeros sentinel matches too). Enforced
+# on every protocol token before it can reach git argv: a token like
+# `--max-count=0` must refuse loudly, never silence evaluation.
+_SHA_RE = re.compile(r"[0-9a-f]{40}")
 
 
 class GateCheckError(Exception):
@@ -73,7 +79,10 @@ def _load_gates() -> dict[str, GateSchema]:
     if isinstance(payload, CoreConfig):
         return dict(payload.gates)
     raw = payload.get("gates") or {}
-    return {name: GateSchema.model_validate(entry) for name, entry in raw.items()}
+    try:
+        return {name: GateSchema.model_validate(entry) for name, entry in raw.items()}
+    except ValidationError as exc:
+        raise GateCheckError(f"gate declarations from the server failed validation: {exc}") from exc
 
 
 def _resolve_gate(name: str) -> GateSchema:
@@ -146,8 +155,9 @@ def _pre_push_candidates(gate: GateSchema, stdin_text: str) -> list[_Candidate]:
     gated. Ref deletions (all-zeros local SHA) are skipped. For a new remote
     branch (all-zeros remote SHA) the pushed range is ``local_sha --not
     --remotes``: every merge commit not already reachable from a
-    remote-tracking ref. Each merge commit's SECOND PARENT — the exact tip
-    that was merged — is a candidate. v1 gates merge commits only; squash and
+    remote-tracking ref. EVERY merged-in parent (``^2`` .. ``^N``) of each
+    merge commit is a candidate — an octopus merge passes only when all of
+    its merged tips are pinned. v1 gates merge commits only; squash and
     fast-forward merges mint or reuse SHAs no merge commit records.
     """
     candidates: list[_Candidate] = []
@@ -162,6 +172,12 @@ def _pre_push_candidates(gate: GateSchema, stdin_text: str) -> list[_Candidate]:
                 f"'<local_ref> <local_sha> <remote_ref> <remote_sha>'): {line!r}"
             )
         _local_ref, local_sha, remote_ref, remote_sha = fields
+        for token in (local_sha, remote_sha):
+            if not _SHA_RE.fullmatch(token):
+                raise GateCheckError(
+                    f"invalid commit SHA {token!r} in pre-push stdin line {line!r}; "
+                    "expected 40 hex characters or the all-zeros sentinel"
+                )
         if not fnmatch.fnmatchcase(remote_ref, gate.applies_to):
             continue
         if local_sha == _ZERO_SHA:
@@ -170,20 +186,25 @@ def _pre_push_candidates(gate: GateSchema, stdin_text: str) -> list[_Candidate]:
             range_args = [local_sha, "--not", "--remotes"]
         else:
             range_args = [f"{remote_sha}..{local_sha}"]
-        for merge_sha in _git_lines(["rev-list", "--merges", *range_args]):
-            (tip_sha,) = _git_lines(["rev-parse", f"{merge_sha}^2"]) or (None,)
-            if tip_sha is None:
-                raise GateCheckError(f"could not resolve second parent of merge {merge_sha}")
-            key = (tip_sha, merge_sha, remote_ref)
-            if key in seen:
-                continue
-            seen.add(key)
-            candidates.append(
-                _Candidate(
-                    sha=tip_sha,
-                    context=f"merge {merge_sha[:9]} -> {remote_ref}",
+        # --parents emits '<merge> <parent1> <parent2> [...]' per line; the
+        # trailing -- keeps every argument in revision position.
+        for merge_line in _git_lines(["rev-list", "--merges", "--parents", *range_args, "--"]):
+            merge_sha, *parents = merge_line.split()
+            if len(parents) < 2:
+                raise GateCheckError(
+                    f"expected a merge commit with two or more parents, got: {merge_line!r}"
                 )
-            )
+            for parent_number, tip_sha in enumerate(parents[1:], start=2):
+                key = (tip_sha, merge_sha, remote_ref)
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append(
+                    _Candidate(
+                        sha=tip_sha,
+                        context=f"merge {merge_sha[:9]}^{parent_number} -> {remote_ref}",
+                    )
+                )
     return candidates
 
 
@@ -197,7 +218,11 @@ def gate_group() -> None:
 @handle_errors
 def gate_list(output_json: bool) -> None:
     """Show the active instance's declared gates."""
-    gates = _load_gates()
+    try:
+        gates = _load_gates()
+    except GateCheckError as exc:
+        # Same clean error surface as gate check, without the exit-code contract.
+        raise click.ClickException(str(exc)) from exc
     if output_json:
         _emit_json({name: gate.model_dump(mode="json") for name, gate in sorted(gates.items())})
         return
@@ -228,11 +253,12 @@ def gate_list(output_json: bool) -> None:
         "Input adapter: derive candidates from git's pre-push stdin protocol "
         "(lines of '<local_ref> <local_sha> <remote_ref> <remote_sha>'). "
         "Run from the repository root, as git hooks do. Pushed refs are "
-        "filtered to the gate's applies_to pattern; each merge commit's "
-        "second parent in the pushed range is a candidate. A new remote "
-        "branch (all-zeros remote SHA) evaluates merges not reachable from "
-        "any remote-tracking ref; a ref deletion (all-zeros local SHA) is "
-        "skipped."
+        "filtered to the gate's applies_to pattern; every merged-in parent "
+        "(^2..^N) of each merge commit in the pushed range is a candidate, "
+        "so an octopus merge passes only when all merged tips are pinned. "
+        "A new remote branch (all-zeros remote SHA) evaluates merges not "
+        "reachable from any remote-tracking ref; a ref deletion (all-zeros "
+        "local SHA) is skipped."
     ),
 )
 def gate_check(name: str, shas: tuple[str, ...], git_pre_push: bool) -> None:

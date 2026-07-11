@@ -1327,7 +1327,7 @@ Resolves the named declaration from the active instance config, queries state fo
 | --- | --- | --- | --- | --- |
 | `NAME` | yes | | argument | Declared gate name (see `cruxible gate list`). |
 | `--sha` | no | | text | Candidate commit SHA to evaluate. Repeatable. |
-| `--git-pre-push` | no | `False` | boolean | Input adapter: derive candidates from git's pre-push stdin protocol (lines of `<local_ref> <local_sha> <remote_ref> <remote_sha>`). Run from the repository root, as git hooks do. Pushed refs are filtered to the gate's `applies_to` pattern; each merge commit's second parent in the pushed range is a candidate. A new remote branch (all-zeros remote SHA) evaluates merges not reachable from any remote-tracking ref; a ref deletion (all-zeros local SHA) is skipped. |
+| `--git-pre-push` | no | `False` | boolean | Input adapter: derive candidates from git's pre-push stdin protocol (lines of `<local_ref> <local_sha> <remote_ref> <remote_sha>`). Run from the repository root, as git hooks do. Pushed refs are filtered to the gate's `applies_to` pattern; every merged-in parent (`^2`..`^N`) of each merge commit in the pushed range is a candidate, so an octopus merge passes only when all merged tips are pinned. SHA tokens must be full 40-hex object names (or the all-zeros sentinel); anything else refuses with exit 2. A new remote branch (all-zeros remote SHA) evaluates merges not reachable from any remote-tracking ref; a ref deletion (all-zeros local SHA) is skipped. |
 
 **Exit Codes (machine contract):**
 

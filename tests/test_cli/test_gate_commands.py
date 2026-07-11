@@ -433,6 +433,22 @@ class TestGateCheckGitPrePush:
         assert result.exit_code == 0
         assert "nothing to evaluate" in result.stderr
 
+    def test_invalid_sha_token_refused_before_git(
+        self, runner: CliRunner, gated_instance: CruxibleInstance
+    ) -> None:
+        # A crafted token in SHA position (e.g. a git flag) must refuse with
+        # exit 2, never silence evaluation by reaching git argv.
+        stdin = f"refs/heads/main --max-count=0 refs/heads/main {'0' * 40}\n"
+        result = _chdir_run(
+            runner,
+            gated_instance.root,
+            ["gate", "check", "merge-review", "--git-pre-push"],
+            stdin=stdin,
+        )
+        assert result.exit_code == 2
+        assert "invalid commit SHA" in result.stderr
+        assert "--max-count=0" in result.stderr
+
     def test_no_merges_in_range_passes_with_notice(
         self,
         runner: CliRunner,
@@ -449,3 +465,165 @@ class TestGateCheckGitPrePush:
         )
         assert result.exit_code == 0
         assert "nothing to evaluate" in result.stderr
+
+
+def _build_octopus_repo(repo: Path) -> tuple[str, str, str, str]:
+    """Create a repo with an octopus merge of two branches into main.
+
+    Returns (base_sha, tip1_sha, tip2_sha, main_head_sha).
+    """
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "gate-test@example.com")
+    _git(repo, "config", "user.name", "Gate Test")
+    _git(repo, "config", "commit.gpgsign", "false")
+    (repo / "a.txt").write_text("a\n")
+    _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-q", "-m", "base")
+    base_sha = _git(repo, "rev-parse", "HEAD")
+    tips: list[str] = []
+    for branch, file_name in (("wi-one", "b.txt"), ("wi-two", "c.txt")):
+        _git(repo, "checkout", "-q", "-b", branch, "main")
+        (repo / file_name).write_text(f"{file_name}\n")
+        _git(repo, "add", file_name)
+        _git(repo, "commit", "-q", "-m", f"work on {branch}")
+        tips.append(_git(repo, "rev-parse", "HEAD"))
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "--no-ff", "-m", "octopus merge", "wi-one", "wi-two")
+    main_sha = _git(repo, "rev-parse", "HEAD")
+    return base_sha, tips[0], tips[1], main_sha
+
+
+@pytest.fixture
+def octopus_repo_instance(tmp_path: Path) -> tuple[CruxibleInstance, str, str, str, str]:
+    """Gated instance whose root holds an octopus merge into main."""
+    base_sha, tip1_sha, tip2_sha, main_sha = _build_octopus_repo(tmp_path)
+    (tmp_path / "config.yaml").write_text(GATED_CONFIG_YAML)
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+    return instance, base_sha, tip1_sha, tip2_sha, main_sha
+
+
+class TestGateCheckOctopusMerge:
+    def test_partially_approved_octopus_refused_naming_unapproved_tip(
+        self,
+        runner: CliRunner,
+        octopus_repo_instance: tuple[CruxibleInstance, str, str, str, str],
+    ) -> None:
+        instance, base_sha, tip1_sha, tip2_sha, main_sha = octopus_repo_instance
+        _approve(instance, tip1_sha)
+        stdin = f"refs/heads/main {main_sha} refs/heads/main {base_sha}\n"
+        result = _chdir_run(
+            runner,
+            instance.root,
+            ["gate", "check", "merge-review", "--git-pre-push"],
+            stdin=stdin,
+        )
+        assert result.exit_code == 1
+        assert f"merge-review {tip1_sha} satisfied" in result.output
+        assert f"merge-review {tip2_sha} unsatisfied" in result.output
+        assert "REFUSED" in result.stderr
+
+    def test_fully_approved_octopus_passes(
+        self,
+        runner: CliRunner,
+        octopus_repo_instance: tuple[CruxibleInstance, str, str, str, str],
+    ) -> None:
+        instance, base_sha, tip1_sha, tip2_sha, main_sha = octopus_repo_instance
+        graph = instance.load_graph()
+        graph.add_entity(_review("RR-t1", "approved", tip1_sha))
+        graph.add_entity(_review("RR-t2", "approved", tip2_sha))
+        instance.save_graph(graph)
+        stdin = f"refs/heads/main {main_sha} refs/heads/main {base_sha}\n"
+        result = _chdir_run(
+            runner,
+            instance.root,
+            ["gate", "check", "merge-review", "--git-pre-push"],
+            stdin=stdin,
+        )
+        assert result.exit_code == 0
+        assert f"merge-review {tip1_sha} satisfied" in result.output
+        assert f"merge-review {tip2_sha} satisfied" in result.output
+
+
+class TestGateCheckEvaluationHardening:
+    def test_abbreviated_stored_sha_does_not_satisfy_full_candidate(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        # Exact-match contract: a stored 12-char abbreviation must never
+        # satisfy a full-sha candidate.
+        (tmp_path / "config.yaml").write_text(GATED_CONFIG_YAML)
+        instance = CruxibleInstance.init(tmp_path, "config.yaml")
+        graph = EntityGraph()
+        graph.add_entity(_review("RR-abbrev", "approved", APPROVED_SHA[:12]))
+        instance.save_graph(graph)
+        result = _chdir_run(
+            runner,
+            instance.root,
+            ["gate", "check", "merge-review", "--sha", APPROVED_SHA],
+        )
+        assert result.exit_code == 1
+        assert f"merge-review {APPROVED_SHA} unsatisfied" in result.output
+
+    def test_mid_loop_query_error_fails_closed(
+        self,
+        runner: CliRunner,
+        gated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # First candidate evaluates satisfied; the second query erroring must
+        # collapse the whole check to exit 2, never a partial verdict exit.
+        from cruxible_client.errors import QueryExecutionError
+        from cruxible_core.cli.commands import gates as gates_module
+
+        real_service_list = gates_module.service_list
+        calls = {"count": 0}
+
+        def flaky_service_list(*args: object, **kwargs: object) -> object:
+            calls["count"] += 1
+            if calls["count"] >= 2:
+                raise QueryExecutionError("state backend exploded")
+            return real_service_list(*args, **kwargs)
+
+        monkeypatch.setattr(gates_module, "service_list", flaky_service_list)
+        result = _chdir_run(
+            runner,
+            gated_instance.root,
+            [
+                "gate",
+                "check",
+                "merge-review",
+                "--sha",
+                APPROVED_SHA,
+                "--sha",
+                REQUESTED_SHA,
+            ],
+        )
+        assert result.exit_code == 2
+        assert f"merge-review {APPROVED_SHA} satisfied" in result.output
+        assert "cannot evaluate" in result.stderr
+
+    def test_malformed_server_gate_payload_fails_closed(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A server payload whose gates element fails GateSchema validation
+        # must exit 2 with a clean error, not a pydantic traceback.
+        def _bad_schema(self: object, instance_id: str) -> dict[str, object]:
+            return {"gates": {"merge-review": {"entity_type": "ReviewRequest"}}}
+
+        monkeypatch.setattr("cruxible_client.CruxibleClient.schema", _bad_schema)
+        server_args = ["--server-url", "http://127.0.0.1:9", "--instance-id", "inst_x"]
+        result = _chdir_run(
+            runner,
+            tmp_path,
+            [*server_args, "gate", "check", "merge-review", "--sha", APPROVED_SHA],
+        )
+        assert result.exit_code == 2
+        assert "failed validation" in result.stderr
+        assert "Traceback" not in result.stderr
+
+        listed = _chdir_run(runner, tmp_path, [*server_args, "gate", "list"])
+        assert listed.exit_code != 0
+        assert "failed validation" in listed.stderr
+        assert "Traceback" not in listed.stderr
