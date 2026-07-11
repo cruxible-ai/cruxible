@@ -175,13 +175,13 @@ def _resolve_projection_value(
             items.append(resolved)
         return items
     if isinstance(value, dict):
-        items: dict[str, Any] = {}
+        mapping: dict[str, Any] = {}
         for key, item in value.items():
             resolved = _resolve_projection_value(item, context, params)
             if resolved is _MISSING:
                 continue
-            items[key] = resolved
-        return items
+            mapping[key] = resolved
+        return mapping
     return value
 
 

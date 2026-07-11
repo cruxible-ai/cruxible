@@ -1070,7 +1070,7 @@ def reload_config_cmd(config_path: str | None, allow_orphans: bool) -> None:
             config_yaml=(
                 _read_validation_yaml_or_error(config_path) if config_path is not None else None
             ),
-            **({"allow_orphans": True} if allow_orphans else {}),
+            allow_orphans=allow_orphans,
         ),
         lambda instance: service_reload_config(
             instance, config_path=config_path, allow_orphans=allow_orphans
@@ -1095,7 +1095,10 @@ def reload_config_cmd(config_path: str | None, allow_orphans: bool) -> None:
         )
     )
     if changed:
-        names = lambda values: ", ".join(values) if values else "none"  # noqa: E731
+
+        def names(values: list[str]) -> str:
+            return ", ".join(values) if values else "none"
+
         click.echo(
             "Type delta: "
             f"entities added [{names(delta.entity_types_added)}] "
@@ -1104,9 +1107,10 @@ def reload_config_cmd(config_path: str | None, allow_orphans: bool) -> None:
             f"removed [{names(delta.relationship_types_removed)}]"
         )
     if result.strandings.entity_types or result.strandings.relationship_types:
-        counts = lambda pairs: ", ".join(  # noqa: E731
-            f"{name} ({count})" for name, count in sorted(pairs.items())
-        )
+
+        def counts(pairs: dict[str, int]) -> str:
+            return ", ".join(f"{name} ({count})" for name, count in sorted(pairs.items()))
+
         click.secho(
             "Strandings allowed: "
             f"entities [{counts(result.strandings.entity_types)}]; "
