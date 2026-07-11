@@ -23,6 +23,7 @@ _KEYED_MAP_KEYS = {
     "entity_types",
     "named_queries",
     "enums",
+    "gates",
     "contracts",
     "artifacts",
     "providers",

@@ -1834,6 +1834,7 @@ def _expand_property_check(name: str, body: dict[str, Any]) -> dict[str, Any]:
 _AUTHORING_ONLY_KEYS = {"presets", "metadata"}
 
 _PASSTHROUGH_TOP_LEVEL_KEYS = {
+    "gates",
     "feedback_profiles",
     "outcome_profiles",
     "decision_policies",
@@ -2077,6 +2078,7 @@ _TOP_LEVEL_ORDER = [
     "mutation_guards",
     "quality_checks",
     "constraints",
+    "gates",
     "feedback_profiles",
     "outcome_profiles",
     "decision_policies",

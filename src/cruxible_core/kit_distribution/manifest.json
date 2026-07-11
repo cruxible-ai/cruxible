@@ -3,6 +3,7 @@
   "kits": {
     "agent-operation": {
       "asset": "agent-operation-0.2.1.tar.gz",
+<<<<<<< HEAD
       "dir_digest": "sha256:ae346a9d518d4c5fd966e4aac8a46ea47842610abe0ba654420f386976778495",
       "tarball_sha256": "3b5466103c8835df3d70304332922aa8f078211e8331155981257740ea318043"
     },
@@ -35,6 +36,40 @@
       "asset": "supply-chain-blast-radius-0.2.1.tar.gz",
       "dir_digest": "sha256:e7c44c39ad5255d8feb78612058fb49bcb9b0b4e46432218d9f42e91d0794adb",
       "tarball_sha256": "e02d4b8106b097356113836364bd4151201082223062261c583ea170b68090c4"
+=======
+      "dir_digest": "sha256:e54fc344dcb3171c41dca21567bd66d23e164d7ca1acaa24fdce6d2485c2778d",
+      "tarball_sha256": "464543d0b63ef8d571cf4132e1994bb9442dec29680951542373e00731d91eb7"
+    },
+    "agent-release": {
+      "asset": "agent-release-0.2.1.tar.gz",
+      "dir_digest": "sha256:59099647cc9c9d5ffeea40a614ff29a411e7e9dd672a2faa4d3f20280c0bf5c2",
+      "tarball_sha256": "a78b85e8ea89953ba870ad845fd179dca134567ef0277d09e0691c79566b6477"
+    },
+    "case-law-monitoring": {
+      "asset": "case-law-monitoring-0.2.1.tar.gz",
+      "dir_digest": "sha256:092a85c446260a46cc368358bf578ca6f61855f6db9b4b764abb35f3d7590818",
+      "tarball_sha256": "336fab7fa478fa262ad8a47e034022108cc5bbcf8b51bdff8c5e855e77ac5ce0"
+    },
+    "kev-reference": {
+      "asset": "kev-reference-0.2.1.tar.gz",
+      "dir_digest": "sha256:cd2e03eac8bd6dc68294d96394a905fbd5839c226586f2518ac50bb5b4d31c42",
+      "tarball_sha256": "b93a3ae4140527ca1dde471d077e3a60633a57d71394cc6bd609bdfbb0e7cb9e"
+    },
+    "kev-triage": {
+      "asset": "kev-triage-0.2.1.tar.gz",
+      "dir_digest": "sha256:941ee79a86770af96332e17946217c6352a14dd08510530c689f864f2405ab64",
+      "tarball_sha256": "0db7c7cc80ca73678cd7e54b5e65e70902f889228b2d0291d9040486c0001181"
+    },
+    "project-domain": {
+      "asset": "project-domain-0.2.1.tar.gz",
+      "dir_digest": "sha256:7e5a222204302d7a6d8d6ad3927be20d85bfd92ba3c9f0310292fbe1dc1a1c0a",
+      "tarball_sha256": "dce2d306db798cb669a7fdcc1c0e9a599e0044d152769093435212df20064049"
+    },
+    "supply-chain-blast-radius": {
+      "asset": "supply-chain-blast-radius-0.2.1.tar.gz",
+      "dir_digest": "sha256:b9717f7ac602182344c725ecb7a42eea2c045474f1946701c53a0c406262ed61",
+      "tarball_sha256": "05f5713406f4f784d583d66936bf25a8335c7c3915fc1f9c0a49db8cf7d84637"
+>>>>>>> ad3085a (Gates: declared config element + cruxible gate verb group (wi-repo-merge-gate))
     }
   },
   "version": "0.2.1"

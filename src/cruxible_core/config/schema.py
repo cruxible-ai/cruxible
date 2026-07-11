@@ -15,6 +15,7 @@ Hierarchy:
     ├── named_queries: dict[str, NamedQuerySchema]
     │   └── traversal: list[TraversalStep]
     ├── constraints: list[ConstraintSchema]
+    ├── gates: dict[str, GateSchema]
     ├── feedback_profiles: dict[str, FeedbackProfileSchema]
     ├── outcome_profiles: dict[str, OutcomeProfileSchema]
     ├── quality_checks: list[QualityCheckSchema]
@@ -902,6 +903,46 @@ class ConstraintSchema(BaseModel):
     value_type: PredicateValueType | None = None
     severity: Literal["warning", "error"] = "warning"
     description: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Gate Schema
+# ---------------------------------------------------------------------------
+
+
+class GateSchema(BaseModel):
+    """Declared repo gate: which state must pin a commit SHA before it passes.
+
+    A gate names the coupling between an external checkpoint (e.g. a git
+    pre-push) and state: a candidate SHA is satisfied when at least one
+    entity of ``entity_type`` carries the candidate in ``sha_property`` AND
+    matches every ``predicate`` property. Core knows no ontology — the
+    declaration supplies it.
+    """
+
+    entity_type: str
+    sha_property: str
+    predicate: dict[str, str | int | float | bool]
+    applies_to: str
+    description: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_gate_shape(self) -> GateSchema:
+        if not self.predicate:
+            msg = "predicate must declare at least one property=value pair"
+            raise ValueError(msg)
+        if self.sha_property in self.predicate:
+            msg = (
+                "predicate may not constrain sha_property "
+                f"'{self.sha_property}'; the candidate SHA supplies that value"
+            )
+            raise ValueError(msg)
+        if not self.applies_to.strip():
+            msg = "applies_to must be a non-empty ref pattern (e.g. refs/heads/main)"
+            raise ValueError(msg)
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -2294,6 +2335,7 @@ class CoreConfig(BaseModel):
     named_queries: dict[str, NamedQuerySchema] = Field(default_factory=dict)
     enums: dict[str, EnumSchema] = Field(default_factory=dict)
     constraints: list[ConstraintSchema] = Field(default_factory=list)
+    gates: dict[str, GateSchema] = Field(default_factory=dict)
     feedback_profiles: dict[str, FeedbackProfileSchema] = Field(default_factory=dict)
     outcome_profiles: dict[str, OutcomeProfileSchema] = Field(default_factory=dict)
     quality_checks: list[QualityCheckSchema] = Field(default_factory=list)

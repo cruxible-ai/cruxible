@@ -1293,6 +1293,87 @@ findings.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
+## cruxible gate
+
+**Usage:** `cruxible gate [OPTIONS]`
+
+**Purpose:** Evaluate declared repo gates against state.
+
+Gates are named config declarations (the `gates:` config element) that couple an external checkpoint to state: a candidate commit SHA is satisfied when at least one entity of the declared type pins it in the declared SHA property and matches the declared predicate. The verb evaluates the declaration; it never hardcodes ontology.
+
+**Subcommands:**
+
+- `cruxible gate check` - Evaluate a named gate against candidate SHAs.
+- `cruxible gate list` - Show the active instance's declared gates.
+
+**Output And Side Effects:**
+- Read-only: gates read declarations from the instance config and query entities; nothing is written.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- No `gates:` element declared in the active instance config.
+
+## cruxible gate check
+
+**Usage:** `cruxible gate check [OPTIONS] NAME`
+
+**Purpose:** Evaluate gate NAME: is every candidate SHA pinned by satisfying state?
+
+Resolves the named declaration from the active instance config, queries state for each candidate (entities of the declared type whose SHA property equals the candidate AND matching the declared predicate), and prints one verdict line per candidate on stdout (`<gate> <sha> satisfied|unsatisfied ...`). Errors go to stderr. Candidate sources are input adapter flags, never subcommands: a future CI adapter is another flag against the same evaluation.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `NAME` | yes | | argument | Declared gate name (see `cruxible gate list`). |
+| `--sha` | no | | text | Candidate commit SHA to evaluate. Repeatable. |
+| `--git-pre-push` | no | `False` | boolean | Input adapter: derive candidates from git's pre-push stdin protocol (lines of `<local_ref> <local_sha> <remote_ref> <remote_sha>`). Run from the repository root, as git hooks do. Pushed refs are filtered to the gate's `applies_to` pattern; each merge commit's second parent in the pushed range is a candidate. A new remote branch (all-zeros remote SHA) evaluates merges not reachable from any remote-tracking ref; a ref deletion (all-zeros local SHA) is skipped. |
+
+**Exit Codes (machine contract):**
+
+| Code | Meaning |
+| --- | --- |
+| 0 | every candidate satisfied |
+| 1 | at least one candidate unsatisfied |
+| 2 | cannot evaluate (unknown gate, no gates declared, server unreachable, auth failure, malformed input, git failure) |
+
+The gate fails closed: every path that cannot produce a verdict exits nonzero with an instructive error on stderr. A gate that silently passes when unconfigured is forbidden.
+
+Hook one-liner (replaces hand-rolled pre-push scripts):
+
+```bash
+# .git/hooks/pre-push
+exec cruxible gate check merge-review --git-pre-push
+```
+
+v1 evaluates merge commits only: squash merges mint new SHAs no review pins, and fast-forward pushes record no merge commit.
+
+**Output And Side Effects:**
+- Verdict lines on stdout; errors and notices on stderr. Read-only.
+
+**Common Errors:**
+- Unknown gate name, or no `gates:` element declared (exit 2).
+- Daemon unreachable or missing/invalid token in server mode (exit 2).
+- Malformed pre-push stdin or failing git commands with `--git-pre-push` (exit 2).
+
+## cruxible gate list
+
+**Usage:** `cruxible gate list [OPTIONS]`
+
+**Purpose:** Show the active instance's declared gates.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output: one line per declared gate (`<name>: <EntityType>.<sha_property> where <predicate> (applies_to <pattern>)`).
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+
 ## cruxible group
 
 **Usage:** `cruxible group [OPTIONS]`

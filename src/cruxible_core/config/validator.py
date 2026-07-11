@@ -49,6 +49,7 @@ def validate_config(config: CoreConfig) -> list[str]:
     _validate_relationships(config, errors)
     _validate_named_queries(config, errors)
     _validate_constraints(config, errors, warnings)
+    _validate_gates(config, errors)
     _validate_feedback_profiles(config, errors)
     _validate_outcome_profiles(config, errors)
     _validate_primary_keys(config, errors)
@@ -293,6 +294,29 @@ def _validate_constraints(
                 f"Constraint '{constraint.name}': property '{to_prop}' not found on "
                 f"TO entity type '{rel.to_entity}' for relationship '{rel_name}'"
             )
+
+
+def _validate_gates(config: CoreConfig, errors: list[str]) -> None:
+    """Check that gate declarations reference declared types and properties."""
+    for gate_name, gate in config.gates.items():
+        entity = config.get_entity_type(gate.entity_type)
+        if entity is None:
+            errors.append(
+                f"Gate '{gate_name}': entity type '{gate.entity_type}' "
+                "not defined in entity_types"
+            )
+            continue
+        if gate.sha_property not in entity.properties:
+            errors.append(
+                f"Gate '{gate_name}': sha_property '{gate.sha_property}' "
+                f"not found on entity type '{gate.entity_type}'"
+            )
+        for prop_name in gate.predicate:
+            if prop_name not in entity.properties:
+                errors.append(
+                    f"Gate '{gate_name}': predicate property '{prop_name}' "
+                    f"not found on entity type '{gate.entity_type}'"
+                )
 
 
 def _validate_feedback_profiles(config: CoreConfig, errors: list[str]) -> None:
