@@ -37,6 +37,7 @@ from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.mutation_guards import (
     build_guard_write_delta,
     mutation_guard_errors,
+    receipt_creation_actor_resolver,
     relationship_mutation_guard_errors,
 )
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
@@ -733,6 +734,7 @@ def _prepare_batch_direct_write(
                 validated_entities,
                 [item.validated for item in validated_relationships],
             ),
+            creation_actor_resolver=receipt_creation_actor_resolver(instance),
         )
     except DataValidationError as exc:
         guard_errors = [str(exc), *exc.errors]
@@ -1065,6 +1067,7 @@ def service_add_entities(
                 entities=pending,
                 actor_context=actor_context,
                 write_delta=build_guard_write_delta(pending),
+                creation_actor_resolver=receipt_creation_actor_resolver(instance),
             )
         except DataValidationError as exc:
             guard_errors = [str(exc), *exc.errors]

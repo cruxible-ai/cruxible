@@ -103,12 +103,17 @@ For `approved` or `withdrawn`, change only `ReviewRequest.status` and the
 note's `kind`-appropriate prose; the structure is identical. All three verdict
 values trigger the guard, so all three need the co-written note.
 
-> **`approved` also needs the reviewer credential.** A separate
-> `actor`-condition guard (`review_request_approval_requires_authorized_actor`)
-> additionally requires the authenticated reviewer actor to set status
-> `approved`. Approving therefore needs *both* the rationale note (this guard)
-> and the reviewer credential (that guard). `changes_requested` and `withdrawn`
-> need only the note.
+> **`approved` also needs the reviewer credential — and a different one than
+> the creator's.** A separate `actor`-condition guard
+> (`review_request_approval_requires_authorized_actor`) additionally requires
+> the authenticated reviewer actor to set status `approved`, and
+> (`distinct_from_creation_actor`) that the approver differ from the actor
+> recorded in the ReviewRequest's creation receipt. The creator of a
+> ReviewRequest can never approve it, and creating a ReviewRequest already
+> `approved` is always refused (creator == approver trivially). Approving
+> therefore needs the rationale note (this guard) plus a reviewer credential
+> distinct from the request's creator (that guard). `changes_requested` and
+> `withdrawn` need only the note.
 
 ### Why one batch and not two writes
 
@@ -189,8 +194,10 @@ Stop and ask the user (don't guess) when:
   change.
 - You hit `review_request_approval_requires_authorized_actor` on an `approved`
   verdict. That is the reviewer-credential guard, not this one — approving
-  requires the authenticated reviewer identity. Surface it; do not try to
-  spoof the actor in the request body.
+  requires the authenticated reviewer identity AND an approver distinct from
+  the actor that created the ReviewRequest (creation-receipt anchored).
+  Surface it; do not try to spoof the actor in the request body, rewrite a
+  property, or re-file the request to launder the creator.
 - A ReviewRequest or Actor id in your payload doesn't resolve to an existing
   entity. Writing a verdict against the wrong request corrupts the thread.
 
@@ -200,6 +207,6 @@ Stop and ask the user (don't guess) when:
 |---|---|
 | `batch-direct-write` rejected with `review_verdict_requires_rationale_note` | The same batch is missing a new `StateNote(kind=review_note)` linked via `state_note_about_review_request`. Add the note + link to this batch; a pre-existing note does not count. |
 | Guard still fires after adding a note | Confirm `kind: review_note` (not another `state_note_kind` value) and that the `state_note_about_review_request` edge points the note at the *same* ReviewRequest whose status you're changing, both created in this write. |
-| `approved` rejected with `review_request_approval_requires_authorized_actor` | Approval needs the authenticated reviewer credential in addition to the note. Run under the reviewer runtime credential. |
+| `approved` rejected with `review_request_approval_requires_authorized_actor` | Approval needs the authenticated reviewer credential in addition to the note, and the approver must differ from the ReviewRequest's creation actor. Run under the reviewer runtime credential; if that credential also created the request, a different authorized reviewer must approve. |
 | Verdict status didn't change but no error | You re-asserted the existing status; that isn't a transition and the guard doesn't fire. Confirm the prior status was actually different. |
 | "Current thread" includes a note you corrected | A corrected note still appears until it has an incoming `state_note_supersedes_state_note`. Add that edge if it should drop from the current view; use `resolves` instead if it should remain as a raised-but-addressed finding. |

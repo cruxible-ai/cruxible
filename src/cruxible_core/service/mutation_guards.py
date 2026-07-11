@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -32,6 +32,7 @@ from cruxible_core.query.predicates import (
     entity_matches_predicates,
     entity_matches_related_predicates,
 )
+from cruxible_core.receipt.types import Receipt
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 
 _MISSING = object()
@@ -64,6 +65,75 @@ class GuardWriteDelta:
         return cls(created_entities={}, created_edges=frozenset())
 
 
+@dataclass(frozen=True)
+class CreationActorResolution:
+    """Outcome of resolving an entity's creation actor from provenance.
+
+    ``found`` carries the actor id recorded on the entity's committed creation
+    receipt. Every other status (``no_actor`` for pre-auth creation receipts,
+    ``not_found`` for entities with no committed creation receipt — e.g.
+    clone/import-materialized records, ``error`` for lookup failures) is a
+    refusal for ``distinct_from_creation_actor`` conditions: separation passes
+    only on positive proof.
+    """
+
+    status: Literal["found", "no_actor", "not_found", "error"]
+    actor_id: str | None = None
+
+
+CreationActorResolver = Callable[[str, str], CreationActorResolution]
+"""Resolve ``(entity_type, entity_id)`` to the entity's creation actor."""
+
+
+def receipt_creation_actor_resolver(instance: InstanceProtocol) -> CreationActorResolver:
+    """Build a creation-actor resolver backed by the instance receipt store.
+
+    The creation anchor is the newest COMMITTED receipt containing an
+    ``entity_write`` node for the target with ``is_update`` false — the write
+    that created the record as it exists now (after a hypothetical hard
+    delete + recreate, the newest creation is the honest creator of the current
+    record). The receipt's top-level ``actor_context`` is server-derived from
+    the authenticated credential, never from the request body, which is why it
+    can anchor separation while writable properties and the last-writer
+    ``EntityMetadata.actor_context`` cannot.
+    """
+
+    def resolve(entity_type: str, entity_id: str) -> CreationActorResolution:
+        try:
+            store = instance.get_receipt_store()
+            try:
+                # get_receipts_for_entity orders newest-first by created_at.
+                for receipt_id in store.get_receipts_for_entity(entity_type, entity_id):
+                    receipt = store.get_receipt(receipt_id)
+                    if receipt is None or not receipt.committed:
+                        continue
+                    if not _receipt_creates_entity(receipt, entity_type, entity_id):
+                        continue
+                    if receipt.actor_context is None:
+                        return CreationActorResolution(status="no_actor")
+                    return CreationActorResolution(
+                        status="found",
+                        actor_id=receipt.actor_context.actor_id,
+                    )
+            finally:
+                store.close()
+        except Exception:
+            return CreationActorResolution(status="error")
+        return CreationActorResolution(status="not_found")
+
+    return resolve
+
+
+def _receipt_creates_entity(receipt: Receipt, entity_type: str, entity_id: str) -> bool:
+    return any(
+        node.node_type == "entity_write"
+        and node.entity_type == entity_type
+        and node.entity_id == entity_id
+        and node.detail.get("is_update") is False
+        for node in receipt.nodes
+    )
+
+
 def build_guard_write_delta(
     entities: Sequence[ValidatedEntity],
     relationships: Sequence[ValidatedRelationship] = (),
@@ -92,8 +162,14 @@ def mutation_guard_errors(
     entities: Sequence[ValidatedEntity],
     actor_context: GovernedActorContext | None = None,
     write_delta: GuardWriteDelta | None = None,
+    creation_actor_resolver: CreationActorResolver | None = None,
 ) -> list[str]:
-    """Return mutation guard errors for proposed entity writes (creates and updates)."""
+    """Return mutation guard errors for proposed entity writes (creates and updates).
+
+    ``creation_actor_resolver`` supplies creation-provenance lookups for
+    ``distinct_from_creation_actor`` conditions; when it is None those
+    conditions fail closed.
+    """
     if not config.mutation_guards:
         return []
 
@@ -123,6 +199,7 @@ def mutation_guard_errors(
                 context,
                 actor_context=actor_context,
                 write_delta=delta,
+                creation_actor_resolver=creation_actor_resolver,
             ):
                 errors.append(_guard_error_message(guard, entity.entity, context))
     return errors
@@ -181,6 +258,7 @@ def validate_mutation_guards(
     entities: Sequence[ValidatedEntity],
     actor_context: GovernedActorContext | None = None,
     write_delta: GuardWriteDelta | None = None,
+    creation_actor_resolver: CreationActorResolver | None = None,
 ) -> None:
     """Raise DataValidationError when any proposed entity write violates a guard."""
     errors = mutation_guard_errors(
@@ -190,6 +268,7 @@ def validate_mutation_guards(
         entities=entities,
         actor_context=actor_context,
         write_delta=write_delta,
+        creation_actor_resolver=creation_actor_resolver,
     )
     if errors:
         raise DataValidationError(
@@ -262,6 +341,7 @@ def _guard_condition_passes(
     context: _GuardEntityContext,
     actor_context: GovernedActorContext | None = None,
     write_delta: GuardWriteDelta | None = None,
+    creation_actor_resolver: CreationActorResolver | None = None,
 ) -> bool:
     condition = guard.condition
     if isinstance(condition, NamedQueryResultCountGuardCondition):
@@ -274,11 +354,46 @@ def _guard_condition_passes(
             return False
         return True
     if isinstance(condition, ActorIdentityGuardCondition):
-        return actor_context is not None and actor_context.actor_id in condition.allowed_actor_ids
+        if actor_context is None or actor_context.actor_id not in condition.allowed_actor_ids:
+            return False
+        if not condition.distinct_from_creation_actor:
+            return True
+        return _distinct_from_creation_actor_passes(
+            context,
+            actor_context,
+            creation_actor_resolver,
+        )
     if isinstance(condition, CoWriteGuardCondition):
         delta = write_delta if write_delta is not None else GuardWriteDelta.empty()
         return _co_write_condition_passes(condition, context, delta, config)
     return False
+
+
+def _distinct_from_creation_actor_passes(
+    context: _GuardEntityContext,
+    actor_context: GovernedActorContext,
+    resolver: CreationActorResolver | None,
+) -> bool:
+    """Pass only on positive proof the acting actor differs from the creation actor.
+
+    Fail-closed by construction. Refused: creating the entity in THIS write
+    (creator == actor trivially, which also covers create-with-guarded-value),
+    no resolver wired, resolver raising, no committed creation receipt, creation
+    provenance with no recorded actor (pre-auth records), and creation actor ==
+    acting actor. Actors compare by actor id (the credential LABEL): rotation /
+    re-mint of the same label keeps the identity stable, so an actor cannot shed
+    creator identity by re-minting, and minting a NEW label is an admin-tier
+    operation.
+    """
+    if context.current is None:
+        return False
+    if resolver is None:
+        return False
+    try:
+        resolution = resolver(context.proposed.entity_type, context.proposed.entity_id)
+    except Exception:
+        return False
+    return resolution.status == "found" and resolution.actor_id != actor_context.actor_id
 
 
 def _co_write_condition_passes(
@@ -512,9 +627,12 @@ def _relationship_evidence_guard_error_message(
 
 
 __all__ = [
+    "CreationActorResolution",
+    "CreationActorResolver",
     "GuardWriteDelta",
     "build_guard_write_delta",
     "mutation_guard_errors",
+    "receipt_creation_actor_resolver",
     "relationship_mutation_guard_errors",
     "validate_mutation_guards",
 ]

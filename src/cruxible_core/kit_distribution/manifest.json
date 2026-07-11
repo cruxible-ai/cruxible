@@ -1,41 +1,41 @@
 {
-  "base_url": "https://github.com/cruxible-ai/cruxible/releases/download/v0.2.0/",
+  "base_url": "https://github.com/cruxible-ai/cruxible/releases/download/v0.2.1/",
   "kits": {
     "agent-operation": {
-      "asset": "agent-operation-0.2.0.tar.gz",
-      "dir_digest": "sha256:e04d1d781cf7f591b145212fcbf5dd25b9a048b82b2b7b14673ae9cf0287d7f1",
-      "tarball_sha256": "ae51840684254105596ac22cc421dea199b1db8fa136a9ed280ad972425fa029"
+      "asset": "agent-operation-0.2.1.tar.gz",
+      "dir_digest": "sha256:ae346a9d518d4c5fd966e4aac8a46ea47842610abe0ba654420f386976778495",
+      "tarball_sha256": "3b5466103c8835df3d70304332922aa8f078211e8331155981257740ea318043"
     },
     "agent-release": {
-      "asset": "agent-release-0.2.0.tar.gz",
+      "asset": "agent-release-0.2.1.tar.gz",
       "dir_digest": "sha256:9271115abdbcf94e9d39556644cefb4a5541b5b2a145cc90afa6384935fb8ec6",
       "tarball_sha256": "cc025b771066ac263eb1e52be0259f7004df48fe238ab6d199d614f9f0c169fe"
     },
     "case-law-monitoring": {
-      "asset": "case-law-monitoring-0.2.0.tar.gz",
+      "asset": "case-law-monitoring-0.2.1.tar.gz",
       "dir_digest": "sha256:a0df5d4e5ad16b2408dc12cbad74b757fd2160345ec64b7f96034dec2ee6affe",
       "tarball_sha256": "5f5bff315926e110c1dace3cfdd56338b8e56d9d6673bee2bf44007400452f76"
     },
     "kev-reference": {
-      "asset": "kev-reference-0.2.0.tar.gz",
+      "asset": "kev-reference-0.2.1.tar.gz",
       "dir_digest": "sha256:10bf27cf96e491fd0bea6baadd2d509e34022e04799dea83ca7ee085056f8ae7",
       "tarball_sha256": "be770effd31916473b3bf79b683340424be1c49674d73759029d8e3bfc2dfbc9"
     },
     "kev-triage": {
-      "asset": "kev-triage-0.2.0.tar.gz",
+      "asset": "kev-triage-0.2.1.tar.gz",
       "dir_digest": "sha256:ab0990d27f198de304c4ab7afe4c8b102ea51f605cde611de96148208e5cb36c",
       "tarball_sha256": "69ef054049ec002703aaf3cf723b28533b28cc80a070e49c4f186ec8bbc5472f"
     },
     "project-domain": {
-      "asset": "project-domain-0.2.0.tar.gz",
+      "asset": "project-domain-0.2.1.tar.gz",
       "dir_digest": "sha256:0197b7cb0393a15b584d7b9f5e6965aaa7f0e1c90c9d287ee2b97a3ab5e907f4",
       "tarball_sha256": "2310910645b1c9a4a106a6622a865b8537e26a2b5535b26d1f79329531fc44c2"
     },
     "supply-chain-blast-radius": {
-      "asset": "supply-chain-blast-radius-0.2.0.tar.gz",
-      "dir_digest": "sha256:742b8dc4a55f939c9abe827ed8fe345734d880e3a735f398118bb4778b526e8d",
-      "tarball_sha256": "5299c547ae01ae00c207d0d80a98f9d6ffc4d97a6e916fdc5bb37862bc857673"
+      "asset": "supply-chain-blast-radius-0.2.1.tar.gz",
+      "dir_digest": "sha256:e7c44c39ad5255d8feb78612058fb49bcb9b0b4e46432218d9f42e91d0794adb",
+      "tarball_sha256": "e02d4b8106b097356113836364bd4151201082223062261c583ea170b68090c4"
     }
   },
-  "version": "0.2.0"
+  "version": "0.2.1"
 }

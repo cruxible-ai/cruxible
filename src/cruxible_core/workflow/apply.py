@@ -337,6 +337,7 @@ def apply_entity_set(
         )
 
     _enforce_entity_mutation_guards(
+        instance,
         config,
         graph,
         step_id,
@@ -536,6 +537,7 @@ def apply_relationship_set(
 
 
 def _enforce_entity_mutation_guards(
+    instance: InstanceProtocol,
     config: CoreConfig,
     graph: EntityGraph,
     step_id: str,
@@ -561,7 +563,10 @@ def _enforce_entity_mutation_guards(
     # Deferred import: cruxible_core.service.__init__ pulls in service.execution
     # -> workflow.executor -> workflow.apply, so a top-level import here would be
     # circular. The function-local import breaks that cycle.
-    from cruxible_core.service.mutation_guards import mutation_guard_errors
+    from cruxible_core.service.mutation_guards import (
+        mutation_guard_errors,
+        receipt_creation_actor_resolver,
+    )
 
     proposed_graph = EntityGraph.from_dict(deepcopy(graph.to_dict()))
     for validated in validated_entities:
@@ -580,6 +585,7 @@ def _enforce_entity_mutation_guards(
         proposed_graph=proposed_graph,
         entities=validated_entities,
         actor_context=actor_context,
+        creation_actor_resolver=receipt_creation_actor_resolver(instance),
     )
     if guard_errors:
         raise QueryExecutionError(

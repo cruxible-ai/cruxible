@@ -10,14 +10,18 @@ Unlike the retired project-state kit, agent-operation gates ReviewRequest
 
 * ``review_request_approval_requires_authorized_actor`` — advancing a
   ReviewRequest to ``approved`` requires an actor_context whose ``actor_id`` is
-  ``authorized-reviewer``.
+  ``authorized-reviewer`` AND (``distinct_from_creation_actor``) an actor that
+  differs from the one recorded in the ReviewRequest's creation receipt. The
+  separation makes create-with-approved impossible (creator == actor
+  trivially), so approved reviews are always seeded in two steps: a creation
+  write by the implementer actor, then an approval write by the reviewer.
 * ``review_verdict_requires_rationale_note`` — any verdict transition
   (``changes_requested``/``approved``/``withdrawn``) must co-write a
   ``StateNote(kind=review_note)`` linked via ``state_note_about_review_request``
   in the same write.
 
 These tests therefore satisfy both guards when seeding/approving reviews, and
-assert the actor guard rejects unauthorized approvals.
+assert the actor guard rejects unauthorized approvals and self-approvals.
 """
 
 from __future__ import annotations
@@ -108,46 +112,19 @@ def _seed_work_item(instance: CruxibleInstance, status: str = "active") -> None:
     )
 
 
+_IMPLEMENTER = "impl-agent"
+
+
 def _seed_review(instance: CruxibleInstance, status: str) -> None:
     """Seed a ReviewRequest at ``status`` linked to wi-gated.
 
-    Verdict statuses (changes_requested/approved/withdrawn) must co-write a
-    review_note in the same governed batch; approvals additionally require the
-    authorized-reviewer actor. Non-verdict statuses (requested/in_review) are
-    plain writes.
+    Creation is always a separate write by the implementer actor: approvals
+    require an actor distinct from the creation actor, so create-with-approved
+    can never satisfy the guard. Verdict statuses
+    (changes_requested/approved/withdrawn) then advance in a second batch that
+    co-writes the required review_note; approvals use the authorized-reviewer
+    actor.
     """
-    verdict_statuses = {"changes_requested", "approved", "withdrawn"}
-    if status in verdict_statuses:
-        service_batch_direct_write(
-            instance,
-            BatchDirectWriteInput(
-                entities=[
-                    EntityWriteInput(
-                        entity_type="ReviewRequest",
-                        entity_id="rr-gated",
-                        properties={
-                            "review_request_id": "rr-gated",
-                            "title": "Review gated work item",
-                            "status": status,
-                        },
-                    ),
-                    _review_note_entity(),
-                ],
-                relationships=[
-                    BatchRelationshipWriteInput(
-                        from_type="ReviewRequest",
-                        from_id="rr-gated",
-                        relationship_type="review_request_for_work_item",
-                        to_type="WorkItem",
-                        to_id="wi-gated",
-                    ),
-                    _note_about_review("sn-gated", "rr-gated"),
-                ],
-            ),
-            actor_context=_actor_context(),
-        )
-        return
-
     service_add_entity_inputs(
         instance,
         [
@@ -157,10 +134,11 @@ def _seed_review(instance: CruxibleInstance, status: str) -> None:
                 properties={
                     "review_request_id": "rr-gated",
                     "title": "Review gated work item",
-                    "status": status,
+                    "status": "requested",
                 },
             )
         ],
+        actor_context=_actor_context(_IMPLEMENTER),
     )
     service_add_relationship_inputs(
         instance,
@@ -175,6 +153,39 @@ def _seed_review(instance: CruxibleInstance, status: str) -> None:
         ],
         source="test",
         source_ref="review-gate-smoke",
+    )
+    if status == "requested":
+        return
+
+    verdict_statuses = {"changes_requested", "approved", "withdrawn"}
+    if status in verdict_statuses:
+        service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="ReviewRequest",
+                        entity_id="rr-gated",
+                        properties={"status": status},
+                    ),
+                    _review_note_entity(),
+                ],
+                relationships=[_note_about_review("sn-gated", "rr-gated")],
+            ),
+            actor_context=_actor_context(),
+        )
+        return
+
+    service_add_entity_inputs(
+        instance,
+        [
+            EntityWriteInput(
+                entity_type="ReviewRequest",
+                entity_id="rr-gated",
+                properties={"status": status},
+            )
+        ],
+        actor_context=_actor_context(_IMPLEMENTER),
     )
 
 
@@ -311,6 +322,39 @@ class TestAgentOperationReviewGate:
         assert review is not None
         assert review.properties["status"] == "approved"
 
+    def test_approval_rejected_for_review_creator(self, tmp_path: Path) -> None:
+        # distinct_from_creation_actor: even the authorized-reviewer actor
+        # cannot approve a ReviewRequest whose creation receipt records that
+        # same actor — the review's creator can never approve it.
+        instance = _agent_operation_instance(tmp_path)
+        _seed_work_item(instance)
+        service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="ReviewRequest",
+                    entity_id="rr-gated",
+                    properties={
+                        "review_request_id": "rr-gated",
+                        "title": "Review gated work item",
+                        "status": "requested",
+                    },
+                )
+            ],
+            actor_context=_actor_context("authorized-reviewer"),
+        )
+
+        with pytest.raises(
+            DataValidationError,
+            match="review_request_approval_requires_authorized_actor",
+        ):
+            _approve_review(instance, actor_context=_actor_context("authorized-reviewer"))
+
+        assert (
+            instance.load_graph().get_entity("ReviewRequest", "rr-gated").properties["status"]
+            == "requested"
+        )
+
     def test_approval_rejected_without_co_written_review_note(self, tmp_path: Path) -> None:
         # The authorized actor still cannot approve without co-writing the
         # rationale review_note in the same batch.
@@ -423,74 +467,98 @@ class TestAgentOperationReviewGate:
 
         assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
 
-    def test_batch_create_as_closed_allowed_with_same_batch_review(self, tmp_path: Path) -> None:
-        # The maintainer-led import path: historical closed work lands with
-        # its approved review (and the required review_note) in the same batch.
+    def test_batch_create_as_approved_rejected(self, tmp_path: Path) -> None:
+        # Creating a ReviewRequest already approved is impossible under
+        # distinct_from_creation_actor: the creation actor IS the acting actor,
+        # so the old maintainer-led import shape (closed work + its approved
+        # review in one batch) is refused. Imports land reviews at requested
+        # and approve them with a second, distinct credential.
         instance = _agent_operation_instance(tmp_path)
 
-        result = service_batch_direct_write(
-            instance,
-            BatchDirectWriteInput(
-                entities=[
-                    EntityWriteInput(
-                        entity_type="WorkItem",
-                        entity_id="wi-born-closed",
-                        properties={
-                            "work_item_id": "wi-born-closed",
-                            "title": "Imported finished work",
-                            "type": "feature",
-                            "status": "closed",
-                            "priority": "low",
-                        },
-                    ),
-                    EntityWriteInput(
-                        entity_type="ReviewRequest",
-                        entity_id="rr-import",
-                        properties={
-                            "review_request_id": "rr-import",
-                            "title": "Import-time review",
-                            "status": "approved",
-                        },
-                    ),
-                    _review_note_entity("sn-import"),
-                ],
-                relationships=[
-                    BatchRelationshipWriteInput(
-                        from_type="ReviewRequest",
-                        from_id="rr-import",
-                        relationship_type="review_request_for_work_item",
-                        to_type="WorkItem",
-                        to_id="wi-born-closed",
-                    ),
-                    _note_about_review("sn-import", "rr-import"),
-                ],
-            ),
-            actor_context=_actor_context(),
-        )
+        with pytest.raises(DataValidationError, match="Batch direct write validation failed"):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        EntityWriteInput(
+                            entity_type="WorkItem",
+                            entity_id="wi-born-closed",
+                            properties={
+                                "work_item_id": "wi-born-closed",
+                                "title": "Imported finished work",
+                                "type": "feature",
+                                "status": "closed",
+                                "priority": "low",
+                            },
+                        ),
+                        EntityWriteInput(
+                            entity_type="ReviewRequest",
+                            entity_id="rr-import",
+                            properties={
+                                "review_request_id": "rr-import",
+                                "title": "Import-time review",
+                                "status": "approved",
+                            },
+                        ),
+                        _review_note_entity("sn-import"),
+                    ],
+                    relationships=[
+                        BatchRelationshipWriteInput(
+                            from_type="ReviewRequest",
+                            from_id="rr-import",
+                            relationship_type="review_request_for_work_item",
+                            to_type="WorkItem",
+                            to_id="wi-born-closed",
+                        ),
+                        _note_about_review("sn-import", "rr-import"),
+                    ],
+                ),
+                actor_context=_actor_context(),
+            )
 
-        assert result.valid is True
-        entity = instance.load_graph().get_entity("WorkItem", "wi-born-closed")
-        assert entity is not None
-        assert entity.properties["status"] == "closed"
+        assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
+        assert instance.load_graph().get_entity("ReviewRequest", "rr-import") is None
 
-    def test_batch_close_allowed_with_same_batch_approved_review(self, tmp_path: Path) -> None:
+    def test_batch_close_allowed_with_same_batch_review_link(self, tmp_path: Path) -> None:
+        # An approved review (created by the implementer, approved by the
+        # reviewer) can land its work-item link in the same batch as the close.
         instance = _agent_operation_instance(tmp_path)
         _seed_work_item(instance)
-
-        result = service_batch_direct_write(
+        service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="ReviewRequest",
+                    entity_id="rr-batch",
+                    properties={
+                        "review_request_id": "rr-batch",
+                        "title": "Same-batch review",
+                        "status": "requested",
+                    },
+                )
+            ],
+            actor_context=_actor_context(_IMPLEMENTER),
+        )
+        service_batch_direct_write(
             instance,
             BatchDirectWriteInput(
                 entities=[
                     EntityWriteInput(
                         entity_type="ReviewRequest",
                         entity_id="rr-batch",
-                        properties={
-                            "review_request_id": "rr-batch",
-                            "title": "Same-batch review",
-                            "status": "approved",
-                        },
+                        properties={"status": "approved"},
                     ),
                     _review_note_entity("sn-batch"),
+                ],
+                relationships=[_note_about_review("sn-batch", "rr-batch")],
+            ),
+            actor_context=_actor_context(),
+        )
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
                     EntityWriteInput(
                         entity_type="WorkItem",
                         entity_id="wi-gated",
@@ -505,7 +573,6 @@ class TestAgentOperationReviewGate:
                         to_type="WorkItem",
                         to_id="wi-gated",
                     ),
-                    _note_about_review("sn-batch", "rr-batch"),
                 ],
             ),
             actor_context=_actor_context(),
@@ -530,7 +597,26 @@ class TestCloseGatePendingEdgeExploit:
 
     @staticmethod
     def _seed_approved_review_without_edge(instance: CruxibleInstance) -> None:
-        """Create an APPROVED rr-gated (actor-guarded, note co-written), no work edge."""
+        """Create an APPROVED rr-gated (actor-guarded, note co-written), no work edge.
+
+        Two writes: the implementer creates the review, the reviewer approves —
+        create-with-approved is refused by distinct_from_creation_actor.
+        """
+        service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="ReviewRequest",
+                    entity_id="rr-gated",
+                    properties={
+                        "review_request_id": "rr-gated",
+                        "title": "Review gated work item",
+                        "status": "requested",
+                    },
+                )
+            ],
+            actor_context=_actor_context(_IMPLEMENTER),
+        )
         service_batch_direct_write(
             instance,
             BatchDirectWriteInput(
@@ -538,11 +624,7 @@ class TestCloseGatePendingEdgeExploit:
                     EntityWriteInput(
                         entity_type="ReviewRequest",
                         entity_id="rr-gated",
-                        properties={
-                            "review_request_id": "rr-gated",
-                            "title": "Review gated work item",
-                            "status": "approved",
-                        },
+                        properties={"status": "approved"},
                     ),
                     _review_note_entity(),
                 ],

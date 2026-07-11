@@ -38,6 +38,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
+    StrictBool,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -1315,10 +1316,18 @@ class NamedQueryResultCountGuardCondition(BaseModel):
 
 
 class ActorIdentityGuardCondition(BaseModel):
-    """Actor identity allow-list condition for config-defined mutation guards."""
+    """Actor identity allow-list condition for config-defined mutation guards.
+
+    ``distinct_from_creation_actor`` additionally requires the acting actor to
+    differ from the actor recorded in the target entity's CREATION provenance
+    (its committed creation receipt) -- never a writable property, which agents
+    could rewrite to launder self-approval. Strictly boolean: YAML ``true`` /
+    ``false`` only, no string/int coercion.
+    """
 
     type: Literal["actor"]
     allowed_actor_ids: list[str] = Field(min_length=1)
+    distinct_from_creation_actor: StrictBool = False
 
     model_config = {"extra": "forbid"}
 

@@ -1670,13 +1670,21 @@ def _expand_guard_condition(name: str, require: dict[str, Any]) -> dict[str, Any
 
     if "allowed_actors" in require:
         _reject_unknown_keys(
-            f"mutation guard '{name}' require allowed_actors", require, {"allowed_actors"}
+            f"mutation guard '{name}' require allowed_actors",
+            require,
+            {"allowed_actors", "distinct_from_creation_actor"},
         )
         # LITERAL passthrough -- no identity resolution, no invented actors.
-        return {
+        actor_condition: dict[str, Any] = {
             "type": "actor",
             "allowed_actor_ids": list(require["allowed_actors"]),
         }
+        if "distinct_from_creation_actor" in require:
+            # Passthrough; the schema enforces strict boolean-ness.
+            actor_condition["distinct_from_creation_actor"] = require[
+                "distinct_from_creation_actor"
+            ]
+        return actor_condition
 
     if "query" in require:
         _reject_unknown_keys(
