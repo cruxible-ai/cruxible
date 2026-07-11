@@ -9,6 +9,17 @@ the project's own state instance.
 
 ### Added
 
+- **`cruxible gate`: declared merge gates enforced from state**: a `gates:`
+  config element declares named, kind-based gates — `{kind, entity_type,
+  match_property, condition}`, where `kind` selects a source adapter that
+  supplies the candidate values to check. `cruxible gate check <name>`
+  evaluates a gate; the only v1 kind, `git-pre-push`, reads git's pre-push
+  protocol and requires every parent of every pushed merge commit to be
+  pinned by a matching entity in state, refusing the push otherwise (fail
+  closed on any error). The agent-operation kit ships a `merge-review` gate
+  (ReviewRequest / change_head / approved) so a repo can gate merges on
+  approved reviews with a one-line pre-push hook. Doctrine: a *guard* blocks
+  a write into state; a *gate* lets the world act only if state agrees.
 - **Approval actor separation (`distinct_from_creation_actor`)**: mutation
   guards can now require that the acting actor differ from the actor that
   created the target entity — anchored on the creation receipt's
