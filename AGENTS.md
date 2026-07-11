@@ -65,9 +65,10 @@ The MCP server name includes the version (`cruxible-core v0.2.0`) so agents and 
 
 **Release process:**
 1. Bump version in both files
-2. Commit: `Bump to vX.Y.Z`
-3. Tag: `git tag vX.Y.Z`
-4. Push: `git push && git push --tags`
+2. Rebuild kit bundles + manifest: `uv run python scripts/build_kit_bundles.py` (if a kit's config/providers changed, first `uv run cruxible lock --kit-dir kits/<kit>`); verify with `uv run python scripts/check_kit_lockfiles.py` and commit the regenerated manifest/locks
+3. Commit: `Bump to vX.Y.Z`
+4. Tag: `git tag vX.Y.Z`
+5. Push: `git push && git push --tags` (upload `dist/kits/*.tar.gz` as release assets on the tag)
 
 ## Architecture
 

@@ -36,6 +36,26 @@ jobs:
       - name: Test
         run: uv run pytest --tb=short
 
+  # Fast standalone drift gate: runs in parallel with the test matrix so a
+  # stale kit lock/manifest surfaces immediately, not after ~25 min of tests
+  # (and not hidden behind unrelated lint/test failures).
+  kit-lockfiles:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-packages --all-extras
+
+      - name: Verify kit lockfiles and distribution manifest are current
+        run: uv run python scripts/check_kit_lockfiles.py
+
   docker-image-test:
     runs-on: ubuntu-latest
 
