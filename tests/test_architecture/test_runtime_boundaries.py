@@ -113,11 +113,42 @@ def test_runtime_api_does_not_construct_graph_or_feedback_domain_models():
         assert import_path not in source, import_path
 
 
-def test_runtime_api_does_not_override_permission_tiers():
+# The ONLY api.py functions allowed to replace a tool's static tier for a call.
+# Config-declared write tiers (``write_tier``) make the direct-write facades'
+# effective requirement payload-dependent: they pre-gate at the GOVERNED_WRITE
+# floor (scope first, before any instance access), then check the payload's
+# computed requirement via ``_direct_write_tier_gate``. Nothing else in the
+# facade may adjust a tier — additions to this set need an architecture review.
+_TIER_OVERRIDE_FUNCTIONS = frozenset(
+    {
+        "add_entities",
+        "add_relationships_with_provenance",
+        "batch_direct_write",
+        "_direct_write_tier_gate",
+    }
+)
+
+
+def test_runtime_api_overrides_permission_tiers_only_in_direct_write_gate():
     path = _repo_root() / "src/cruxible_core/runtime/api.py"
     source = path.read_text()
+    # The legacy ad-hoc override spelling stays banned outright.
     assert "required_mode=" not in source
-    assert "PermissionMode" not in source
+
+    tree = ast.parse(source, filename=str(path))
+    offenders: list[str] = []
+    for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)):
+        for node in ast.walk(function):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "check_permission"
+            ):
+                continue
+            has_override = any(keyword.arg == "required_override" for keyword in node.keywords)
+            if has_override and function.name not in _TIER_OVERRIDE_FUNCTIONS:
+                offenders.append(f"{function.name}:{node.lineno}")
+    assert offenders == []
 
 
 def test_runtime_api_scoped_permission_checks_include_instance_id():

@@ -7,6 +7,18 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the `release-0.2.1` line in
 the project's own state instance.
 
+### Added
+
+- **Config-declared write tiers (`write_tier`)**: entity and relationship
+  types may declare `write_tier: governed_write` to open their direct-write
+  surface (`add_entity` / `add_relationship` / `batch_direct_write`) to
+  `governed_write` actors. Undeclared types keep requiring `graph_write`;
+  mixed payloads are gated at the strictest touched type; mutation guards
+  and `write_policy` run unchanged after the tier check. Config lint
+  rejects non-write tiers (`read_only`, `admin`) and tier declarations on
+  `proposal_only`/`mint_only` types. See "Config-Declared Write Tiers"
+  in the config reference.
+
 ### Fixed
 
 - **Config reload refuses to strand stored graph records**: reloading a

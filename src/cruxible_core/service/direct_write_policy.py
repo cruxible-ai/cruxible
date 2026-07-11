@@ -40,9 +40,10 @@ does NOT apply to it.
 from __future__ import annotations
 
 import os
-from typing import Literal, Mapping
+from typing import Iterable, Literal, Mapping
 
 from cruxible_core.config.schema import CoreConfig
+from cruxible_core.runtime.permissions import PermissionMode
 
 WritePolicy = Literal["direct", "proposal_only", "mint_only"]
 
@@ -142,3 +143,73 @@ def effective_relationship_write_policy(
         config.runtime.default_write_policy,
         environ=environ,
     )
+
+
+# ---------------------------------------------------------------------------
+# Config-declared write tiers (the SECOND per-type write-governance knob)
+# ---------------------------------------------------------------------------
+#
+# ``write_tier`` is the tier-ladder complement of ``write_policy``:
+#
+# * ``write_policy`` answers "may this type be direct-written AT ALL?"
+#   (hard constraint, tier-independent, enforced at graph/operations.py).
+# * ``write_tier`` answers "which permission tier may direct-write it?"
+#   (per-type requirement for the direct-write verbs, enforced at the
+#   runtime/api.py facades BEFORE the write reaches the chokepoint).
+#
+# A type may declare ``write_tier: governed_write`` to open its direct-write
+# surface to sub-``graph_write`` actors (e.g. an operation kit's StateNote
+# scratchpad surface). Undeclared types keep the classic ``graph_write``
+# requirement, so declared tiers only ever LOWER the requirement — schema
+# validation rejects tiers above ``graph_write`` (that is write_policy's job)
+# and below ``governed_write`` (read_only is not a write tier).
+
+# Schema-validated write_tier names -> permission modes.
+_WRITE_TIER_MODES: dict[str, PermissionMode] = {
+    "governed_write": PermissionMode.GOVERNED_WRITE,
+    "graph_write": PermissionMode.GRAPH_WRITE,
+}
+
+# Requirement for any type without a declared write_tier (and for unknown type
+# names: they fail schema validation later, but the permission gate must not be
+# the layer that loosens for them).
+DEFAULT_DIRECT_WRITE_TIER = PermissionMode.GRAPH_WRITE
+
+
+def required_direct_write_tier(
+    config: CoreConfig,
+    *,
+    entity_types: Iterable[str],
+    relationship_types: Iterable[str],
+) -> PermissionMode:
+    """Return the permission tier a direct write of these types requires.
+
+    The requirement is the MAX over every touched type: each type contributes
+    its declared ``write_tier`` (or ``graph_write`` when undeclared/unknown),
+    so a mixed payload is gated at the strictest member. An empty payload
+    (a no-op or validation ping) keeps the classic ``graph_write`` requirement.
+
+    Relationship writes contribute only the relationship type itself — the
+    edge is the thing mutated; endpoint entities are referenced, not written.
+    Creates and updates are one surface: the tier declares who may direct-write
+    the type, not which verb flavor they use. ``write_policy`` refusals and
+    mutation guards run after (and independent of) this check.
+    """
+    required = PermissionMode.READ_ONLY
+    touched = False
+
+    for entity_type in entity_types:
+        touched = True
+        schema = config.entity_types.get(entity_type)
+        tier = schema.write_tier if schema is not None else None
+        required = max(required, _WRITE_TIER_MODES.get(tier or "", DEFAULT_DIRECT_WRITE_TIER))
+
+    for relationship_type in relationship_types:
+        touched = True
+        rel_schema = config.get_relationship(relationship_type)
+        tier = rel_schema.write_tier if rel_schema is not None else None
+        required = max(required, _WRITE_TIER_MODES.get(tier or "", DEFAULT_DIRECT_WRITE_TIER))
+
+    if not touched:
+        return DEFAULT_DIRECT_WRITE_TIER
+    return required

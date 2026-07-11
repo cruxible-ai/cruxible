@@ -4718,6 +4718,54 @@ behavior — all direct writes succeed.
 
 ---
 
+## Config-Declared Write Tiers (`write_tier`)
+
+`write_tier` is the tier-ladder complement of `write_policy`. Where
+`write_policy` answers "may this type be direct-written **at all**?" (a hard,
+tier-independent constraint), `write_tier` answers "**which permission tier**
+may direct-write it?". By default the direct-write verbs (`add_entity` /
+`add_relationship` / `batch_direct_write`) require `graph_write`; a type may
+declare a lower requirement:
+
+```yaml
+entity_types:
+  StateNote:
+    write_tier: governed_write   # governed_write actors may direct-write notes
+
+relationships:
+  - state_note_about_work_item: StateNote -> WorkItem
+    write_tier: governed_write   # ...and attach them, in the same payload
+```
+
+Semantics:
+
+- **Allowed values:** `governed_write` or `graph_write` (an explicit
+  restatement of the default). `read_only` is rejected — it is not a write
+  tier. `admin` is rejected — a declared tier only ever *lowers* the
+  requirement below `graph_write`; restricting writes harder than the tier
+  ladder is `write_policy`'s job (`proposal_only` / `mint_only`).
+- **Per-payload requirement = max over touched types.** A direct write whose
+  payload touches only types declared at-or-below the caller's tier is
+  permitted; any type without `write_tier` keeps requiring `graph_write`, so a
+  mixed payload is gated at its strictest member. An empty payload keeps the
+  classic `graph_write` requirement.
+- **Relationship writes contribute only the relationship type.** The edge is
+  the thing mutated; endpoint entities are referenced, not written — a
+  governed-tier edge may attach to entities the caller could not write
+  directly.
+- **Creates and updates are one surface.** The tier declares who may
+  direct-write the type, not which verb flavor they use.
+- **Everything downstream is unchanged.** Mutation guards, `write_policy`
+  refusals, and validation all run after the tier check. Declaring
+  `write_tier` together with an explicit `proposal_only`/`mint_only`
+  `write_policy` is rejected at config load (the declared tier could never
+  take effect).
+
+Core stays domain-agnostic: it never knows what a "note" is — kits decide
+which types form their low-trust write surfaces.
+
+---
+
 ## Config Composition
 
 The `extends` field enables an **overlay pattern** for release-backed state publishing. A published upstream state model provides entity types, relationships, and workflows; a downstream overlay adds its own internal extensions without duplicating the base.
@@ -4787,6 +4835,7 @@ entity_types:
 | `properties` | dict | **yes** | — | Property definitions (see below) |
 | `constraints` | list[string] | no | `[]` | Constraint names that apply to this entity type |
 | `write_policy` | string | no | `null` | `"direct"`, `"proposal_only"`, or `"mint_only"`. Governs direct entity adds for this type — see [Direct-Write Governance](#direct-write-governance-refuse_direct_writes). `"mint_only"` is stricter than `"proposal_only"`: writable only by the internal `token_mint` source, refusing all other sources including `workflow_apply` / `group_resolve` (a config wiring a `mint_only` type into a workflow `make_entities` step is rejected at load). `null` inherits `runtime.default_write_policy`. |
+| `write_tier` | string | no | `null` | `"governed_write"` or `"graph_write"`. Minimum permission tier allowed to direct-write this type — see [Config-Declared Write Tiers](#config-declared-write-tiers-write_tier). `null` keeps the default `graph_write` requirement. Rejected together with an explicit `proposal_only`/`mint_only` `write_policy`. |
 
 ### PropertySchema
 
@@ -4956,6 +5005,7 @@ relationships:
 | `proposal_policy` | ProposalPolicyConfig | no | `null` | Governed proposal policy (see [proposal_policy](#proposal_policy)) |
 | `proposal_identity` | string | no | `"thesis_signature"` | `"thesis_signature"` groups trust by proposal thesis; `"relationship_tuple"` groups trust by edge tuple and requires `proposal_policy` |
 | `write_policy` | string | no | `null` | `"direct"` or `"proposal_only"`. Governs direct edge writes for this type — see [Direct-Write Governance](#direct-write-governance-refuse_direct_writes). `null` inherits `runtime.default_write_policy`. |
+| `write_tier` | string | no | `null` | `"governed_write"` or `"graph_write"`. Minimum permission tier allowed to direct-write edges of this type — see [Config-Declared Write Tiers](#config-declared-write-tiers-write_tier). Endpoint entity types are not part of the check. `null` keeps the default `graph_write` requirement. Rejected together with an explicit `proposal_only` `write_policy`. |
 
 **Notes:**
 - `from` and `to` must reference entity type names defined in `entity_types`.

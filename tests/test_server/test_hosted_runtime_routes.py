@@ -623,7 +623,11 @@ def test_read_only_runtime_credential_can_read_but_not_write(
         headers=headers,
     )
     assert graph_write.status_code == 403
-    assert graph_write.json()["context"]["required_mode"] == "GRAPH_WRITE"
+    # Direct-write verbs deny sub-GOVERNED_WRITE actors at the write FLOOR
+    # (the minimum any config-declared write_tier could require) before any
+    # instance/config access; the payload-specific requirement (GRAPH_WRITE
+    # here — Vehicle declares no write_tier) is only computed past the floor.
+    assert graph_write.json()["context"]["required_mode"] == "GOVERNED_WRITE"
 
     admin = client.post(
         "/api/v1/instances",
