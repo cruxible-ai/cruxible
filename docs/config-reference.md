@@ -18,6 +18,7 @@ entity_types: { ... }
 relationships: [ ... ]
 named_queries: { ... }
 constraints: [ ... ]
+gates: { ... }
 
 # Governed workflow sections (all optional)
 quality_checks: [ ... ]
@@ -45,6 +46,7 @@ tests: [ ... ]
 | `relationships` | list | no | `[]` | Relationship definitions |
 | `named_queries` | dict | no | `{}` | Declarative query definitions |
 | `constraints` | list | no | `[]` | Validation rules |
+| `gates` | dict | no | `{}` | Named repo gates evaluated by `cruxible gate check` |
 | `quality_checks` | list | no | `[]` | Evaluate-time graph quality checks |
 | `feedback_profiles` | dict | no | `{}` | Structured feedback vocabularies per relationship type |
 | `outcome_profiles` | dict | no | `{}` | Structured outcome vocabularies for trust calibration |
@@ -853,6 +855,38 @@ RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property
 **Examples:**
 - `replaces.FROM.category == replaces.TO.category` — flags any `replaces` edge where the source and target parts have different categories.
 - `replaces.FROM.priority > replaces.TO.priority` — flags any `replaces` edge where the source priority does not exceed the target priority.
+
+---
+
+## gates
+
+Named repo gate declarations evaluated by [`cruxible gate check`](cli-reference.md#cruxible-gate-check). Doctrine: a **guard** blocks a write INTO state (inbound — see `mutation_guards`); a **gate** lets the world act only if state agrees (outbound). Gates are outbound exclusively.
+
+A gate is **kind-based**: `kind` names the source adapter that derives candidate values (v1's only kind is `git-pre-push`, which reads git's pre-push hook protocol and yields every merged-in parent of each pushed merge commit). A candidate is **satisfied** when at least one entity of `entity_type` carries the candidate in `match_property` AND matches the declared `condition`. Core knows no ontology — the declaration supplies it, so kit evolution updates the declaration while the verb and hook line never change. Generality comes from source-adapter kinds plus declarative conditions: a new candidate source is a new kind, and domain knowledge lives in the condition, never in an adapter.
+
+```yaml
+gates:
+  merge-review:
+    description: Merges to main need an approved review pinning the merged tip.
+    kind: git-pre-push
+    entity_type: ReviewRequest
+    match_property: change_head
+    condition: {status: approved}
+    adapter: {branch_pattern: refs/heads/main}
+```
+
+### GateSchema
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `kind` | string | **yes** | — | Source adapter that derives candidate values. v1's only kind is `git-pre-push`; lint rejects unknown kinds |
+| `entity_type` | string | **yes** | — | Entity type to consult; must be declared in `entity_types` |
+| `match_property` | string | **yes** | — | Property a candidate value is matched against (for `git-pre-push`, the pinned commit SHA); must exist on `entity_type` |
+| `condition` | dict | **yes** | — | Property=value pairs meaning *satisfied* (ANDed); each property must exist on `entity_type`, may not include `match_property`, and at least one pair is required. The key `query` is reserved for a future named-query condition variant |
+| `adapter` | dict | for `git-pre-push` | `null` | Kind-specific adapter config. `git-pre-push` requires `branch_pattern`: a glob over remote ref names (e.g. `refs/heads/main`, `refs/heads/release-*`) selecting which pushed refs are gated. Branch scoping belongs to the source, not the gate |
+| `description` | string | no | `null` | Human-readable description |
+
+Unknown keys are refused, and config lint rejects unknown kinds and undeclared entity types or properties. In overlay composition, an overlay may add new gates but cannot redefine an upstream gate.
 
 ---
 

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     feedback_group: Any
     feedback_profile_cmd: Any
     clone_cmd: Any
+    gate_group: Any
     get_entity_cmd: Any
     get_relationship_cmd: Any
     group_group: Any
@@ -78,6 +79,7 @@ else:
         outcome_group,
         outcome_profile_cmd,
     )
+    from cruxible_core.cli.commands.gates import gate_group
     from cruxible_core.cli.commands.groups import (
         group_group,
     )
@@ -152,6 +154,7 @@ __all__ = [
     "feedback_group",
     "feedback_profile_cmd",
     "clone_cmd",
+    "gate_group",
     "get_entity_cmd",
     "get_relationship_cmd",
     "group_group",

@@ -155,6 +155,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     explain,
     export_group,
     feedback_group,
+    gate_group,
     get_entity_cmd,
     get_relationship_cmd,
     group_group,
@@ -212,6 +213,7 @@ cli.add_command(sample)
 cli.add_command(evaluate)
 cli.add_command(lint_cmd, "lint")
 cli.add_command(inspect_group, "inspect")
+cli.add_command(gate_group, "gate")
 
 # config group: config-editing and review-surface verbs.
 config_group = click.Group("config", help="Edit, validate, and render the active config.")

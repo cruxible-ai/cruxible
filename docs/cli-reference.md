@@ -1293,6 +1293,91 @@ findings.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
+## cruxible gate
+
+**Usage:** `cruxible gate [OPTIONS]`
+
+**Purpose:** Evaluate declared repo gates against state.
+
+Doctrine: a **guard** blocks a write INTO state (inbound; the `mutation_guards` config element); a **gate** lets the world act only if state agrees (outbound). Gates are outbound exclusively.
+
+Gates are named, kind-based config declarations (the `gates:` config element). A gate's `kind` names the source adapter that derives candidate values (v1's only kind is `git-pre-push`); a candidate is satisfied when at least one entity of the declared type carries it in the declared match property and matches the declared condition. The verb evaluates the declaration; it never hardcodes ontology, and generality comes from source-adapter kinds plus declarative conditions.
+
+**Subcommands:**
+
+- `cruxible gate check` - Evaluate a named gate against its kind's candidate values.
+- `cruxible gate list` - Show the active instance's declared gates.
+
+**Output And Side Effects:**
+- Read-only: gates read declarations from the instance config and query entities; nothing is written.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- No `gates:` element declared in the active instance config.
+
+## cruxible gate check
+
+**Usage:** `cruxible gate check [OPTIONS] NAME`
+
+**Purpose:** Evaluate gate NAME: is every candidate value pinned by satisfying state?
+
+Resolves the named declaration from the active instance config, invokes its declared `kind`'s source adapter for candidate values, queries state for each candidate (entities of the declared type whose match property equals the candidate AND matching the declared condition), and prints one verdict line per candidate on stdout (`<gate> <value> satisfied|unsatisfied ...`). Errors go to stderr. The candidate source is part of the gate's declaration, never a CLI flag: a future source (CI status, webhook) is a new gate kind against the same evaluation.
+
+The `git-pre-push` kind reads git's pre-push stdin protocol (lines of `<local_ref> <local_sha> <remote_ref> <remote_sha>`); run it from the repository root, as git hooks do. Pushed refs are filtered to the adapter config's `branch_pattern`; every merged-in parent (`^2`..`^N`) of each merge commit in the pushed range is a candidate, so an octopus merge passes only when all merged tips are pinned. SHA tokens must be full 40-hex object names (or the all-zeros sentinel); anything else refuses with exit 2. A new remote branch (all-zeros remote SHA) evaluates merges not reachable from any remote-tracking ref; a ref deletion (all-zeros local SHA) is skipped.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `NAME` | yes | | argument | Declared gate name (see `cruxible gate list`). |
+| `--value` | no | | text | Hidden diagnostic/test-only override: evaluate these candidate values directly, bypassing the gate's declared source adapter. Repeatable. Not a general primitive — real invocations let the gate's kind derive candidates. |
+
+**Exit Codes (machine contract):**
+
+| Code | Meaning |
+| --- | --- |
+| 0 | every candidate satisfied |
+| 1 | at least one candidate unsatisfied |
+| 2 | cannot evaluate (unknown gate, no gates declared, unknown kind, adapter failure, server unreachable, auth failure, malformed input, git failure) |
+
+The gate fails closed: every path that cannot produce a verdict exits nonzero with an instructive error on stderr. A gate that silently passes when unconfigured — or whose kind this build cannot evaluate — is forbidden.
+
+Hook one-liner (replaces hand-rolled pre-push scripts):
+
+```bash
+# .git/hooks/pre-push
+exec cruxible gate check merge-review
+```
+
+v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash merges mint new SHAs no review pins, and fast-forward pushes record no merge commit.
+
+**Output And Side Effects:**
+- Verdict lines on stdout; errors and notices on stderr. Read-only.
+
+**Common Errors:**
+- Unknown gate name, or no `gates:` element declared (exit 2).
+- Gate kind with no source adapter in this build (exit 2).
+- Daemon unreachable or missing/invalid token in server mode (exit 2).
+- Empty or malformed pre-push stdin, or failing git commands (exit 2).
+
+## cruxible gate list
+
+**Usage:** `cruxible gate list [OPTIONS]`
+
+**Purpose:** Show the active instance's declared gates.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output: one line per declared gate (`<name> [<kind>]: <EntityType>.<match_property> where <condition> (branch_pattern <pattern>)`).
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+
 ## cruxible group
 
 **Usage:** `cruxible group [OPTIONS]`
