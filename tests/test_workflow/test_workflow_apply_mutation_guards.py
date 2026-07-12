@@ -403,9 +403,7 @@ def _change_head(instance: CruxibleInstance) -> str | None:
 class TestWorkflowApplyFrozenPropertyGuard:
     """The frozen-property condition holds on the canonical workflow apply path."""
 
-    def test_canonical_apply_retarget_refused_on_approved_review(
-        self, tmp_path: Path
-    ) -> None:
+    def test_canonical_apply_retarget_refused_on_approved_review(self, tmp_path: Path) -> None:
         instance = _instance_with_retarget_workflow(tmp_path)
         _seed_pinned_review(instance, approve=True)
 
@@ -422,9 +420,7 @@ class TestWorkflowApplyFrozenPropertyGuard:
             )
         assert _change_head(instance) == "sha-reviewed"
 
-    def test_canonical_preview_retarget_refused_on_approved_review(
-        self, tmp_path: Path
-    ) -> None:
+    def test_canonical_preview_retarget_refused_on_approved_review(self, tmp_path: Path) -> None:
         instance = _instance_with_retarget_workflow(tmp_path)
         _seed_pinned_review(instance, approve=True)
 
@@ -441,9 +437,7 @@ class TestWorkflowApplyFrozenPropertyGuard:
             )
         assert _change_head(instance) == "sha-reviewed"
 
-    def test_canonical_apply_retarget_allowed_on_requested_review(
-        self, tmp_path: Path
-    ) -> None:
+    def test_canonical_apply_retarget_allowed_on_requested_review(self, tmp_path: Path) -> None:
         instance = _instance_with_retarget_workflow(tmp_path)
         _seed_pinned_review(instance, approve=False)
 

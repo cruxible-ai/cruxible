@@ -275,9 +275,7 @@ class TestFrozenGuardLint:
             **_base_config_dict(),
             "entity_types": {
                 **_base_config_dict()["entity_types"],
-                "Commit": {
-                    "properties": {"commit_id": {"type": "string", "primary_key": True}}
-                },
+                "Commit": {"properties": {"commit_id": {"type": "string", "primary_key": True}}},
             },
             "relationships": [
                 {
@@ -416,21 +414,15 @@ class TestConditionalFreezeEnforcement:
 
     def test_change_refused_while_state_matches(self, tmp_path: Path) -> None:
         instance = _instance(tmp_path)
-        _write_review(
-            instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"}
-        )
+        _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"})
 
-        with pytest.raises(
-            DataValidationError, match="review_head_frozen_while_approved"
-        ):
+        with pytest.raises(DataValidationError, match="review_head_frozen_while_approved"):
             _write_review(instance, {"head": "sha-2"})
         assert _review_property(instance, "head") == "sha-1"
 
     def test_change_allowed_while_state_does_not_match(self, tmp_path: Path) -> None:
         instance = _instance(tmp_path)
-        _write_review(
-            instance, {"review_id": "rev-1", "status": "requested", "head": "sha-1"}
-        )
+        _write_review(instance, {"review_id": "rev-1", "status": "requested", "head": "sha-1"})
 
         _write_review(instance, {"head": "sha-2"})
         assert _review_property(instance, "head") == "sha-2"
@@ -476,9 +468,7 @@ class TestConditionalFreezeEnforcement:
 
     def test_reasserting_stored_value_is_not_a_change(self, tmp_path: Path) -> None:
         instance = _instance(tmp_path)
-        _write_review(
-            instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"}
-        )
+        _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"})
 
         _write_review(instance, {"head": "sha-1"})
         assert _review_property(instance, "head") == "sha-1"
@@ -488,31 +478,23 @@ class TestConditionalFreezeEnforcement:
         instance = _instance(tmp_path)
         _write_review(instance, {"review_id": "rev-1", "status": "approved"})
 
-        with pytest.raises(
-            DataValidationError, match="review_head_frozen_while_approved"
-        ):
+        with pytest.raises(DataValidationError, match="review_head_frozen_while_approved"):
             _write_review(instance, {"head": "sha-1"})
         assert _review_property(instance, "head") is None
 
     def test_demote_and_retarget_in_one_write_refused(self, tmp_path: Path) -> None:
         """Before-state semantics: leaving the freeze state in the same write does not help."""
         instance = _instance(tmp_path)
-        _write_review(
-            instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"}
-        )
+        _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"})
 
-        with pytest.raises(
-            DataValidationError, match="review_head_frozen_while_approved"
-        ):
+        with pytest.raises(DataValidationError, match="review_head_frozen_while_approved"):
             _write_review(instance, {"status": "withdrawn", "head": "sha-2"})
         assert _review_property(instance, "status") == "approved"
         assert _review_property(instance, "head") == "sha-1"
 
     def test_demote_then_retarget_in_separate_writes_allowed(self, tmp_path: Path) -> None:
         instance = _instance(tmp_path)
-        _write_review(
-            instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"}
-        )
+        _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"})
 
         _write_review(instance, {"status": "withdrawn"})
         _write_review(instance, {"head": "sha-2"})
@@ -520,16 +502,12 @@ class TestConditionalFreezeEnforcement:
 
     def test_create_sets_frozen_property_freely(self, tmp_path: Path) -> None:
         instance = _instance(tmp_path)
-        _write_review(
-            instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"}
-        )
+        _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"})
         assert _review_property(instance, "head") == "sha-1"
 
     def test_other_properties_stay_writable_while_frozen(self, tmp_path: Path) -> None:
         instance = _instance(tmp_path)
-        _write_review(
-            instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"}
-        )
+        _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"})
 
         _write_review(instance, {"summary": "still writable"})
         assert _review_property(instance, "summary") == "still writable"
@@ -595,13 +573,9 @@ class TestUnconditionalFreezeEnforcement:
 class TestBatchDirectWriteFreezeEnforcement:
     def test_batch_update_refused_atomically(self, tmp_path: Path) -> None:
         instance = _instance(tmp_path)
-        _write_review(
-            instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"}
-        )
+        _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"})
 
-        with pytest.raises(
-            DataValidationError, match="review_head_frozen_while_approved"
-        ):
+        with pytest.raises(DataValidationError, match="review_head_frozen_while_approved"):
             service_batch_direct_write(
                 instance,
                 BatchDirectWriteInput(
@@ -624,9 +598,7 @@ class TestBatchDirectWriteFreezeEnforcement:
 
     def test_batch_dry_run_reports_freeze_refusal(self, tmp_path: Path) -> None:
         instance = _instance(tmp_path)
-        _write_review(
-            instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"}
-        )
+        _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"})
 
         result = service_batch_direct_write(
             instance,
@@ -643,8 +615,7 @@ class TestBatchDirectWriteFreezeEnforcement:
         )
         assert not result.valid
         assert any(
-            "review_head_frozen_while_approved" in error
-            for error in result.validation_errors
+            "review_head_frozen_while_approved" in error for error in result.validation_errors
         )
         assert _review_property(instance, "head") == "sha-1"
 
