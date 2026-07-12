@@ -296,6 +296,168 @@ class TestWorkflowApplyMutationGuards:
         assert _work_item_status(instance) == "closed"
 
 
+_RETARGET_REVIEW_WORKFLOW = dedent(
+    """
+    contracts:
+      RetargetReviewInput:
+        fields:
+          review_request_id:
+            type: string
+          change_head:
+            type: string
+
+    workflows:
+      retarget_review:
+        type: canonical
+        contract_in: RetargetReviewInput
+        steps:
+          - id: reviews
+            make_entities:
+              entity_type: ReviewRequest
+              items:
+                - review_request_id: $input.review_request_id
+                  change_head: $input.change_head
+              entity_id: $item.review_request_id
+              properties:
+                change_head: $item.change_head
+            as: reviews
+          - id: apply_reviews
+            apply_entities:
+              entities_from: reviews
+            as: apply_reviews
+        returns: apply_reviews
+    """
+)
+
+
+def _instance_with_retarget_workflow(tmp_path: Path) -> CruxibleInstance:
+    config_text = KIT_CONFIG.read_text() + "\n" + _RETARGET_REVIEW_WORKFLOW
+    (tmp_path / "config.yaml").write_text(config_text)
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+    write_lock_for_instance(instance)
+    return instance
+
+
+def _seed_pinned_review(instance: CruxibleInstance, *, approve: bool) -> None:
+    """Create rr-frozen with change_head pinned; optionally approve it."""
+    service_add_entity_inputs(
+        instance,
+        [
+            EntityWriteInput(
+                entity_type="ReviewRequest",
+                entity_id="rr-frozen",
+                properties={
+                    "review_request_id": "rr-frozen",
+                    "title": "Pinned review",
+                    "status": "requested",
+                    "change_head": "sha-reviewed",
+                },
+            )
+        ],
+        actor_context=_actor_context(_IMPLEMENTER),
+    )
+    if not approve:
+        return
+    service_batch_direct_write(
+        instance,
+        BatchDirectWriteInput(
+            entities=[
+                EntityWriteInput(
+                    entity_type="ReviewRequest",
+                    entity_id="rr-frozen",
+                    properties={"status": "approved"},
+                ),
+                EntityWriteInput(
+                    entity_type="StateNote",
+                    entity_id="sn-frozen",
+                    properties={
+                        "note_id": "sn-frozen",
+                        "kind": "review_note",
+                        "title": "Approval rationale",
+                        "summary": "Approved.",
+                        "body": "Approved at sha-reviewed.",
+                        "created_at": utc_now(),
+                    },
+                ),
+            ],
+            relationships=[
+                BatchRelationshipWriteInput(
+                    from_type="StateNote",
+                    from_id="sn-frozen",
+                    relationship_type="state_note_about_review_request",
+                    to_type="ReviewRequest",
+                    to_id="rr-frozen",
+                ),
+            ],
+        ),
+        actor_context=_actor_context(),
+    )
+
+
+def _change_head(instance: CruxibleInstance) -> str | None:
+    entity = instance.load_graph().get_entity("ReviewRequest", "rr-frozen")
+    assert entity is not None
+    return entity.properties.get("change_head")
+
+
+class TestWorkflowApplyFrozenPropertyGuard:
+    """The frozen-property condition holds on the canonical workflow apply path."""
+
+    def test_canonical_apply_retarget_refused_on_approved_review(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _instance_with_retarget_workflow(tmp_path)
+        _seed_pinned_review(instance, approve=True)
+
+        with pytest.raises(
+            QueryExecutionError,
+            match="review_request_change_head_frozen_after_approval",
+        ):
+            execute_workflow(
+                instance,
+                instance.load_config(),
+                "retarget_review",
+                {"review_request_id": "rr-frozen", "change_head": "sha-unreviewed"},
+                mode="apply",
+            )
+        assert _change_head(instance) == "sha-reviewed"
+
+    def test_canonical_preview_retarget_refused_on_approved_review(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _instance_with_retarget_workflow(tmp_path)
+        _seed_pinned_review(instance, approve=True)
+
+        with pytest.raises(
+            QueryExecutionError,
+            match="review_request_change_head_frozen_after_approval",
+        ):
+            execute_workflow(
+                instance,
+                instance.load_config(),
+                "retarget_review",
+                {"review_request_id": "rr-frozen", "change_head": "sha-unreviewed"},
+                mode="preview",
+            )
+        assert _change_head(instance) == "sha-reviewed"
+
+    def test_canonical_apply_retarget_allowed_on_requested_review(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _instance_with_retarget_workflow(tmp_path)
+        _seed_pinned_review(instance, approve=False)
+
+        applied = execute_workflow(
+            instance,
+            instance.load_config(),
+            "retarget_review",
+            {"review_request_id": "rr-frozen", "change_head": "sha-rebased"},
+            mode="apply",
+        )
+        assert applied.mode == "apply"
+        assert _change_head(instance) == "sha-rebased"
+
+
 class TestCanonicalPreviewDoesNotMutateLiveCache:
     """G2: a canonical preview/dry-run leaves the live cached graph byte-identical."""
 
