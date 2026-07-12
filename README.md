@@ -15,50 +15,71 @@
 
 <p align="center">
   <a href="https://cruxible.ai">cruxible.ai</a> ·
+  <a href="https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md">quickstart</a> ·
   <a href="https://docs.cruxible.ai">docs</a> ·
   <a href="https://cruxible.ai/kits">kits</a> ·
   <a href="https://cruxible.ai/skills">skills</a>
 </p>
 
-**Cruxible is hard state for AI agents** — a typed, verifiable state layer
-that teams of agents and humans operate together. Work compounds into a
-record of what you've determined to be true: every claim governed and linked
-to its evidence. When the expensive question arrives (which assets are
-exposed? what breaks downstream? is this authority still good law?), the
-answer is computed over established truth, not guessed from a pile of
-context.
+**Cruxible is a governed state engine for AI agents** — an alternative to
+general-purpose agent memory for claims that must be settled, enforced,
+and auditable.
+All humans and agents share one typed model of a real domain: every claim
+is validated against declared rules, judgment calls route through review,
+and every computed answer carries its receipt. We call it **hard state**.
 
-You model your domain in a Terraform-like config: entity and relationship
-types, deterministic workflows, write rules. The runtime enforces it.
+In practice it's a Python daemon with a CLI and an MCP server, storing a
+typed graph in SQLite. You declare your domain's ontology in a
+Terraform-like YAML config (entity types, relationships, write rules,
+queries); humans and agents build the graph through governed writes, and
+named queries traverse it: blast radius, downstream impact, the multi-hop
+questions similarity retrieval can't follow.
+
+> `pip install cruxible` — the
+> [Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md)
+> goes install to first query; [Get Started](#get-started) below runs a
+> seeded demo world in ~3 minutes, no tokens.
+
+## How You Use It
+
+1. **Model the domain.** Start from a [kit](https://cruxible.ai/kits), or
+   hand the [authoring skills](https://github.com/cruxible-ai/cruxible/tree/main/skills)
+   to your agent with your data: it drafts the YAML ontology, you review
+   what it proposes.
+2. **Pin the sources.** The exports, tables, and documents your truth
+   comes from register as content-hashed artifacts; claims cite into them.
+3. **Ingest the hard facts.** Deterministic workflows match source rows
+   into typed entities and edges, previewed before they commit.
+4. **Propose the judgment calls.** Claim types you declared governed can't
+   be written directly, not even by a workflow; they're proposed into
+   review groups carrying the evidence that matched them.
+5. **Review and mint, only where you opted in.** Governed claims land in
+   review: a human, or an agent under trust rules you declared, approves
+   or rejects. Everything else is live the moment it's written, and
+   approving or correcting it is one verb, straight from a query result.
+6. **Ask, and act on the answer.** Agents connect over MCP at the
+   permission tier you give them; queries return answers with receipts;
+   guards refuse writes that break the rules, and gates hold outside
+   actions (a merge, a deploy) until state agrees.
+
+Once the config is declared, every mutation and computed query is a
+receipted CLI or MCP verb: the
+[walkthrough below](#what-a-governed-domain-looks-like) runs this loop as
+the actual commands.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_architecture.svg" alt="Cruxible architecture: source systems are pinned as artifacts, workflows propose row-matched claims into domain state, the agent operation layer reviews and mints them, and reads come back as deterministic queries with receipts" width="740">
 </p>
 
-- **Ingest is deterministic.** Exports and tables from real systems
-  are pinned as artifacts and matched row by row into proposals; model
-  judgment is injected only where your pinned domain logic can't decide.
+There is no LLM inside the engine. Judgment enters only where you saw it
+(modeling, proposals, review); everything the engine itself does —
+validate, refuse, record, answer — is deterministic, works with any agent
+or harness, and lands in a SQLite file you own.
 
-- **Writes are governed.** Governed relationships can only be written through
-  a proposal flow that requires declared evidence, auto-resolves only under
-  trust rules you set, and routes everything else to human review. Every
-  accepted claim is attributed and carries a receipt.
-
-- **The model is executable.** Recurring procedures are declared workflows in
-  the same config: previewed before they apply, locked to the exact provider
-  code and artifacts they compile against, replayable from receipts. State
-  accumulates as the exhaust of governed work, and the model improves
-  iteratively: feedback and outcomes are recorded in state, and the config
-  evolves like code.
-
-- **Reads are reproducible.** Same query, same state, same result, with a
-  receipt explaining how it was derived. Queries express structure that
-  retrieval can't: multi-hop traversals, review status, staleness against
-  cited sources.
-
-- **The core is deterministic.** No LLM inside, no hidden API calls. It works
-  with any agent or harness, points at your existing systems, and mints into
-  state only the claims worth coordinating around.
+Work compounds into a durable record of what you've determined to be true.
+When the expensive question arrives — which assets are exposed? what breaks
+downstream? is this authority still good law? — the answer is computed over
+that record, not re-derived each session from a pile of raw context.
 
 ## Get Started
 
@@ -105,44 +126,59 @@ write is attributed. Details, permission tiers, and hardening:
 [Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md) ·
 [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md).
 
-## Why Not Markdown, RAG, Or Vector Memory?
+## The Rules Run
 
-Markdown, retrieval, and vector memory hand a model raw text, so every
-session it reconstructs what's true from scratch. For drafts, exploration,
-and one-off questions, that's fine — but for the claims that are recurring,
-shared, and expensive to get wrong, every fresh read re-rolls the
-reconstruction, and a better model reads better, but it cannot certify its
-own output. Cruxible's answer is to **model the domain instead of
-engineering the context**: the durable slice of what's true becomes typed,
-governed state, read instead of reconstructed. What changes:
+An LLM can interpret a policy. Cruxible enforces it. The difference is
+where the rule lives: prompted knowledge produces an agent that *usually*
+complies, and storing the policy in memory doesn't move it — remembered
+text is still interpreted, not enforced. A rule declared in config runs at
+a chokepoint no writer can skip.
 
-| Markdown · RAG · vector memory | Cruxible |
+| Prompted | Enforced |
 |---|---|
-| A claim is just text: no source, no review state | Claims carry provenance and review state; evidence-gated writes refuse references that don't dereference to content-hash-verified source chunks |
-| Anything can be edited; nothing enforces what may change | Writes pass typed validation, guards, review, and lifecycle rules |
-| Retrieval returns similar chunks; it can't follow exact links | Multi-hop traversal over typed relationships, with visibility rules applied at every hop |
-| Counts and rollups are approximate summaries | Exact, repeatable counts and joins as deterministic workflow steps |
-| Each read is fresh and can disagree with the last | One accepted state: the same answer for every agent and app |
-| Freshness is unknowable: nothing says which chunks have gone stale | Claims cite dated, content-hashed sources; staleness is a queryable property, not a vibe |
-| A correction is just more text; nothing ties it to the claim it corrects | Feedback and outcomes attach to the specific claim, decision, or workflow result as typed, queryable signal |
-| Static text that doesn't improve from use | Claims mature from proposed to accepted; the ontology iterates with use |
-| A better model reads better, but can't certify its own output | Guarantees come from a deterministic layer outside the model |
+| "The agent knows an exposure can't be closed while unremediated" | The write chokepoint refuses the transition until the remediation claim, with its evidence, is linked |
+| "The model says these sources support the claim" | The write is refused unless every reference dereferences to a content-hash-verified source chunk |
+| "The agent was told not to accept claims it proposed itself" | The guard compares the acting actor against the creation receipt's recorded actor and refuses, including create-as-accepted |
+| "The agent remembers the ingest procedure" | The workflow is declared, previewed, and locked to pinned providers; every run leaves a receipt |
 
-Markdown and retrieval remain the right tools for most text, and Cruxible
-itself cites markdown chunks as source evidence. Version control narrows the
-gap less than it seems: git reviews the diff, not the claim — nothing types
-what a changed line asserts or refuses an edit that drops its evidence. And
-nobody hand-tends this state: it accumulates as the exhaust of governed
-work, not as a wiki someone has to maintain. If you already have the wiki
-(a pile of CLAUDE.md files, a memory bank, an Obsidian vault), the
-[`wiki-to-state`](https://github.com/cruxible-ai/cruxible/tree/main/skills/wiki-to-state)
-skill converts it: pages become pinned evidence, an agent proposes the typed
-claims, and you review what gets minted. The wiki survives as the source of
-record; the graph becomes accountable to it.
+Two enforcement directions, one doctrine:
+
+- **Guards face inward.** A write cannot enter state unless the declared
+  conditions hold: types validate, evidence dereferences, the actor is
+  authorized, the transition is legal.
+- **Gates face outward.** An action outside Cruxible checks state before
+  it proceeds: a deploy holds while critical exposures are open, a filing
+  step waits for the citation check, a merge waits for its approved
+  review. The check wires in wherever the action lives (a CI job, an
+  internal protocol, a git hook).
+
+```yaml
+gates:
+  merge-review:
+    kind: git-pre-push
+    entity_type: ReviewRequest
+    match_property: change_head
+    condition: {status: approved}
+    adapter: {branch_pattern: refs/heads/main}
+```
+
+The first shipped gate kind holds a git repository to its state: one line
+in `.git/hooks/pre-push`, and a push is refused unless every branch merged
+into main is pinned by an approved review — fail closed, and mandatory
+once the same check is wired where pushes can't skip it (CI, protected
+infrastructure). This repository runs on it: the gate refused our own
+0.2.2 release push until the review record was corrected in state. We
+fixed the state, not the hook.
+
+Judgment stays with the model; the rules run without it.
 
 ## What A Governed Domain Looks Like
 
-A minimal slice of a supply-chain ontology, as authored in a kit config:
+Where this section ends up: one reviewed judgment — *this incident impacts
+this supplier* — and from it, a query walks a recursive bill of materials
+to name every exposed shipment, five typed hops downstream, with a receipt.
+Here is how that truth gets built. A minimal slice of a supply-chain
+ontology, as authored in a kit config:
 
 ```yaml
 entity_types:
@@ -223,10 +259,12 @@ cruxible group resolve --group GRP-7f3a --action approve \
   --expected-pending-version 1   # pins the decision to the state the reviewer saw
 ```
 
-With the facts ingested and the impact claim approved, an agent (or app)
-can ask for the blast radius of the incident (the components exposed through
-its impacted suppliers) without scanning spreadsheets or tracing the bill of
-materials by hand:
+Notice where the judgment went: exactly one edge — *does this incident
+materially impact this supplier?* — passed through review. Everything
+downstream is computation over settled truth: which components those
+suppliers supply is ingested fact, so the blast radius is a traversal
+across the two, not another judgment call. An agent (or app) asks the
+expensive question without re-deciding anything:
 
 ```bash
 cruxible query run components_exposed_by_incident \
@@ -259,7 +297,20 @@ to traversed edges to returned rows.
 
 Receipts are not logs — they are typed evidence graphs. Mutation receipts
 record exactly what a write changed, and governed edges carry a reference back
-to the receipt of the operation that created them.
+to the receipt of the operation that created them. A receipt doesn't prove a
+claim is *true* — it records what state, evidence, and rules produced the
+result; the same query against the same state reproduces it.
+
+And the cascade keeps going, with a sharp line through it: what gets
+judged, and what flows. In the full kit, impact judgments stop at
+components and assemblies; product and shipment exposure are never judged
+at all. `incident_exposed_shipments` derives them by traversal — walking
+the accepted impacts up a recursive bill of materials (assemblies nest
+eight levels deep), into the finished products, out to the shipments
+carrying them. Downstream truth is computed from upstream judgment, never
+asserted alongside it. Overturn one impact edge in review and every
+product and shipment answer downstream moves with it, on the next query,
+for free.
 
 This is what a pending review group looks like in the
 [inspection UI](https://github.com/cruxible-ai/cruxible-app): the signal
@@ -279,7 +330,7 @@ ways:
 | Write mode | Use it for | What happens |
 |---|---|---|
 | **Direct write** | Asserting hard state: imports, deterministic relationships, source evidence | Live and queryable at once, with evidence when supplied, but unreviewed until a governed process approves it |
-| **Governed proposal** | Judgment calls: uncertain or interpretive relationships | Candidates are grouped under one thesis with signal evidence and routed to a human or auto-resolution policy; approval writes accepted state with provenance, rejection records why |
+| **Governed proposal** | Judgment calls: uncertain or interpretive relationships | Pending candidates land in a review group under one thesis, each carrying its matching evidence; the group resolves through declared policy, human approval, or an agent with the permission to judge — acceptance mints attributed state, rejection records why |
 
 Guards are declared in config and enforced at a single write chokepoint.
 A relationship type can refuse direct writes entirely; a work item can be
@@ -291,19 +342,69 @@ registered source chunk whose content hash matches.
 
 The agent-operation kit ships these live: a work item cannot close without
 an approved review linked, and a review verdict must co-write its rationale
-note in the same unit of work, so the work itself is typed state, gated on
-review. Each kit README renders its declared guards as a generated table
+note in the same unit of work, so the work itself is typed state whose
+guards enforce review. Each kit README renders its declared guards as a
+generated table
 ([agent-operation's](https://github.com/cruxible-ai/cruxible/tree/main/kits/agent-operation/)).
+
+## One Truth, Many Writers
+
+Cruxible is built for the day the second writer shows up. Every writer,
+human or agent, acts under its own minted credential at one of four
+cumulative permission tiers (`read_only` ⊂ `governed_write` ⊂ `graph_write`
+⊂ `admin`); give each agent the least tier that does its job. Every write
+is attributed to the actor that made it, and roles can be separated by
+receipt: a guard can require that the actor who created a record is never
+the one to approve it, anchored on the creation receipt rather than
+anything a writer can forge.
+
+Humans and agents sit in the same loops under the same rules. An agent
+with the permission to judge resolves review groups exactly as you would,
+and its approvals are attributed exactly like yours — while every reader,
+whatever the agent, model, or session, computes the same answer from the
+same accepted state. Wiring and hardening: [Agent Setup](#agent-setup).
+
+## Why Not Markdown, RAG, Or Vector Memory?
+
+We spent fifty years keeping the facts that matter in systems with schemas,
+constraints, and transactions — then handed agents piles of markdown,
+because prose was the only interface they spoke. Cruxible **models the
+domain instead of engineering the context**: the durable slice of what's
+true becomes typed, governed state — accepted at a point in time, changed
+only through explicit lifecycle, read back with a receipt. What changes:
+
+| Markdown · RAG · vector memory | Cruxible |
+|---|---|
+| A claim is prose; nothing refuses one without a source | Evidence-gated writes refuse references that don't verify against content-hashed sources |
+| Edits are reviewed as diffs, not claims | Writes pass typed validation, guards, and review |
+| Links live in prose, re-inferred on every read | Typed edges, traversed multi-hop, visibility rules at every hop |
+| A rollup is a one-off summary | Counts and joins are deterministic, receipted, re-runnable |
+| No record of which answer was settled on | One accepted state; the same query returns the same answer for every agent |
+| No record of when a source was captured | Sources are dated and hashed; staleness is queryable |
+| A correction is just more text | Feedback attaches to the exact claim; claims mature from proposed to accepted |
+| A better model reads the pile better | It can't read what was never written; the record and its derivations don't move when you swap models |
+
+The guarantee is a property of the whole write surface: one chokepoint
+every write passes through, provenance on every claim, evidence that must
+dereference wherever you require it, answers that re-run the same way from
+the same state. Assembled from parts — a schema here, a
+review queue there, an audit column bolted on — every seam between the
+parts is a bypass.
+
+This is not a second wiki to tend — the state accumulates through the same
+loops that use it. And if the wiki already exists (a pile of CLAUDE.md
+files, an Obsidian vault), the
+[`wiki-to-state`](https://github.com/cruxible-ai/cruxible/tree/main/skills/wiki-to-state)
+skill converts it: pages become pinned evidence, an agent proposes the
+typed claims, you review what gets minted.
 
 ## Workflows And Pinned Providers
 
 Workflows orchestrate reads, providers, shaping, and writes as one declared,
-reproducible procedure. Providers are the building blocks workflows call:
-deterministic transforms and data loaders in Python, over HTTP, or as
-commands. They are pinned, not trusted. The kit lockfile
-(`cruxible.lock.yaml`) records each provider's version, content digest, and
-declared side effects, and every call leaves an execution trace, so runs
-replay deterministically.
+reproducible procedure. Providers — deterministic transforms and data
+loaders in Python, over HTTP, or as commands — are pinned, not trusted: the
+kit lockfile (`cruxible.lock.yaml`) records each one's version, content
+digest, and declared side effects, and every call leaves an execution trace.
 
 Canonical workflows are **preview-first**:
 
@@ -324,27 +425,20 @@ Declare → preview → apply, with a receipt at every step.
 
 Cruxible models two kinds of state, strongest together.
 
-**Domain state** is the durable model of the world an agent reasons about:
-assets, vulnerabilities, suppliers, products, cases, controls, policies,
-risks. It answers what is true, proposed, reviewed, or constrained. *Which
-assets are exposed to a known exploited vulnerability? Which supplier incident
-affects which products and shipments?*
+**Domain state** is the durable model of the world an agent reasons about —
+assets, vulnerabilities, suppliers, cases, controls, risks — answering what
+is true, proposed, reviewed, or constrained:
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/ui_state_graph.png" alt="Cruxible state graph: a supply-chain domain of 780 entities and 1,734 edges, dots colored by entity type, with edge strokes carrying governance review state" width="900">
 </p>
 
-**Agent operating state** is the durable coordination layer for the work
-itself: work items, review requests, decisions, open questions, risks,
-actors, dependencies, lineage. It tracks what's active or blocked, why, who
-reviewed it, and what changed.
-
-A domain kit models the thing being worked on; an operating-state kit tracks
-the work, decisions, and reviews around it. Typed operation-to-domain edges
-(or `SubjectRef`s across instances) compose them into one queryable graph.
-This is the type map of the supply-chain instance from the walkthrough above
-— the agent-operation base layer composed under the domain overlay, every
-relationship type carrying its live edge count:
+**Agent operating state** is the coordination layer for the work itself —
+work items, review requests, decisions, risks, open questions, actors —
+tracking what's active or blocked, why, who reviewed it, and what changed.
+A domain kit models the thing being worked on; an operating-state kit
+tracks the work around it; typed edges compose them into one queryable
+graph. The type map of the composed supply-chain instance above:
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/ui_type_map.png" alt="Cruxible type map of a composed supply-chain instance: base agent-operation types and violet domain overlay types, with labeled relationship types carrying live edge counts" width="900">
@@ -352,8 +446,14 @@ relationship type carrying its live edge count:
 
 ## State That Compounds
 
-Knowledge shouldn't be wiped out by a context refresh, a model swap, or a
-handoff. Three loops make the state improve with use:
+The one real cost is the config — the types, rules, and queries that model
+your domain. You don't write it from scratch: point an agent at your data,
+or an existing pile of CLAUDE.md files, and it drafts the model; you review
+what it proposes instead of authoring it. The rules are few, static, and
+reviewed once; the writes they govern are many and continuous — that
+asymmetry is the point. And the cost keeps paying: knowledge no longer gets
+wiped out by a context refresh, a model swap, or a handoff, and three loops
+keep the state current through the same governed work that uses it:
 
 1. **Feedback and outcomes.** Corrections, missing context, and policy gaps
    are recorded as feedback; outcomes record whether a decision or workflow
