@@ -30,11 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - name: Regenerate llms.txt (fails if drifted from committed copy)
-        run: |
-          uv run --with pyyaml python scripts/generate_llms_txt.py
-          git diff --exit-code docs/llms.txt docs/llms-full.txt || {
-            echo "::error::docs/llms*.txt are stale — run scripts/generate_llms_txt.py and commit"; exit 1; }
+      - name: Generate llms.txt into the site source
+        run: uv run --with pyyaml python scripts/generate_llms_txt.py
       - name: Build site
         run: uvx --python 3.12 --with 'mkdocs-material>=9.5,<10' mkdocs build --strict
       - uses: actions/configure-pages@v5

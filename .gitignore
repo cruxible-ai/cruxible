@@ -28,3 +28,7 @@ kits/**/wiki/
 smoke-test-bundles/
 .claude/settings.local.json
 site/
+
+# Generated at docs-deploy time (docs.yml), not committed
+docs/llms.txt
+docs/llms-full.txt

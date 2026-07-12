@@ -6,10 +6,13 @@ and agents. llms-full.txt: the full markdown of every published doc
 concatenated, for single-fetch ingestion. Both are generated from
 mkdocs.yml's nav so they can't drift from the published site.
 
-Usage:
+Generated at docs-deploy time by the `docs` workflow, not committed:
+the outputs are gitignored build artifacts that mkdocs copies into the
+built site as plain files.
+
+Usage (run automatically in CI; run manually to preview):
     uv run --with pyyaml python scripts/generate_llms_txt.py
-Writes docs/llms.txt and docs/llms-full.txt (copied into the built
-site by mkdocs as plain files).
+Writes docs/llms.txt and docs/llms-full.txt.
 """
 
 from __future__ import annotations
