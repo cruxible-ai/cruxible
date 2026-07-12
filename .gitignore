@@ -32,3 +32,6 @@ site/
 # Generated at docs-deploy time (docs.yml), not committed
 docs/llms.txt
 docs/llms-full.txt
+
+# Local operation-instance config (customized agent-operation + project-domain overlay); never shipped
+/ops/
