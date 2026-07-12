@@ -19,7 +19,8 @@ the project's own state instance.
   is not a change. Because the clause reads before-state only, a single
   write that both leaves the freeze state and changes the frozen property
   (demote + retarget) is refused by design, and an update whose stored
-  state cannot be read fails closed. Enforced at the shared guard
+  state cannot be read — or whose `while` clause value fails schema
+  normalization — fails closed. Enforced at the shared guard
   chokepoint every entity write path runs through (`add_entity`,
   `batch_direct_write`, canonical workflow apply). Entity types only in
   v1 — config lint refuses freeze declarations on relationship types.

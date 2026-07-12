@@ -366,7 +366,9 @@ def _frozen_property_guard_error(
       refused by design — leave the freeze state first, then change the
       property in a later write.
     - Fail-closed: an update whose stored pre-write state cannot be read is
-      refused.
+      refused, and so is an update whose ``while`` clause value cannot be
+      normalized against the property schema (malformed/stale config must
+      never silently deactivate a freeze).
     """
     if guard.entity_type != validated.entity.entity_type:
         return None
@@ -383,11 +385,32 @@ def _frozen_property_guard_error(
     new_value = proposed.properties.get(guard.property, _MISSING)
     if old_value == new_value:
         return None
-    if condition.while_state is not None and not _frozen_while_state_matches(
-        config, guard.entity_type, condition.while_state, current
-    ):
-        return None
+    if condition.while_state is not None:
+        try:
+            in_freeze_state = _frozen_while_state_matches(
+                config, guard.entity_type, condition.while_state, current
+            )
+        except _FrozenClauseNormalizationError as exc:
+            return (
+                f"Mutation guard '{guard.name}' rejected write "
+                f"{proposed.entity_type}:{proposed.entity_id} "
+                f"{guard.property}: 'while' clause {exc.key}={exc.value!r} does not "
+                f"normalize against the property schema ({exc.reason}); the freeze "
+                f"cannot be evaluated (fail-closed)"
+            )
+        if not in_freeze_state:
+            return None
     return _frozen_guard_error_message(guard, condition, proposed, new_value)
+
+
+class _FrozenClauseNormalizationError(Exception):
+    """A frozen guard ``while`` clause value failed schema normalization."""
+
+    def __init__(self, key: str, value: Any, reason: str) -> None:
+        super().__init__(f"{key}={value!r}: {reason}")
+        self.key = key
+        self.value = value
+        self.reason = reason
 
 
 def _frozen_while_state_matches(
@@ -400,21 +423,27 @@ def _frozen_while_state_matches(
 
     Stored values were normalized on their way into the graph; clause values
     normalize through the same property schema (config lint guarantees they
-    can) so e.g. enum/date spellings compare canonically.
+    can) so e.g. enum/date spellings compare canonically. A clause value that
+    fails normalization raises ``_FrozenClauseNormalizationError`` — the guard
+    caller refuses the mutation (fail-closed) rather than falling back to the
+    raw authored value, which could silently turn an active freeze into a
+    non-match. Every clause normalizes before any comparison so an
+    unnormalizable clause refuses regardless of the stored state.
     """
     entity_schema = config.entity_types.get(entity_type)
+    normalized_clauses: dict[str, Any] = {}
     for key, expected in while_state.items():
-        stored = current.properties.get(key, _MISSING)
-        if stored is _MISSING:
-            return False
         normalized = expected
         property_schema = entity_schema.properties.get(key) if entity_schema else None
         if property_schema is not None:
             try:
                 normalized = normalize_value(expected, property_schema, config)
-            except ValueError:
-                normalized = expected
-        if stored != normalized:
+            except ValueError as exc:
+                raise _FrozenClauseNormalizationError(key, expected, str(exc)) from exc
+        normalized_clauses[key] = normalized
+    for key, normalized in normalized_clauses.items():
+        stored = current.properties.get(key, _MISSING)
+        if stored is _MISSING or stored != normalized:
             return False
     return True
 

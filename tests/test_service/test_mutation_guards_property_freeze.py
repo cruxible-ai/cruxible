@@ -200,6 +200,21 @@ class TestFrozenGuardSchema:
                 }
             )
 
+    @pytest.mark.parametrize("field", ["where_related", "where_not_related"])
+    def test_explicit_empty_related_scoping_refused(self, field: str) -> None:
+        """An explicitly supplied empty related-scoping list is still a scoping
+        declaration: presence is refused, not just truthy values."""
+        with pytest.raises(ValidationError, match="'while' clause"):
+            _config_with_guard(
+                {
+                    "name": "g",
+                    "entity_type": "Review",
+                    "property": "head",
+                    field: [],
+                    "condition": {"type": "frozen"},
+                }
+            )
+
     def test_empty_while_refused(self) -> None:
         with pytest.raises(ValidationError, match="at least one"):
             _config_with_guard(
@@ -596,6 +611,33 @@ class TestBatchDirectWriteFreezeEnforcement:
         assert _review_property(instance, "head") == "sha-1"
         assert instance.load_graph().get_entity("Note", "n-batch") is None
 
+    @pytest.mark.parametrize("demote_first", [True, False])
+    def test_demote_and_retarget_as_duplicate_batch_entries_refused(
+        self, tmp_path: Path, demote_first: bool
+    ) -> None:
+        """The freeze attack split across two batch entries for the SAME entity
+        (demote status in one entry, retarget head in the other, either order)
+        is refused by the batch's generic duplicate-entity rejection before any
+        write applies."""
+        instance = _instance(tmp_path)
+        _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"})
+
+        demote = EntityWriteInput(
+            entity_type="Review",
+            entity_id="rev-1",
+            properties={"status": "withdrawn"},
+        )
+        retarget = EntityWriteInput(
+            entity_type="Review",
+            entity_id="rev-1",
+            properties={"head": "sha-2"},
+        )
+        entries = [demote, retarget] if demote_first else [retarget, demote]
+        with pytest.raises(DataValidationError, match="duplicate in batch"):
+            service_batch_direct_write(instance, BatchDirectWriteInput(entities=entries))
+        assert _review_property(instance, "status") == "approved"
+        assert _review_property(instance, "head") == "sha-1"
+
     def test_batch_dry_run_reports_freeze_refusal(self, tmp_path: Path) -> None:
         instance = _instance(tmp_path)
         _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"})
@@ -653,6 +695,90 @@ class TestFrozenGuardFailClosed:
         )
         assert len(errors) == 1
         assert "head_frozen" in errors[0]
+        assert "fail-closed" in errors[0]
+
+    @staticmethod
+    def _stale_clause_config() -> CoreConfig:
+        """A frozen guard whose ``while`` clause value cannot normalize.
+
+        The clause names ``status: approved`` but the enum no longer contains
+        ``approved`` — a stale/programmatically-constructed config that skipped
+        lint. ``normalize_value`` raises for the clause value.
+        """
+        return CoreConfig.model_validate(
+            {
+                "version": "1.0",
+                "name": "stale_clause",
+                "enums": {"review_status": {"values": ["requested", "withdrawn"]}},
+                "entity_types": {
+                    "Review": {
+                        "properties": {
+                            "review_id": {"type": "string", "primary_key": True},
+                            "status": {"type": "string", "enum_ref": "review_status"},
+                            "head": {"type": "string", "optional": True},
+                        }
+                    }
+                },
+                "mutation_guards": [
+                    {
+                        "name": "head_frozen",
+                        "entity_type": "Review",
+                        "property": "head",
+                        "condition": {"type": "frozen", "while": {"status": "approved"}},
+                    }
+                ],
+            }
+        )
+
+    @staticmethod
+    def _frozen_update_errors(config: CoreConfig, stored_properties: dict) -> list[str]:
+        stored = EntityInstance(
+            entity_type="Review",
+            entity_id="rev-1",
+            properties=stored_properties,
+        )
+        proposed = EntityInstance(
+            entity_type="Review",
+            entity_id="rev-1",
+            properties={**stored_properties, "head": "sha-2"},
+        )
+        current_graph = EntityGraph()
+        current_graph.add_entity(stored)
+        proposed_graph = EntityGraph()
+        proposed_graph.add_entity(proposed)
+        return mutation_guard_errors(
+            config,
+            current_graph=current_graph,
+            proposed_graph=proposed_graph,
+            entities=[ValidatedEntity(entity=proposed, is_update=True)],
+        )
+
+    def test_unnormalizable_while_clause_refuses_mutation(self) -> None:
+        """Normalization failure on a frozen guard refuses the write outright.
+
+        Regression for the fail-open fallback: the evaluator used to compare
+        the raw authored clause value when normalization raised, so a stored
+        value differing from the raw spelling silently deactivated the freeze.
+        """
+        errors = self._frozen_update_errors(
+            self._stale_clause_config(),
+            {"review_id": "rev-1", "status": "requested", "head": "sha-1"},
+        )
+        assert len(errors) == 1
+        assert "head_frozen" in errors[0]
+        assert "status='approved'" in errors[0]
+        assert "does not normalize" in errors[0]
+        assert "fail-closed" in errors[0]
+
+    def test_unnormalizable_while_clause_refuses_even_without_stored_property(self) -> None:
+        """An unnormalizable clause refuses regardless of stored state — the
+        stored-property-missing short-circuit does not skip clause validation."""
+        errors = self._frozen_update_errors(
+            self._stale_clause_config(),
+            {"review_id": "rev-1", "head": "sha-1"},
+        )
+        assert len(errors) == 1
+        assert "status='approved'" in errors[0]
         assert "fail-closed" in errors[0]
 
 
