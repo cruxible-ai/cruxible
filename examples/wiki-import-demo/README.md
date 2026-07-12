@@ -18,7 +18,7 @@ prescribes Postgres advisory locks that the May decision retired (rollout
 stuck at 5%, the wiki itself doubts its status), a standup "decision" in the
 sprint notes contradicts the conventions page, and an open question may
 already be half-answered by a decision. Stage 2 of the
-[wiki-to-instance recipe](../../docs/recipes/llm-wiki-to-instance.md) is
+[wiki-to-state skill](../../skills/wiki-to-state/SKILL.md) is
 supposed to flag these as unsure rather than resolve them — that is the
 teaching point.
 
@@ -70,4 +70,4 @@ cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> \
 ```
 
 From here, continue with Stage 2 (the agent brief) in the
-[recipe](../../docs/recipes/llm-wiki-to-instance.md).
+[wiki-to-state skill](../../skills/wiki-to-state/SKILL.md).

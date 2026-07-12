@@ -46,6 +46,74 @@ structural truth. Everything outside them is authored explanation.
   `scripts/fetch_inventory.py` owns the API call and auth, and the reviewed
   JSON feeds the sync workflow. Providers never fetch.
 
+## Run The Worked Demo
+
+Initialize the base operation ontology plus this overlay, then build the
+canonical supply and incident state:
+
+```bash
+cruxible init --kit agent-operation --kit supply-chain-blast-radius
+
+cruxible run --workflow build_seed_state --save-preview supply-seed.json
+cruxible apply --preview-file supply-seed.json
+
+cruxible run --workflow ingest_incidents --save-preview incidents.json
+cruxible apply --preview-file incidents.json
+```
+
+The impact cascade is deliberately governed and staged. Propose and review
+each stage before running the next one because downstream candidates traverse
+accepted upstream judgments:
+
+```bash
+cruxible propose --workflow propose_incident_impacts_supplier
+cruxible group list --status pending_review
+# Inspect and approve the incident_impacts_supplier group.
+
+cruxible propose --workflow propose_incident_impacts_component
+# Inspect and approve the incident_impacts_component group.
+
+cruxible propose --workflow propose_incident_impacts_assembly
+# Inspect and approve the incident_impacts_assembly group.
+```
+
+The critical Guangdong fixture then exposes three products and six shipments.
+Query paths are intentionally retained, so totals count distinct BOM paths;
+inspect or deduplicate `result.entity_id` when the question is "which unique
+products or shipments?":
+
+```bash
+cruxible query run incident_component_exposed_products \
+  --param incident_id=INC-GD-STEPPER-2026-07 --json
+cruxible query run incident_exposed_shipments \
+  --param incident_id=INC-GD-STEPPER-2026-07 --json
+```
+
+Inventory, buffers, and response routing are separate compute/apply seams.
+Feed each utility workflow's `output` object into its canonical sync workflow:
+
+```bash
+cruxible run --workflow refresh_inventory_positions --json
+cruxible run --workflow sync_inventory_positions \
+  --input-file inventory-output.json --save-preview inventory-preview.json
+cruxible apply --preview-file inventory-preview.json
+
+cruxible run --workflow refresh_buffer_assessments --json
+cruxible run --workflow sync_product_buffer_assessments \
+  --input-file buffer-output.json --save-preview buffer-preview.json
+cruxible apply --preview-file buffer-preview.json
+
+cruxible run --workflow analyze_operations_routing --json
+cruxible run --workflow apply_operations_routing \
+  --input-file routing-output.json --save-preview routing-preview.json
+cruxible apply --preview-file routing-preview.json
+cruxible propose --workflow propose_risk_attaches_to_supplier
+```
+
+`inventory-output.json`, `buffer-output.json`, and `routing-output.json` must
+contain only the preceding command's `output` object, not its full workflow
+result envelope.
+
 ## Ontology
 
 <!-- CRUXIBLE:BEGIN ontology -->

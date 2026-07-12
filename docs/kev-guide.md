@@ -80,6 +80,33 @@ cruxible state pull-apply
 Your local judgments, exceptions, and controls persist across pulls; only
 the upstream reference layer moves.
 
+## Offline demo without a published reference
+
+To exercise both layers from the pinned files bundled with the kits, compose
+the reference and triage kits into one disposable instance, then build each
+layer in order:
+
+```bash
+cruxible init --kit kev-reference --kit kev-triage
+
+cruxible run --workflow build_public_kev_reference \
+  --save-preview kev-reference.json
+cruxible apply --preview-file kev-reference.json
+
+cruxible run --workflow build_local_state --save-preview kev-local.json
+cruxible apply --preview-file kev-local.json
+
+cruxible propose --workflow propose_asset_products
+# Review and approve the pending asset_runs_product group, then:
+cruxible propose --workflow propose_asset_exposure
+# Review and approve the pending asset_vulnerability_posture group, then:
+cruxible query run asset_vulnerability_postures_requiring_action --json
+```
+
+This route proves the ontology and governed triage flow without requiring an
+OCI registry or network fetch. It is a demo/build path, not a subscription:
+use the overlay flow above when the reference should advance independently.
+
 ## Building or publishing your own reference
 
 `init --kit kev-reference` plus the `build_public_kev_reference` workflow

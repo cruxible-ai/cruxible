@@ -8,7 +8,7 @@ a content hash, and a parsed chunk manifest. Nothing here reads prose meaning.
 Turning wiki text into typed state (work items, decisions, risks, notes) is
 agent judgment and belongs in Stage 2, where every claim flows through
 proposals or evidence-carrying writes that cite the chunks this script
-registers. See docs/recipes/llm-wiki-to-instance.md.
+registers. See skills/wiki-to-state/SKILL.md.
 
 Registration shells out to the `cruxible` CLI (`cruxible source register`), so
 this script works against a remote daemon with only the CLI installed; it never
