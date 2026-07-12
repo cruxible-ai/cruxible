@@ -9,15 +9,17 @@ the project's own state instance.
 
 ### Fixed
 
-- **Kit-audit content fixes**: `kits/README.md` now lists
-  supply-chain-blast-radius and case-law-monitoring as `ready` (both ship
-  working deterministic providers, pinned data, and worked demos; the
-  placeholder-provider caveat no longer applies). `kits/kev-triage/README.md`
-  no longer claims the generated workflow-pipeline diagram is the onboarding
-  order — it's an inferred dependency ordering, and readers are pointed at
-  `docs/kev-guide.md` for the actual sequence. `kits/kev-triage/.mcp.json`
-  now ships at `CRUXIBLE_MODE=governed_write` instead of `admin`, with a
-  README note that initial canonical applies need a higher tier.
+- **Kit catalog status is current**: `kits/README.md` now lists
+  supply-chain-blast-radius and case-law-monitoring as `ready` — both ship
+  working deterministic providers, pinned data, and worked demos, so the
+  placeholder-provider caveat no longer applies.
+- **kev-triage README no longer misstates the pipeline diagram**: the
+  generated workflow-pipeline diagram is an inferred dependency ordering,
+  not the onboarding order; the README says so and points at
+  `docs/kev-guide.md` for the actual sequence.
+- **kev-triage ships least-privilege MCP config**: `.mcp.json` now sets
+  `CRUXIBLE_MODE=governed_write` instead of `admin`, with a README note
+  that `group resolve` and initial canonical applies need a higher tier.
 
 ## 0.2.2 — 2026-07-12
 

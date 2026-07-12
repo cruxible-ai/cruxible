@@ -10,9 +10,10 @@ Localable cyber state model for vulnerability and KEV triage.
   daily triage / waiver / remediation / control-effectiveness loop
 
 The shipped [`.mcp.json`](.mcp.json) example runs at `CRUXIBLE_MODE=governed_write`,
-the least-privilege tier that covers day-to-day proposals, reviews, and
-feedback; initial canonical applies such as `build_local_state` need a higher
-tier (`graph_write` or `admin`).
+the least-privilege tier that covers day-to-day proposing, workflow runs, and
+feedback; resolving review groups (`group resolve`) and initial canonical
+applies such as `build_local_state` need a higher tier (`graph_write` or
+`admin`).
 
 ## Structure
 

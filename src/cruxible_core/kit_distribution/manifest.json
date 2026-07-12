@@ -23,8 +23,8 @@
     },
     "kev-triage": {
       "asset": "kev-triage-0.2.2.tar.gz",
-      "dir_digest": "sha256:b01bd09c76eda3ef83bd7659790c430c86a75247e87b43d1a8a1e6054f72ea8e",
-      "tarball_sha256": "93aa05ed127f4b6afe49fc8c824d8dfc134799bd6b8b6315f390890f696e6669"
+      "dir_digest": "sha256:5501f0ee4cd5b979967c3413d80577caf28adf9d8a34a220d24cb85a82a654e0",
+      "tarball_sha256": "158b0fb26c40efabb66a7d7a95bca05f35b1dec41fad8707e12cc017e18796ed"
     },
     "project-domain": {
       "asset": "project-domain-0.2.2.tar.gz",
