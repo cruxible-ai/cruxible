@@ -400,7 +400,7 @@ toml = [
 
 [[package]]
 name = "cruxible"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -474,7 +474,7 @@ dev = [
 
 [[package]]
 name = "cruxible-client"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "packages/cruxible-client" }
 dependencies = [
     { name = "httpx" },

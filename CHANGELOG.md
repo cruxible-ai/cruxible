@@ -7,6 +7,11 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## 0.2.3 — 2026-07-12
+
+Kit versions now track the release train: every bundled kit's manifest
+version matches the release that ships it.
+
 ### Added
 
 - **Frozen-property mutation guards (`type: frozen`)**: the guard grammar

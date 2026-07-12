@@ -1,6 +1,6 @@
 schema_version: cruxible.kit.v1
 kit_id: kev-reference
-version: 0.2.0
+version: 0.2.3
 role: standalone
 entry_config: config.yaml
 provider_paths:

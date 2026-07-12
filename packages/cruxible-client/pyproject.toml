@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cruxible-client"
-version = "0.2.2"
+version = "0.2.3"
 description = "Client package for talking to a governed Cruxible daemon."
 readme = "README.md"
 license = "Apache-2.0"
