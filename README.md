@@ -128,11 +128,11 @@ write is attributed. Details, permission tiers, and hardening:
 
 ## The Rules Run
 
-An LLM can interpret a policy. Cruxible enforces it. The difference is
-where the rule lives: prompted knowledge produces an agent that *usually*
-complies, and storing the policy in memory doesn't move it — remembered
-text is still interpreted, not enforced. A rule declared in config runs at
-a chokepoint no writer can skip.
+An LLM can interpret a policy. Cruxible enforces it. Interpretation is
+sampling: an LLM's compliance is a probability, drawn fresh on every call,
+however good the model — and storing the policy in memory doesn't change
+that; remembered text is still interpreted, not enforced. A rule declared
+in config is an invariant, run at a chokepoint no writer can skip.
 
 | Prompted | Enforced |
 |---|---|
