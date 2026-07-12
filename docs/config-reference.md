@@ -3,8 +3,21 @@
 Cruxible configs are YAML files that define a decision domain: entity
 types, relationships, named queries, constraints, workflows, providers,
 artifacts, quality checks, feedback profiles, outcome profiles, and decision
-policies, plus mutation guards for configured state writes. AI agents generate
-these configs; Core validates and executes against them.
+policies, plus mutation guards for configured state writes. This page
+documents the explicit `CoreConfig` schema — the shape the engine actually
+parses, validates, and executes.
+
+> **Author new config in [Compact](compact-config.md), not here.** Compact
+> is a set of short YAML grammars that expand deterministically into the
+> schema on this page; it's what kits ship and what `kits/agent-operation/
+> config.yaml` is written in. This page is the **expansion target**: the
+> precise contract for what every field defaults to and validates against,
+> the shape validation errors and internals speak, and the **long-tail
+> fallback** (via compact's `explicit: true` escape hatch) for the rare
+> construct compact doesn't cover yet. Treat it as the reference-of-record
+> for the schema, not as a second how-to — hand-authoring it directly is a
+> deliberate opt-out of compact's fail-closed unknown-key checking, not the
+> default path.
 
 ## Top-Level Structure
 
