@@ -73,6 +73,7 @@ nav:
       - KEV guide: kev-guide.md
   - Reference:
       - CLI reference: cli-reference.md
+      - Compact config authoring: compact-config.md
       - Config reference: config-reference.md
       - MCP tools: mcp-tools.md
       - Common providers: common-providers.md
