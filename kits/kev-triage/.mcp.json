@@ -3,7 +3,7 @@
     "cruxible": {
       "command": "cruxible-mcp",
       "env": {
-        "CRUXIBLE_MODE": "admin"
+        "CRUXIBLE_MODE": "governed_write"
       }
     }
   }

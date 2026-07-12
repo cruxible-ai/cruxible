@@ -9,6 +9,11 @@ Localable cyber state model for vulnerability and KEV triage.
 - [skills/kev-triage/SKILL.md](skills/kev-triage/SKILL.md) — the packaged
   daily triage / waiver / remediation / control-effectiveness loop
 
+The shipped [`.mcp.json`](.mcp.json) example runs at `CRUXIBLE_MODE=governed_write`,
+the least-privilege tier that covers day-to-day proposals, reviews, and
+feedback; initial canonical applies such as `build_local_state` need a higher
+tier (`graph_write` or `admin`).
+
 ## Structure
 
 This demo has two kit directories that represent the two layers:
@@ -110,9 +115,11 @@ lines = deterministic | Dashed red lines = governed proposal/review.
 
 ## Workflow Summary
 
-The generated pipeline gives the onboarding order. The generated stage
-blocks underneath keep long context and provider provenance readable without
-squeezing them into a wide table.
+The generated pipeline is an inferred dependency ordering, not a guaranteed
+onboarding sequence — for the authoritative walkthrough (products before
+exposure), see [`docs/kev-guide.md`](../../docs/kev-guide.md). The generated
+stage blocks underneath keep long context and provider provenance readable
+without squeezing them into a wide table.
 
 <!-- CRUXIBLE:BEGIN workflow-pipeline -->
 ```mermaid
