@@ -7,6 +7,36 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+### Added
+
+- **Frozen-property mutation guards (`type: frozen`)**: the guard grammar
+  could only trigger on transitions *to* named values, so no property could
+  be protected from *any* change. A frozen-property condition freezes the
+  guarded property outright: updates that change it are refused while the
+  entity's **stored, pre-write** state matches an optional `while`
+  property=value clause — with no clause the property is immutable after
+  create. Creates set the property freely and re-asserting the stored value
+  is not a change. Because the clause reads before-state only, a single
+  write that both leaves the freeze state and changes the frozen property
+  (demote + retarget) is refused by design, and an update whose stored
+  state cannot be read — or whose `while` clause value fails schema
+  normalization — fails closed. Enforced at the shared guard
+  chokepoint every entity write path runs through (`add_entity`,
+  `batch_direct_write`, canonical workflow apply). Entity types only in
+  v1 — config lint refuses freeze declarations on relationship types.
+  Compact grammar: `freeze: <Entity>.<prop>` with an optional `while:`
+  mapping. The agent-operation kit closes two holes with it:
+  `ReviewRequest.change_head` is frozen while `status=approved` (an
+  approved review's pin can no longer be retargeted to an unreviewed SHA
+  under the merge-review gate) and `StateNote.kind` is immutable after
+  create (a reviewer's rationale note can no longer be re-kinded to
+  `scratchpad` to hide it from curated reads).
+- **`gates` config view**: `cruxible config views --view gates` renders
+  declared repo gates as a generated Markdown block (opt-in; not part of
+  `--view all`). The agent-operation README now documents its
+  `merge-review` gate with an authored Merge Gate section plus the
+  generated block.
+
 ### Fixed
 
 - **Kit catalog status is current**: `kits/README.md` now lists

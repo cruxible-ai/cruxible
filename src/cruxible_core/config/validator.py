@@ -23,6 +23,7 @@ from cruxible_core.config.schema import (
     CoreConfig,
     CoWriteGuardCondition,
     EvidenceRequirementGuardCondition,
+    FrozenPropertyGuardCondition,
     JsonContentQualityCheck,
     MutationGuardSchema,
     NamedQueryResultCountGuardCondition,
@@ -815,6 +816,10 @@ def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
                 )
             continue
 
+        if isinstance(condition, FrozenPropertyGuardCondition):
+            _validate_frozen_guard(config, guard, condition, errors)
+            continue
+
         entity_type = guard.entity_type
         property_name = guard.property
         assert entity_type is not None
@@ -852,6 +857,61 @@ def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
                 )
         elif isinstance(condition, CoWriteGuardCondition):
             _validate_co_write_condition(config, guard, condition, errors)
+
+
+def _validate_frozen_guard(
+    config: CoreConfig,
+    guard: MutationGuardSchema,
+    condition: FrozenPropertyGuardCondition,
+    errors: list[str],
+) -> None:
+    """Validate a frozen-property guard against the config ontology.
+
+    v1 scope is entity types only: freeze declarations naming a relationship
+    type are refused here (edge properties have no freeze surface yet).
+    """
+    entity_type = guard.entity_type
+    property_name = guard.property
+    assert entity_type is not None
+    assert property_name is not None
+
+    entity_schema = config.entity_types.get(entity_type)
+    if entity_schema is None:
+        if config.get_relationship(entity_type) is not None:
+            errors.append(
+                f"Mutation guard '{guard.name}': '{entity_type}' is a relationship "
+                "type; frozen property guards support entity types only (v1)"
+            )
+        else:
+            errors.append(
+                f"Mutation guard '{guard.name}': entity_type "
+                f"'{entity_type}' not defined in entity_types"
+            )
+        return
+
+    if property_name not in entity_schema.properties:
+        errors.append(
+            f"Mutation guard '{guard.name}': frozen property '{property_name}' "
+            f"not found on entity type '{entity_type}'"
+        )
+
+    if condition.while_state is None:
+        return
+    for clause_property, clause_value in condition.while_state.items():
+        clause_schema = entity_schema.properties.get(clause_property)
+        if clause_schema is None:
+            errors.append(
+                f"Mutation guard '{guard.name}': 'while' property "
+                f"'{clause_property}' not found on entity type '{entity_type}'"
+            )
+            continue
+        try:
+            normalize_value(clause_value, clause_schema, config)
+        except ValueError as exc:
+            errors.append(
+                f"Mutation guard '{guard.name}': 'while' value for property "
+                f"'{clause_property}': {exc}"
+            )
 
 
 def _validate_co_write_condition(

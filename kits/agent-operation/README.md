@@ -171,7 +171,9 @@ evidence-backed when proposed by agents.
 | --- | --- | --- | --- |
 | `decision_acceptance_requires_authorized_actor` | `Decision.status` -> `accepted` | authenticated actor in: authorized-reviewer | Accepting a Decision requires the authenticated reviewer actor (not a writer credential or spoofed body actor). Proposed decisions stay writable at the Decision type's normal tier. |
 | `review_request_approval_requires_authorized_actor` | `ReviewRequest.status` -> `approved` | authenticated actor in: authorized-reviewer; actor differs from the entity's creation actor | ReviewRequest approvals require the authenticated reviewer actor (not a writer credential or spoofed body actor), and the approver must differ from the actor recorded in the ReviewRequest's creation receipt — the review's creator can never approve it, including create-with-approved. |
+| `review_request_change_head_frozen_after_approval` | any change to `ReviewRequest.change_head` | the property is unchanged while the stored pre-write state has `status` = `approved` (creates set it freely) | An approved ReviewRequest pins the exact SHA that was reviewed: change_head cannot be retargeted while status=approved — not even in the same write that demotes the status (the freeze reads pre-write state). Move the review out of approved in its own write first, or file a new ReviewRequest for the new head. |
 | `review_verdict_requires_rationale_note` | `ReviewRequest.status` -> `changes_requested, approved, withdrawn` | same write creates `StateNote` (kind=review_note) linked via `state_note_about_review_request` | A ReviewRequest verdict must co-write a new StateNote(kind=review_note) linked via state_note_about_review_request in the same write. Status can't advance without recording why. |
+| `state_note_kind_immutable` | any change to `StateNote.kind` | the property is unchanged (immutable after create; creates set it freely) | A StateNote's kind is fixed at creation: re-kinding (e.g. demoting a reviewer's rationale note to scratchpad) would silently move it out of curated note reads. Record any reinterpretation as a new note instead. |
 | `work_item_closed_requires_approved_review` | `WorkItem.status` -> `closed` | query `approved_reviews_for_work_item` returns >= 1 result(s) | Work items cannot be closed until an approved ReviewRequest reviews them. |
 <!-- CRUXIBLE:END mutation-guards -->
 
@@ -181,15 +183,17 @@ evidence-backed when proposed by agents.
 implementer agents can record working notes without a `graph_write`
 credential. Know what that tier can and cannot do: governance decisions
 stay protected (review verdicts, work-item closes, and Decision
-acceptance are all actor-guarded), but the note surface itself — every
-kind, creates AND updates — is governed_write territory. A
-governed_write actor can rewrite or re-kind an existing note, including
-a reviewer's rationale note (re-kinding to `scratchpad` hides it from
-curated reads), fabricate `review_note`-kind notes on any review
-request, and assert `state_note_authored_by_actor` edges to any actor.
-Treat note *content* as governed_write-trust; verdicts and lifecycle
-remain the guarded record. Tighter semantics (create-only tiers or
-per-kind write surfaces) are a tracked core follow-up.
+acceptance are all actor-guarded), and a note's `kind` is frozen at
+creation (`state_note_kind_immutable`), so an existing note — a
+reviewer's rationale note included — can never be re-kinded to
+`scratchpad` to hide it from curated reads. But the rest of the note
+surface is governed_write territory: a governed_write actor can rewrite
+an existing note's content, fabricate `review_note`-kind notes on any
+review request, and assert `state_note_authored_by_actor` edges to any
+actor. Treat note *content* as governed_write-trust; verdicts, note
+kind, and lifecycle remain the guarded record. Tighter semantics
+(create-only tiers or per-kind write surfaces) are a tracked core
+follow-up.
 
 ### Signal Policy Notes
 
@@ -199,6 +203,27 @@ per-kind write surfaces) are a tracked core follow-up.
 | `maintainer_judgment` | advisory | yes | no | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
 | `source_evidence` | required | yes | no | Decision Affects Subject, Decision Answers Open Question, Decision Constrains Work Item, Decision Supersedes Decision, Open Question Blocks Decision, Open Question Blocks Work Item, Open Question Concerns Subject, Risk Attaches To Subject, Risk Blocks Work Item, Work Item Answers Open Question, Work Item Depends On Work Item, Work Item Mitigates Risk, Work Item Supersedes Work Item | - |
 <!-- CRUXIBLE:END signal-policy-catalog -->
+
+## Merge Gate
+
+Guards block writes INTO state; gates let the world act only if state
+agrees. This kit declares one gate: `merge-review` holds a repo to the
+reviewed-merge invariant — a merge enters `main` only when every
+merged-in tip (all parents `^2..^N` of each pushed merge commit) is
+pinned by an approved `ReviewRequest` via `change_head`. Enforce it from
+a pre-push hook with `exec cruxible gate check merge-review`; the check
+fails closed on any error.
+
+The gate's trust chain is why `change_head` is frozen after approval
+(`review_request_change_head_frozen_after_approval`): the approved
+review pins the exact SHA that was reviewed, so the pin cannot be
+retargeted to an unreviewed commit without a fresh review.
+
+<!-- CRUXIBLE:BEGIN gates -->
+| Gate | Kind | Candidate Pinned By | Required State | Description |
+| --- | --- | --- | --- | --- |
+| `merge-review` | `git-pre-push` | `ReviewRequest.change_head` | `status` = `approved` | Every tip merged into main (all merged-in parents of each merge commit) must be pinned by an approved ReviewRequest (change_head). Enforce from a pre-push hook with `exec cruxible gate check merge-review`. |
+<!-- CRUXIBLE:END gates -->
 
 ## Query Catalog
 
@@ -301,4 +326,8 @@ No configured receipt-anchored outcome profiles.
 
 ```bash
 uv run cruxible config views --config kits/agent-operation/config.yaml --update-readme kits/agent-operation/README.md
+uv run cruxible config views --config kits/agent-operation/config.yaml --view gates --update-readme kits/agent-operation/README.md
 ```
+
+The `gates` view is opt-in (not part of `--view all`), so its marker block
+is refreshed by the second command.

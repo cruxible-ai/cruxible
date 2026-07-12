@@ -17,6 +17,7 @@ from cruxible_core.canonical_views import (
     build_query_view,
     build_schema_catalog_view,
     build_workflow_view,
+    render_gates_markdown,
     render_governed_relationship_table_markdown,
     render_learning_loops_markdown,
     render_mutation_guards_markdown,
@@ -151,6 +152,10 @@ def _render_governance_table_scoped(config: CoreConfig, overlay_scope: OverlaySc
 
 def _render_mutation_guards(config: CoreConfig) -> str:
     return _as_rendered_text(render_mutation_guards_markdown(config))
+
+
+def _render_gates(config: CoreConfig) -> str:
+    return _as_rendered_text(render_gates_markdown(config))
 
 
 def _render_mutation_guards_scoped(config: CoreConfig, overlay_scope: OverlayScope) -> str:
@@ -354,6 +359,16 @@ VIEW_SPECS: dict[str, ViewSpec] = {
         _render_mutation_guards,
         fenced=False,
         render_scoped=_render_mutation_guards_scoped,
+    ),
+    # Opt-in view (not in DEFAULT_VIEW_ORDER): only kits that declare gates
+    # carry the README marker block, so `--view all --update-readme` keeps
+    # working on kits without one.
+    "gates": ViewSpec(
+        "gates",
+        "Gates",
+        _render_gates,
+        fenced=False,
+        empty_text="This kit declares no repo gates.",
     ),
     "signal-policy-catalog": ViewSpec(
         "signal-policy-catalog",

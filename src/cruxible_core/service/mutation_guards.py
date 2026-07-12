@@ -17,6 +17,7 @@ from cruxible_core.config.schema import (
     CoreConfig,
     CoWriteGuardCondition,
     EvidenceRequirementGuardCondition,
+    FrozenPropertyGuardCondition,
     MutationGuardSchema,
     NamedQueryResultCountGuardCondition,
 )
@@ -187,6 +188,13 @@ def mutation_guard_errors(
         if proposed is None:
             continue
         for guard in config.mutation_guards:
+            if isinstance(guard.condition, FrozenPropertyGuardCondition):
+                frozen_error = _frozen_property_guard_error(
+                    config, guard, guard.condition, entity, current, proposed
+                )
+                if frozen_error is not None:
+                    errors.append(frozen_error)
+                continue
             context = _matching_guard_context(
                 config, guard, entity, current, proposed, proposed_graph
             )
@@ -332,6 +340,132 @@ def _guarded_value_list(new_value: Any) -> list[Any]:
     if isinstance(new_value, list):
         return list(new_value)
     return [new_value]
+
+
+def _frozen_property_guard_error(
+    config: CoreConfig,
+    guard: MutationGuardSchema,
+    condition: FrozenPropertyGuardCondition,
+    validated: ValidatedEntity,
+    current: EntityInstance | None,
+    proposed: EntityInstance,
+) -> str | None:
+    """Return the refusal message when an update changes a frozen property.
+
+    Freeze semantics, all evaluated against the STORED (pre-write) entity:
+
+    - Creates set the property freely; only updates can trip the freeze.
+    - The guard fires when the property's post-write value differs from the
+      stored value (set, changed, or unset alike). Re-asserting the stored
+      value is not a change.
+    - With a ``while`` clause the freeze is active only when the stored
+      entity matches every clause entry; a stored property absent from the
+      entity does not match any named value. Because the clause reads
+      before-state only, a write that changes the frozen property AND moves
+      the entity out of the freeze state (demote + retarget in one write) is
+      refused by design — leave the freeze state first, then change the
+      property in a later write.
+    - Fail-closed: an update whose stored pre-write state cannot be read is
+      refused, and so is an update whose ``while`` clause value cannot be
+      normalized against the property schema (malformed/stale config must
+      never silently deactivate a freeze).
+    """
+    if guard.entity_type != validated.entity.entity_type:
+        return None
+    assert guard.property is not None
+    if not validated.is_update:
+        return None
+    if current is None:
+        return (
+            f"Mutation guard '{guard.name}' rejected write "
+            f"{proposed.entity_type}:{proposed.entity_id} "
+            f"{guard.property}: stored pre-write state is unavailable (fail-closed)"
+        )
+    old_value = current.properties.get(guard.property, _MISSING)
+    new_value = proposed.properties.get(guard.property, _MISSING)
+    if old_value == new_value:
+        return None
+    if condition.while_state is not None:
+        try:
+            in_freeze_state = _frozen_while_state_matches(
+                config, guard.entity_type, condition.while_state, current
+            )
+        except _FrozenClauseNormalizationError as exc:
+            return (
+                f"Mutation guard '{guard.name}' rejected write "
+                f"{proposed.entity_type}:{proposed.entity_id} "
+                f"{guard.property}: 'while' clause {exc.key}={exc.value!r} does not "
+                f"normalize against the property schema ({exc.reason}); the freeze "
+                f"cannot be evaluated (fail-closed)"
+            )
+        if not in_freeze_state:
+            return None
+    return _frozen_guard_error_message(guard, condition, proposed, new_value)
+
+
+class _FrozenClauseNormalizationError(Exception):
+    """A frozen guard ``while`` clause value failed schema normalization."""
+
+    def __init__(self, key: str, value: Any, reason: str) -> None:
+        super().__init__(f"{key}={value!r}: {reason}")
+        self.key = key
+        self.value = value
+        self.reason = reason
+
+
+def _frozen_while_state_matches(
+    config: CoreConfig,
+    entity_type: str,
+    while_state: Mapping[str, Any],
+    current: EntityInstance,
+) -> bool:
+    """Return whether the stored entity matches every ``while`` clause entry.
+
+    Stored values were normalized on their way into the graph; clause values
+    normalize through the same property schema (config lint guarantees they
+    can) so e.g. enum/date spellings compare canonically. A clause value that
+    fails normalization raises ``_FrozenClauseNormalizationError`` — the guard
+    caller refuses the mutation (fail-closed) rather than falling back to the
+    raw authored value, which could silently turn an active freeze into a
+    non-match. Every clause normalizes before any comparison so an
+    unnormalizable clause refuses regardless of the stored state.
+    """
+    entity_schema = config.entity_types.get(entity_type)
+    normalized_clauses: dict[str, Any] = {}
+    for key, expected in while_state.items():
+        normalized = expected
+        property_schema = entity_schema.properties.get(key) if entity_schema else None
+        if property_schema is not None:
+            try:
+                normalized = normalize_value(expected, property_schema, config)
+            except ValueError as exc:
+                raise _FrozenClauseNormalizationError(key, expected, str(exc)) from exc
+        normalized_clauses[key] = normalized
+    for key, normalized in normalized_clauses.items():
+        stored = current.properties.get(key, _MISSING)
+        if stored is _MISSING or stored != normalized:
+            return False
+    return True
+
+
+def _frozen_guard_error_message(
+    guard: MutationGuardSchema,
+    condition: FrozenPropertyGuardCondition,
+    entity: EntityInstance,
+    new_value: Any,
+) -> str:
+    if condition.while_state is None:
+        scope = "immutable after create"
+    else:
+        clause = ", ".join(f"{key}={value!r}" for key, value in condition.while_state.items())
+        scope = f"frozen while stored state matches {clause}"
+    message = guard.message or "property is frozen"
+    rendered_new = "<unset>" if new_value is _MISSING else repr(new_value)
+    return (
+        f"Mutation guard '{guard.name}' rejected write "
+        f"{entity.entity_type}:{entity.entity_id} "
+        f"{guard.property}={rendered_new} ({scope}): {message}"
+    )
 
 
 def _guard_condition_passes(

@@ -557,6 +557,20 @@ mutation_guards:
         min_count: 1
       message: >-
         Work items cannot be closed until an approved ReviewRequest reviews them.
+  - review_request_change_head_frozen_after_approval:
+      freeze: ReviewRequest.change_head
+      while: {status: approved}
+      message: >-
+        An approved ReviewRequest pins the exact SHA that was reviewed: change_head
+        cannot be retargeted while status=approved — not even in the same write that
+        demotes the status (the freeze reads pre-write state). Move the review out of
+        approved in its own write first, or file a new ReviewRequest for the new head.
+  - state_note_kind_immutable:
+      freeze: StateNote.kind
+      message: >-
+        A StateNote's kind is fixed at creation: re-kinding (e.g. demoting a
+        reviewer's rationale note to scratchpad) would silently move it out of
+        curated note reads. Record any reinterpretation as a new note instead.
 
 quality_checks:
   - work_items_have_owner:
