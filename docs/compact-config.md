@@ -1,22 +1,29 @@
 # Compact Config Authoring
 
-Compact is how you author Cruxible config. It is YAML that expands
-deterministically to the explicit `CoreConfig` schema before validation —
-entity types, relationships, and named queries collapse to a handful of
-short string grammars instead of the fully-spelled-out engine shape.
-Unsupported compact keys **fail closed** with `CompactExpansionError`; they
-are never silently ignored or passed through.
+Compact is the recommended way to author the graph-shape parts of Cruxible
+config. It is YAML that expands deterministically to the explicit `CoreConfig`
+schema before validation — entity types, relationships, named queries,
+mutation guards, and quality checks collapse to short string grammars instead
+of the fully-spelled-out engine shape. Unsupported compact keys **fail closed**
+with `CompactExpansionError`; they are never silently ignored or passed through.
+
+Compact only reduces those graph-shape keys. The other top-level keys —
+`gates`, `contracts`, `providers`, `workflows`, `feedback_profiles`,
+`outcome_profiles`, `decision_policies`, `artifacts`, `runtime`, `tests` — have
+no compact form; a compact file carries them in their explicit shape verbatim,
+so a real config mixes compact-reduced sections with explicit pass-through
+ones. Author those keys from [Config Reference](config-reference.md).
 
 The canonical worked compact config is `kits/agent-operation/config.yaml`.
 Every example on this page is a real excerpt from it.
 
-> **This page is the how-to.** For the precise expanded shape of any field —
-> every default, every validation rule, the full quality-check kind
-> catalogue — see [Config Reference](config-reference.md), the engine
-> contract compact expands into. Reach for it when compact doesn't cover a
-> construct yet, when you need to know exactly what a key defaults to, or
-> when you're reading a validation error (errors speak the expanded schema —
-> see [Coherence with the engine](#coherence-with-the-engine) below).
+> **This page is the how-to for the keys compact reduces.** For the pass-through
+> keys above, and for the precise expanded shape of any field — every default,
+> every validation rule, the full quality-check kind catalogue — see
+> [Config Reference](config-reference.md), the complete schema compact expands
+> into. Reach for it to author a pass-through key, when you need to know exactly
+> what a key defaults to, or when you're reading a validation error (errors
+> speak the expanded schema — see [Coherence with the engine](#coherence-with-the-engine) below).
 
 Expand a compact file yourself to see the shape it produces:
 
