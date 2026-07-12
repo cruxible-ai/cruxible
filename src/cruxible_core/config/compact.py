@@ -1572,6 +1572,7 @@ def _all_adjacent_query_intents(name: str, body: dict[str, Any]) -> dict[str, di
 # ---------------------------------------------------------------------------
 
 _GUARD_TRIGGER_RE = re.compile(r"^\s*(?P<entity>\w+)\.(?P<prop>\w+)\s*->\s*(?P<value>.+?)\s*$")
+_FREEZE_TRIGGER_RE = re.compile(r"^\s*(?P<entity>\w+)\.(?P<prop>\w+)\s*$")
 _COWRITE_RE = re.compile(r"^\s*(?P<entity>\w+)\s+via\s+(?P<rel>\w+)\s*$")
 
 
@@ -1589,6 +1590,12 @@ def _expand_mutation_guards(raw_guards: list[Any]) -> list[dict[str, Any]]:
     ``where_related:``/``where_not_related:`` are lists of related-edge predicates
     (same ``RelatedPredicateSpec`` shape as query traversal steps) that further
     scope the trigger; they pass through unchanged.
+
+    Freeze form: ``freeze: <Entity>.<prop>`` (no ``when``/``require``) declares a
+    frozen-property guard -- the property may not change on updates. Optional
+    ``while: {prop: value, ...}`` limits the freeze to entities whose STORED,
+    pre-write state matches every entry; without it the property is immutable
+    after create. The clause passes through into ``condition.while`` unchanged.
     """
     out: list[dict[str, Any]] = []
     for item in raw_guards:
@@ -1599,6 +1606,9 @@ def _expand_mutation_guards(raw_guards: list[Any]) -> list[dict[str, Any]]:
         name, body = next(iter(item.items()))
         if not isinstance(body, dict):
             raise CompactExpansionError(f"mutation guard '{name}': body must be a mapping")
+        if "freeze" in body:
+            out.append(_expand_freeze_guard(name, body))
+            continue
         _reject_unknown_keys(
             f"mutation guard '{name}'",
             body,
@@ -1633,6 +1643,38 @@ def _expand_mutation_guards(raw_guards: list[Any]) -> list[dict[str, Any]]:
             guard["where_not_related"] = body["where_not_related"]
         out.append(guard)
     return out
+
+
+def _expand_freeze_guard(name: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Expand a compact ``freeze:`` guard into an explicit frozen-property guard."""
+    _reject_unknown_keys(f"mutation guard '{name}'", body, {"freeze", "while", "message"})
+    freeze = body["freeze"]
+    if not isinstance(freeze, str):
+        raise CompactExpansionError(
+            f"mutation guard '{name}': freeze must be '<Entity>.<prop>', got {freeze!r}"
+        )
+    match = _FREEZE_TRIGGER_RE.match(freeze)
+    if match is None:
+        raise CompactExpansionError(
+            f"mutation guard '{name}': freeze must be '<Entity>.<prop>', got '{freeze}'"
+        )
+    condition: dict[str, Any] = {"type": "frozen"}
+    if "while" in body:
+        while_clause = body["while"]
+        if not isinstance(while_clause, dict):
+            raise CompactExpansionError(
+                f"mutation guard '{name}': while must be a property=value mapping"
+            )
+        condition["while"] = while_clause
+    guard: dict[str, Any] = {
+        "name": name,
+        "entity_type": match.group("entity"),
+        "property": match.group("prop"),
+        "condition": condition,
+    }
+    if "message" in body:
+        guard["message"] = body["message"]
+    return guard
 
 
 def _parse_guard_value(value: str) -> Any:

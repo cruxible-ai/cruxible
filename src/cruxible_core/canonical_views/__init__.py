@@ -10,6 +10,7 @@ from cruxible_core.canonical_views.builders import (
     build_workflow_view,
 )
 from cruxible_core.canonical_views.markdown import (
+    render_gates_markdown,
     render_governance_markdown,
     render_governed_relationship_table_markdown,
     render_learning_loops_markdown,
@@ -99,6 +100,7 @@ __all__ = [
     "build_schema_catalog_view",
     "build_workflow_view",
     "canonical_view_payload",
+    "render_gates_markdown",
     "render_governance_markdown",
     "render_governed_relationship_table_markdown",
     "render_mutation_guards_markdown",

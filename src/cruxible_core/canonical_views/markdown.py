@@ -316,6 +316,8 @@ def render_governed_relationship_table_markdown(
 
 def _guard_fires_on_label(guard: Any) -> str:
     if guard.entity_type is not None:
+        if guard.condition.type == "frozen":
+            return f"any change to `{guard.entity_type}.{guard.property}`"
         values = guard.new_value if isinstance(guard.new_value, list) else [guard.new_value]
         rendered = ", ".join(str(value) for value in values)
         return f"`{guard.entity_type}.{guard.property}` -> `{rendered}`"
@@ -347,6 +349,14 @@ def _guard_requirement_label(guard: Any) -> str:
         )
     if kind == "evidence":
         return f">= {condition.min_count} source evidence ref(s)"
+    if kind == "frozen":
+        if condition.while_state is None:
+            return "the property is unchanged (immutable after create; creates set it freely)"
+        clause = ", ".join(f"`{key}` = `{value}`" for key, value in condition.while_state.items())
+        return (
+            f"the property is unchanged while the stored pre-write state has {clause} "
+            "(creates set it freely)"
+        )
     return str(kind)
 
 
@@ -376,6 +386,32 @@ def render_mutation_guards_markdown(
     ]
     return _markdown_table(
         ("Guard", "Fires On", "Refused Unless", "Message"),
+        rows,
+    )
+
+
+def render_gates_markdown(config: CoreConfig) -> str:
+    """Render declared repo gates as a table: state agreements the world must satisfy.
+
+    Doctrine: a guard blocks a write INTO state (inbound); a gate lets the
+    world act only if state agrees (outbound). Gates are the outbound
+    promises a kit makes (e.g. the merge-review gate), so they get a
+    generated block instead of living only in authored prose.
+    """
+    if not config.gates:
+        return "No repo gates declared."
+    rows = [
+        (
+            f"`{name}`",
+            f"`{gate.kind}`",
+            f"`{gate.entity_type}.{gate.match_property}`",
+            ", ".join(f"`{key}` = `{value}`" for key, value in gate.condition.items()),
+            gate.description.strip() if gate.description else "",
+        )
+        for name, gate in sorted(config.gates.items())
+    ]
+    return _markdown_table(
+        ("Gate", "Kind", "Candidate Pinned By", "Required State", "Description"),
         rows,
     )
 

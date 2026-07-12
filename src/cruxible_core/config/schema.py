@@ -1497,12 +1497,47 @@ class EvidenceRequirementGuardCondition(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class FrozenPropertyGuardCondition(BaseModel):
+    """Property freeze condition for config-defined mutation guards.
+
+    Freezes the guard-level ``property``: any update that changes it is
+    refused while the entity's STORED, pre-write state matches ``while``
+    (a property -> value equality map; every entry must match). With no
+    ``while`` clause the property is immutable after create. Creates set
+    the property freely. Because the clause evaluates before-state only, a
+    single write that both leaves the freeze state and changes the frozen
+    property (demote + retarget) is still refused. Entity types only (v1).
+    """
+
+    type: Literal["frozen"]
+    while_state: dict[str, str | int | float | bool] | None = Field(
+        default=None,
+        alias="while",
+    )
+
+    model_config = {"extra": "forbid", "populate_by_name": True}
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> FrozenPropertyGuardCondition:
+        if self.while_state is None:
+            return self
+        if not self.while_state:
+            msg = "frozen property guard 'while' requires at least one property=value entry"
+            raise ValueError(msg)
+        for key in self.while_state:
+            if not key.strip():
+                msg = "frozen property guard 'while' keys must be non-empty property names"
+                raise ValueError(msg)
+        return self
+
+
 MutationGuardConditionSchema = Annotated[
     (
         NamedQueryResultCountGuardCondition
         | ActorIdentityGuardCondition
         | CoWriteGuardCondition
         | EvidenceRequirementGuardCondition
+        | FrozenPropertyGuardCondition
     ),
     Field(discriminator="type"),
 ]
@@ -1557,6 +1592,32 @@ class MutationGuardSchema(BaseModel):
                 joined = ", ".join(forbidden_fields)
                 raise ValueError(
                     f"relationship evidence guards may not define entity-property fields: {joined}"
+                )
+            return self
+
+        if isinstance(self.condition, FrozenPropertyGuardCondition):
+            missing = [
+                field
+                for field in ("entity_type", "property")
+                if field not in self.model_fields_set or getattr(self, field) is None
+            ]
+            if missing:
+                raise ValueError(f"frozen property guards require: {', '.join(missing)}")
+            if self.relationship_type is not None:
+                raise ValueError(
+                    "frozen property guards support entity types only (v1); "
+                    "relationship_type is not allowed"
+                )
+            if "new_value" in self.model_fields_set:
+                raise ValueError(
+                    "frozen property guards fire on any change to the property; "
+                    "new_value is not allowed"
+                )
+            if self.where is not None or self.where_related or self.where_not_related:
+                raise ValueError(
+                    "frozen property guards do not support where/where_related/"
+                    "where_not_related scoping; state scoping is the condition's "
+                    "'while' clause, evaluated against the stored pre-write state"
                 )
             return self
 
