@@ -201,19 +201,30 @@ class TestFrozenGuardSchema:
             )
 
     @pytest.mark.parametrize("field", ["where_related", "where_not_related"])
-    def test_explicit_empty_related_scoping_refused(self, field: str) -> None:
-        """An explicitly supplied empty related-scoping list is still a scoping
-        declaration: presence is refused, not just truthy values."""
-        with pytest.raises(ValidationError, match="'while' clause"):
-            _config_with_guard(
-                {
-                    "name": "g",
-                    "entity_type": "Review",
-                    "property": "head",
-                    field: [],
-                    "condition": {"type": "frozen"},
-                }
-            )
+    def test_explicit_empty_related_scoping_accepted(self, field: str) -> None:
+        """Empty related-scoping lists are accepted: config composition
+        round-trips guards through model_dump, which serializes the default
+        empty lists explicitly — refusing presence would refuse the guard's
+        own round-trip (caught by composed-init integration tests). An empty
+        list declares no scoping, so accepting it weakens nothing; populated
+        lists remain refused."""
+        config = _config_with_guard(
+            {
+                "name": "g",
+                "entity_type": "Review",
+                "property": "head",
+                field: [],
+                "condition": {"type": "frozen"},
+            }
+        )
+        guard = config.mutation_guards[0]
+        # Pin the exact round-trip the composer performs (composer.py:177):
+        # exclude_none drops the None-valued fields whose presence would trip
+        # their own checks (new_value), while default empty lists survive the
+        # dump — which is why they must be accepted, not presence-refused.
+        dumped = guard.model_dump(mode="python", by_alias=True, exclude_none=True)
+        assert dumped[field] == []
+        type(guard).model_validate(dumped)
 
     def test_empty_while_refused(self) -> None:
         with pytest.raises(ValidationError, match="at least one"):

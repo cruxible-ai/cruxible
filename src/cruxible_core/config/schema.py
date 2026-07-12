@@ -1613,14 +1613,12 @@ class MutationGuardSchema(BaseModel):
                     "frozen property guards fire on any change to the property; "
                     "new_value is not allowed"
                 )
-            # Presence check, not truthiness: an explicitly supplied empty
-            # where_related: [] / where_not_related: [] is still a scoping
-            # declaration on a guard kind that does not support scoping.
-            if (
-                self.where is not None
-                or "where_related" in self.model_fields_set
-                or "where_not_related" in self.model_fields_set
-            ):
+            # Truthiness, not presence: config composition round-trips guards
+            # through model_dump, which serializes the default empty lists as
+            # explicit where_related: [] / where_not_related: [] — a presence
+            # check refuses the guard's own round-trip. Empty lists declare no
+            # scoping, so accepting them weakens nothing.
+            if self.where is not None or self.where_related or self.where_not_related:
                 raise ValueError(
                     "frozen property guards do not support where/where_related/"
                     "where_not_related scoping; state scoping is the condition's "
