@@ -511,7 +511,8 @@ A mutation guard is a single-key list item: `<name>: {when:, require:,
 message:}`. `when:` is a compact trigger grammar, `<Entity>.<prop> ->
 <value>` (or `-> [value_a, value_b]` for multiple trigger values); `require:`
 is one of three compact condition shapes, discriminated by which key it
-carries. Every guard below is a real kit guard.
+carries. A fourth form, `freeze:`, replaces `when`/`require` entirely (see
+below). Every guard below is a real kit guard.
 
 **`co_write`** — a companion entity must be written, linked via a named
 relationship, in the same payload:
@@ -556,9 +557,30 @@ passthrough of `allowed_actor_ids`):
         Work items cannot be closed until an approved ReviewRequest reviews them.
 ```
 
+**`freeze`** — the property may not *change* on updates (there is no `->`
+value: any change fires). Optional `while: {prop: value, ...}` limits the
+freeze to entities whose **stored, pre-write** state matches every entry;
+without it the property is immutable after create. Creates set the property
+freely, and a one-write demote+retarget is refused (the clause reads
+before-state only). Entity types only; expands to `condition: {type: frozen,
+while: ...}`:
+
+```yaml
+  - review_request_change_head_frozen_after_approval:
+      freeze: ReviewRequest.change_head
+      while: {status: approved}
+      message: >-
+        An approved ReviewRequest pins the exact SHA that was reviewed.
+  - state_note_kind_immutable:
+      freeze: StateNote.kind
+      message: >-
+        A StateNote's kind is fixed at creation.
+```
+
 Optional `where:` / `where_related:` / `where_not_related:` further scope
-which mutations trigger the guard; they use the same predicate shapes as
-query traversal steps and pass through unchanged. See
+which mutations trigger a `when`-form guard; they use the same predicate
+shapes as query traversal steps and pass through unchanged (`freeze`-form
+guards take no trigger scoping — their only state clause is `while`). See
 [mutation_guards](config-reference.md#mutation_guards) in the config
 reference for the full trigger/condition schema these expand to, and the
 overlay-composition and guard-exemption rules.

@@ -1240,7 +1240,10 @@ separately as a blocking pull conflict before the merge is materialized.
 Entity-property guards fire on any direct write that **results in** the guarded
 property value — creating an entity with the value and changing an existing
 entity to the value are both covered. Updates that re-assert the value an entity
-already holds are not transitions and do not fire.
+already holds are not transitions and do not fire. The one exception is the
+`frozen` condition, which has no `new_value`: it fires on **any change** to the
+guarded property (updates only — creates set it freely; see
+[FrozenPropertyGuardCondition](#frozenpropertyguardcondition-type-frozen)).
 
 Relationship evidence guards fire on writes to the configured relationship type
 and require the resulting relationship evidence to meet the configured floor.
@@ -1250,9 +1253,9 @@ declare no evidence floor and rely on ambient attribution: provenance, receipts,
 actor context, and review history. Every guard field is load-bearing.
 
 The `condition` is a **discriminated union** keyed by an explicit `condition.type`
-field — one of `query`, `actor`, `co_write`, or `evidence`. The type is required;
-guard shape is never inferred from which keys are present. The guard-level
-`operation` / `effect` discriminator fields deliberately do not exist.
+field — one of `query`, `actor`, `co_write`, `evidence`, or `frozen`. The type is
+required; guard shape is never inferred from which keys are present. The
+guard-level `operation` / `effect` discriminator fields deliberately do not exist.
 
 ```yaml
 mutation_guards:
@@ -1297,6 +1300,14 @@ mutation_guards:
       require_evidence: source_evidence
       min_count: 1
     message: "Observation claims require source evidence."
+
+  - name: review_request_change_head_frozen_after_approval
+    entity_type: ReviewRequest
+    property: change_head
+    condition:
+      type: frozen
+      while: {status: approved}   # omit `while` for immutable-after-create
+    message: "An approved review pins the exact SHA that was reviewed."
 ```
 
 ### MutationGuardSchema
@@ -1306,11 +1317,11 @@ mutation_guards:
 | `name` | string | **yes** | — | Unique guard name |
 | `entity_type` | string | entity guards | — | Entity type the write applies to |
 | `property` | string | entity guards | — | Property that must be present in the incoming write |
-| `new_value` | any or list | entity guards | — | Guarded resulting value(s) after config property normalization. A scalar guards one value; a list guards several (the guard fires when the write results in any listed value) |
+| `new_value` | any or list | entity guards except `frozen` | — | Guarded resulting value(s) after config property normalization. A scalar guards one value; a list guards several (the guard fires when the write results in any listed value). Forbidden on `frozen` guards, which fire on any change |
 | `relationship_type` | string | relationship evidence guards | — | Relationship type the write applies to |
 | `condition` | discriminated union on `type` | **yes** | — | Condition that must pass (see types below) |
 | `message` | string | no | `null` | Optional user-facing rejection detail |
-| `where` | predicate map | no | `null` | Entity-property guards only: scopes the trigger so the guard fires only when the mutated entity matches (candidate scope) |
+| `where` | predicate map | no | `null` | Entity-property guards only (not `frozen`): scopes the trigger so the guard fires only when the mutated entity matches (candidate scope) |
 | `where_related` | list | no | `[]` | Entity-property guards only: related-edge predicates; the guard fires only when every listed edge exists (and matches its inner predicates) on the mutated entity |
 | `where_not_related` | list | no | `[]` | Entity-property guards only: related-edge predicates; the guard fires only when no listed edge exists on the mutated entity |
 
@@ -1340,6 +1351,7 @@ The `condition.type` discriminator selects the condition variant:
 | `actor` | ActorIdentityGuardCondition | entity guards |
 | `co_write` | CoWriteGuardCondition | entity guards |
 | `evidence` | EvidenceRequirementGuardCondition | relationship guards |
+| `frozen` | FrozenPropertyGuardCondition | entity guards |
 
 ### NamedQueryResultCountGuardCondition (`type: query`)
 
@@ -1452,6 +1464,62 @@ Evidence requirement guards are relationship-scoped: they require
 `evidence_rationale` alone. Generic `evidence_refs` only satisfy the floor when
 they are dereferenceable `source_artifact` refs with chunk identity and content
 hash metadata, as produced by source artifact registration.
+
+### FrozenPropertyGuardCondition (`type: frozen`)
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `type` | `frozen` | **yes** | — | Condition discriminator |
+| `while` | map of property → value | no | `null` | Freeze-state clause evaluated against the entity's **stored, pre-write** state; every entry must match. Omitted = the property is immutable after create |
+
+Every other condition triggers on transitions *to* named values; the frozen
+condition protects the guard-level `property` from **any** change. An update
+whose post-write value for the property differs from the stored value —
+changed, newly set, or unset — is refused while the freeze is active.
+Semantics, all evaluated against the stored (pre-write) entity:
+
+- **Creates set the property freely.** Only updates can trip the freeze;
+  re-asserting the stored value is not a change.
+- **`while` reads before-state only.** The freeze is active when the stored
+  entity matches every `while` entry (values compare after property-schema
+  normalization; a stored property that is absent matches no named value).
+  Because the clause never looks at the incoming write, a single write that
+  both moves the entity out of the freeze state and changes the frozen
+  property (demote + retarget in one write) is refused by design — leave the
+  freeze state in its own write first, then change the property.
+- **Fail-closed.** An update whose stored pre-write state is missing or
+  unreadable is refused.
+- **Entity types only (v1).** `relationship_type` is rejected on the guard,
+  and config lint refuses freeze declarations whose `entity_type` names a
+  relationship type. Lint also requires the frozen property and every
+  `while` property to exist on the entity type, and `while` values to
+  normalize against their property schemas.
+
+Frozen guards must not define `new_value` (they fire on any change) and do not
+support `where` / `where_related` / `where_not_related` trigger scoping — those
+predicates evaluate the *proposed* entity, which would reopen the one-write
+demote+retarget hole the before-state clause exists to close. State scoping is
+exclusively the condition's `while` clause.
+
+Enforcement runs at the same guard chokepoint as every other entity-property
+condition, so all entity write paths are covered: `add_entity`,
+`batch_direct_write`, and canonical workflow `apply_entities`. Feedback
+`correct` cannot reach entity freezes at all — corrections validate against
+relationship (edge) properties only. Release-backed `state pull`
+re-materialization stays guard-exempt as described above.
+
+In compact kit configs the freeze form replaces `when`/`require`:
+
+```yaml
+mutation_guards:
+  - review_request_change_head_frozen_after_approval:
+      freeze: ReviewRequest.change_head
+      while: {status: approved}
+      message: "An approved review pins the exact SHA that was reviewed."
+  - state_note_kind_immutable:
+      freeze: StateNote.kind
+      message: "A StateNote's kind is fixed at creation."
+```
 
 For batch direct writes, guards evaluate against the proposed batch graph, so
 valid same-batch entities and relationships can satisfy the named query before
