@@ -13,6 +13,8 @@ jobs:
       - name: Verify package versions are locked
         run: |
           python - <<'PY'
+          import json
+          import os
           import tomllib
           from pathlib import Path
 
@@ -29,6 +31,24 @@ jobs:
               )
           if expected not in dependencies:
               raise SystemExit(f"Missing exact dependency pin: {expected}")
+
+          # The tag names the GitHub release that the packaged kit manifest
+          # points at, so tag, package version, manifest version, and the
+          # manifest base_url must all agree before anything publishes.
+          tag = os.environ["GITHUB_REF_NAME"]
+          manifest = json.loads(
+              Path("src/cruxible_core/kit_distribution/manifest.json").read_text()
+          )
+          if tag != f"v{core_version}":
+              raise SystemExit(f"Tag {tag} does not match package version {core_version}")
+          if manifest["version"] != core_version:
+              raise SystemExit(
+                  f"Kit manifest version {manifest['version']} does not match {core_version}"
+              )
+          if f"/releases/download/{tag}/" not in manifest["base_url"]:
+              raise SystemExit(
+                  f"Kit manifest base_url {manifest['base_url']} does not point at {tag}"
+              )
           PY
 
   # PyPI pending publishers must have distinct configurations, so the two
@@ -52,9 +72,12 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
+  # The core wheel ships the kit manifest whose URLs point at this tag's
+  # release assets, so it must not publish unless the bundles are attached
+  # and verified.
   publish-cruxible:
     runs-on: ubuntu-latest
-    needs: publish-client
+    needs: [publish-client, publish-kit-bundles]
     permissions:
       id-token: write
 
@@ -68,3 +91,72 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  # Kit bundles are fetched at `cruxible init --kit` from the GitHub release
+  # named by the packaged manifest's base_url, so a release without bundle
+  # assets breaks kit init for that whole version (this happened on v0.2.1
+  # and v0.2.2). Bundles are byte-reproducible (build_kit_bundles.py pins
+  # mtimes/ownership/order): CI first proves the COMMITTED lock/manifest are
+  # current, rebuilds, refuses if the build changed the committed manifest,
+  # attaches the assets, and re-downloads every asset through the manifest's
+  # own URLs to confirm the release serves the pinned bytes. Combined with
+  # verify-versions (tag == package == manifest == base_url) and
+  # publish-cruxible's dependency on this job, a wheel cannot publish whose
+  # bundled kit URLs do not resolve and verify.
+  publish-kit-bundles:
+    runs-on: ubuntu-latest
+    needs: verify-versions
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Verify committed lockfiles and manifest are current
+        run: uv run python scripts/check_kit_lockfiles.py
+
+      - name: Build kit bundles
+        run: uv run python scripts/build_kit_bundles.py
+
+      - name: Refuse if the build changed the committed manifest
+        run: git diff --exit-code -- src/cruxible_core/kit_distribution/manifest.json
+
+      - name: Attach bundles to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "${GITHUB_REF_NAME#v}" \
+            --notes "See CHANGELOG.md for this release's notes." \
+            || true  # release may already exist with authored notes
+          gh release upload "$GITHUB_REF_NAME" dist/kits/*.tar.gz --clobber
+
+      - name: Verify every manifest asset URL serves the pinned bytes
+        run: |
+          uv run python - <<'PY'
+          import hashlib, json, time, urllib.error, urllib.request
+          from pathlib import Path
+
+          manifest = json.loads(
+              Path("src/cruxible_core/kit_distribution/manifest.json").read_text()
+          )
+          base = manifest["base_url"]
+          for kit_id, entry in manifest["kits"].items():
+              url = base + entry["asset"]
+              # Assets can lag briefly behind `gh release upload`.
+              for attempt in range(5):
+                  try:
+                      data = urllib.request.urlopen(url, timeout=60).read()
+                      actual = hashlib.sha256(data).hexdigest()
+                      if actual == entry["tarball_sha256"]:
+                          print(f"ok {kit_id} <- {url}")
+                          break
+                      last = f"digest mismatch ({actual})"
+                  except urllib.error.URLError as exc:
+                      last = str(exc)
+                  time.sleep(10 * (attempt + 1))
+              else:
+                  raise SystemExit(f"{kit_id}: {last} at {url}")
+          PY
