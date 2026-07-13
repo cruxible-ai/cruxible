@@ -71,6 +71,9 @@ nav:
       - Kit walkthroughs: kit-walkthroughs.md
       - Kit authoring: kit-authoring.md
       - KEV guide: kev-guide.md
+      - Supply chain guide: supply-chain-guide.md
+      - Case law guide: case-law-guide.md
+      - Agent operation guide: agent-operation-guide.md
   - Reference:
       - CLI reference: cli-reference.md
       - Compact config authoring: compact-config.md

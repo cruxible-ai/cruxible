@@ -24,9 +24,10 @@ for the model behind this.
 
 ## Prerequisites
 
-- Python 3.11 or later
-- [git](https://git-scm.com/) and [uv](https://docs.astral.sh/uv/)
+- Python 3.11 or later (with pip)
 - An MCP-capable AI agent if you want agent orchestration
+- [git](https://git-scm.com/) and [uv](https://docs.astral.sh/uv/) only if
+  you develop from source
 
 ## Install And Start The Daemon
 
@@ -85,7 +86,9 @@ pip install cruxible-client
 
 Create an instance from two kits — the agent-operation base and the
 supply-chain demo domain — and connect the CLI context so commands stop
-needing per-call flags:
+needing per-call flags. (agent-operation is optional: it is the work-item
+and review operations layer for teams running agents on the loop; for a
+domain-only instance, pass just the domain kit.)
 
 ```bash
 cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --kit supply-chain-blast-radius
@@ -97,14 +100,15 @@ against a clone and returns an apply digest; `apply` re-verifies it against
 the current config, lockfile, and head snapshot before committing:
 
 ```bash
-cruxible run --workflow build_seed_state --save-preview seed.json
-cruxible apply --preview-file seed.json
-cruxible run --workflow ingest_incidents --save-preview incidents.json
-cruxible apply --preview-file incidents.json
+cruxible run --workflow build_seed_state
+cruxible apply --workflow build_seed_state --from-last-preview
+cruxible run --workflow ingest_incidents
+cruxible apply --workflow ingest_incidents --from-last-preview
 ```
 
-Incident-to-supplier impact is a governed relationship: nothing may write it
-directly, not even a workflow. The proposal workflow bridges its output into
+Incident-to-supplier impact is a governed relationship: every live direct
+write is refused, at any permission tier, and in this kit it is minted only
+through proposal and review. The proposal workflow bridges its output into
 a candidate group, each member carrying the signals and evidence that
 matched it:
 

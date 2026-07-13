@@ -21,9 +21,9 @@
   <a href="https://cruxible.ai/skills">skills</a>
 </p>
 
-**Cruxible is a governed state engine for AI agents** — an alternative to
-general-purpose agent memory for claims that must be settled, enforced,
-and auditable.
+**Cruxible is a governed state engine for AI agents** — an ontology-backed
+alternative to general-purpose agent memory for claims that must be
+settled, enforced, and auditable.
 All humans and agents share one typed model of a real domain: every claim
 is validated against declared rules, judgment calls route through review,
 and every computed answer carries its receipt. We call it **hard state**.
@@ -57,8 +57,8 @@ questions similarity retrieval can't follow.
    review: a human, or an agent under trust rules you declared, approves
    or rejects. Everything else is live the moment it's written, and
    approving or correcting it is one verb, straight from a query result.
-6. **Ask, and act on the answer.** Agents connect over MCP at the
-   permission tier you give them; queries return answers with receipts;
+6. **Ask, and act on the answer.** Agents work through MCP or the CLI at
+   the permission tier you give them; queries return answers with receipts;
    guards refuse writes that break the rules, and gates hold outside
    actions (a merge, a deploy) until state agrees.
 
@@ -90,7 +90,7 @@ pip install cruxible
 **Model your own domain**: hand your agent the authoring skills in
 [`skills/`](https://github.com/cruxible-ai/cruxible/tree/main/skills)
 (`prepare-data` → `create-state` → `review-state`) with your exports
-(`wiki-to-state` converts an existing CLAUDE.md pile or Obsidian vault), or
+(`wiki-to-state` converts an existing team wiki or Obsidian vault), or
 start from [Modeling State](https://github.com/cruxible-ai/cruxible/blob/main/docs/modeling-state.md)
 and the [config template](https://github.com/cruxible-ai/cruxible/blob/main/docs/config-template.yaml).
 
@@ -102,6 +102,7 @@ and the [config template](https://github.com/cruxible-ai/cruxible/blob/main/docs
 CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/sandbox" cruxible server start
 
 # shell 2 — kit bundles are fetched from the release and digest-verified
+# (agent-operation is the optional agent-ops layer; domain-only works too)
 cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --kit supply-chain-blast-radius
 cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
 
@@ -141,11 +142,13 @@ in config is an invariant, run at a chokepoint no writer can skip.
 | "The agent was told not to accept claims it proposed itself" | The guard compares the acting actor against the creation receipt's recorded actor and refuses, including create-as-accepted |
 | "The agent remembers the ingest procedure" | The workflow is declared, previewed, and locked to pinned providers; every run leaves a receipt |
 
-Two enforcement directions, one doctrine:
+Two enforcement directions, one purpose — keeping the shared state a truth
+layer the rest of your stack can trust:
 
-- **Guards face inward.** A write cannot enter state unless the declared
-  conditions hold: types validate, evidence dereferences, the actor is
-  authorized, the transition is legal.
+- **Guards face inward.** They protect the write boundary of accepted
+  state: a claim enters or changes it only when the declared conditions
+  hold — the actor is authorized, the transition is legal, the evidence
+  dereferences, frozen fields stay frozen.
 - **Gates face outward.** An action outside Cruxible checks state before
   it proceeds: a deploy holds while critical exposures are open, a filing
   step waits for the citation check, a merge waits for its approved
@@ -238,14 +241,17 @@ cruxible run --workflow ingest_bom --input-file ./exports/bom-2026-07.csv    # p
 cruxible apply --workflow ingest_bom --from-last-preview                     # commit
 ```
 
-`incident_impacts_supplier` is a judgment call, so it is governed: nothing
-may write it directly, not even a workflow. The incident feed's workflow
-records the incidents themselves as hard facts, but the impact edges it can
+`incident_impacts_supplier` is a judgment call, so it is governed: every
+live direct write is refused — CLI, MCP, batch, at any permission tier
+(a direct write can at most *stage* the edge for review). It
+enters only through the governed verbs the config declares, and in this
+domain that is proposal and review. The incident feed's workflow records
+the incidents themselves as hard facts, but the impact edges it can
 only *propose*. Those candidates land in a review group, each carrying the
 signals and evidence that matched it:
 
 ```bash
-cruxible propose --workflow propose_incident_impacts --input-file ./exports/incidents.json
+cruxible propose --workflow propose_incident_impacts_supplier --input-file ./exports/incidents.json
 ```
 
 The judgment itself stays with a human, or with an agent when the trust
@@ -272,26 +278,32 @@ cruxible query run components_exposed_by_incident \
   --json
 ```
 
-Results come back with a receipt: the deterministic path from query parameters
-to traversed edges to returned rows.
+Results come back carrying a receipt id — the receipt is the deterministic
+path from query parameters to traversed edges to returned rows:
 
 ```json
 {
   "items": [
     { "entity_type": "Component", "entity_id": "component-main-board" }
   ],
-  "receipt_id": "RCP-...",
-  "receipt": {
-    "operation_type": "query",
-    "query_name": "components_exposed_by_incident",
-    "parameters": { "incident_id": "INC-42" },
-    "nodes": [
-      { "node_type": "query", "detail": { "entry_point": "Incident" } },
-      { "node_type": "edge_traversal", "relationship": "incident_impacts_supplier" },
-      { "node_type": "edge_traversal", "relationship": "supplier_supplies_component" },
-      { "node_type": "result", "entity_type": "Component", "entity_id": "component-main-board" }
-    ]
-  }
+  "receipt_id": "RCP-2f61a90c84d3"
+}
+```
+
+```bash
+cruxible explain --receipt RCP-2f61a90c84d3 --format json
+```
+
+```json
+{
+  "query_name": "components_exposed_by_incident",
+  "parameters": { "incident_id": "INC-42" },
+  "nodes": [
+    { "node_type": "query", "detail": { "entry_point": "Incident" } },
+    { "node_type": "edge_traversal", "relationship": "incident_impacts_supplier" },
+    { "node_type": "edge_traversal", "relationship": "supplier_supplies_component" },
+    { "node_type": "result", "entity_type": "Component", "entity_id": "component-main-board" }
+  ]
 }
 ```
 
@@ -311,6 +323,10 @@ carrying them. Downstream truth is computed from upstream judgment, never
 asserted alongside it. Overturn one impact edge in review and every
 product and shipment answer downstream moves with it, on the next query,
 for free.
+
+To run this end to end on the seeded world — the staged cascade, the
+review seats, the receipted blast radius — follow the
+[supply chain guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/supply-chain-guide.md).
 
 This is what a pending review group looks like in the
 [inspection UI](https://github.com/cruxible-ai/cruxible-app): the signal
@@ -349,7 +365,7 @@ generated table
 
 ## One Truth, Many Writers
 
-Cruxible is built for the day the second writer shows up. Every writer,
+Cruxible is built for many writers out of the box. Every writer,
 human or agent, acts under its own minted credential at one of four
 cumulative permission tiers (`read_only` ⊂ `governed_write` ⊂ `graph_write`
 ⊂ `admin`); give each agent the least tier that does its job. Every write
@@ -392,8 +408,8 @@ review queue there, an audit column bolted on — every seam between the
 parts is a bypass.
 
 This is not a second wiki to tend — the state accumulates through the same
-loops that use it. And if the wiki already exists (a pile of CLAUDE.md
-files, an Obsidian vault), the
+loops that use it. And if the wiki already exists (a team wiki, an
+Obsidian vault), the
 [`wiki-to-state`](https://github.com/cruxible-ai/cruxible/tree/main/skills/wiki-to-state)
 skill converts it: pages become pinned evidence, an agent proposes the
 typed claims, you review what gets minted.
@@ -448,7 +464,7 @@ graph. The type map of the composed supply-chain instance above:
 
 The one real cost is the config — the types, rules, and queries that model
 your domain. You don't write it from scratch: point an agent at your data,
-or an existing pile of CLAUDE.md files, and it drafts the model; you review
+or an existing wiki, and it drafts the model; you review
 what it proposes instead of authoring it. The rules are few, static, and
 reviewed once; the writes they govern are many and continuous — that
 asymmetry is the point. And the cost keeps paying: knowledge no longer gets
@@ -481,9 +497,14 @@ state model; overlay kits compose local state, proposals, and workflows over
 an upstream base. All seven ship working providers end to end.
 
 Start with **agent-operation** — the domain-agnostic operating layer
-Cruxible itself is developed with. The **KEV pair** runs the whole loop on
-real CISA data ([KEV guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/kev-guide.md));
-**supply-chain-blast-radius** is the walkthrough above.
+Cruxible itself is developed with
+([guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/agent-operation-guide.md)).
+The **KEV pair** runs the whole loop on real CISA data
+([guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/kev-guide.md));
+**supply-chain-blast-radius** is the walkthrough above
+([guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/supply-chain-guide.md));
+**case-law-monitoring** is a governed citator in two acts
+([guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/case-law-guide.md)).
 
 | Kit | Kind | What it models |
 |-----|------|----------------|
@@ -538,6 +559,10 @@ the tier they need. Give an agent the lowest tier that does its job:
 `governed_write` (above) can run workflows, propose, and record feedback,
 but cannot mutate the raw graph or resolve proposals.
 
+MCP is one door, not the only one: an agent can drive the same daemon
+through the CLI or the Python client, under the same credentials and
+tiers — Cruxible develops itself with CLI-driven agents.
+
 Local permission modes are a practical hardening layer, not full sandboxing. If
 trust levels matter, keep the daemon state outside the agent workspace and
 expose only the client, HTTP, or MCP surface. See
@@ -572,13 +597,16 @@ expose only the client, HTTP, or MCP surface. See
 
 **Guides**
 - [KEV Guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/kev-guide.md) — subscribe to the vulnerability reference, judge your exposures, work the queue
+- [Supply Chain Guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/supply-chain-guide.md) — build the seeded world, judge the cascade, walk the blast radius
+- [Case Law Guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/case-law-guide.md) — a governed citator in two acts, from opinion texts to bad-law alerts
+- [Agent Operation Guide](https://github.com/cruxible-ai/cruxible/blob/main/docs/agent-operation-guide.md) — work items, gated reviews, and the repo gate for teams running agents
 
 **Agent skills** ([`skills/`](https://github.com/cruxible-ai/cruxible/tree/main/skills))
 - [prepare-data](https://github.com/cruxible-ai/cruxible/tree/main/skills/prepare-data) — profile and ready raw exports before modeling
 - [create-state](https://github.com/cruxible-ai/cruxible/tree/main/skills/create-state) — staged graph, workflow, query, and review-loop design from your data
 - [review-state](https://github.com/cruxible-ai/cruxible/tree/main/skills/review-state) — audit and harden a drafted state model
 - [overlay-and-fit](https://github.com/cruxible-ai/cruxible/tree/main/skills/overlay-and-fit) — compose and adapt overlay kits
-- [wiki-to-state](https://github.com/cruxible-ai/cruxible/tree/main/skills/wiki-to-state) — convert a CLAUDE.md pile or Obsidian vault into governed state
+- [wiki-to-state](https://github.com/cruxible-ai/cruxible/tree/main/skills/wiki-to-state) — convert an existing wiki or Obsidian vault into governed state
 - [classification-at-scale](https://github.com/cruxible-ai/cruxible/tree/main/skills/classification-at-scale) — classify a catalog against a taxonomy with signals, batch review, and a trust flywheel
 
 Kit-specific skills ship inside their kits (e.g. `kev-start` and `kev-triage`
