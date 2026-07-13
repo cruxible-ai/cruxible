@@ -35,7 +35,9 @@ layer) compose on top, adding seam relationships out to domain entities. To
 compose, replace the initialization command above with:
 
 ```bash
-cruxible init --kit agent-operation --kit project-domain --bootstrap
+CRUXIBLE_SERVER_BEARER_TOKEN=change-me-once \
+  cruxible --server-url http://127.0.0.1:8100 init \
+  --kit agent-operation --kit project-domain --bootstrap
 ```
 
 Actors are mint-only — the graph refuses direct `Actor` writes; identities
