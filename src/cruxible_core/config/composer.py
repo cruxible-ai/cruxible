@@ -62,28 +62,75 @@ def resolve_config_layers(
     config_path: Path | None = None,
     config_dir: Path | None = None,
 ) -> list[ResolvedConfigLayer]:
-    """Lower today's supported config shapes into an ordered layer sequence."""
+    """Resolve one config root into its ordered, recursive layer sequence."""
     if config_path is not None and config_dir is not None:
         raise ConfigError("Provide config_path or config_dir, not both")
     resolved_path = config_path.resolve() if config_path is not None else None
     resolved_dir = config_dir.resolve() if config_dir is not None else None
-    source_dir = (
-        resolved_dir
-        if resolved_dir is not None
-        else (resolved_path.parent if resolved_path is not None else None)
+    return resolve_config_layer_sequence(
+        [
+            ResolvedConfigLayer(
+                config=config,
+                config_path=resolved_path,
+                config_dir=resolved_dir,
+            )
+        ]
     )
-    if config.extends is None:
-        layer = ResolvedConfigLayer(
-            config=config,
-            config_path=resolved_path,
-            config_dir=resolved_dir,
-        )
-        base_layer = resolve_overlay_kit_base_layer(config_path=resolved_path)
-        if base_layer is None:
-            return [layer]
-        return [base_layer, layer]
 
-    base_path = Path(config.extends)
+
+def resolve_config_layer_sequence(
+    roots: Sequence[ResolvedConfigLayer],
+) -> list[ResolvedConfigLayer]:
+    """Linearize config roots base-first, deduplicating files at first position.
+
+    Every root may recursively extend another config or inherit an overlay-kit
+    base from its manifest. A resolved file is one semantic layer regardless of
+    how many roots reach it, so diamond dependencies compose that file once at
+    its first base-first position. Pathless inline roots remain distinct because
+    they have no stable identity to deduplicate.
+    """
+    layers: list[ResolvedConfigLayer] = []
+    seen_paths: set[Path] = set()
+    visiting_paths: list[Path] = []
+
+    def visit(layer: ResolvedConfigLayer) -> None:
+        path = layer.config_path.resolve() if layer.config_path is not None else None
+        if path is not None:
+            if path in visiting_paths:
+                cycle_start = visiting_paths.index(path)
+                cycle = [*visiting_paths[cycle_start:], path]
+                raise ConfigError(
+                    "Config extends cycle detected: " + " -> ".join(str(item) for item in cycle)
+                )
+            if path in seen_paths:
+                return
+            visiting_paths.append(path)
+
+        for parent in _resolve_parent_layers(layer):
+            visit(parent)
+
+        if path is not None:
+            visiting_paths.pop()
+            if path in seen_paths:
+                return
+            seen_paths.add(path)
+        layers.append(layer)
+
+    for root in roots:
+        visit(root)
+    return layers
+
+
+def _resolve_parent_layers(layer: ResolvedConfigLayer) -> list[ResolvedConfigLayer]:
+    source_dir = layer.source_dir
+    if layer.config.extends is None:
+        base_layer = resolve_overlay_kit_base_layer(
+            config_path=layer.config_path,
+            config_dir=layer.config_dir,
+        )
+        return [base_layer] if base_layer is not None else []
+
+    base_path = Path(layer.config.extends)
     if not base_path.is_absolute():
         if source_dir is None:
             raise ConfigError(_INLINE_RELATIVE_EXTENDS_ERROR)
@@ -93,12 +140,10 @@ def resolve_config_layers(
 
     resolved_base_path = base_path.resolve()
     return [
-        ResolvedConfigLayer(config=load_config(resolved_base_path), config_path=resolved_base_path),
         ResolvedConfigLayer(
-            config=config,
-            config_path=resolved_path,
-            config_dir=resolved_dir,
-        ),
+            config=load_config(resolved_base_path),
+            config_path=resolved_base_path,
+        )
     ]
 
 
@@ -301,11 +346,13 @@ def compose_config_files(
     """Compose two config files without writing the merged result to disk."""
     base = load_config(base_path)
     overlay = load_config(overlay_path)
-    return compose_configs(
-        base,
-        overlay,
-        base_config_path=base_path,
-        overlay_config_path=overlay_path,
+    return compose_config_sequence(
+        resolve_config_layer_sequence(
+            [
+                ResolvedConfigLayer(config=base, config_path=base_path.resolve()),
+                ResolvedConfigLayer(config=overlay, config_path=overlay_path.resolve()),
+            ]
+        )
     )
 
 
@@ -317,11 +364,14 @@ def compose_runtime_config_files(
     """Compose two config files for release-backed overlay runtime use."""
     base = load_config(base_path)
     overlay = load_config(overlay_path)
-    return compose_runtime_configs(
-        base,
-        overlay,
-        base_config_path=base_path,
-        overlay_config_path=overlay_path,
+    return compose_config_sequence(
+        resolve_config_layer_sequence(
+            [
+                ResolvedConfigLayer(config=base, config_path=base_path.resolve()),
+                ResolvedConfigLayer(config=overlay, config_path=overlay_path.resolve()),
+            ]
+        ),
+        runtime=True,
     )
 
 

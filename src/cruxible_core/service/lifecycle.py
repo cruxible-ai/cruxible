@@ -13,6 +13,7 @@ from cruxible_core.config.composer import (
     compose_config_sequence,
     compose_runtime_config_files,
     rebase_artifact_uri,
+    resolve_config_layer_sequence,
     resolve_config_layers,
     resolve_overlay_kit_base_layer,
 )
@@ -204,7 +205,7 @@ def service_init(
         bundles = [resolve_kit_ref(value) for value in normalized_kits]
         _validate_kit_sequence(normalized_kits, bundles)
         try:
-            layers: list[ResolvedConfigLayer] = []
+            roots: list[ResolvedConfigLayer] = []
             for kit_ref, bundle in zip(normalized_kits, bundles):
                 kit_id = bundle.manifest.kit_id
                 kit_dir = root / _INSTANCE_KITS_DIR / kit_id
@@ -222,8 +223,8 @@ def service_init(
                 )
                 layer_config = load_config(entry_config)
                 _namespace_config_kit_provider_refs(layer_config, kit_id)
-                layers.append(ResolvedConfigLayer(config=layer_config, config_path=entry_config))
-            composed = compose_config_sequence(layers)
+                roots.append(ResolvedConfigLayer(config=layer_config, config_path=entry_config))
+            composed = compose_config_sequence(resolve_config_layer_sequence(roots))
             config_path = _save_managed_config(root, composed)
             wrote_managed_config = True
         except Exception:

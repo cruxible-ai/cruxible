@@ -13,6 +13,7 @@ from cruxible_core.config.composer import (
     compose_config_sequence,
     compose_configs,
     compose_runtime_configs,
+    resolve_config_layer_sequence,
     resolve_config_layers,
     write_composed_config,
 )
@@ -238,6 +239,133 @@ named_queries:
         assert "build_reference" not in sequence.workflows
         assert "reference_loader" not in sequence.providers
 
+
+class TestRecursiveLayerResolution:
+    @staticmethod
+    def _write_layer(
+        path: Path,
+        *,
+        name: str,
+        entity_type: str,
+        extends: str | None = None,
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        extends_line = f"extends: {extends}\n" if extends is not None else ""
+        path.write_text(
+            "version: '1.0'\n"
+            f"name: {name}\n"
+            f"{extends_line}"
+            "entity_types:\n"
+            f"  {entity_type}:\n"
+            "    properties:\n"
+            f"      {entity_type.lower()}_id: {{type: string, primary_key: true}}\n"
+            "relationships: []\n"
+        )
+
+    def test_resolves_three_layer_extends_chain_base_first(self, tmp_path: Path) -> None:
+        base = tmp_path / "base" / "config.yaml"
+        domain = tmp_path / "domain" / "config.yaml"
+        overlay = tmp_path / "overlay" / "config.yaml"
+        self._write_layer(base, name="base", entity_type="Actor")
+        self._write_layer(
+            domain,
+            name="domain",
+            entity_type="WorkItem",
+            extends="../base/config.yaml",
+        )
+        self._write_layer(
+            overlay,
+            name="overlay",
+            entity_type="Strategy",
+            extends="../domain/config.yaml",
+        )
+
+        layers = resolve_config_layers(load_config(overlay), config_path=overlay)
+        composed = compose_config_sequence(layers)
+
+        assert [layer.config_path for layer in layers] == [
+            base.resolve(),
+            domain.resolve(),
+            overlay.resolve(),
+        ]
+        assert list(composed.entity_types) == ["Actor", "WorkItem", "Strategy"]
+
+    def test_multiple_roots_deduplicate_shared_base_at_first_position(
+        self, tmp_path: Path
+    ) -> None:
+        base = tmp_path / "base" / "config.yaml"
+        first = tmp_path / "first" / "config.yaml"
+        second = tmp_path / "second" / "config.yaml"
+        self._write_layer(base, name="base", entity_type="Actor")
+        self._write_layer(
+            first,
+            name="first",
+            entity_type="WorkItem",
+            extends="../base/config.yaml",
+        )
+        self._write_layer(
+            second,
+            name="second",
+            entity_type="Strategy",
+            extends="../base/config.yaml",
+        )
+
+        layers = resolve_config_layer_sequence(
+            [
+                ResolvedConfigLayer(config=load_config(first), config_path=first),
+                ResolvedConfigLayer(config=load_config(second), config_path=second),
+            ]
+        )
+
+        assert [layer.config_path for layer in layers] == [
+            base.resolve(),
+            first,
+            second,
+        ]
+        composed = compose_config_sequence(layers)
+        assert list(composed.entity_types) == ["Actor", "WorkItem", "Strategy"]
+
+    def test_cycle_error_prints_the_resolved_chain(self, tmp_path: Path) -> None:
+        first = tmp_path / "first.yaml"
+        second = tmp_path / "second.yaml"
+        self._write_layer(first, name="first", entity_type="Actor", extends="second.yaml")
+        self._write_layer(second, name="second", entity_type="WorkItem", extends="first.yaml")
+
+        with pytest.raises(ConfigError) as exc_info:
+            resolve_config_layers(load_config(first), config_path=first)
+
+        assert str(exc_info.value) == (
+            "Config extends cycle detected: "
+            f"{first.resolve()} -> {second.resolve()} -> {first.resolve()}"
+        )
+
+    def test_two_layer_resolution_matches_explicit_pair(self, tmp_path: Path) -> None:
+        base_path = tmp_path / "base.yaml"
+        overlay_path = tmp_path / "overlay.yaml"
+        self._write_layer(base_path, name="base", entity_type="Actor")
+        self._write_layer(
+            overlay_path,
+            name="overlay",
+            entity_type="WorkItem",
+            extends="base.yaml",
+        )
+        base = load_config(base_path)
+        overlay = load_config(overlay_path)
+
+        recursive = compose_config_sequence(
+            resolve_config_layers(overlay, config_path=overlay_path)
+        )
+        explicit = compose_configs(
+            base,
+            overlay,
+            base_config_path=base_path,
+            overlay_config_path=overlay_path,
+        )
+
+        assert recursive.model_dump(mode="python") == explicit.model_dump(mode="python")
+
+
+class TestSequenceCompositionValidation:
     def test_compose_validates_semantic_output_by_default(self) -> None:
         base = _base()
         overlay = _overlay(
