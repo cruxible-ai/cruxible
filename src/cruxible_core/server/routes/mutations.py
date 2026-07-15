@@ -16,6 +16,7 @@ from cruxible_core.server.request_models import (
     AddEntitiesRequest,
     AddRelationshipsRequest,
     BatchDirectWriteRequest,
+    ConfigStatusRequest,
     ReloadConfigRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
@@ -122,4 +123,16 @@ async def reload_config(
         config_path=req.config_path,
         config_yaml=req.config_yaml,
         allow_orphans=req.allow_orphans,
+        config_source_manifest=req.config_source_manifest,
+    )
+
+
+@router.post("/{instance_id}/config/status", response_model=contracts.ConfigStatusResult)
+async def config_status(
+    instance_id: str,
+    req: ConfigStatusRequest,
+) -> contracts.ConfigStatusResult:
+    return api.config_status(
+        instance_id=resolve_server_instance_id(instance_id),
+        current_source_manifest=req.current_source_manifest,
     )

@@ -18,6 +18,14 @@ from cruxible_core.config.composer import (
     resolve_overlay_kit_base_layer,
 )
 from cruxible_core.config.loader import load_config, load_config_from_string, save_config
+from cruxible_core.config.provenance import (
+    ConfigSourceManifest,
+    compute_composed_config_digest,
+    compute_file_digest,
+    materialized_header,
+    record_materialized_provenance,
+    source_manifest_for_layers,
+)
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
@@ -39,6 +47,7 @@ from cruxible_core.server.auth_managed_entities import (
     materialize_local_operator_auth_managed_entities,
 )
 from cruxible_core.service.types import (
+    ConfigStatusResult,
     ConfigStrandingReport,
     ConfigTypeDelta,
     InitResult,
@@ -181,6 +190,7 @@ def service_init(
     *,
     instance_mode: str = CruxibleInstance.DEV_MODE,
     default_base_kit: str | None = None,
+    config_source_manifest: ConfigSourceManifest | None = None,
 ) -> InitResult:
     """Initialize a new cruxible instance (create-only).
 
@@ -202,6 +212,7 @@ def service_init(
     wrote_managed_config = False
     materialized_kit_dirs: list[tuple[str, Path]] = []
     base_kit_id: str | None = None
+    pending_source_manifest: ConfigSourceManifest | None = None
 
     if normalized_kits:
         bundles = [resolve_kit_ref(value) for value in normalized_kits]
@@ -231,8 +242,18 @@ def service_init(
                 layer_config = load_config(entry_config)
                 _namespace_config_kit_provider_refs(layer_config, kit_id)
                 roots.append(ResolvedConfigLayer(config=layer_config, config_path=entry_config))
-            composed = compose_config_sequence(resolve_config_layer_sequence(roots))
-            config_path = _save_managed_config(root, composed)
+            resolved_layers = resolve_config_layer_sequence(roots)
+            composed = compose_config_sequence(resolved_layers)
+            pending_source_manifest = source_manifest_for_layers(
+                resolved_layers,
+                composed,
+                root_path=roots[-1].config_path,
+            )
+            config_path = _save_managed_config(
+                root,
+                composed,
+                source_manifest=pending_source_manifest,
+            )
             wrote_managed_config = True
         except Exception:
             _cleanup_managed_config(root)
@@ -241,10 +262,17 @@ def service_init(
 
     if config_yaml is not None:
         config = load_config_from_string(config_yaml)
-        config = compose_config_sequence(
-            resolve_config_layers(config, config_dir=root),
+        resolved_layers = resolve_config_layers(config, config_dir=root)
+        config = compose_config_sequence(resolved_layers)
+        pending_source_manifest = config_source_manifest or ConfigSourceManifest(
+            composed_digest=compute_composed_config_digest(config)
         )
-        config_path = _save_managed_config(root, config)
+        _validate_source_manifest(config, pending_source_manifest)
+        config_path = _save_managed_config(
+            root,
+            config,
+            source_manifest=pending_source_manifest,
+        )
         wrote_managed_config = True
 
     assert config_path is not None
@@ -256,10 +284,18 @@ def service_init(
     config = load_config(resolved)
     if config.extends is not None:
         try:
-            composed = compose_config_sequence(
-                resolve_config_layers(config, config_path=resolved),
+            resolved_layers = resolve_config_layers(config, config_path=resolved)
+            composed = compose_config_sequence(resolved_layers)
+            pending_source_manifest = source_manifest_for_layers(
+                resolved_layers,
+                composed,
+                root_path=resolved,
             )
-            config_path = _save_managed_config(root, composed)
+            config_path = _save_managed_config(
+                root,
+                composed,
+                source_manifest=pending_source_manifest,
+            )
             wrote_managed_config = True
         except Exception:
             if wrote_managed_config:
@@ -277,6 +313,13 @@ def service_init(
             data_dir,
             instance_mode=instance_mode,
         )
+        if pending_source_manifest is not None:
+            instance.set_config_provenance(
+                record_materialized_provenance(
+                    pending_source_manifest,
+                    instance.get_config_path(),
+                )
+            )
         ensure_auth_managed_runtime_identity(instance)
     except Exception:
         if wrote_managed_config:
@@ -405,6 +448,7 @@ def service_init_governed_upload(
     data_dir: str | None = None,
     kits: Sequence[str] | None = None,
     default_base_kit: str | None = None,
+    config_source_manifest: ConfigSourceManifest | None = None,
 ) -> InitResult:
     """Initialize a governed instance from caller-owned uploaded config content."""
     governed_root = Path(root_dir)
@@ -440,6 +484,7 @@ def service_init_governed_upload(
         kits=kits,
         instance_mode=CruxibleInstance.GOVERNED_MODE,
         default_base_kit=default_base_kit,
+        config_source_manifest=config_source_manifest,
     )
     if copied_kit_runtime_files:
         write_materialized_kit_metadata(governed_root)
@@ -582,15 +627,50 @@ def _install_instance_lock_from_materialized_kit(instance: InstanceProtocol) -> 
         ) from exc
 
 
-def _save_managed_config(root: Path, config: CoreConfig) -> str:
+def _save_managed_config(
+    root: Path,
+    config: CoreConfig,
+    *,
+    source_manifest: ConfigSourceManifest,
+) -> str:
     """Persist the active config under instance-owned metadata."""
     managed_path = root / _MANAGED_CONFIG_RELATIVE_PATH
     try:
         managed_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise ConfigError(f"Failed to create directory {managed_path.parent}: {exc}") from exc
-    save_config(config, managed_path)
+    save_config(
+        config,
+        managed_path,
+        header=materialized_header(source_manifest.root_path),
+    )
     return str(_MANAGED_CONFIG_RELATIVE_PATH)
+
+
+def _validate_source_manifest(config: CoreConfig, source: ConfigSourceManifest) -> None:
+    actual = compute_composed_config_digest(config)
+    if actual != source.composed_digest:
+        raise ConfigError(
+            "Config source provenance does not match uploaded config content: "
+            f"recorded {source.composed_digest}, actual {actual}"
+        )
+
+
+def _write_materialized_config(
+    instance: InstanceProtocol,
+    config: CoreConfig,
+    source: ConfigSourceManifest,
+) -> None:
+    """Write active config bytes and bind them to their source provenance."""
+    _validate_source_manifest(config, source)
+    target_path = instance.get_config_path()
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    save_config(
+        config,
+        target_path,
+        header=materialized_header(source.root_path),
+    )
+    instance.set_config_provenance(record_materialized_provenance(source, target_path))
 
 
 def _cleanup_managed_config(root: Path) -> None:
@@ -641,6 +721,7 @@ def service_reload_config(
     *,
     config_base_dir: str | Path | None = None,
     allow_orphans: bool = False,
+    config_source_manifest: ConfigSourceManifest | None = None,
 ) -> ReloadConfigResult:
     """Validate, replace, or repoint the active config for an existing instance."""
     if config_path is not None and config_yaml is not None:
@@ -664,7 +745,6 @@ def service_reload_config(
             raise ConfigError(f"Overlay config not found: {overlay_path}")
 
         base_path = root / upstream.upstream_config_path
-        active_path = instance.get_config_path()
         if config_yaml is not None:
             # Raw uploaded overlay YAML has no source filename; use the tracked
             # overlay path only as the base directory for relative extends and
@@ -674,20 +754,37 @@ def service_reload_config(
                 resolve_config_layers(overlay, config_path=overlay_path),
                 runtime=True,
             )
+            source_manifest = config_source_manifest or ConfigSourceManifest(
+                composed_digest=compute_composed_config_digest(composed)
+            )
         else:
             composed = compose_runtime_config_files(
                 base_path=base_path,
                 overlay_path=overlay_path,
             )
+            source_layers = resolve_config_layer_sequence(
+                [
+                    ResolvedConfigLayer(config=load_config(base_path), config_path=base_path),
+                    ResolvedConfigLayer(
+                        config=load_config(overlay_path),
+                        config_path=overlay_path,
+                    ),
+                ]
+            )
+            source_manifest = source_manifest_for_layers(
+                source_layers,
+                composed,
+                root_path=overlay_path,
+            )
         warnings = validate_config(composed)
         type_delta, strandings, report_warnings = _reload_type_report(
             instance, composed, allow_orphans=allow_orphans
         )
+        _validate_source_manifest(composed, source_manifest)
         if config_yaml is not None:
             overlay_path.parent.mkdir(parents=True, exist_ok=True)
             overlay_path.write_text(config_yaml)
-        active_path.parent.mkdir(parents=True, exist_ok=True)
-        save_config(composed, active_path)
+        _write_materialized_config(instance, composed, source_manifest)
         if config_path is not None:
             # A new overlay path changes which local file is tracked, but the
             # active config remains the generated upstream+overlay composition.
@@ -713,9 +810,11 @@ def service_reload_config(
         type_delta, strandings, report_warnings = _reload_type_report(
             instance, validation.config, allow_orphans=allow_orphans
         )
+        source_manifest = config_source_manifest or ConfigSourceManifest(
+            composed_digest=compute_composed_config_digest(validation.config)
+        )
+        _write_materialized_config(instance, validation.config, source_manifest)
         target_path = instance.get_config_path()
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        save_config(validation.config, target_path)
         ensure_auth_managed_runtime_identity(instance)
         return ReloadConfigResult(
             config_path=str(target_path),
@@ -775,4 +874,72 @@ def service_reload_config(
         config_path=str(instance.get_config_path()),
         updated=False,
         warnings=warnings,
+    )
+
+
+def service_config_status(
+    instance: InstanceProtocol,
+    *,
+    current_source_manifest: ConfigSourceManifest | None = None,
+) -> ConfigStatusResult:
+    """Compare recorded config sources and materialized active bytes."""
+    provenance = instance.get_config_provenance()
+    config_path = instance.get_config_path()
+    if provenance is None:
+        return ConfigStatusResult(
+            status="untracked",
+            config_path=str(config_path),
+            materialized_matches=None,
+            sources_checked=current_source_manifest is not None,
+            composed_matches=None,
+        )
+
+    actual_materialized = compute_file_digest(config_path)
+    materialized_matches = actual_materialized == provenance.materialized_digest
+    if not materialized_matches:
+        return ConfigStatusResult(
+            status="materialized_modified",
+            config_path=str(config_path),
+            materialized_matches=False,
+            sources_checked=current_source_manifest is not None,
+            composed_matches=None,
+            provenance=provenance,
+        )
+
+    if current_source_manifest is None:
+        active_matches_source = provenance.active_config_digest == provenance.composed_digest
+        return ConfigStatusResult(
+            status="source_unchecked" if active_matches_source else "source_changed",
+            config_path=str(config_path),
+            materialized_matches=True,
+            sources_checked=False,
+            composed_matches=active_matches_source,
+            changed_sources=(
+                [] if active_matches_source else [provenance.root_path or "(composed config)"]
+            ),
+            provenance=provenance,
+        )
+
+    recorded_sources = {item.path: item.digest for item in provenance.layers}
+    current_sources = {item.path: item.digest for item in current_source_manifest.layers}
+    changed_sources = sorted(
+        path
+        for path in set(recorded_sources) | set(current_sources)
+        if recorded_sources.get(path) != current_sources.get(path)
+    )
+    composed_matches = (
+        current_source_manifest.composed_digest == provenance.composed_digest
+        and current_source_manifest.composed_digest == provenance.active_config_digest
+    )
+    if not composed_matches and not changed_sources:
+        changed_sources = [current_source_manifest.root_path or "(composed config)"]
+
+    return ConfigStatusResult(
+        status="in_sync" if composed_matches and not changed_sources else "source_changed",
+        config_path=str(config_path),
+        materialized_matches=True,
+        sources_checked=True,
+        composed_matches=composed_matches,
+        changed_sources=changed_sources,
+        provenance=provenance,
     )

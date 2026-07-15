@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
+from cruxible_core.config.provenance import compose_file_with_source_manifest
 from cruxible_core.errors import ConstraintViolationError, InstanceNotFoundError
 from cruxible_core.kits.state_refs import StateCatalogEntry
 from cruxible_core.mcp.handlers import reset_client_cache
@@ -1179,10 +1180,14 @@ def test_reload_config_route_updates_instance_path(
     instance_id = _init_instance(app_client, server_project)
     new_config = tmp_path / "alt-config.yaml"
     new_config.write_text(CAR_PARTS_YAML.replace("car_parts_compatibility", "alt_name"))
+    _composed, source_manifest = compose_file_with_source_manifest(new_config)
 
     response = app_client.post(
         f"/api/v1/{instance_id}/config/reload",
-        json={"config_yaml": new_config.read_text()},
+        json={
+            "config_yaml": new_config.read_text(),
+            "config_source_manifest": source_manifest.model_dump(mode="json"),
+        },
     )
 
     assert response.status_code == 200
@@ -1190,6 +1195,18 @@ def test_reload_config_route_updates_instance_path(
     assert payload["updated"] is True
     assert str(tmp_path / "alt-config.yaml") not in payload["config_path"]
     assert payload["config_path"].endswith("/.cruxible/configs/active.yaml")
+    active_path = get_manager().get(instance_id).get_config_path()
+    assert active_path.read_text().startswith("# MATERIALIZED - DO NOT EDIT")
+
+    status_response = app_client.post(
+        f"/api/v1/{instance_id}/config/status",
+        json={"current_source_manifest": source_manifest.model_dump(mode="json")},
+    )
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["status"] == "in_sync"
+    assert status["materialized_matches"] is True
+    assert status["provenance"]["root_path"] == str(new_config.resolve())
 
 
 def test_server_init_creates_daemon_owned_governed_instance(

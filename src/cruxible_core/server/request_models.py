@@ -16,6 +16,7 @@ class InitRequest(BaseModel):
     data_dir: str | None = None
     kits: list[str] | None = None
     bare: bool = False
+    config_source_manifest: contracts.ConfigSourceManifest | None = None
 
 
 class ValidateRequest(BaseModel):
@@ -320,6 +321,11 @@ class ReloadConfigRequest(BaseModel):
     config_path: str | None = None
     config_yaml: str | None = None
     allow_orphans: bool = False
+    config_source_manifest: contracts.ConfigSourceManifest | None = None
+
+
+class ConfigStatusRequest(BaseModel):
+    current_source_manifest: contracts.ConfigSourceManifest | None = None
 
 
 class SnapshotCreateRequest(BaseModel):

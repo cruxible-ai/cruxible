@@ -226,6 +226,27 @@ class GovernedActorContext(BaseModel):
         return self
 
 
+class ConfigSourceDigest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    digest: str
+
+
+class ConfigSourceManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    root_path: str | None = None
+    layers: list[ConfigSourceDigest] = Field(default_factory=list)
+    composed_digest: str
+
+
+class ConfigProvenance(ConfigSourceManifest):
+    active_config_digest: str
+    materialized_digest: str
+    recorded_at: str
+
+
 class SignalBucketBasis(BaseModel):
     mode: Literal["score", "enum"] = Field(
         description="Whether the signal was bucketed by numeric score or enum match."
@@ -1151,6 +1172,22 @@ class ReloadConfigResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     type_delta: ConfigTypeDelta = Field(default_factory=ConfigTypeDelta)
     strandings: ConfigStrandingReport = Field(default_factory=ConfigStrandingReport)
+
+
+class ConfigStatusResult(BaseModel):
+    status: Literal[
+        "untracked",
+        "materialized_modified",
+        "source_changed",
+        "source_unchecked",
+        "in_sync",
+    ]
+    config_path: str
+    materialized_matches: bool | None
+    sources_checked: bool
+    composed_matches: bool | None
+    changed_sources: list[str] = Field(default_factory=list)
+    provenance: ConfigProvenance | None = None
 
 
 class FeedbackProfileResult(BaseModel):

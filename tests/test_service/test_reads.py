@@ -10,6 +10,11 @@ import structlog
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.loader import save_config
+from cruxible_core.config.provenance import (
+    ConfigSourceManifest,
+    compose_file_with_source_manifest,
+    record_materialized_provenance,
+)
 from cruxible_core.errors import (
     ConfigError,
     EntityTypeNotFoundError,
@@ -30,6 +35,7 @@ from cruxible_core.service import (
     service_add_decision_policy,
     service_add_entities,
     service_batch_direct_write,
+    service_config_status,
     service_get_entity,
     service_get_entity_change_history,
     service_get_receipt,
@@ -235,6 +241,71 @@ class TestInit:
             instance_root / ".cruxible" / "configs" / "active.yaml"
         )
         assert (instance_root / ".cruxible" / "configs" / "active.yaml").exists()
+        materialized = result.instance.get_config_path().read_text()
+        assert materialized.startswith("# MATERIALIZED - DO NOT EDIT\n# Source:")
+        provenance = result.instance.get_config_provenance()
+        assert provenance is not None
+        assert [Path(layer.path).name for layer in provenance.layers] == [
+            "base.yaml",
+            "overlay.yaml",
+        ]
+
+    def test_config_status_distinguishes_source_and_materialized_drift(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        base = tmp_path / "base.yaml"
+        base.write_text(CAR_PARTS_YAML)
+        overlay = tmp_path / "overlay.yaml"
+        overlay.write_text(
+            'version: "1.0"\n'
+            "name: overlay\n"
+            "extends: base.yaml\n"
+            "entity_types: {}\n"
+            "relationships: []\n"
+        )
+        instance = service_init(tmp_path / "instance", config_path=str(overlay)).instance
+        _composed, current = compose_file_with_source_manifest(overlay)
+
+        in_sync = service_config_status(instance, current_source_manifest=current)
+        assert in_sync.status == "in_sync"
+        assert in_sync.changed_sources == []
+
+        overlay.write_text(overlay.read_text().replace("name: overlay", "name: changed"))
+        _composed, changed = compose_file_with_source_manifest(overlay)
+        source_changed = service_config_status(instance, current_source_manifest=changed)
+        assert source_changed.status == "source_changed"
+        assert source_changed.changed_sources == [str(overlay.resolve())]
+
+        active = instance.get_config_path()
+        active.write_text(active.read_text() + "# edit\n")
+        hand_edited = service_config_status(instance, current_source_manifest=changed)
+        assert hand_edited.status == "materialized_modified"
+        with pytest.raises(ConfigError, match="ACTIVE CONFIG WAS HAND-EDITED"):
+            instance.verify_config_integrity()
+
+    def test_authorized_config_mutation_refreshes_integrity_but_exposes_source_drift(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        source = tmp_path / "source.yaml"
+        source.write_text(CAR_PARTS_YAML)
+        result = service_init(tmp_path / "instance", config_yaml=source.read_text())
+        instance = result.instance
+        _composed, source_manifest = compose_file_with_source_manifest(source)
+        instance.set_config_provenance(
+            record_materialized_provenance(source_manifest, instance.get_config_path())
+        )
+
+        config = instance.load_config()
+        config.description = "authorized active-only edit"
+        instance.save_config(config)
+
+        instance.verify_config_integrity()
+        status = service_config_status(instance, current_source_manifest=source_manifest)
+        assert status.status == "source_changed"
+        assert status.materialized_matches is True
+        assert status.composed_matches is False
 
     def test_init_with_extends_base_not_found(self, tmp_path: Path) -> None:
         overlay = tmp_path / "overlay.yaml"
@@ -709,6 +780,25 @@ class TestSchema:
         assert result.updated is True
         assert any("type delta not computed" in w for w in result.warnings)
         assert result.strandings.entity_types == {}
+
+    def test_reload_rejects_mismatched_source_manifest_before_write(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        active = populated_instance.get_config_path()
+        before = active.read_bytes()
+
+        with pytest.raises(ConfigError, match="source provenance does not match"):
+            service_reload_config(
+                populated_instance,
+                config_yaml=CAR_PARTS_YAML,
+                config_source_manifest=ConfigSourceManifest(
+                    root_path="/repo/config.yaml",
+                    composed_digest="sha256:not-the-config",
+                ),
+            )
+
+        assert active.read_bytes() == before
 
     def test_empty_instance_accepts_narrower_config(
         self, initialized_instance: CruxibleInstance, tmp_path: Path

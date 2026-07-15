@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from cruxible_core.config.provenance import ConfigProvenanceMetadata
     from cruxible_core.config.schema import CoreConfig
     from cruxible_core.decision.types import DecisionEvent, DecisionRecord
     from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
@@ -356,6 +357,17 @@ class InstanceProtocol(ABC):
     def load_config(self) -> CoreConfig: ...
     @abstractmethod
     def save_config(self, config: CoreConfig) -> None: ...
+    def get_config_provenance(self) -> ConfigProvenanceMetadata | None:
+        """Return config provenance when the instance implementation supports it."""
+        return None
+
+    def set_config_provenance(self, provenance: ConfigProvenanceMetadata | None) -> None:
+        """Persist config provenance when supported by the instance implementation."""
+        raise NotImplementedError
+
+    def verify_config_integrity(self) -> None:
+        """Verify materialized config integrity when supported."""
+        return None
     @abstractmethod
     def load_graph(self) -> EntityGraph: ...
     @abstractmethod

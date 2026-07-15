@@ -260,6 +260,7 @@ class CruxibleClient:
         data_dir: str | None = None,
         kits: list[str] | None = None,
         bare: bool = False,
+        config_source_manifest: contracts.ConfigSourceManifest | None = None,
     ) -> contracts.InitResult:
         payload: dict[str, Any] = {
             "root_dir": root_dir,
@@ -268,6 +269,8 @@ class CruxibleClient:
             "data_dir": data_dir,
             "kits": kits,
         }
+        if config_source_manifest is not None:
+            payload["config_source_manifest"] = config_source_manifest.model_dump(mode="json")
         if bare:
             payload["bare"] = True
         response = self._client.post(
@@ -968,11 +971,14 @@ class CruxibleClient:
         config_path: str | None = None,
         config_yaml: str | None = None,
         allow_orphans: bool = False,
+        config_source_manifest: contracts.ConfigSourceManifest | None = None,
     ) -> contracts.ReloadConfigResult:
         payload: dict[str, Any] = {
             "config_path": config_path,
             "config_yaml": config_yaml,
         }
+        if config_source_manifest is not None:
+            payload["config_source_manifest"] = config_source_manifest.model_dump(mode="json")
         if allow_orphans:
             payload["allow_orphans"] = True
         response = self._client.post(
@@ -980,6 +986,24 @@ class CruxibleClient:
             json=payload,
         )
         return self._parse_model(response, contracts.ReloadConfigResult)
+
+    def config_status(
+        self,
+        instance_id: str,
+        *,
+        current_source_manifest: contracts.ConfigSourceManifest | None = None,
+    ) -> contracts.ConfigStatusResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/config/status",
+            json={
+                "current_source_manifest": (
+                    current_source_manifest.model_dump(mode="json")
+                    if current_source_manifest is not None
+                    else None
+                )
+            },
+        )
+        return self._parse_model(response, contracts.ConfigStatusResult)
 
     def sample(
         self,

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client import contracts
 from cruxible_core.mcp import handlers as mcp_handlers
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
@@ -103,6 +104,7 @@ class GovernedLocalClient:
         config_yaml: str | None = None,
         data_dir: str | None = None,
         kits: list[str] | None = None,
+        config_source_manifest: contracts.ConfigSourceManifest | None = None,
     ):
         return api.init_governed(
             root_dir=root_dir,
@@ -110,6 +112,7 @@ class GovernedLocalClient:
             config_yaml=config_yaml,
             data_dir=data_dir,
             kits=kits,
+            config_source_manifest=config_source_manifest,
         )
 
     def validate(self, config_path: str | None = None, config_yaml: str | None = None):

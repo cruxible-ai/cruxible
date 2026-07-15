@@ -239,9 +239,24 @@ which types form their low-trust write surfaces.
 
 The `extends` field enables an **overlay pattern** for release-backed state publishing. A published upstream state model provides entity types, relationships, and workflows; a downstream overlay adds its own internal extensions without duplicating the base.
 
-**How it works:** `cruxible_validate` detects `extends`, resolves the base path relative to the overlay file, composes in memory, and validates the composed result. The raw `load_config()` function still parses a single file — composition happens in the service/CLI layer. For inline `config_yaml` (no file path), `extends` must use an absolute path or validation will error.
+**How it works:** `cruxible_validate` resolves `extends` recursively, linearizes
+the chain base-first, deduplicates shared file layers by resolved path, composes
+in memory, and validates the result. Cycles are rejected with the full path
+chain. The raw `load_config()` function still parses one file; composition
+happens in the service/CLI layer. For inline `config_yaml` (no file path),
+`extends` must use an absolute path or validation will error.
 
-At runtime, the release-backed overlay flow (`service_reload_config`) materializes the composed config to disk as the active config the instance uses.
+At runtime, reload materializes the composed config to the instance-owned active
+file. The file is stamped `MATERIALIZED - DO NOT EDIT`. Instance metadata records
+the exact digest and path of every authored layer, semantic digests of the
+last-reloaded source composition and current active config, and the exact-byte
+digest of the generated active file.
+
+`cruxible config status --config <authored-root>` distinguishes source changes
+that need a reload from hand edits to the active materialization. Governed daemon
+startup refuses a recorded active-file mismatch. For recovery only, start with
+`CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH=true`, reload from the authored source,
+then remove the override.
 
 ```yaml
 # overlay config — validated by composing with the base automatically

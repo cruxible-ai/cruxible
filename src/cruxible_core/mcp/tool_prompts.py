@@ -182,6 +182,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_reload_config": (
         "Use when you need to replace or reload the active config for an instance."
     ),
+    "cruxible_config_status": (
+        "Use when you need to check source drift or active config integrity."
+    ),
     "cruxible_propose_workflow": (
         "Use when a workflow proposes reviewable relationship changes instead of "
         "writing them directly."

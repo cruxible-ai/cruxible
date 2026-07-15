@@ -62,6 +62,7 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
             "cruxible_apply_workflow",
             "cruxible_lock_workflow",
             "cruxible_reload_config",
+            "cruxible_config_status",
         }
     ),
     PROFILE_REVIEW: frozenset(

@@ -1178,6 +1178,7 @@ error-level finding exists.
 | `config_path` | no | string | null |  |
 | `config_yaml` | no | string | null |  |
 | `allow_orphans` | no | boolean | Allow stored graph types absent from the incoming config (default false: strandings refuse the reload with per-type counts). |
+| `config_source_manifest` | no | object | Source paths and digests for uploaded composed YAML. File-based handlers build this automatically. |
 
 **Returns:** Top-level fields: `config_path`, `updated`, `warnings`, `type_delta`, `strandings`
 
@@ -1187,6 +1188,18 @@ error-level finding exists.
 - Unknown `instance_id` or missing daemon configuration.
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_config_status
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Check authored-source drift and active materialized-config integrity.
+
+**Arguments:** `instance_id` is required. `current_source_manifest` is optional;
+without it, only the active materialized digest is checked.
+
+**Returns:** `status`, `config_path`, `materialized_matches`, `sources_checked`,
+`composed_matches`, `changed_sources`, and recorded `provenance`.
 
 ## cruxible_propose_workflow
 

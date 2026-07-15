@@ -3456,6 +3456,564 @@
         "snapshot"
       ]
     },
+    "ConfigProvenance": {
+      "fields": {
+        "active_config_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "active_config_digest",
+          "required": true,
+          "schema": {
+            "title": "Active Config Digest",
+            "type": "string"
+          }
+        },
+        "composed_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "composed_digest",
+          "required": true,
+          "schema": {
+            "title": "Composed Digest",
+            "type": "string"
+          }
+        },
+        "layers": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "layers",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ConfigSourceDigest"
+            },
+            "title": "Layers",
+            "type": "array"
+          }
+        },
+        "materialized_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "materialized_digest",
+          "required": true,
+          "schema": {
+            "title": "Materialized Digest",
+            "type": "string"
+          }
+        },
+        "recorded_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "recorded_at",
+          "required": true,
+          "schema": {
+            "title": "Recorded At",
+            "type": "string"
+          }
+        },
+        "root_path": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "root_path",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Root Path"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ConfigSourceDigest": {
+            "additionalProperties": false,
+            "properties": {
+              "digest": {
+                "title": "Digest",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "digest"
+            ],
+            "title": "ConfigSourceDigest",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "active_config_digest": {
+            "title": "Active Config Digest",
+            "type": "string"
+          },
+          "composed_digest": {
+            "title": "Composed Digest",
+            "type": "string"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/$defs/ConfigSourceDigest"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "materialized_digest": {
+            "title": "Materialized Digest",
+            "type": "string"
+          },
+          "recorded_at": {
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "root_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Root Path"
+          }
+        },
+        "required": [
+          "composed_digest",
+          "active_config_digest",
+          "materialized_digest",
+          "recorded_at"
+        ],
+        "title": "ConfigProvenance",
+        "type": "object"
+      },
+      "required_fields": [
+        "active_config_digest",
+        "composed_digest",
+        "materialized_digest",
+        "recorded_at"
+      ]
+    },
+    "ConfigSourceDigest": {
+      "fields": {
+        "digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "digest",
+          "required": true,
+          "schema": {
+            "title": "Digest",
+            "type": "string"
+          }
+        },
+        "path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "path",
+          "required": true,
+          "schema": {
+            "title": "Path",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "digest"
+        ],
+        "title": "ConfigSourceDigest",
+        "type": "object"
+      },
+      "required_fields": [
+        "digest",
+        "path"
+      ]
+    },
+    "ConfigSourceManifest": {
+      "fields": {
+        "composed_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "composed_digest",
+          "required": true,
+          "schema": {
+            "title": "Composed Digest",
+            "type": "string"
+          }
+        },
+        "layers": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "layers",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ConfigSourceDigest"
+            },
+            "title": "Layers",
+            "type": "array"
+          }
+        },
+        "root_path": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "root_path",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Root Path"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ConfigSourceDigest": {
+            "additionalProperties": false,
+            "properties": {
+              "digest": {
+                "title": "Digest",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "digest"
+            ],
+            "title": "ConfigSourceDigest",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "composed_digest": {
+            "title": "Composed Digest",
+            "type": "string"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/$defs/ConfigSourceDigest"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "root_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Root Path"
+          }
+        },
+        "required": [
+          "composed_digest"
+        ],
+        "title": "ConfigSourceManifest",
+        "type": "object"
+      },
+      "required_fields": [
+        "composed_digest"
+      ]
+    },
+    "ConfigStatusResult": {
+      "fields": {
+        "changed_sources": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "changed_sources",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed Sources",
+            "type": "array"
+          }
+        },
+        "composed_matches": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "composed_matches",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Composed Matches"
+          }
+        },
+        "config_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "config_path",
+          "required": true,
+          "schema": {
+            "title": "Config Path",
+            "type": "string"
+          }
+        },
+        "materialized_matches": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "materialized_matches",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Materialized Matches"
+          }
+        },
+        "provenance": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "provenance",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ConfigProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "sources_checked": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "sources_checked",
+          "required": true,
+          "schema": {
+            "title": "Sources Checked",
+            "type": "boolean"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "untracked",
+              "materialized_modified",
+              "source_changed",
+              "source_unchecked",
+              "in_sync"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ConfigProvenance": {
+            "additionalProperties": false,
+            "properties": {
+              "active_config_digest": {
+                "title": "Active Config Digest",
+                "type": "string"
+              },
+              "composed_digest": {
+                "title": "Composed Digest",
+                "type": "string"
+              },
+              "layers": {
+                "items": {
+                  "$ref": "#/$defs/ConfigSourceDigest"
+                },
+                "title": "Layers",
+                "type": "array"
+              },
+              "materialized_digest": {
+                "title": "Materialized Digest",
+                "type": "string"
+              },
+              "recorded_at": {
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "root_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Root Path"
+              }
+            },
+            "required": [
+              "composed_digest",
+              "active_config_digest",
+              "materialized_digest",
+              "recorded_at"
+            ],
+            "title": "ConfigProvenance",
+            "type": "object"
+          },
+          "ConfigSourceDigest": {
+            "additionalProperties": false,
+            "properties": {
+              "digest": {
+                "title": "Digest",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "digest"
+            ],
+            "title": "ConfigSourceDigest",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "changed_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed Sources",
+            "type": "array"
+          },
+          "composed_matches": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Composed Matches"
+          },
+          "config_path": {
+            "title": "Config Path",
+            "type": "string"
+          },
+          "materialized_matches": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Materialized Matches"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ConfigProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "sources_checked": {
+            "title": "Sources Checked",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "untracked",
+              "materialized_modified",
+              "source_changed",
+              "source_unchecked",
+              "in_sync"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "config_path",
+          "materialized_matches",
+          "sources_checked",
+          "composed_matches"
+        ],
+        "title": "ConfigStatusResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "composed_matches",
+        "config_path",
+        "materialized_matches",
+        "sources_checked",
+        "status"
+      ]
+    },
     "ConfigStrandingReport": {
       "fields": {
         "entity_types": {

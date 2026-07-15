@@ -16,11 +16,11 @@ from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _emit_json,
-    _read_validation_yaml_or_error,
     _require_instance_id,
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.config.provenance import ConfigSourceManifest
 from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.provenance import (
     SOURCE_REF_BATCH_DIRECT_WRITE,
@@ -31,6 +31,7 @@ from cruxible_core.service import (
     EntityWriteInput,
     SharedEvidenceInput,
     service_batch_direct_write,
+    service_config_status,
     service_reload_config,
 )
 from cruxible_core.service.lifecycle_inputs import (
@@ -1064,13 +1065,16 @@ def add_constraint_cmd(
 def reload_config_cmd(config_path: str | None, allow_orphans: bool) -> None:
     """Validate the active config or repoint the instance to a new config file."""
     remote = _common._get_client() is not None
+    uploaded_yaml: str | None = None
+    source_manifest: contracts.ConfigSourceManifest | None = None
+    if remote and config_path is not None:
+        uploaded_yaml, source_manifest = _common._read_config_upload_or_error(config_path)
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.reload_config(
             instance_id,
-            config_yaml=(
-                _read_validation_yaml_or_error(config_path) if config_path is not None else None
-            ),
+            config_yaml=uploaded_yaml,
             allow_orphans=allow_orphans,
+            config_source_manifest=source_manifest,
         ),
         lambda instance: service_reload_config(
             instance, config_path=config_path, allow_orphans=allow_orphans
@@ -1117,6 +1121,76 @@ def reload_config_cmd(config_path: str | None, allow_orphans: bool) -> None:
             f"relationships [{counts(result.strandings.relationship_types)}]",
             fg="yellow",
         )
+
+
+@click.command("status")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    help="Authored root config to compare with the active materialization.",
+)
+@json_option
+@handle_errors
+def config_status_cmd(config_path: str | None, output_json: bool) -> None:
+    """Report source drift and active materialized-config integrity."""
+    source_manifest: contracts.ConfigSourceManifest | None = None
+    core_source_manifest = None
+    if config_path is not None:
+        _yaml, source_manifest = _common._read_config_upload_or_error(config_path)
+        core_source_manifest = ConfigSourceManifest.model_validate(
+            source_manifest.model_dump(mode="python")
+        )
+
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.config_status(
+            instance_id,
+            current_source_manifest=source_manifest,
+        ),
+        lambda instance: service_config_status(
+            instance,
+            current_source_manifest=core_source_manifest,
+        ),
+        command_name="config status",
+    )
+    if output_json:
+        if isinstance(result, contracts.ConfigStatusResult):
+            _emit_json(result.model_dump(mode="json"))
+        else:
+            _emit_json(
+                {
+                    **vars(result),
+                    "provenance": (
+                        result.provenance.model_dump(mode="json")
+                        if result.provenance is not None
+                        else None
+                    ),
+                }
+            )
+    elif result.status == "in_sync":
+        click.echo("Config in sync: authored sources and active materialization match.")
+    elif result.status == "materialized_modified":
+        click.secho(
+            f"ACTIVE CONFIG WAS HAND-EDITED: {result.config_path}",
+            fg="red",
+            bold=True,
+        )
+    elif result.status == "source_changed":
+        click.secho(
+            "Authored config and active materialization differ; reload is pending:",
+            fg="yellow",
+        )
+        for source in result.changed_sources:
+            click.echo(f"  {source}")
+    elif result.status == "source_unchecked":
+        click.echo(
+            "Active materialized config is intact; pass --config to compare authored sources."
+        )
+    else:
+        click.echo("Config provenance is not recorded; reload from an authored config to track it.")
+
+    if result.status in {"materialized_modified", "source_changed"}:
+        raise click.exceptions.Exit(1)
 
 
 @click.command("add-decision-policy")

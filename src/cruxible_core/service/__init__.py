@@ -59,6 +59,7 @@ from cruxible_core.service.groups import (
     service_update_trust_status,
 )
 from cruxible_core.service.lifecycle import (
+    service_config_status,
     service_init,
     service_init_governed_upload,
     service_reload_config,
@@ -128,6 +129,7 @@ from cruxible_core.service.types import (
     BatchRelationshipWriteInput,
     CanonicalViewResult,
     CloneSnapshotResult,
+    ConfigStatusResult,
     ConstraintSuggestion,
     DebugPackage,
     DecisionEventListResult,
@@ -235,6 +237,7 @@ __all__ = [
     "FeedbackItemInput",
     "FeedbackServiceResult",
     "CloneSnapshotResult",
+    "ConfigStatusResult",
     "CanonicalViewResult",
     "EntityChangeHistoryItem",
     "EntityChangeHistoryResult",
@@ -300,6 +303,7 @@ __all__ = [
     "WorkflowTestCaseServiceResult",
     # Execution
     "service_lock",
+    "service_config_status",
     "service_state_status",
     "service_publish_state",
     "service_create_state_overlay",

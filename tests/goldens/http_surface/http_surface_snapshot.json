@@ -23,6 +23,9 @@
   "/api/v1/{instance_id}/config/reload": {
     "POST": "ReloadConfigResult"
   },
+  "/api/v1/{instance_id}/config/status": {
+    "POST": "ConfigStatusResult"
+  },
   "/api/v1/{instance_id}/constraints": {
     "POST": "AddConstraintResult"
   },

@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from cruxible_core import __version__
 from cruxible_core.errors import CoreError
+from cruxible_core.runtime.instance import CruxibleInstance, enforce_config_integrity
 from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.config import (
@@ -27,7 +28,7 @@ from cruxible_core.server.errors import (
     ErrorResponse,
     error_to_response,
 )
-from cruxible_core.server.registry import get_registry
+from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.server.request_logging import configure_request_logging
 from cruxible_core.server.routes.decision_records import router as decision_records_router
 from cruxible_core.server.routes.feedback import router as feedback_router
@@ -213,6 +214,14 @@ def run_server(
     )
     if is_server_auth_enabled():
         credential_store.mark_auth_required("server_startup_auth_enabled")
+    for record in registry.list_instances():
+        if record.backend != GOVERNED_DAEMON_BACKEND:
+            continue
+        instance_root = Path(record.location)
+        if not (instance_root / CruxibleInstance.INSTANCE_DIR / "instance.json").exists():
+            continue
+        instance = CruxibleInstance.load(instance_root)
+        enforce_config_integrity(instance, context=f"daemon startup for {record.instance_id}")
     for warning in volatile_state_path_warnings(
         instance_locations=[
             (record.instance_id, record.location) for record in registry.list_instances()

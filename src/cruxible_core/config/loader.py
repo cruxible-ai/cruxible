@@ -156,12 +156,20 @@ def _parse_yaml(raw: str) -> dict[str, Any]:
     return data
 
 
-def save_config(config: CoreConfig, path: str | Path) -> None:
+def save_config(
+    config: CoreConfig,
+    path: str | Path,
+    *,
+    header: str | None = None,
+) -> None:
     """Serialize a CoreConfig to YAML and write to disk atomically."""
     stamped = config.model_copy(update={"cruxible_version": __version__})
     path = Path(path)
     data = stamped.model_dump(mode="python", by_alias=True, exclude_none=True)
     yaml_str = yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
+    if header is not None:
+        comments = "\n".join(f"# {line}" for line in header.splitlines())
+        yaml_str = f"{comments}\n{yaml_str}"
     try:
         fd = tempfile.NamedTemporaryFile(
             mode="w",

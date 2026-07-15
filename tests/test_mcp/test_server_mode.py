@@ -374,6 +374,17 @@ def test_new_admin_and_governed_handlers_delegate_to_client(monkeypatch: pytest.
                 updated=True,
             )
 
+        def config_status(self, instance_id, *, current_source_manifest=None):
+            assert instance_id == "inst_123"
+            assert current_source_manifest is None
+            return contracts.ConfigStatusResult(
+                status="source_unchecked",
+                config_path="/srv/project/config.yaml",
+                materialized_matches=True,
+                sources_checked=False,
+                composed_matches=None,
+            )
+
         def create_snapshot(self, instance_id, *, label=None):
             assert instance_id == "inst_123"
             assert label == "baseline"
@@ -422,6 +433,7 @@ def test_new_admin_and_governed_handlers_delegate_to_client(monkeypatch: pytest.
 
     assert handlers.handle_workflow_test("inst_123", "smoke").passed == 1
     assert handlers.handle_reload_config("inst_123", config_yaml="name: demo\n").updated
+    assert handlers.handle_config_status("inst_123").status == "source_unchecked"
     assert handlers.handle_create_snapshot("inst_123", "baseline").snapshot.snapshot_id == "snap_1"
     assert (
         handlers.handle_instance_backup("inst_123", "/tmp/backup.zip", "backup").artifact_path

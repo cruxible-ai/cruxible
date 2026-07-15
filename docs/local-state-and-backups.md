@@ -57,6 +57,12 @@ A Cruxible instance can include:
 - decision records and decision events
 - feedback and outcomes
 
+Generated active configs carry source provenance in `instance.json`. Governed
+daemon startup verifies the active file's exact digest before serving requests.
+If an active config was edited out of band, repair it by reloading the authored
+root. `CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH=true` is a temporary recovery
+override, not a normal launch setting.
+
 Exact file names may change across releases. Back up the instance directory as
 a unit instead of cherry-picking one SQLite database.
 

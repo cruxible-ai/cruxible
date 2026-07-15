@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, TypeAlias
 
+from cruxible_core.config.provenance import ConfigProvenanceMetadata
 from cruxible_core.config.schema import (
     CoreConfig,
     FeedbackRemediationHint,
@@ -384,6 +385,26 @@ class ReloadConfigResult:
     warnings: list[str] = field(default_factory=list)
     type_delta: ConfigTypeDelta = field(default_factory=ConfigTypeDelta)
     strandings: ConfigStrandingReport = field(default_factory=ConfigStrandingReport)
+
+
+ConfigSyncStatus = Literal[
+    "untracked",
+    "materialized_modified",
+    "source_changed",
+    "source_unchecked",
+    "in_sync",
+]
+
+
+@dataclass
+class ConfigStatusResult:
+    status: ConfigSyncStatus
+    config_path: str
+    materialized_matches: bool | None
+    sources_checked: bool
+    composed_matches: bool | None
+    changed_sources: list[str] = field(default_factory=list)
+    provenance: ConfigProvenanceMetadata | None = None
 
 
 @dataclass

@@ -14,6 +14,7 @@ from typing import Any, Literal, TypeVar, cast
 from pydantic import BaseModel, ValidationError
 
 from cruxible_client import contracts
+from cruxible_core.config.provenance import ConfigSourceManifest
 from cruxible_core.config.schema import schema_wire_payload
 from cruxible_core.errors import AuthenticationError, ConfigError
 from cruxible_core.governance.actors import (
@@ -54,6 +55,7 @@ from cruxible_core.service import (
     service_batch_direct_write,
     service_clone_snapshot,
     service_config_compatibility_warnings,
+    service_config_status,
     service_create_decision_record,
     service_create_snapshot,
     service_create_state_overlay,
@@ -146,6 +148,15 @@ WorkflowExecutionContractT = TypeVar(
     contracts.WorkflowRunResult,
     contracts.WorkflowApplyResult,
 )
+
+
+def _core_source_manifest(
+    source: contracts.ConfigSourceManifest | None,
+) -> ConfigSourceManifest | None:
+    if source is None:
+        return None
+    return ConfigSourceManifest.model_validate(source.model_dump(mode="python"))
+
 
 _HOSTED_INIT_METADATA_RELATIVE_PATH = Path(CruxibleInstance.INSTANCE_DIR) / "hosted_init.json"
 
@@ -380,6 +391,7 @@ def init_local(
     data_dir: str | None = None,
     kits: list[str] | None = None,
     bare: bool = False,
+    config_source_manifest: contracts.ConfigSourceManifest | None = None,
 ) -> contracts.InitResult:
     """Initialize a new cruxible instance, or reload an existing one."""
     has_config = _has_init_config(config_path, config_yaml, kits)
@@ -402,6 +414,7 @@ def init_local(
             data_dir=data_dir,
             kits=kits,
             default_base_kit=None if bare else get_default_base_kit(),
+            config_source_manifest=_core_source_manifest(config_source_manifest),
         ),
         include_initialized_warnings=False,
     )
@@ -414,6 +427,7 @@ def init_governed(
     data_dir: str | None = None,
     kits: list[str] | None = None,
     bare: bool = False,
+    config_source_manifest: contracts.ConfigSourceManifest | None = None,
 ) -> contracts.InitResult:
     """Initialize or reload a daemon-owned governed instance."""
     check_permission(
@@ -443,6 +457,7 @@ def init_governed(
                 data_dir=data_dir,
                 kits=kits,
                 default_base_kit=None if bare else get_default_base_kit(),
+                config_source_manifest=_core_source_manifest(config_source_manifest),
             )
 
         return _load_or_initialize_instance(
@@ -474,6 +489,7 @@ def init_governed(
             data_dir=data_dir,
             kits=kits,
             default_base_kit=None if bare else get_default_base_kit(),
+            config_source_manifest=_core_source_manifest(config_source_manifest),
         )
 
     try:
@@ -2518,6 +2534,7 @@ def reload_config(
     config_path: str | None = None,
     config_yaml: str | None = None,
     allow_orphans: bool = False,
+    config_source_manifest: contracts.ConfigSourceManifest | None = None,
 ) -> contracts.ReloadConfigResult:
     """Validate the current config or repoint the instance to a new config path."""
     check_permission("cruxible_reload_config", instance_id=instance_id)
@@ -2537,6 +2554,7 @@ def reload_config(
         config_yaml=config_yaml,
         config_base_dir=config_base_dir,
         allow_orphans=allow_orphans,
+        config_source_manifest=_core_source_manifest(config_source_manifest),
     )
     return contracts.ReloadConfigResult(
         config_path=result.config_path,
@@ -2547,6 +2565,32 @@ def reload_config(
     )
 
 
+def config_status(
+    instance_id: str,
+    current_source_manifest: contracts.ConfigSourceManifest | None = None,
+) -> contracts.ConfigStatusResult:
+    """Report authored-source and materialized active-config parity."""
+    check_permission("cruxible_config_status", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_config_status(
+        instance,
+        current_source_manifest=_core_source_manifest(current_source_manifest),
+    )
+    return contracts.ConfigStatusResult(
+        status=result.status,
+        config_path=result.config_path,
+        materialized_matches=result.materialized_matches,
+        sources_checked=result.sources_checked,
+        composed_matches=result.composed_matches,
+        changed_sources=result.changed_sources,
+        provenance=(
+            contracts.ConfigProvenance.model_validate(
+                result.provenance.model_dump(mode="python")
+            )
+            if result.provenance is not None
+            else None
+        ),
+    )
 def sample(
     instance_id: str,
     entity_type: str,

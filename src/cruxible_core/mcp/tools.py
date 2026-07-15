@@ -775,6 +775,7 @@ def register_tools(server: FastMCP) -> list[str]:
         config_path: str | None = None,
         config_yaml: str | None = None,
         allow_orphans: bool = False,
+        config_source_manifest: contracts.ConfigSourceManifest | None = None,
     ) -> contracts.ReloadConfigResult:
         """Reload or replace an instance config after validation."""
         return handlers.handle_reload_config(
@@ -782,6 +783,18 @@ def register_tools(server: FastMCP) -> list[str]:
             config_path=config_path,
             config_yaml=config_yaml,
             allow_orphans=allow_orphans,
+            config_source_manifest=config_source_manifest,
+        )
+
+    @_tool
+    def cruxible_config_status(
+        instance_id: str,
+        current_source_manifest: contracts.ConfigSourceManifest | None = None,
+    ) -> contracts.ConfigStatusResult:
+        """Report source drift and active materialized-config integrity."""
+        return handlers.handle_config_status(
+            instance_id,
+            current_source_manifest=current_source_manifest,
         )
 
     @_tool

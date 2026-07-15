@@ -243,6 +243,14 @@ class TestInputSchema:
         assert "limit" in history_props
         assert "offset" in history_props
         assert "config_yaml" in schemas["cruxible_reload_config"].inputSchema["properties"]
+        assert (
+            "config_source_manifest"
+            in schemas["cruxible_reload_config"].inputSchema["properties"]
+        )
+        assert (
+            "current_source_manifest"
+            in schemas["cruxible_config_status"].inputSchema["properties"]
+        )
         assert "snapshot_id" in schemas["cruxible_clone_snapshot"].inputSchema["required"]
         assert "root_dir" in schemas["cruxible_clone_snapshot"].inputSchema["required"]
 
@@ -465,6 +473,18 @@ class TestOutputSchema:
             (
                 "cruxible_reload_config",
                 {"config_path", "updated", "warnings", "type_delta", "strandings"},
+            ),
+            (
+                "cruxible_config_status",
+                {
+                    "status",
+                    "config_path",
+                    "materialized_matches",
+                    "sources_checked",
+                    "composed_matches",
+                    "changed_sources",
+                    "provenance",
+                },
             ),
             (
                 "cruxible_propose_workflow",

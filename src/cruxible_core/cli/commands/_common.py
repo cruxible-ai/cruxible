@@ -22,6 +22,7 @@ from cruxible_core.cli.context import (
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
 from cruxible_core.config.loader import load_config
+from cruxible_core.config.provenance import compose_file_with_source_manifest
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
@@ -307,6 +308,18 @@ def _read_validation_yaml_or_error(path_str: str) -> str:
     )
     composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
     return yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
+
+
+def _read_config_upload_or_error(
+    path_str: str,
+) -> tuple[str, contracts.ConfigSourceManifest]:
+    """Compose an authored config and return its complete source manifest."""
+    composed, source_manifest = compose_file_with_source_manifest(path_str)
+    composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
+    config_yaml = yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
+    return config_yaml, contracts.ConfigSourceManifest.model_validate(
+        source_manifest.model_dump(mode="python")
+    )
 
 
 def _read_input_payload(path_str: str) -> dict[str, Any]:

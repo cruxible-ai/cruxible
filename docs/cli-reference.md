@@ -79,6 +79,7 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 **Subcommands:**
 
 - `cruxible config reload` - Validate the active config or repoint the instance to a new config file.
+- `cruxible config status` - Compare authored config layers with the active materialization.
 - `cruxible config views` - Render canonical Mermaid/Markdown views for a Cruxible config.
 - `cruxible config expand` - Expand a compact authoring config to the explicit engine config.
 - `cruxible config add-constraint` - Add a constraint rule to the config.
@@ -2242,6 +2243,24 @@ cruxible query inline \
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible config status
+
+**Usage:** `cruxible config status [--config PATH] [--json]`
+
+**Purpose:** Distinguish authored-source drift from out-of-band edits to the active
+materialized config.
+
+Pass the same authored root used for reload:
+
+```bash
+cruxible config status --config ops/business-overlay.yaml
+```
+
+The command reports one of five states: `in_sync`, `source_changed`,
+`materialized_modified`, `source_unchecked`, or `untracked`. Source or active
+drift exits nonzero so the command can be used by hooks and CI. Omitting
+`--config` verifies the active bytes only.
 
 ## cruxible run
 

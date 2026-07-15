@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -20,6 +21,13 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_core import __version__
 from cruxible_core.config.loader import load_config, save_config
+from cruxible_core.config.provenance import (
+    ConfigProvenanceMetadata,
+    ConfigSourceManifest,
+    compute_file_digest,
+    materialized_header,
+    record_materialized_provenance,
+)
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.decision.store import DecisionStore
 from cruxible_core.errors import ConfigError, InstanceNotFoundError
@@ -52,6 +60,31 @@ logger = logging.getLogger(__name__)
 InstanceMode = Literal["dev", "governed"]
 _HEAD_SNAPSHOT_STATE_KEY = "head_snapshot_id"
 _ORIGIN_SNAPSHOT_STATE_KEY = "origin_snapshot_id"
+CONFIG_INTEGRITY_OVERRIDE_ENV = "CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH"
+
+
+def config_integrity_override_enabled() -> bool:
+    """Return whether startup may temporarily tolerate active-config drift."""
+    return os.environ.get(CONFIG_INTEGRITY_OVERRIDE_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def enforce_config_integrity(instance: CruxibleInstance, *, context: str) -> None:
+    """Verify one instance, honoring the explicit recovery override."""
+    try:
+        instance.verify_config_integrity()
+    except ConfigError:
+        if not config_integrity_override_enabled():
+            raise
+        logger.warning(
+            "Config integrity mismatch allowed for recovery (%s): %s",
+            context,
+            instance.get_config_path(),
+        )
 
 
 class InstanceMetadata(BaseModel):
@@ -67,6 +100,7 @@ class InstanceMetadata(BaseModel):
     head_snapshot_id: str | None = None
     origin_snapshot_id: str | None = None
     upstream: UpstreamMetadata | None = None
+    config_provenance: ConfigProvenanceMetadata | None = None
 
 
 class CruxibleInstance(InstanceProtocol):
@@ -154,7 +188,22 @@ class CruxibleInstance(InstanceProtocol):
 
     def save_config(self, config: CoreConfig) -> None:
         """Save the CoreConfig back to the YAML file on disk."""
-        save_config(config, self.get_config_path())
+        provenance = self.get_config_provenance()
+        source_label = provenance.root_path if provenance is not None else None
+        save_config(
+            config,
+            self.get_config_path(),
+            header=materialized_header(source_label) if provenance is not None else None,
+        )
+        if provenance is not None:
+            source = ConfigSourceManifest(
+                root_path=provenance.root_path,
+                layers=provenance.layers,
+                composed_digest=provenance.composed_digest,
+            )
+            self.set_config_provenance(
+                record_materialized_provenance(source, self.get_config_path())
+            )
 
     def get_instance_mode(self) -> str:
         """Return the persisted instance mode for this workspace."""
@@ -172,6 +221,29 @@ class CruxibleInstance(InstanceProtocol):
         """Update the config path recorded in instance metadata."""
         self.metadata.config_path = config_path
         self._write_metadata()
+
+    def get_config_provenance(self) -> ConfigProvenanceMetadata | None:
+        """Return the recorded source/materialized config provenance."""
+        return self.metadata.config_provenance
+
+    def set_config_provenance(self, provenance: ConfigProvenanceMetadata | None) -> None:
+        """Persist config provenance in instance metadata."""
+        self.metadata.config_provenance = provenance
+        self._write_metadata()
+
+    def verify_config_integrity(self) -> None:
+        """Refuse a materialized config whose exact bytes changed out of band."""
+        provenance = self.get_config_provenance()
+        if provenance is None:
+            return
+        actual = compute_file_digest(self.get_config_path())
+        if actual != provenance.materialized_digest:
+            raise ConfigError(
+                "ACTIVE CONFIG WAS HAND-EDITED: materialized digest mismatch at "
+                f"{self.get_config_path()} (recorded {provenance.materialized_digest}, "
+                f"actual {actual}). Reload from the authored source or set "
+                "CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH=true for recovery."
+            )
 
     def get_config_path(self) -> Path:
         """Return the resolved config path for the instance."""

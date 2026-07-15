@@ -2109,6 +2109,64 @@ def test_stats_inspect_and_reload_use_expected_routes():
     assert captured["payload"]["config_yaml"] == 'name: governed\nversion: "1.0"\n'
 
 
+def test_config_provenance_round_trips_for_reload_and_status() -> None:
+    captured: list[tuple[str, dict[str, Any]]] = []
+    source = contracts.ConfigSourceManifest(
+        root_path="/repo/overlay.yaml",
+        layers=[
+            contracts.ConfigSourceDigest(path="/repo/base.yaml", digest="sha256:base"),
+            contracts.ConfigSourceDigest(path="/repo/overlay.yaml", digest="sha256:overlay"),
+        ],
+        composed_digest="sha256:composed",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        captured.append((request.url.path, payload))
+        if request.url.path.endswith("/config/status"):
+            return httpx.Response(
+                200,
+                json={
+                    "status": "in_sync",
+                    "config_path": "/daemon/config.yaml",
+                    "materialized_matches": True,
+                    "sources_checked": True,
+                    "composed_matches": True,
+                    "changed_sources": [],
+                    "provenance": {
+                        **source.model_dump(mode="json"),
+                        "active_config_digest": "sha256:composed",
+                        "materialized_digest": "sha256:active",
+                        "recorded_at": "2026-07-15T12:00:00Z",
+                    },
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "config_path": "/daemon/config.yaml",
+                "updated": True,
+                "warnings": [],
+            },
+        )
+
+    client = _build_client(handler)
+    client.reload_config(
+        "inst_123",
+        config_yaml='name: governed\nversion: "1.0"\n',
+        config_source_manifest=source,
+    )
+    status = client.config_status("inst_123", current_source_manifest=source)
+
+    assert captured[0][0].endswith("/config/reload")
+    assert captured[0][1]["config_source_manifest"] == source.model_dump(mode="json")
+    assert captured[1][0].endswith("/config/status")
+    assert captured[1][1]["current_source_manifest"] == source.model_dump(mode="json")
+    assert status.status == "in_sync"
+    assert status.provenance is not None
+    assert status.provenance.materialized_digest == "sha256:active"
+
+
 def test_feedback_analysis_and_policy_routes():
     captured: dict[str, Any] = {}
 

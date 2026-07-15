@@ -277,15 +277,17 @@ def init(
             )
 
     def _remote_init(client: CruxibleClient) -> contracts.InitResult:
+        uploaded_yaml: str | None = None
+        source_manifest: contracts.ConfigSourceManifest | None = None
+        if config_path is not None:
+            uploaded_yaml, source_manifest = _common._read_config_upload_or_error(config_path)
         init_kwargs: dict[str, Any] = {
             "root_dir": effective_root_dir or str(Path.cwd()),
-            "config_yaml": (
-                _common._read_validation_yaml_or_error(config_path)
-                if config_path is not None
-                else None
-            ),
+            "config_yaml": uploaded_yaml,
             "data_dir": data_dir,
         }
+        if source_manifest is not None:
+            init_kwargs["config_source_manifest"] = source_manifest
         if kits:
             init_kwargs["kits"] = list(kits)
         if bare:

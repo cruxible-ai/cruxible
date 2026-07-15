@@ -6,7 +6,7 @@ from pathlib import Path
 
 from cruxible_core.errors import InstanceNotFoundError
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.runtime.instance import CruxibleInstance
+from cruxible_core.runtime.instance import CruxibleInstance, enforce_config_integrity
 from cruxible_core.server.registry import (
     GOVERNED_DAEMON_BACKEND,
     LOCAL_FILESYSTEM_BACKEND,
@@ -57,6 +57,8 @@ class InstanceManager:
             raise InstanceNotFoundError(record.instance_id)
         if record.backend == GOVERNED_DAEMON_BACKEND and not loaded.is_governed_mode():
             raise InstanceNotFoundError(record.instance_id)
+        if record.backend == GOVERNED_DAEMON_BACKEND:
+            enforce_config_integrity(loaded, context=f"instance {record.instance_id} load")
         known_backends = {
             LOCAL_FILESYSTEM_BACKEND,
             GOVERNED_DAEMON_BACKEND,

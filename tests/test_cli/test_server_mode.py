@@ -307,11 +307,20 @@ def test_server_mode_init_reads_local_config_and_prints_instance_id(
     captured: dict[str, object] = {}
 
     class StubClient:
-        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None):
+        def init(
+            self,
+            *,
+            root_dir,
+            config_path=None,
+            config_yaml=None,
+            data_dir=None,
+            config_source_manifest=None,
+        ):
             captured["root_dir"] = root_dir
             captured["config_path"] = config_path
             captured["config_yaml"] = config_yaml
             captured["data_dir"] = data_dir
+            captured["config_source_manifest"] = config_source_manifest
             return contracts.InitResult(instance_id="inst_abc123", status="initialized")
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -332,6 +341,7 @@ def test_server_mode_init_reads_local_config_and_prints_instance_id(
     assert captured["root_dir"] == "/srv/project"
     assert captured["config_path"] is None
     assert isinstance(captured["config_yaml"], str)
+    assert isinstance(captured["config_source_manifest"], contracts.ConfigSourceManifest)
     assert "Instance ID: inst_abc123" in result.output
     assert "Active instance: inst_abc123" in result.output
 
@@ -363,7 +373,15 @@ def test_server_mode_init_reports_previous_active_instance(
     config_path.write_text(CAR_PARTS_YAML)
 
     class StubClient:
-        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None):
+        def init(
+            self,
+            *,
+            root_dir,
+            config_path=None,
+            config_yaml=None,
+            data_dir=None,
+            config_source_manifest=None,
+        ):
             return contracts.InitResult(instance_id="inst_new", status="initialized")
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -396,7 +414,15 @@ def test_server_mode_init_no_activate_leaves_active_instance(
     config_path.write_text(CAR_PARTS_YAML)
 
     class StubClient:
-        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None):
+        def init(
+            self,
+            *,
+            root_dir,
+            config_path=None,
+            config_yaml=None,
+            data_dir=None,
+            config_source_manifest=None,
+        ):
             return contracts.InitResult(instance_id="inst_new", status="initialized")
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -420,7 +446,15 @@ def test_server_mode_init_defaults_root_dir_to_cwd(
     captured: dict[str, object] = {}
 
     class StubClient:
-        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None):
+        def init(
+            self,
+            *,
+            root_dir,
+            config_path=None,
+            config_yaml=None,
+            data_dir=None,
+            config_source_manifest=None,
+        ):
             captured["root_dir"] = root_dir
             return contracts.InitResult(instance_id="inst_abc123", status="initialized")
 
@@ -3007,12 +3041,19 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
 
     class StubClient:
         def reload_config(
-            self, instance_id, *, config_path=None, config_yaml=None, allow_orphans=False
+            self,
+            instance_id,
+            *,
+            config_path=None,
+            config_yaml=None,
+            allow_orphans=False,
+            config_source_manifest=None,
         ):
             captured["instance_id"] = instance_id
             captured["config_path"] = config_path
             captured["config_yaml"] = config_yaml
             captured["allow_orphans"] = allow_orphans
+            captured["config_source_manifest"] = config_source_manifest
             return contracts.ReloadConfigResult(
                 config_path="/daemon/instances/inst_123/config.yaml",
                 updated=True,
@@ -3040,7 +3081,57 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
     assert isinstance(captured["config_yaml"], str)
     assert "extends:" not in captured["config_yaml"]
     assert "follows" in captured["config_yaml"]
+    manifest = captured["config_source_manifest"]
+    assert isinstance(manifest, contracts.ConfigSourceManifest)
+    assert [Path(layer.path).name for layer in manifest.layers] == [
+        "base.yaml",
+        "overlay.yaml",
+    ]
     assert "Config updated on server." in result.output
+
+
+def test_config_status_reports_source_drift_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(CAR_PARTS_YAML)
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def config_status(self, instance_id, *, current_source_manifest=None):
+            captured["instance_id"] = instance_id
+            captured["current_source_manifest"] = current_source_manifest
+            return contracts.ConfigStatusResult(
+                status="source_changed",
+                config_path="/daemon/config.yaml",
+                materialized_matches=True,
+                sources_checked=True,
+                composed_matches=False,
+                changed_sources=[str(config_path.resolve())],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "config",
+            "status",
+            "--config",
+            str(config_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.output)["status"] == "source_changed"
+    assert captured["instance_id"] == "inst_123"
+    assert isinstance(captured["current_source_manifest"], contracts.ConfigSourceManifest)
 
 
 @pytest.mark.parametrize("command", ["add", "update"])

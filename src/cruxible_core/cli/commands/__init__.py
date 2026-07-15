@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     apply_cmd: Any
     batch_direct_write_cmd: Any
     config_expand_cmd: Any
+    config_status_cmd: Any
     config_views_cmd: Any
     connect_group: Any
     decision_records_cmd: Any
@@ -94,6 +95,7 @@ else:
         add_entity_cmd,
         add_relationship_cmd,
         batch_direct_write_cmd,
+        config_status_cmd,
         reload_config_cmd,
         update_entity_cmd,
         update_relationship_cmd,
@@ -141,6 +143,7 @@ __all__ = [
     "apply_cmd",
     "batch_direct_write_cmd",
     "config_expand_cmd",
+    "config_status_cmd",
     "config_views_cmd",
     "connect_group",
     "decision_records_cmd",

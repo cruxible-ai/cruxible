@@ -15,6 +15,7 @@ import yaml
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
 from cruxible_core.config.loader import load_config
+from cruxible_core.config.provenance import compose_file_with_source_manifest
 from cruxible_core.errors import ConfigError
 from cruxible_core.runtime import api
 from cruxible_core.runtime.instance_manager import (
@@ -103,6 +104,22 @@ def _config_yaml_for_upload(config_path: str, *, root_dir: str | None = None) ->
     return yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
 
 
+def _config_upload_for_path(
+    config_path: str,
+    *,
+    root_dir: str | None = None,
+) -> tuple[str, contracts.ConfigSourceManifest]:
+    path = Path(config_path)
+    if not path.is_absolute() and root_dir is not None:
+        path = Path(root_dir) / path
+    composed, source_manifest = compose_file_with_source_manifest(path)
+    composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
+    config_yaml = yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
+    return config_yaml, contracts.ConfigSourceManifest.model_validate(
+        source_manifest.model_dump(mode="python")
+    )
+
+
 def handle_init(
     root_dir: str,
     config_path: str | None = None,
@@ -113,8 +130,12 @@ def handle_init(
 ) -> contracts.InitResult:
     """Initialize a new cruxible instance, or reload an existing one."""
     uploaded_yaml = config_yaml
+    source_manifest: contracts.ConfigSourceManifest | None = None
     if uploaded_yaml is None and config_path is not None:
-        uploaded_yaml = _config_yaml_for_upload(config_path, root_dir=root_dir)
+        uploaded_yaml, source_manifest = _config_upload_for_path(
+            config_path,
+            root_dir=root_dir,
+        )
 
     def _remote_init(client: CruxibleClient) -> contracts.InitResult:
         kwargs: dict[str, Any] = dict(
@@ -124,6 +145,8 @@ def handle_init(
             data_dir=data_dir,
             kits=kits,
         )
+        if source_manifest is not None:
+            kwargs["config_source_manifest"] = source_manifest
         if bare:
             kwargs["bare"] = True
         return client.init(**kwargs)
@@ -1145,26 +1168,51 @@ def handle_reload_config(
     config_path: str | None = None,
     config_yaml: str | None = None,
     allow_orphans: bool = False,
+    config_source_manifest: contracts.ConfigSourceManifest | None = None,
 ) -> contracts.ReloadConfigResult:
     """Reload or replace an instance config."""
     uploaded_yaml = config_yaml
+    source_manifest = config_source_manifest
     if uploaded_yaml is None and config_path is not None:
-        uploaded_yaml = _config_yaml_for_upload(config_path)
+        uploaded_yaml, source_manifest = _config_upload_for_path(config_path)
+
+    def _remote_reload(client: CruxibleClient) -> contracts.ReloadConfigResult:
+        kwargs: dict[str, Any] = {
+            "config_path": None,
+            "config_yaml": uploaded_yaml,
+        }
+        if source_manifest is not None:
+            kwargs["config_source_manifest"] = source_manifest
+        if allow_orphans:
+            kwargs["allow_orphans"] = True
+        return client.reload_config(instance_id, **kwargs)
+
     return _dispatch_remote_or_local(
-        lambda client: client.reload_config(
-            instance_id,
-            config_path=None,
-            config_yaml=uploaded_yaml,
-            **({"allow_orphans": True} if allow_orphans else {}),
-        ),
+        _remote_reload,
         lambda: api.reload_config(
             instance_id,
             config_path=config_path,
             config_yaml=config_yaml,
             allow_orphans=allow_orphans,
+            config_source_manifest=config_source_manifest,
         ),
         allow_local=False,
         operation_name="cruxible_reload_config",
+    )
+
+
+def handle_config_status(
+    instance_id: str,
+    *,
+    current_source_manifest: contracts.ConfigSourceManifest | None = None,
+) -> contracts.ConfigStatusResult:
+    """Report config source/materialization parity."""
+    return _dispatch_remote_or_local(
+        lambda client: client.config_status(
+            instance_id,
+            current_source_manifest=current_source_manifest,
+        ),
+        lambda: api.config_status(instance_id, current_source_manifest),
     )
 
 
