@@ -124,9 +124,13 @@ def resolve_config_layer_sequence(
 def _resolve_parent_layers(layer: ResolvedConfigLayer) -> list[ResolvedConfigLayer]:
     source_dir = layer.source_dir
     if layer.config.extends is None:
+        # ``config_dir`` only supplies a base for relative paths in anonymous
+        # inline content. It does not prove that the content is the adjacent
+        # kit's raw entry layer: server uploads often place an already-composed
+        # config beside a copied overlay manifest. Callers that know they hold
+        # raw overlay content resolve that manifest explicitly.
         base_layer = resolve_overlay_kit_base_layer(
             config_path=layer.config_path,
-            config_dir=layer.config_dir,
         )
         return [base_layer] if base_layer is not None else []
 
