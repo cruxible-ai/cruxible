@@ -3,8 +3,8 @@
   "kits": {
     "agent-operation": {
       "asset": "agent-operation-0.2.3.tar.gz",
-      "dir_digest": "sha256:c40b7bf31d63fb11927b0d7545e68960ae28b8f70d032a379686deee7527f678",
-      "tarball_sha256": "1545a381198618acde3986d4577fa08b84d265cee05a710219c3e169ae7db344"
+      "dir_digest": "sha256:984dd2af56cfeea7ef5bd7fcc0e486f7895b6050452ac9cdcf1354be14b1d17b",
+      "tarball_sha256": "6da60c3da8c87b8eee857bdb4b329fe86028580c9ecb22ce5f9a93110c17f00e"
     },
     "agent-release": {
       "asset": "agent-release-0.2.3.tar.gz",

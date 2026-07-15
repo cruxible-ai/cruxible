@@ -29,6 +29,7 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.kits import get_default_base_kit
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     apply_preview_reference_from_receipt,
@@ -221,8 +222,13 @@ def _print_preview_reference(reference: dict[str, Any]) -> None:
     multiple=True,
     help=(
         "Kit alias or ref to materialize; repeatable. Order is composition order: "
-        "a standalone base kit first, overlay kits after."
+        "domain kits left-to-right, then overlays; the configured base is prepended."
     ),
+)
+@click.option(
+    "--bare",
+    is_flag=True,
+    help="Do not compose the configured default base kit during kit init.",
 )
 @click.option(
     "--root-dir",
@@ -244,6 +250,7 @@ def _print_preview_reference(reference: dict[str, Any]) -> None:
 def init(
     config_path: str | None,
     kits: tuple[str, ...],
+    bare: bool,
     root_dir: str | None,
     data_dir: str | None,
     bootstrap: bool,
@@ -256,6 +263,9 @@ def init(
         effective_root_dir = str(Path.cwd())
     kit_args = " ".join(f"--kit {value}" for value in kits)
 
+    if bare and not kits:
+        raise click.UsageError("--bare requires --kit.")
+
     if bootstrap:
         if client is None:
             raise click.UsageError("--bootstrap requires server mode.")
@@ -263,7 +273,7 @@ def init(
             raise click.UsageError("--bootstrap requires --kit.")
         if config_path is not None or data_dir is not None or root_dir is not None:
             raise click.UsageError(
-                "--bootstrap uses hosted kit init and accepts only --kit and --activate."
+                "--bootstrap uses hosted kit init and accepts only --kit, --bare, and --activate."
             )
 
     def _remote_init(client: CruxibleClient) -> contracts.InitResult:
@@ -278,6 +288,8 @@ def init(
         }
         if kits:
             init_kwargs["kits"] = list(kits)
+        if bare:
+            init_kwargs["bare"] = True
         try:
             return client.init(**init_kwargs)
         except ClientAuthenticationError as exc:
@@ -294,7 +306,11 @@ def init(
         assert client is not None
         assert kits
         try:
-            hosted_result = client.init_hosted_instance(source_type="kit", kit_refs=list(kits))
+            hosted_result = client.init_hosted_instance(
+                source_type="kit",
+                kit_refs=list(kits),
+                bare=bare,
+            )
         except ClientAuthenticationError as exc:
             raise click.ClickException(
                 "Server auth rejected hosted bootstrap init. If the bootstrap secret "
@@ -309,6 +325,8 @@ def init(
         click.echo(f"Instance {hosted_result.status}.")
         click.echo(f"Instance ID: {hosted_result.instance_id}")
         click.echo(f"Source: {hosted_result.source_type} {hosted_result.source_ref}")
+        if hosted_result.base_kit_id is not None:
+            click.echo(f"Base: {hosted_result.base_kit_id}")
         if activate:
             _print_active_instance_change(_activate_server_instance(hosted_result.instance_id))
         else:
@@ -324,6 +342,7 @@ def init(
             config_path=config_path,
             data_dir=data_dir,
             kits=list(kits),
+            default_base_kit=None if bare else get_default_base_kit(),
         ),
         allow_local=False,
         command_name="init",
@@ -331,6 +350,8 @@ def init(
     if isinstance(result, contracts.InitResult):
         click.echo(f"Instance {result.status}.")
         click.echo(f"Instance ID: {result.instance_id}")
+        if result.base_kit_id is not None:
+            click.echo(f"Base: {result.base_kit_id}")
         if activate:
             _print_active_instance_change(_activate_server_instance(result.instance_id))
         else:
@@ -341,6 +362,8 @@ def init(
 
     root = Path(effective_root_dir) if effective_root_dir is not None else Path.cwd()
     click.echo(f"Initialized .cruxible/ in {root}")
+    if result.base_kit_id is not None:
+        click.echo(f"Base: {result.base_kit_id}")
     for warning in result.warnings:
         click.secho(f"  Warning: {warning}", fg="yellow")
 

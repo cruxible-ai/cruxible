@@ -11,10 +11,12 @@ from pydantic import ValidationError
 from cruxible_core.config.schema import ProviderSchema
 from cruxible_core.errors import ConfigError
 from cruxible_core.kits import (
+    DEFAULT_BASE_KIT,
     KitManifest,
     compute_kit_provider_sha256,
     compute_kit_runtime_digest,
     config_yaml_has_kit_provider_refs,
+    get_default_base_kit,
     get_kit_catalog,
     load_kit_provider_module,
     materialize_kit,
@@ -27,6 +29,14 @@ from cruxible_core.provider.registry import resolve_provider
 
 
 def test_kit_manifest_validates_roles() -> None:
+    base = KitManifest(
+        kit_id="operation-base",
+        version="0.2.0",
+        role="base",
+        entry_config="config.yaml",
+    )
+    assert base.target_state is None
+
     standalone = KitManifest(
         kit_id="demo",
         version="0.2.0",
@@ -51,6 +61,25 @@ def test_kit_manifest_validates_roles() -> None:
             role="overlay",
             entry_config="config.yaml",
         )
+
+    with pytest.raises(ValidationError, match="must not set requires_base"):
+        KitManifest(
+            kit_id="bad-base",
+            version="0.2.0",
+            role="base",
+            requires_base="another-base",
+        )
+
+
+def test_default_base_kit_is_opt_out_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CRUXIBLE_DEFAULT_BASE_KIT", raising=False)
+    assert get_default_base_kit() == DEFAULT_BASE_KIT
+
+    monkeypatch.setenv("CRUXIBLE_DEFAULT_BASE_KIT", "custom-base")
+    assert get_default_base_kit() == "custom-base"
+
+    monkeypatch.setenv("CRUXIBLE_DEFAULT_BASE_KIT", "off")
+    assert get_default_base_kit() is None
 
 
 def test_kit_provider_ref_loads_relative_imports(tmp_path: Path) -> None:

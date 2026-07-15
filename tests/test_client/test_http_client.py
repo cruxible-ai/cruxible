@@ -61,6 +61,28 @@ def test_init_serializes_kit():
     assert result.instance_id == "inst_123"
     assert captured["payload"]["kits"] == ["kev-reference"]
     assert captured["payload"]["config_yaml"] is None
+    assert "bare" not in captured["payload"]
+
+
+def test_init_serializes_explicit_bare_opt_out():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "instance_id": "inst_123",
+                "status": "initialized",
+                "warnings": [],
+                "base_kit_id": None,
+            },
+        )
+
+    client = _build_client(handler)
+    client.init("/srv/project", kits=["kev-reference"], bare=True)
+
+    assert captured["payload"]["bare"] is True
 
 
 def test_error_response_rehydrates_correct_exception():

@@ -191,7 +191,10 @@ If the agent should not have direct state access, keep
 
 Use kits for repeatable work:
 
-- A **standalone kit** creates a state model by itself.
+- A **base kit** supplies cross-domain operating state. Kit initialization uses
+  the configured default base (`agent-operation`) unless you pass `--bare`.
+- A **standalone kit** creates a domain state model without requiring another
+  domain kit.
 - An **overlay kit** extends a published reference state.
 - Provider refs use `kit://...::callable`.
 - Deterministic state loading should be workflow-based: parse source artifacts,

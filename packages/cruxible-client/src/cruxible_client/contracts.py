@@ -567,6 +567,7 @@ class InitResult(BaseModel):
     instance_id: str
     status: str
     warnings: list[str] = Field(default_factory=list)
+    base_kit_id: str | None = None
 
 
 class RuntimeCredentialBootstrapResult(BaseModel):
@@ -583,6 +584,7 @@ class HostedInstanceInitResult(BaseModel):
     source_ref: str
     resolved_source_ref: str | None = None
     overlay_kit_ref: str | None = None
+    base_kit_id: str | None = None
     manifest: "PublishedStateManifest | None" = None
     warnings: list[str] = Field(default_factory=list)
 

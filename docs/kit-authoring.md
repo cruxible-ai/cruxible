@@ -167,9 +167,12 @@ requires_extras: []
 
 Rules:
 
-- `role` is `standalone` or `overlay`.
+- `role` is `base`, `standalone`, or `overlay`.
+- `role: base` anchors composition, must be first, and may appear at most once.
 - `role: overlay` requires `target_state`.
-- `role: standalone` must not set `target_state`.
+- `role: base` and `role: standalone` must not set `target_state`.
+- `requires_base` may name the required base kit. Initialization fails when a
+  different base, or no base, is present.
 - 0.2 supports one `entry_config` per kit.
 - `requires_extras` is metadata only. Cruxible does not install kit
   dependencies automatically.
@@ -206,6 +209,16 @@ Bundle behavior:
 - Runtime workflow execution does not fall back to arbitrary config-root locks.
 - Consumers should not silently regenerate published bundled locks. Rebuild the
   kit lock before publishing or distributing a changed kit.
+
+Kit initialization composes layers in this order: one base, standalone domain
+kits from left to right, then overlays. Unless `--bare` is supplied, CLI, MCP,
+and daemon initialization prepend the deployment's default base. The product
+default is `agent-operation`; deployments can change it with
+`CRUXIBLE_DEFAULT_BASE_KIT` or set that variable to `off`. Initialization
+always reports the selected base. An implicit base must have the same kit
+version as the first explicitly requested kit, keeping every composed instance
+on one release train. The base remains a separate digest-verified bundle; it is
+not copied into domain bundles.
 
 ## Standing Views And Decision Surfaces
 

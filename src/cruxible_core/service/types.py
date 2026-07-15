@@ -638,6 +638,7 @@ class OutcomeServiceResult:
 class InitResult:
     instance: InstanceProtocol
     warnings: list[str]
+    base_kit_id: str | None = None
 
 
 @dataclass

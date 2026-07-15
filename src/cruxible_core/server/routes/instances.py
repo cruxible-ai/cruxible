@@ -35,6 +35,7 @@ async def init_instance(req: InitRequest) -> contracts.InitResult:
         config_yaml=req.config_yaml,
         data_dir=req.data_dir,
         kits=req.kits,
+        bare=req.bare,
     )
 
 

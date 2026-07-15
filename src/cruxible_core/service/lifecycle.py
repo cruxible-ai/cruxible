@@ -180,6 +180,7 @@ def service_init(
     kits: Sequence[str] | None = None,
     *,
     instance_mode: str = CruxibleInstance.DEV_MODE,
+    default_base_kit: str | None = None,
 ) -> InitResult:
     """Initialize a new cruxible instance (create-only).
 
@@ -200,9 +201,15 @@ def service_init(
 
     wrote_managed_config = False
     materialized_kit_dirs: list[tuple[str, Path]] = []
+    base_kit_id: str | None = None
 
     if normalized_kits:
         bundles = [resolve_kit_ref(value) for value in normalized_kits]
+        normalized_kits, bundles, base_kit_id = _with_default_base_kit(
+            normalized_kits,
+            bundles,
+            default_base_kit=default_base_kit,
+        )
         _validate_kit_sequence(normalized_kits, bundles)
         try:
             roots: list[ResolvedConfigLayer] = []
@@ -283,15 +290,46 @@ def service_init(
     loaded = instance.load_config()
     warnings = validate_config(loaded)
 
-    return InitResult(instance=instance, warnings=warnings)
+    return InitResult(instance=instance, warnings=warnings, base_kit_id=base_kit_id)
+
+
+def _with_default_base_kit(
+    kit_refs: list[str],
+    bundles: list[KitBundle],
+    *,
+    default_base_kit: str | None,
+) -> tuple[list[str], list[KitBundle], str | None]:
+    explicit_bases = [bundle for bundle in bundles if bundle.manifest.role == "base"]
+    if len(explicit_bases) > 1:
+        names = ", ".join(bundle.manifest.kit_id for bundle in explicit_bases)
+        raise ConfigError(f"At most one role: base kit may be composed; found: {names}")
+    if explicit_bases:
+        return kit_refs, bundles, explicit_bases[0].manifest.kit_id
+    if default_base_kit is None:
+        return kit_refs, bundles, None
+
+    base = resolve_kit_ref(default_base_kit)
+    if base.manifest.role != "base":
+        raise ConfigError(
+            f"Default base kit '{base.manifest.kit_id}' declares role: "
+            f"{base.manifest.role}, expected role: base"
+        )
+    trigger_version = bundles[0].manifest.version
+    if base.manifest.version != trigger_version:
+        raise ConfigError(
+            f"Default base kit '{base.manifest.kit_id}' is version {base.manifest.version}, "
+            f"but triggering kit '{bundles[0].manifest.kit_id}' is version "
+            f"{trigger_version}. Implicit bases must come from the same release train."
+        )
+    return [default_base_kit, *kit_refs], [base, *bundles], base.manifest.kit_id
 
 
 def _validate_kit_sequence(kit_refs: Sequence[str], bundles: Sequence[KitBundle]) -> None:
-    """Validate a composed init kit sequence: standalone base, overlays on earlier kits."""
+    """Validate base, domain, then overlay ordering for composed kit init."""
     first = bundles[0].manifest
-    if first.role != "standalone":
+    if first.role not in {"base", "standalone"}:
         raise ConfigError(
-            f"The first kit in an init sequence must be role: standalone, but "
+            f"The first kit in an init sequence must be role: base or standalone, but "
             f"'{first.kit_id}' is role: {first.role}"
             + (
                 f" targeting state '{first.target_state}'. List its base kit first, "
@@ -302,15 +340,37 @@ def _validate_kit_sequence(kit_refs: Sequence[str], bundles: Sequence[KitBundle]
             )
         )
     seen_kit_ids = [first.kit_id]
+    base_kit_id = first.kit_id if first.role == "base" else None
+    overlays_started = first.role == "overlay"
+    if first.requires_base is not None:
+        raise ConfigError(
+            f"Kit '{first.kit_id}' requires base '{first.requires_base}', but no base kit "
+            "appears earlier in the composition"
+        )
     for kit_ref, bundle in zip(kit_refs[1:], bundles[1:]):
         manifest = bundle.manifest
-        if manifest.role != "overlay":
+        if manifest.role == "base":
             raise ConfigError(
-                f"Kit '{manifest.kit_id}' has role '{manifest.role}'; every kit after "
-                "the first in an init sequence must be role: overlay"
+                f"Kit '{manifest.kit_id}' has role: base; the base must be first and "
+                "at most one base may be composed"
             )
         if manifest.kit_id in seen_kit_ids:
             raise ConfigError(f"Kit '{manifest.kit_id}' appears more than once in the sequence")
+        if manifest.requires_base is not None and manifest.requires_base != base_kit_id:
+            actual = base_kit_id or "(none)"
+            raise ConfigError(
+                f"Kit '{manifest.kit_id}' requires base '{manifest.requires_base}', "
+                f"but the composition base is '{actual}'"
+            )
+        if manifest.role == "standalone":
+            if overlays_started:
+                raise ConfigError(
+                    f"Standalone domain kit '{manifest.kit_id}' cannot appear after an overlay"
+                )
+            seen_kit_ids.append(manifest.kit_id)
+            continue
+        assert manifest.role == "overlay"
+        overlays_started = True
         if manifest.target_state not in seen_kit_ids:
             raise ConfigError(
                 f"Kit '{manifest.kit_id}' targets state '{manifest.target_state}', which "
@@ -344,6 +404,7 @@ def service_init_governed_upload(
     config_yaml: str | None = None,
     data_dir: str | None = None,
     kits: Sequence[str] | None = None,
+    default_base_kit: str | None = None,
 ) -> InitResult:
     """Initialize a governed instance from caller-owned uploaded config content."""
     governed_root = Path(root_dir)
@@ -378,6 +439,7 @@ def service_init_governed_upload(
         data_dir=data_dir,
         kits=kits,
         instance_mode=CruxibleInstance.GOVERNED_MODE,
+        default_base_kit=default_base_kit,
     )
     if copied_kit_runtime_files:
         write_materialized_kit_metadata(governed_root)

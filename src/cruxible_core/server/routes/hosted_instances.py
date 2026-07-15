@@ -28,4 +28,5 @@ async def init_hosted_instance(
         state_ref=req.state_ref,
         overlay_kit_ref=req.overlay_kit_ref,
         no_overlay_kit=req.no_overlay_kit,
+        bare=req.bare,
     )

@@ -25,6 +25,7 @@ from cruxible_core.graph.provenance import (
     SOURCE_REF_ADD_RELATIONSHIP,
     SOURCE_REF_BATCH_DIRECT_WRITE,
 )
+from cruxible_core.kits import get_default_base_kit
 from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.query.types import dump_query_row
 from cruxible_core.runtime.instance import CruxibleInstance
@@ -355,14 +356,21 @@ def _load_or_initialize_instance(
         instance = CruxibleInstance.load(instance_root)
         warnings = service_config_compatibility_warnings(instance)
         status = "loaded"
+        base_kit_id = None
     else:
         result = initialize()
         instance = result.instance
         warnings = result.warnings if include_initialized_warnings else []
         status = "initialized"
+        base_kit_id = result.base_kit_id
 
     get_manager().register(instance_id, instance)
-    return contracts.InitResult(instance_id=instance_id, status=status, warnings=warnings)
+    return contracts.InitResult(
+        instance_id=instance_id,
+        status=status,
+        warnings=warnings,
+        base_kit_id=base_kit_id,
+    )
 
 
 def init_local(
@@ -371,6 +379,7 @@ def init_local(
     config_yaml: str | None = None,
     data_dir: str | None = None,
     kits: list[str] | None = None,
+    bare: bool = False,
 ) -> contracts.InitResult:
     """Initialize a new cruxible instance, or reload an existing one."""
     has_config = _has_init_config(config_path, config_yaml, kits)
@@ -392,6 +401,7 @@ def init_local(
             config_yaml=config_yaml,
             data_dir=data_dir,
             kits=kits,
+            default_base_kit=None if bare else get_default_base_kit(),
         ),
         include_initialized_warnings=False,
     )
@@ -403,6 +413,7 @@ def init_governed(
     config_yaml: str | None = None,
     data_dir: str | None = None,
     kits: list[str] | None = None,
+    bare: bool = False,
 ) -> contracts.InitResult:
     """Initialize or reload a daemon-owned governed instance."""
     check_permission(
@@ -431,6 +442,7 @@ def init_governed(
                 config_yaml=config_yaml,
                 data_dir=data_dir,
                 kits=kits,
+                default_base_kit=None if bare else get_default_base_kit(),
             )
 
         return _load_or_initialize_instance(
@@ -461,6 +473,7 @@ def init_governed(
             config_yaml=config_yaml,
             data_dir=data_dir,
             kits=kits,
+            default_base_kit=None if bare else get_default_base_kit(),
         )
 
     try:
@@ -474,6 +487,7 @@ def init_governed(
         instance_id=registered.record.instance_id,
         status="initialized",
         warnings=result.warnings,
+        base_kit_id=result.base_kit_id,
     )
 
 
@@ -486,6 +500,7 @@ def init_hosted_instance(
     state_ref: str | None = None,
     overlay_kit_ref: str | None = None,
     no_overlay_kit: bool = False,
+    bare: bool = False,
 ) -> contracts.HostedInstanceInitResult:
     """Initialize a fresh server-owned hosted instance from a first-class source ref."""
     registry = get_registry()
@@ -498,6 +513,7 @@ def init_hosted_instance(
         state_ref=state_ref,
         overlay_kit_ref=overlay_kit_ref,
         no_overlay_kit=no_overlay_kit,
+        bare=bare,
     )
     kit_refs = [value.strip() for value in (kit_refs or []) if value.strip()] or None
     transport_ref = (transport_ref or "").strip() or None
@@ -511,6 +527,7 @@ def init_hosted_instance(
         state_ref=state_ref,
         overlay_kit_ref=overlay_kit_ref,
         no_overlay_kit=no_overlay_kit,
+        bare=bare,
     )
     request_digest = _hosted_init_digest(source_payload)
 
@@ -534,11 +551,13 @@ def init_hosted_instance(
                 root_dir=instance_root,
                 kits=kit_refs,
                 instance_mode=CruxibleInstance.GOVERNED_MODE,
+                default_base_kit=None if bare else get_default_base_kit(),
             )
             instance = init_result.instance
             manifest: contracts.PublishedStateManifest | None = None
             resolved_source_ref: str | None = None
             warnings = init_result.warnings
+            base_kit_id = init_result.base_kit_id
         else:
             overlay_result = service_create_state_overlay(
                 transport_ref=transport_ref,
@@ -555,6 +574,7 @@ def init_hosted_instance(
             upstream = instance.get_upstream_metadata()
             resolved_source_ref = upstream.transport_ref if upstream is not None else None
             warnings = []
+            base_kit_id = None
 
         metadata = _hosted_init_metadata(
             request_digest=request_digest,
@@ -562,6 +582,7 @@ def init_hosted_instance(
             resolved_source_ref=resolved_source_ref,
             manifest=manifest,
             warnings=warnings,
+            base_kit_id=base_kit_id,
         )
         _write_hosted_init_metadata(instance_root, metadata)
         registered = registry.create_governed_instance_with_id(selected_instance_id)
@@ -585,6 +606,7 @@ def _validate_hosted_init_inputs(
     state_ref: str | None,
     overlay_kit_ref: str | None,
     no_overlay_kit: bool,
+    bare: bool,
 ) -> None:
     normalized_kit_refs = [value.strip() for value in (kit_refs or []) if value.strip()]
     if source_type == "kit":
@@ -608,6 +630,8 @@ def _validate_hosted_init_inputs(
         raise ConfigError("Provide overlay_kit_ref or no_overlay_kit, not both")
     if normalized_kit_refs:
         raise ConfigError("kit_refs requires source_type=kit")
+    if bare:
+        raise ConfigError("bare requires source_type=kit")
 
 
 def _load_hosted_instance_idempotently(
@@ -642,11 +666,13 @@ def _hosted_init_source_payload(
     state_ref: str | None,
     overlay_kit_ref: str | None,
     no_overlay_kit: bool,
+    bare: bool,
 ) -> dict[str, Any]:
     if source_type == "kit":
         return {
             "source_type": source_type,
             "kit_refs": kit_refs,
+            "bare": bare,
         }
     return {
         "source_type": source_type,
@@ -669,6 +695,7 @@ def _hosted_init_metadata(
     resolved_source_ref: str | None,
     manifest: contracts.PublishedStateManifest | None,
     warnings: list[str],
+    base_kit_id: str | None,
 ) -> dict[str, Any]:
     initialized_at = format_datetime(utc_now())
     assert initialized_at is not None
@@ -680,6 +707,7 @@ def _hosted_init_metadata(
         "resolved_source_ref": resolved_source_ref,
         "manifest": manifest.model_dump(mode="json") if manifest is not None else None,
         "warnings": warnings,
+        "base_kit_id": base_kit_id,
     }
 
 
@@ -745,6 +773,11 @@ def _hosted_init_result_from_metadata(
             else None
         ),
         overlay_kit_ref=overlay_kit_ref,
+        base_kit_id=(
+            str(metadata["base_kit_id"])
+            if metadata.get("base_kit_id") is not None
+            else None
+        ),
         manifest=manifest,
         warnings=list(warnings) if isinstance(warnings, list) else [],
     )

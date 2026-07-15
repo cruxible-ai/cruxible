@@ -15,6 +15,7 @@ class InitRequest(BaseModel):
     config_yaml: str | None = None
     data_dir: str | None = None
     kits: list[str] | None = None
+    bare: bool = False
 
 
 class ValidateRequest(BaseModel):
@@ -39,6 +40,7 @@ class HostedInstanceInitRequest(BaseModel):
     state_ref: str | None = None
     overlay_kit_ref: str | None = None
     no_overlay_kit: bool = False
+    bare: bool = False
 
     @model_validator(mode="after")
     def validate_source(self) -> HostedInstanceInitRequest:
@@ -68,6 +70,8 @@ class HostedInstanceInitRequest(BaseModel):
             raise ValueError("Provide overlay_kit_ref or no_overlay_kit, not both")
         if normalized_kit_refs:
             raise ValueError("kit_refs requires source_type=kit")
+        if self.bare:
+            raise ValueError("bare requires source_type=kit")
         return self
 
 

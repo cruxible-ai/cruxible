@@ -193,18 +193,22 @@ class CruxibleClient:
         state_ref: str | None = None,
         overlay_kit_ref: str | None = None,
         no_overlay_kit: bool = False,
+        bare: bool = False,
     ) -> contracts.HostedInstanceInitResult:
+        payload: dict[str, Any] = {
+            "instance_id": instance_id,
+            "source_type": source_type,
+            "kit_refs": kit_refs,
+            "transport_ref": transport_ref,
+            "state_ref": state_ref,
+            "overlay_kit_ref": overlay_kit_ref,
+            "no_overlay_kit": no_overlay_kit,
+        }
+        if bare:
+            payload["bare"] = True
         response = self._client.post(
             "/api/v1/runtime/instances",
-            json={
-                "instance_id": instance_id,
-                "source_type": source_type,
-                "kit_refs": kit_refs,
-                "transport_ref": transport_ref,
-                "state_ref": state_ref,
-                "overlay_kit_ref": overlay_kit_ref,
-                "no_overlay_kit": no_overlay_kit,
-            },
+            json=payload,
         )
         return self._parse_model(response, contracts.HostedInstanceInitResult)
 
@@ -255,16 +259,20 @@ class CruxibleClient:
         config_yaml: str | None = None,
         data_dir: str | None = None,
         kits: list[str] | None = None,
+        bare: bool = False,
     ) -> contracts.InitResult:
+        payload: dict[str, Any] = {
+            "root_dir": root_dir,
+            "config_path": config_path,
+            "config_yaml": config_yaml,
+            "data_dir": data_dir,
+            "kits": kits,
+        }
+        if bare:
+            payload["bare"] = True
         response = self._client.post(
             "/api/v1/instances",
-            json={
-                "root_dir": root_dir,
-                "config_path": config_path,
-                "config_yaml": config_yaml,
-                "data_dir": data_dir,
-                "kits": kits,
-            },
+            json=payload,
         )
         return self._parse_model(response, contracts.InitResult)
 

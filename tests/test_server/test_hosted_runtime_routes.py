@@ -1962,6 +1962,7 @@ def test_hosted_instance_init_from_kit_is_idempotent_and_survives_restart(
         "instance_id": "inst_hostedkit",
         "source_type": "kit",
         "kit_refs": ["car-parts-hosted"],
+        "bare": True,
     }
 
     created = client.post("/api/v1/runtime/instances", json=payload)
@@ -2153,6 +2154,7 @@ def test_hosted_instance_init_accepts_unclaimed_bootstrap_secret(
             "instance_id": "inst_bootinit",
             "source_type": "kit",
             "kit_refs": ["car-parts-hosted"],
+            "bare": True,
         },
         headers={"Authorization": "Bearer bootstrap-secret"},
     )
@@ -2170,6 +2172,7 @@ def test_hosted_instance_init_accepts_unclaimed_bootstrap_secret(
             "instance_id": "inst_bootinit2",
             "source_type": "kit",
             "kit_refs": ["car-parts-hosted"],
+            "bare": True,
         },
         headers={"Authorization": "Bearer bootstrap-secret"},
     )

@@ -14,7 +14,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from types import ModuleType
-from typing import Iterator
+from typing import Iterator, Mapping
 from urllib.parse import unquote
 
 import yaml
@@ -26,6 +26,8 @@ KIT_MANIFEST_FILE = "cruxible-kit.yaml"
 KIT_METADATA_FILE = "kit.json"
 KIT_SCHEMA_VERSION = "cruxible.kit.v1"
 LOCK_FILE_NAME = "cruxible.lock.yaml"
+DEFAULT_BASE_KIT_ENV = "CRUXIBLE_DEFAULT_BASE_KIT"
+DEFAULT_BASE_KIT = "agent-operation"
 
 _IGNORED_DIRS = {"__pycache__", ".cruxible", ".ruff_cache", ".pytest_cache"}
 _IGNORED_FILES = {".DS_Store"}
@@ -47,6 +49,7 @@ class KitManifest(BaseModel):
     version: str
     role: str
     target_state: str | None = None
+    requires_base: str | None = None
     entry_config: str = "config.yaml"
     provider_paths: list[str] = Field(default_factory=list)
     copy_paths: list[str] = Field(default_factory=list)
@@ -56,12 +59,16 @@ class KitManifest(BaseModel):
     def validate_role(self) -> KitManifest:
         if self.schema_version != KIT_SCHEMA_VERSION:
             raise ValueError(f"schema_version must be {KIT_SCHEMA_VERSION}")
-        if self.role not in {"standalone", "overlay"}:
-            raise ValueError("role must be standalone or overlay")
+        if self.role not in {"base", "standalone", "overlay"}:
+            raise ValueError("role must be base, standalone, or overlay")
         if self.role == "overlay" and not self.target_state:
             raise ValueError("role: overlay requires target_state")
-        if self.role == "standalone" and self.target_state is not None:
-            raise ValueError("role: standalone must not set target_state")
+        if self.role in {"base", "standalone"} and self.target_state is not None:
+            raise ValueError(f"role: {self.role} must not set target_state")
+        if self.role == "base" and self.requires_base is not None:
+            raise ValueError("role: base must not set requires_base")
+        if self.requires_base is not None and not self.requires_base.strip():
+            raise ValueError("requires_base must name a base kit")
         _validate_relative_path(self.entry_config, field_name="entry_config")
         for field_name, values in (
             ("provider_paths", self.provider_paths),
@@ -78,6 +85,18 @@ class KitBundle(BaseModel):
     root: Path
     manifest: KitManifest
     digest: str
+
+
+def get_default_base_kit(environ: Mapping[str, str] | None = None) -> str | None:
+    """Return the deployment's opt-out default base kit reference."""
+    env = environ or os.environ
+    configured = env.get(DEFAULT_BASE_KIT_ENV)
+    if configured is None:
+        return DEFAULT_BASE_KIT
+    normalized = configured.strip()
+    if not normalized or normalized.lower() in {"none", "off", "false"}:
+        return None
+    return normalized
 
 
 def get_kit_catalog() -> dict[str, str]:

@@ -159,15 +159,27 @@ def test_bootstrap_init_composes_overlay_kit_on_auth_enabled_daemon(
     assert "work_items_for_area" in overlay_query.output
 
 
-def test_bootstrap_init_rejects_overlay_without_base(
+def test_bootstrap_init_implicitly_composes_default_base(
     auth_cli_runner: tuple[Callable[..., Result], TestClient],
 ) -> None:
     invoke, _test_client = auth_cli_runner
 
     result = invoke("init", "--kit", "project-domain", "--bootstrap")
 
+    assert result.exit_code == 0, result.output
+    assert "Source: kit project-domain" in result.output
+    assert "Base: agent-operation" in result.output
+
+
+def test_bootstrap_init_bare_rejects_overlay_without_base(
+    auth_cli_runner: tuple[Callable[..., Result], TestClient],
+) -> None:
+    invoke, _test_client = auth_cli_runner
+
+    result = invoke("init", "--kit", "project-domain", "--bare", "--bootstrap")
+
     assert result.exit_code != 0
-    assert "must be role: standalone" in result.output
+    assert "must be role: base or standalone" in result.output
     assert "project-domain" in result.output
     assert "agent-operation" in result.output
 
@@ -188,13 +200,15 @@ def _bundle(kit_id: str, role: str, target_state: str | None = None) -> KitBundl
 def test_kit_sequence_validation_names_offender_and_target() -> None:
     from cruxible_core.service.lifecycle import _validate_kit_sequence
 
-    base = _bundle("base", "standalone")
+    base = _bundle("base", "base")
+    domain = _bundle("domain", "standalone")
     overlay = _bundle("overlay", "overlay", target_state="base")
     stranger = _bundle("stranger", "overlay", target_state="elsewhere")
 
     _validate_kit_sequence(["base", "overlay"], [base, overlay])
+    _validate_kit_sequence(["base", "domain", "overlay"], [base, domain, overlay])
 
-    with pytest.raises(ConfigError, match="must be role: standalone"):
+    with pytest.raises(ConfigError, match="must be role: base or standalone"):
         _validate_kit_sequence(["overlay"], [overlay])
     with pytest.raises(
         ConfigError,
@@ -206,8 +220,27 @@ def test_kit_sequence_validation_names_offender_and_target() -> None:
             ["base", "overlay", "overlay"],
             [base, overlay, overlay],
         )
-    with pytest.raises(ConfigError, match="every kit after the first"):
+    with pytest.raises(ConfigError, match="at most one base"):
         _validate_kit_sequence(["base", "base"], [base, base])
+
+
+def test_kit_sequence_validates_required_base_identity() -> None:
+    from cruxible_core.service.lifecycle import _validate_kit_sequence
+
+    base = _bundle("agent-operation", "base")
+    domain = KitBundle(
+        root=Path("/nonexistent/domain"),
+        manifest=KitManifest(
+            kit_id="domain",
+            version="0.2.0",
+            role="standalone",
+            requires_base="other-base",
+        ),
+        digest="sha256:test",
+    )
+
+    with pytest.raises(ConfigError, match="requires base 'other-base'"):
+        _validate_kit_sequence(["agent-operation", "domain"], [base, domain])
 
 
 def test_service_composed_kev_init_resolves_workflows_queries_and_providers(
@@ -218,12 +251,19 @@ def test_service_composed_kev_init_resolves_workflows_queries_and_providers(
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     root = tmp_path / "kev-composed"
 
-    result = service_init(root, kits=["kev-reference", "kev-triage"])
+    result = service_init(
+        root,
+        kits=["kev-reference", "kev-triage"],
+        default_base_kit="agent-operation",
+    )
     instance = result.instance
 
     composed = instance.load_config()
+    assert result.base_kit_id == "agent-operation"
+    assert "Actor" in composed.entity_types  # implicit operation base
     assert "Vulnerability" in composed.entity_types  # base layer
     assert "Asset" in composed.entity_types  # overlay layer
+    assert (root / "kits" / "agent-operation").is_dir()
 
     # kit:// provider refs from BOTH kits are namespaced and resolve to their
     # own kits/<kit_id>/ roots.

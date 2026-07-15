@@ -204,6 +204,7 @@ class TestInputSchema:
         schemas = _get_tool_schemas(server)
         schema = schemas["cruxible_init"].inputSchema
         assert "config_yaml" in schema["properties"]
+        assert "bare" in schema["properties"]
         required = set(schema.get("required", []))
         assert "config_yaml" not in required
         # root_dir remains required
@@ -252,7 +253,7 @@ class TestOutputSchema:
     @pytest.mark.parametrize(
         "tool_name,expected_keys",
         [
-            ("cruxible_init", {"instance_id", "status", "warnings"}),
+            ("cruxible_init", {"instance_id", "status", "warnings", "base_kit_id"}),
             (
                 "cruxible_validate",
                 {
