@@ -90,7 +90,7 @@ def resolve_config_layer_sequence(
     they have no stable identity to deduplicate.
     """
     layers: list[ResolvedConfigLayer] = []
-    seen_paths: set[Path] = set()
+    seen_layers: dict[Path, ResolvedConfigLayer] = {}
     visiting_paths: list[Path] = []
 
     def visit(layer: ResolvedConfigLayer) -> None:
@@ -102,7 +102,14 @@ def resolve_config_layer_sequence(
                 raise ConfigError(
                     "Config extends cycle detected: " + " -> ".join(str(item) for item in cycle)
                 )
-            if path in seen_paths:
+            existing = seen_layers.get(path)
+            if existing is not None:
+                if existing.config != layer.config:
+                    raise ConfigError(
+                        "Config layer path was resolved with conflicting in-memory content: "
+                        f"{path}. Apply config transformations consistently before recursive "
+                        "layer resolution."
+                    )
                 return
             visiting_paths.append(path)
 
@@ -111,9 +118,7 @@ def resolve_config_layer_sequence(
 
         if path is not None:
             visiting_paths.pop()
-            if path in seen_paths:
-                return
-            seen_paths.add(path)
+            seen_layers[path] = layer
         layers.append(layer)
 
     for root in roots:
@@ -176,7 +181,10 @@ def resolve_overlay_kit_base_layer(
     manifest = load_kit_manifest(kit_dir)
     if manifest.role != "overlay":
         return None
-    if config_path is not None and (kit_dir / manifest.entry_config) != config_path:
+    if (
+        config_path is not None
+        and (kit_dir / manifest.entry_config).resolve() != config_path.resolve()
+    ):
         return None
     target_state = manifest.target_state
     assert target_state is not None

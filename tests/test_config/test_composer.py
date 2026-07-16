@@ -325,6 +325,29 @@ class TestRecursiveLayerResolution:
         composed = compose_config_sequence(layers)
         assert list(composed.entity_types) == ["Actor", "WorkItem", "Strategy"]
 
+    def test_duplicate_path_with_conflicting_in_memory_content_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        base = tmp_path / "base" / "config.yaml"
+        child = tmp_path / "child" / "config.yaml"
+        self._write_layer(base, name="base", entity_type="Actor")
+        self._write_layer(
+            child,
+            name="child",
+            entity_type="WorkItem",
+            extends="../base/config.yaml",
+        )
+        transformed_base = load_config(base)
+        transformed_base.name = "namespaced-base"
+
+        with pytest.raises(ConfigError, match="conflicting in-memory content"):
+            resolve_config_layer_sequence(
+                [
+                    ResolvedConfigLayer(config=load_config(child), config_path=child),
+                    ResolvedConfigLayer(config=transformed_base, config_path=base),
+                ]
+            )
+
     def test_cycle_error_prints_the_resolved_chain(self, tmp_path: Path) -> None:
         first = tmp_path / "first.yaml"
         second = tmp_path / "second.yaml"
