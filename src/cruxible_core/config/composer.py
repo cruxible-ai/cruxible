@@ -92,6 +92,19 @@ def resolve_config_layer_sequence(
     layers: list[ResolvedConfigLayer] = []
     seen_layers: dict[Path, ResolvedConfigLayer] = {}
     visiting_paths: list[Path] = []
+    explicit_roots: dict[Path, ResolvedConfigLayer] = {}
+
+    for root in roots:
+        if root.config_path is None:
+            continue
+        path = root.config_path.resolve()
+        existing = explicit_roots.get(path)
+        if existing is not None and existing.config != root.config:
+            raise ConfigError(
+                "Config layer path was supplied with conflicting in-memory content: "
+                f"{path}"
+            )
+        explicit_roots[path] = root
 
     def visit(layer: ResolvedConfigLayer) -> None:
         path = layer.config_path.resolve() if layer.config_path is not None else None
@@ -114,6 +127,8 @@ def resolve_config_layer_sequence(
             visiting_paths.append(path)
 
         for parent in _resolve_parent_layers(layer):
+            if parent.config_path is not None:
+                parent = explicit_roots.get(parent.config_path.resolve(), parent)
             visit(parent)
 
         if path is not None:
