@@ -26,7 +26,7 @@ from cruxible_core.graph.provenance import (
     SOURCE_REF_ADD_RELATIONSHIP,
     SOURCE_REF_BATCH_DIRECT_WRITE,
 )
-from cruxible_core.kits import get_default_base_kit
+from cruxible_core.kit_defaults import get_default_base_kit
 from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.query.types import dump_query_row
 from cruxible_core.runtime.instance import CruxibleInstance
@@ -797,9 +797,7 @@ def _hosted_init_result_from_metadata(
         ),
         overlay_kit_ref=overlay_kit_ref,
         base_kit_id=(
-            str(metadata["base_kit_id"])
-            if metadata.get("base_kit_id") is not None
-            else None
+            str(metadata["base_kit_id"]) if metadata.get("base_kit_id") is not None else None
         ),
         manifest=manifest,
         warnings=list(warnings) if isinstance(warnings, list) else [],
@@ -2591,9 +2589,7 @@ def config_status(
         composed_matches=result.composed_matches,
         changed_sources=result.changed_sources,
         provenance=(
-            contracts.ConfigProvenance.model_validate(
-                result.provenance.model_dump(mode="python")
-            )
+            contracts.ConfigProvenance.model_validate(result.provenance.model_dump(mode="python"))
             if result.provenance is not None
             else None
         ),

@@ -331,7 +331,8 @@ def test_init_bootstrap_rejects_local_init_options(
 
     assert result.exit_code == 2
     assert (
-        "--bootstrap uses hosted kit init and accepts only --kit and --activate." in result.output
+        "--bootstrap uses hosted kit init and accepts only --kit, --bare, and --activate."
+        in result.output
     )
 
 

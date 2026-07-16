@@ -10,13 +10,12 @@ from pydantic import ValidationError
 
 from cruxible_core.config.schema import ProviderSchema
 from cruxible_core.errors import ConfigError
+from cruxible_core.kit_defaults import DEFAULT_BASE_KIT, get_default_base_kit
 from cruxible_core.kits import (
-    DEFAULT_BASE_KIT,
     KitManifest,
     compute_kit_provider_sha256,
     compute_kit_runtime_digest,
     config_yaml_has_kit_provider_refs,
-    get_default_base_kit,
     get_kit_catalog,
     load_kit_provider_module,
     materialize_kit,

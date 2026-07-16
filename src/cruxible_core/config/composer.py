@@ -101,8 +101,7 @@ def resolve_config_layer_sequence(
         existing = explicit_roots.get(path)
         if existing is not None and existing.config != root.config:
             raise ConfigError(
-                "Config layer path was supplied with conflicting in-memory content: "
-                f"{path}"
+                f"Config layer path was supplied with conflicting in-memory content: {path}"
             )
         explicit_roots[path] = root
 
@@ -387,14 +386,24 @@ def compose_runtime_config_files(
     *,
     base_path: Path,
     overlay_path: Path,
+    base_identity_path: Path | None = None,
 ) -> CoreConfig:
-    """Compose two config files for release-backed overlay runtime use."""
+    """Compose two config files for release-backed overlay runtime use.
+
+    ``base_identity_path`` assigns the base layer's path identity when its
+    content lives elsewhere than the path the overlay extends — e.g. pull
+    preview, where the target release sits in a pulled temp dir but the
+    overlay extends ``.cruxible/upstream/current/config.yaml``. Without the
+    alias, layer resolution would expand the overlay's extends into a second,
+    conflicting upstream layer.
+    """
     base = load_config(base_path)
     overlay = load_config(overlay_path)
+    identity = (base_identity_path if base_identity_path is not None else base_path).resolve()
     return compose_config_sequence(
         resolve_config_layer_sequence(
             [
-                ResolvedConfigLayer(config=base, config_path=base_path.resolve()),
+                ResolvedConfigLayer(config=base, config_path=identity),
                 ResolvedConfigLayer(config=overlay, config_path=overlay_path.resolve()),
             ]
         ),
@@ -408,7 +417,7 @@ def _compose_mapping(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str,
         if key == "extends":
             result[key] = overlay_value
             continue
-        if key in {"name", "description"}:
+        if key in {"name", "description", "version"}:
             result[key] = overlay_value
             continue
         if key == "runtime":

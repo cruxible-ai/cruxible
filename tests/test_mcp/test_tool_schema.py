@@ -244,12 +244,10 @@ class TestInputSchema:
         assert "offset" in history_props
         assert "config_yaml" in schemas["cruxible_reload_config"].inputSchema["properties"]
         assert (
-            "config_source_manifest"
-            in schemas["cruxible_reload_config"].inputSchema["properties"]
+            "config_source_manifest" in schemas["cruxible_reload_config"].inputSchema["properties"]
         )
         assert (
-            "current_source_manifest"
-            in schemas["cruxible_config_status"].inputSchema["properties"]
+            "current_source_manifest" in schemas["cruxible_config_status"].inputSchema["properties"]
         )
         assert "snapshot_id" in schemas["cruxible_clone_snapshot"].inputSchema["required"]
         assert "root_dir" in schemas["cruxible_clone_snapshot"].inputSchema["required"]

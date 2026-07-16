@@ -78,6 +78,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `config_yaml` | no | string | null |  |
 | `data_dir` | no | string | null |  |
 | `kits` | no | array | null | Ordered kit refs: standalone base first, overlay kits after. |
+| `bare` | no | boolean | Skip the configured default base kit on kit init. |
 
 **Returns:** Top-level fields: `instance_id`, `status`, `warnings`
 
@@ -1193,7 +1194,7 @@ error-level finding exists.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Check authored-source drift and active materialized-config integrity.
+**Purpose:** Use when you need to check source drift or active config integrity.
 
 **Arguments:** `instance_id` is required. `current_source_manifest` is optional;
 without it, only the active materialized digest is checked.

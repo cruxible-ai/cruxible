@@ -182,9 +182,13 @@ def _build_state_pull_preview(
 
     root = instance.get_root_path()
     try:
+        # The target release's content is still in the pulled temp dir, but the
+        # overlay's config extends the materialized upstream path — compose the
+        # pulled content under that identity, exactly as it will sit post-apply.
         compose_runtime_config_files(
             base_path=pulled.root_dir / "config.yaml",
             overlay_path=root / upstream.overlay_config_path,
+            base_identity_path=root / upstream.upstream_config_path,
         )
     except Exception as exc:
         conflicts.append(f"Overlay config does not compose cleanly with target release: {exc}")

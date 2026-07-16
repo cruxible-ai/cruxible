@@ -325,12 +325,8 @@ class TestInit:
         second = tmp_path / "second"
         shutil.copytree(first, second)
 
-        _first_config, first_manifest = compose_file_with_source_manifest(
-            first / "overlay.yaml"
-        )
-        _second_config, second_manifest = compose_file_with_source_manifest(
-            second / "overlay.yaml"
-        )
+        _first_config, first_manifest = compose_file_with_source_manifest(first / "overlay.yaml")
+        _second_config, second_manifest = compose_file_with_source_manifest(second / "overlay.yaml")
 
         assert first_manifest == second_manifest
         assert first_manifest.root_path == "overlay.yaml"

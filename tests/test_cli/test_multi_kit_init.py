@@ -185,17 +185,50 @@ def test_bootstrap_init_bare_rejects_overlay_without_base(
     assert "agent-operation" in result.output
 
 
-def _bundle(kit_id: str, role: str, target_state: str | None = None) -> KitBundle:
+def _bundle(
+    kit_id: str,
+    role: str,
+    target_state: str | None = None,
+    version: str = "0.2.0",
+) -> KitBundle:
     return KitBundle(
         root=Path("/nonexistent") / kit_id,
         manifest=KitManifest(
             kit_id=kit_id,
-            version="0.2.0",
+            version=version,
             role=role,
             target_state=target_state,
         ),
         digest="sha256:test",
     )
+
+
+def test_default_base_train_check_applies_only_to_catalog_kits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _bundle("agent-operation", "base", version="0.2.4")
+    monkeypatch.setattr("cruxible_core.service.lifecycle.resolve_kit_ref", lambda _ref: base)
+
+    # User-authored kits version on their own line: the implicit base composes
+    # without demanding the user's kit match our release train.
+    user_kit = _bundle("my-risk-kit", "standalone", version="1.0.0")
+    refs, bundles, base_id = _with_default_base_kit(
+        ["./my-risk-kit"],
+        [user_kit],
+        default_base_kit="agent-operation",
+    )
+    assert base_id == "agent-operation"
+    assert refs == ["agent-operation", "./my-risk-kit"]
+    assert bundles[0] is base
+
+    # Shipped catalog kits keep the protection against stale cached bundles.
+    stale = _bundle("kev-triage", "standalone", version="0.2.0")
+    with pytest.raises(ConfigError, match="same release train"):
+        _with_default_base_kit(
+            ["kev-triage"],
+            [stale],
+            default_base_kit="agent-operation",
+        )
 
 
 def test_default_base_resolution_error_names_configuration_source(

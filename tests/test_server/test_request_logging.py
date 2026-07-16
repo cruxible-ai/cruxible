@@ -295,6 +295,7 @@ def test_bootstrap_secret_runtime_request_log_does_not_include_secret(
             "instance_id": "inst_requestlog",
             "source_type": "kit",
             "kit_refs": ["car-parts-hosted"],
+            "bare": True,
         },
         headers={"Authorization": "Bearer bootstrap-secret"},
     )

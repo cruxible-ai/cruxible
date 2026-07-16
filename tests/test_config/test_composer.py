@@ -290,9 +290,7 @@ class TestRecursiveLayerResolution:
         ]
         assert list(composed.entity_types) == ["Actor", "WorkItem", "Strategy"]
 
-    def test_multiple_roots_deduplicate_shared_base_at_first_position(
-        self, tmp_path: Path
-    ) -> None:
+    def test_multiple_roots_deduplicate_shared_base_at_first_position(self, tmp_path: Path) -> None:
         base = tmp_path / "base" / "config.yaml"
         first = tmp_path / "first" / "config.yaml"
         second = tmp_path / "second" / "config.yaml"
@@ -325,9 +323,7 @@ class TestRecursiveLayerResolution:
         composed = compose_config_sequence(layers)
         assert list(composed.entity_types) == ["Actor", "WorkItem", "Strategy"]
 
-    def test_recursive_parent_prefers_explicit_transformed_root(
-        self, tmp_path: Path
-    ) -> None:
+    def test_recursive_parent_prefers_explicit_transformed_root(self, tmp_path: Path) -> None:
         base = tmp_path / "base" / "config.yaml"
         child = tmp_path / "child" / "config.yaml"
         self._write_layer(base, name="base", entity_type="Actor")
@@ -349,9 +345,7 @@ class TestRecursiveLayerResolution:
 
         assert [layer.config.name for layer in layers] == ["namespaced-base", "child"]
 
-    def test_conflicting_explicit_roots_for_same_path_are_rejected(
-        self, tmp_path: Path
-    ) -> None:
+    def test_conflicting_explicit_roots_for_same_path_are_rejected(self, tmp_path: Path) -> None:
         base = tmp_path / "base.yaml"
         self._write_layer(base, name="base", entity_type="Actor")
         transformed = load_config(base)

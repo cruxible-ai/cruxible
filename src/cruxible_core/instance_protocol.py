@@ -368,6 +368,7 @@ class InstanceProtocol(ABC):
     def verify_config_integrity(self) -> None:
         """Verify materialized config integrity when supported."""
         return None
+
     @abstractmethod
     def load_graph(self) -> EntityGraph: ...
     @abstractmethod

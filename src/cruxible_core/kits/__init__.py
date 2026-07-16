@@ -14,7 +14,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from types import ModuleType
-from typing import Iterator, Mapping
+from typing import Iterator
 from urllib.parse import unquote
 
 import yaml
@@ -26,8 +26,6 @@ KIT_MANIFEST_FILE = "cruxible-kit.yaml"
 KIT_METADATA_FILE = "kit.json"
 KIT_SCHEMA_VERSION = "cruxible.kit.v1"
 LOCK_FILE_NAME = "cruxible.lock.yaml"
-DEFAULT_BASE_KIT_ENV = "CRUXIBLE_DEFAULT_BASE_KIT"
-DEFAULT_BASE_KIT = "agent-operation"
 
 _IGNORED_DIRS = {"__pycache__", ".cruxible", ".ruff_cache", ".pytest_cache"}
 _IGNORED_FILES = {".DS_Store"}
@@ -85,18 +83,6 @@ class KitBundle(BaseModel):
     root: Path
     manifest: KitManifest
     digest: str
-
-
-def get_default_base_kit(environ: Mapping[str, str] | None = None) -> str | None:
-    """Return the deployment's opt-out default base kit reference."""
-    env = os.environ if environ is None else environ
-    configured = env.get(DEFAULT_BASE_KIT_ENV)
-    if configured is None:
-        return DEFAULT_BASE_KIT
-    normalized = configured.strip()
-    if not normalized or normalized.lower() in {"none", "off", "false"}:
-        return None
-    return normalized
 
 
 def get_kit_catalog() -> dict[str, str]:

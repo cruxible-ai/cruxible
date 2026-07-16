@@ -29,7 +29,7 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.kits import get_default_base_kit
+from cruxible_core.kit_defaults import get_default_base_kit
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     apply_preview_reference_from_receipt,

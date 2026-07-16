@@ -30,12 +30,14 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.kit_defaults import DEFAULT_BASE_KIT_ENV
+from cruxible_core.kit_distribution import published_kit_ids
 from cruxible_core.kits import (
-    DEFAULT_BASE_KIT_ENV,
     KIT_MANIFEST_FILE,
     KitBundle,
     config_yaml_has_kit_provider_refs,
     copy_kit_runtime_files,
+    get_kit_catalog,
     is_kit_provider_ref,
     load_kit_manifest,
     materialize_kit,
@@ -366,12 +368,18 @@ def _with_default_base_kit(
             f"Default base kit '{base.manifest.kit_id}' declares role: "
             f"{base.manifest.role}, expected role: base"
         )
-    trigger_version = bundles[0].manifest.version
-    if base.manifest.version != trigger_version:
+    # The same-train check protects against composing a stale cached copy of a
+    # shipped kit with this release's implicit base. Kits outside the shipped
+    # set are user-authored and version on their own line — demanding they
+    # match our release train would block every `init --kit ./my-kit`. The
+    # packaged manifest covers installed envs, where catalog discovery is empty.
+    trigger = bundles[0].manifest
+    shipped = trigger.kit_id in get_kit_catalog() or trigger.kit_id in published_kit_ids()
+    if shipped and base.manifest.version != trigger.version:
         raise ConfigError(
             f"Default base kit '{base.manifest.kit_id}' is version {base.manifest.version}, "
-            f"but triggering kit '{bundles[0].manifest.kit_id}' is version "
-            f"{trigger_version}. Implicit bases must come from the same release train."
+            f"but triggering kit '{trigger.kit_id}' is version "
+            f"{trigger.version}. Implicit bases must come from the same release train."
         )
     return [default_base_kit, *kit_refs], [base, *bundles], base.manifest.kit_id
 
