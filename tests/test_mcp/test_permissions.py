@@ -412,6 +412,18 @@ class TestValidation:
             assert tool.description is not None
             assert tool.description.startswith("Use when ")
 
+    def test_server_instructions_explain_relationship_state_semantics(self):
+        """Agents receive the relationship truth-state model without reading docs."""
+        server = create_server()
+        instructions = server._mcp_server.instructions
+
+        assert "`live` includes active direct/unreviewed relationships" in instructions
+        assert "`accepted` includes only relationships approved through review" in instructions
+        assert "`pending` includes staged relationships awaiting review" in instructions
+        assert "`reviewable` includes both live and pending relationships" in instructions
+        assert "Candidate-group members are review records" in instructions
+        assert "do not approve" in instructions.lower()
+
 
 # ── Allowed roots ─────────────────────────────────────────────────────
 

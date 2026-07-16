@@ -120,6 +120,19 @@ entity_types:
 
 Tools raise errors on failure — the MCP protocol returns them
 with an error flag. Check tool call success before processing results.
+
+## Relationship State Semantics
+
+- `live` includes active direct/unreviewed relationships and approved relationships.
+- `accepted` includes only relationships approved through review.
+- `pending` includes staged relationships awaiting review.
+- `reviewable` includes both live and pending relationships.
+- A direct relationship write is live/unreviewed unless it is written with
+  `pending=true`; direct evidence does not make an edge accepted.
+- Candidate-group members are review records, not traversable graph edges. They
+  become accepted graph relationships only when the group is approved.
+- Do not treat pending or candidate-group claims as accepted, and do not approve
+  your own claims when the operating policy requires independent review.
 """
 
 
