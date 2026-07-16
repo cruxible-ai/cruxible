@@ -13,6 +13,12 @@ presets:
       signals:
         source_evidence:     {role: required,  always_review_on_unsure: true}
         maintainer_judgment: {role: advisory,  always_review_on_unsure: true}
+    # Planning-judgment edges: the claim is a decision, not an observation —
+    # rationale is required, source evidence welcome but never demanded.
+    judgment:
+      signals:
+        maintainer_judgment: {role: required,  always_review_on_unsure: true}
+        source_evidence:     {role: advisory,  always_review_on_unsure: true}
 
 enums:
   actor_kind: [human, agent, service_account, system]
@@ -168,7 +174,7 @@ relationships:
 
   # --- Work axes ---
   - work_item_depends_on_work_item: WorkItem -> WorkItem       # Sequencing: from depends on to landing/deciding first.
-    proposal_policy: standard
+    proposal_policy: judgment
     write_policy: proposal_only
     basis: dependency_basis
   - work_item_part_of_work_item: WorkItem -> WorkItem          # Composition: part-of roll-up; NOT a prerequisite.
