@@ -2598,6 +2598,8 @@ def config_status(
             else None
         ),
     )
+
+
 def sample(
     instance_id: str,
     entity_type: str,

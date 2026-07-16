@@ -2254,7 +2254,7 @@ materialized config.
 Pass the same authored root used for reload:
 
 ```bash
-cruxible config status --config ops/business-overlay.yaml
+cruxible config status --config path/to/composed-config.yaml
 ```
 
 The command reports one of five states: `in_sync`, `source_changed`,

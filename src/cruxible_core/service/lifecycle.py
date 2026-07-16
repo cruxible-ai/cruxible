@@ -855,6 +855,10 @@ def service_reload_config(
             instance, config, allow_orphans=allow_orphans
         )
         instance.set_config_path(str(resolved))
+        # A direct path is caller-owned source, not an instance materialization.
+        # Provenance for the previous active file must not follow the pointer or
+        # the next integrity check will compare unrelated bytes and fail closed.
+        instance.set_config_provenance(None)
         ensure_auth_managed_runtime_identity(instance)
         return ReloadConfigResult(
             config_path=str(instance.get_config_path()),

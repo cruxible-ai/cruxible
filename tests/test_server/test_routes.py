@@ -1206,7 +1206,7 @@ def test_reload_config_route_updates_instance_path(
     status = status_response.json()
     assert status["status"] == "in_sync"
     assert status["materialized_matches"] is True
-    assert status["provenance"]["root_path"] == str(new_config.resolve())
+    assert status["provenance"]["root_path"] == "alt-config.yaml"
 
 
 def test_server_init_creates_daemon_owned_governed_instance(

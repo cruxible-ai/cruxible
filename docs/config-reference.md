@@ -248,9 +248,14 @@ happens in the service/CLI layer. For inline `config_yaml` (no file path),
 
 At runtime, reload materializes the composed config to the instance-owned active
 file. The file is stamped `MATERIALIZED - DO NOT EDIT`. Instance metadata records
-the exact digest and path of every authored layer, semantic digests of the
+the exact digest and root-relative label of every authored layer, semantic digests of the
 last-reloaded source composition and current active config, and the exact-byte
 digest of the generated active file.
+
+For uploaded configs, the daemon verifies the reported composed digest against
+the uploaded effective config. Source labels and per-layer digests describe the
+client-side authored files for later drift comparison; they are not independent
+authentication of files the daemon cannot read.
 
 `cruxible config status --config <authored-root>` distinguishes source changes
 that need a reload from hand edits to the active materialization. Governed daemon

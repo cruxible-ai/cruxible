@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -77,15 +78,29 @@ def source_manifest_for_layers(
     root_path: Path | None,
 ) -> ConfigSourceManifest:
     """Build provenance for all file-backed layers in one composition."""
+    resolved_root = root_path.resolve() if root_path is not None else None
+
+    def source_label(path: Path) -> str:
+        resolved = path.resolve()
+        if resolved_root is None:
+            return str(resolved)
+        try:
+            relative = os.path.relpath(resolved, start=resolved_root.parent)
+        except ValueError:
+            # Different Windows drives cannot be expressed relative to one
+            # another; retain the absolute identity in that case.
+            return str(resolved)
+        return Path(relative).as_posix()
+
     source_layers = [
         ConfigSourceDigest(
-            path=str(layer.config_path), digest=compute_file_digest(layer.config_path)
+            path=source_label(layer.config_path), digest=compute_file_digest(layer.config_path)
         )
         for layer in layers
         if layer.config_path is not None
     ]
     return ConfigSourceManifest(
-        root_path=str(root_path.resolve()) if root_path is not None else None,
+        root_path=source_label(resolved_root) if resolved_root is not None else None,
         layers=source_layers,
         composed_digest=compute_composed_config_digest(composed),
     )

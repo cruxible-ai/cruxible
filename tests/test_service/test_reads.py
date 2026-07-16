@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -275,7 +276,7 @@ class TestInit:
         _composed, changed = compose_file_with_source_manifest(overlay)
         source_changed = service_config_status(instance, current_source_manifest=changed)
         assert source_changed.status == "source_changed"
-        assert source_changed.changed_sources == [str(overlay.resolve())]
+        assert source_changed.changed_sources == ["overlay.yaml"]
 
         active = instance.get_config_path()
         active.write_text(active.read_text() + "# edit\n")
@@ -306,6 +307,37 @@ class TestInit:
         assert status.status == "source_changed"
         assert status.materialized_matches is True
         assert status.composed_matches is False
+
+    def test_config_source_manifest_is_stable_when_source_tree_moves(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        first = tmp_path / "first"
+        first.mkdir()
+        (first / "base.yaml").write_text(CAR_PARTS_YAML)
+        (first / "overlay.yaml").write_text(
+            'version: "1.0"\n'
+            "name: overlay\n"
+            "extends: base.yaml\n"
+            "entity_types: {}\n"
+            "relationships: []\n"
+        )
+        second = tmp_path / "second"
+        shutil.copytree(first, second)
+
+        _first_config, first_manifest = compose_file_with_source_manifest(
+            first / "overlay.yaml"
+        )
+        _second_config, second_manifest = compose_file_with_source_manifest(
+            second / "overlay.yaml"
+        )
+
+        assert first_manifest == second_manifest
+        assert first_manifest.root_path == "overlay.yaml"
+        assert [layer.path for layer in first_manifest.layers] == [
+            "base.yaml",
+            "overlay.yaml",
+        ]
 
     def test_init_with_extends_base_not_found(self, tmp_path: Path) -> None:
         overlay = tmp_path / "overlay.yaml"
@@ -828,6 +860,23 @@ class TestSchema:
         assert result.updated is True
         assert populated_instance.get_config_path() == new_config
         assert populated_instance.load_config().name == "alt_name"
+
+    def test_reload_config_repoint_clears_previous_materialized_provenance(
+        self, tmp_path: Path
+    ) -> None:
+        instance = service_init(
+            tmp_path / "instance",
+            config_yaml=CAR_PARTS_YAML,
+        ).instance
+        assert instance.get_config_provenance() is not None
+        new_config = tmp_path / "alt-config.yaml"
+        new_config.write_text(CAR_PARTS_YAML.replace("car_parts_compatibility", "alt_name"))
+
+        service_reload_config(instance, str(new_config))
+
+        assert instance.get_config_path() == new_config
+        assert instance.get_config_provenance() is None
+        instance.verify_config_integrity()
 
     def test_reload_config_resolves_relative_path_from_cwd(
         self,
