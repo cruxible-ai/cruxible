@@ -31,6 +31,7 @@ from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import (
+    DEFAULT_BASE_KIT_ENV,
     KIT_MANIFEST_FILE,
     KitBundle,
     config_yaml_has_kit_provider_refs,
@@ -351,7 +352,15 @@ def _with_default_base_kit(
     if default_base_kit is None:
         return kit_refs, bundles, None
 
-    base = resolve_kit_ref(default_base_kit)
+    try:
+        base = resolve_kit_ref(default_base_kit)
+    except ConfigError as exc:
+        raise ConfigError(
+            f"Default base kit '{default_base_kit}' could not be resolved. It was "
+            f"selected by {DEFAULT_BASE_KIT_ENV} or the built-in default; correct that "
+            "configuration or opt out with --bare. "
+            f"Resolver error: {exc}"
+        ) from exc
     if base.manifest.role != "base":
         raise ConfigError(
             f"Default base kit '{base.manifest.kit_id}' declares role: "

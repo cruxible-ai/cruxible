@@ -82,6 +82,14 @@ def test_default_base_kit_is_opt_out_configurable(monkeypatch: pytest.MonkeyPatc
     assert get_default_base_kit() is None
 
 
+def test_default_base_kit_respects_explicit_empty_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_DEFAULT_BASE_KIT", "process-only-base")
+
+    assert get_default_base_kit({}) == DEFAULT_BASE_KIT
+
+
 def test_kit_provider_ref_loads_relative_imports(tmp_path: Path) -> None:
     _write_minimal_kit(tmp_path, role="standalone")
     providers = tmp_path / "providers"

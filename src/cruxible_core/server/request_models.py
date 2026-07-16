@@ -18,6 +18,12 @@ class InitRequest(BaseModel):
     bare: bool = False
     config_source_manifest: contracts.ConfigSourceManifest | None = None
 
+    @model_validator(mode="after")
+    def validate_bare(self) -> InitRequest:
+        if self.bare and not any(value.strip() for value in (self.kits or [])):
+            raise ValueError("bare requires kit-backed init")
+        return self
+
 
 class ValidateRequest(BaseModel):
     config_path: str | None = None

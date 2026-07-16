@@ -339,6 +339,11 @@ def _has_init_config(
     return config_path is not None or config_yaml is not None or bool(kits)
 
 
+def _validate_bare_kit_init(*, bare: bool, kits: list[str] | None) -> None:
+    if bare and not any(value.strip() for value in (kits or [])):
+        raise ConfigError("bare requires kit-backed init")
+
+
 def _check_init_permissions(root_dir: str, *, has_config: bool) -> None:
     check_permission("cruxible_init")
     if has_config:
@@ -394,6 +399,7 @@ def init_local(
     config_source_manifest: contracts.ConfigSourceManifest | None = None,
 ) -> contracts.InitResult:
     """Initialize a new cruxible instance, or reload an existing one."""
+    _validate_bare_kit_init(bare=bare, kits=kits)
     has_config = _has_init_config(config_path, config_yaml, kits)
     _check_init_permissions(root_dir, has_config=has_config)
     root = Path(root_dir)
@@ -430,6 +436,7 @@ def init_governed(
     config_source_manifest: contracts.ConfigSourceManifest | None = None,
 ) -> contracts.InitResult:
     """Initialize or reload a daemon-owned governed instance."""
+    _validate_bare_kit_init(bare=bare, kits=kits)
     check_permission(
         "cruxible_governed_instance_lifecycle",
         instance_id=root_dir,

@@ -89,7 +89,7 @@ class KitBundle(BaseModel):
 
 def get_default_base_kit(environ: Mapping[str, str] | None = None) -> str | None:
     """Return the deployment's opt-out default base kit reference."""
-    env = environ or os.environ
+    env = os.environ if environ is None else environ
     configured = env.get(DEFAULT_BASE_KIT_ENV)
     if configured is None:
         return DEFAULT_BASE_KIT

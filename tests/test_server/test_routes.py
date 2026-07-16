@@ -1733,6 +1733,22 @@ def test_server_init_rejects_uploaded_config_with_unmaterialized_kit_refs(
     assert "Uploaded config contains kit:// provider refs" in response.json()["message"]
 
 
+def test_server_init_rejects_bare_for_uploaded_config(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "bare-upload"
+    project.mkdir()
+
+    response = app_client.post(
+        "/api/v1/instances",
+        json={"root_dir": str(project), "config_yaml": CAR_PARTS_YAML, "bare": True},
+    )
+
+    assert response.status_code == 422
+    assert "bare requires kit-backed init" in response.text
+
+
 def test_repeated_init_returns_same_opaque_id(app_client: TestClient, server_project: Path):
     first = _init_instance(app_client, server_project)
     second = app_client.post("/api/v1/instances", json={"root_dir": str(server_project)}).json()

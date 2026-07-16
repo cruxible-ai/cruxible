@@ -38,6 +38,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service import service_describe_query, service_init, service_plan
+from cruxible_core.service.lifecycle import _with_default_base_kit
 
 # Base URL is a label only; the real transport is the in-process TestClient.
 _SERVER_URL = "http://cruxible-daemon"
@@ -195,6 +196,24 @@ def _bundle(kit_id: str, role: str, target_state: str | None = None) -> KitBundl
         ),
         digest="sha256:test",
     )
+
+
+def test_default_base_resolution_error_names_configuration_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    domain = _bundle("demo-domain", "standalone")
+
+    def fail_resolve(_kit_ref: str) -> KitBundle:
+        raise ConfigError("not found")
+
+    monkeypatch.setattr("cruxible_core.service.lifecycle.resolve_kit_ref", fail_resolve)
+
+    with pytest.raises(ConfigError, match="CRUXIBLE_DEFAULT_BASE_KIT.*--bare"):
+        _with_default_base_kit(
+            ["demo-domain"],
+            [domain],
+            default_base_kit="missing-base",
+        )
 
 
 def test_kit_sequence_validation_names_offender_and_target() -> None:
