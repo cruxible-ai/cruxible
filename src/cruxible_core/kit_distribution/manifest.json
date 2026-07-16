@@ -1,41 +1,41 @@
 {
-  "base_url": "https://github.com/cruxible-ai/cruxible/releases/download/v0.2.3/",
+  "base_url": "https://github.com/cruxible-ai/cruxible/releases/download/v0.2.4/",
   "kits": {
     "agent-operation": {
-      "asset": "agent-operation-0.2.3.tar.gz",
-      "dir_digest": "sha256:e0aac3290383b2af0a79947497356106871b94eee1cd4e2f1b689eb514b4d53d",
-      "tarball_sha256": "822730c97c78079c089e550ded05219845b58a53136551df1803cd6dbe8f5924"
+      "asset": "agent-operation-0.2.4.tar.gz",
+      "dir_digest": "sha256:296b9b022172eda41f07c7007b7a3c386af88acb7c19a44a69e4590f50036d15",
+      "tarball_sha256": "1af12491cf6652822293531c2f1fb8788daca16c50d7ff8878f37ed8e8f83dbb"
     },
     "agent-release": {
-      "asset": "agent-release-0.2.3.tar.gz",
-      "dir_digest": "sha256:1fe97dd24d16a7675b3b3d3867d6715afe289ea85c4b9028943a6d3ae9e926fa",
-      "tarball_sha256": "6fff8336570fa33478be4a9ce0a828b8a39e544c7e24a3bd1e00c562ce9047a7"
+      "asset": "agent-release-0.2.4.tar.gz",
+      "dir_digest": "sha256:6dba8ac6ec0b390048719accac9763448bfcf35abbd196ce5b77e5cb7793d8c4",
+      "tarball_sha256": "996d6ddda53143a88a208ef93b61ceff954a8ba52abaa1eaf192332622e12755"
     },
     "case-law-monitoring": {
-      "asset": "case-law-monitoring-0.2.3.tar.gz",
-      "dir_digest": "sha256:62aac6fca7fdb4d64810fa35735975d5bb00c272e569f2e8267c7077cb826588",
-      "tarball_sha256": "f37e09f157a9671c22900edda2f6c28fa0bfe9be00d6206f08debbee3e47499e"
+      "asset": "case-law-monitoring-0.2.4.tar.gz",
+      "dir_digest": "sha256:866314177b1856de9cad2a94e3c850724a062fc3cbcffc9a23756ddbab405ab1",
+      "tarball_sha256": "5aa5f714e3240d5c6dd77b99c21c7b6562ae4d892a821a4e327739afe6220655"
     },
     "kev-reference": {
-      "asset": "kev-reference-0.2.3.tar.gz",
-      "dir_digest": "sha256:11e264af5be4fa6988eb08306b80ba520f5748c005f9f9d049f43cfd8845bf69",
-      "tarball_sha256": "b5dbcaaf58e578f2342d0fdc959055ed2f6423786dee759ea6093c3192a7b32f"
+      "asset": "kev-reference-0.2.4.tar.gz",
+      "dir_digest": "sha256:d5f8e00fb6ae66a782511ac66bb431dd326819bd8a1b39f4e25c7f6e4ee5172a",
+      "tarball_sha256": "245e4fefec0f19c20063b362147b4a8df9973efb2a3badaa38c54db0e9c4b60d"
     },
     "kev-triage": {
-      "asset": "kev-triage-0.2.3.tar.gz",
-      "dir_digest": "sha256:dfb48e2e40f81e2fe19469f864030abc4c1a47845d810bd097be27c1b1d613d9",
-      "tarball_sha256": "4388904bfe9bea7d6a6fa6e7ac2d5750703aed5dfda31abc7e52d30034ac41ee"
+      "asset": "kev-triage-0.2.4.tar.gz",
+      "dir_digest": "sha256:dddc6eb94fa67dc8877b4711a3064705f966213663696250e246f3d69a5cb9cf",
+      "tarball_sha256": "c8e3eefe40a72e7c844b4101aa074882b6d5b3550ec7b93b7a5d5842f082ca86"
     },
     "project-domain": {
-      "asset": "project-domain-0.2.3.tar.gz",
-      "dir_digest": "sha256:ffb9c2500f117100d7433baa075bd7db23cdf515b36b61b194ddbd26bbdd0d6a",
-      "tarball_sha256": "037050d0ca93bbe4d6f245cf292a0cda6d29af156c1cc7203bb9b904c5e6132e"
+      "asset": "project-domain-0.2.4.tar.gz",
+      "dir_digest": "sha256:9dc5a24479739a348e3752bed635d6b68032dda8eb2aba51368779f7c19431b2",
+      "tarball_sha256": "f53f3a5956edd09679ed190f1aa5f68feb8cf458fd6ff7d78a7f993a46f7013d"
     },
     "supply-chain-blast-radius": {
-      "asset": "supply-chain-blast-radius-0.2.3.tar.gz",
-      "dir_digest": "sha256:171d46297ca2b7bb70601ea338e6d223483c5bd97619739cc7105f35baa20a5e",
-      "tarball_sha256": "fb8c5c08726749421ffd33f443b843b590d19a41ee0dacc20f7376b4e0afdbaf"
+      "asset": "supply-chain-blast-radius-0.2.4.tar.gz",
+      "dir_digest": "sha256:4d8625f9857422c4937f34573d2b65cb421811b4dfedd5cc841d57bfa9a9a344",
+      "tarball_sha256": "489b9a47df028cbb8de9cb2041865e779d1f5c4d056d31ef392ddfb975edd9e5"
     }
   },
-  "version": "0.2.3"
+  "version": "0.2.4"
 }

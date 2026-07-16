@@ -7,6 +7,39 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## 0.2.4 — 2026-07-16
+
+Config composition lands: instances materialize from chains of config
+layers (base kit → domain → overlay) instead of a single vendored file,
+and every materialized config carries verifiable provenance.
+
+### Added
+
+- **Recursive N-ary config composition (`extends`)**: a config may extend
+  multiple bases and bases may themselves extend, materialized with
+  deterministic layering; ambiguous or conflicting layer identities in the
+  chain are rejected rather than silently merged.
+- **First-class default base kits**: a base kit role with an optional
+  `requires_base` contract; `agent-operation` is the public init default,
+  with an explicit `--bare` opt-out across CLI, MCP, HTTP, hosted runtime,
+  and client surfaces. Base/domain/overlay ordering is validated and the
+  composed base identity is reported.
+- **Config provenance and `cruxible config status`**: every authored layer
+  and its digest is recorded alongside the exact materialized bytes;
+  generated active configs are stamped, source drift and hand-edits are
+  detected (forged source manifests rejected), governed active configs are
+  verified at daemon startup with an explicit recovery override, and
+  provenance stays stable across kit repoints and checkout moves.
+- **`judgment` proposal-policy preset** (agent-operation kit): planning
+  judgments — e.g. work-item dependency edges — require maintainer
+  rationale; source evidence is advisory rather than demanded.
+
+### Changed
+
+- **Overlay composition boundary preserved**: uploaded overlays keep their
+  layer boundary through composition, so overlay edits cannot rewrite
+  base-kit-owned config.
+
 ## 0.2.3 — 2026-07-12
 
 Kit versions now track the release train: every bundled kit's manifest
