@@ -3654,3 +3654,152 @@ class TestReadProfiles:
         assert pending_rows
         assert "actor_context" not in json.dumps(local_payload)
         assert "provenance" not in json.dumps(local_payload)
+
+    def test_inspect_neighborhood_local_and_remote_json_parity(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Local and server-mode EXPANDED inspect emit identical JSON, key order included.
+
+        Same pattern as the single-hop parity test: the remote path is driven
+        through a stub client returning the REAL `api.inspect_entity` expanded
+        contract result for the same instance and parameters, so both modes
+        exercise their full emit chains (shared neighborhood serializer
+        builders included).
+        """
+        from cruxible_core.runtime import api
+        from cruxible_core.runtime.instance_manager import get_manager
+
+        self._seed_pending_edge(populated_instance)
+
+        cli_args = [
+            "entity",
+            "inspect",
+            "--type",
+            "Vehicle",
+            "--id",
+            "V-2024-CIVIC-EX",
+            "--depth",
+            "2",
+            "--state",
+            "all",
+            "--profile",
+            "compact",
+            "--json",
+        ]
+        local = _chdir_run(runner, populated_instance.root, cli_args)
+        assert local.exit_code == 0, local.output
+        local_payload = json.loads(local.output)
+
+        get_manager().clear()
+        try:
+            remote_result = api.inspect_entity(
+                str(populated_instance.root),
+                "Vehicle",
+                "V-2024-CIVIC-EX",
+                depth=2,
+                state="all",
+                profile="compact",
+            )
+        finally:
+            get_manager().clear()
+
+        class StubClient:
+            def inspect_entity(
+                self,
+                _instance_id,
+                _entity_type,
+                _entity_id,
+                *,
+                direction="both",
+                relationship_type=None,
+                limit=None,
+                depth=None,
+                relationship_types=None,
+                target_types=None,
+                state=None,
+                projection=None,
+                max_nodes=None,
+                max_edges=None,
+                profile=None,
+            ):
+                assert depth == 2
+                assert state == "all"
+                assert profile == "compact"
+                return remote_result
+
+        monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+        monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+        remote = runner.invoke(
+            cli,
+            ["--server-url", "http://server", "--instance-id", "inst_x", *cli_args],
+        )
+        assert remote.exit_code == 0, remote.output
+        remote_payload = json.loads(remote.output)
+
+        assert local_payload == remote_payload
+        # Ordered-key parity for the envelope and every node/edge row.
+        assert list(local_payload) == list(remote_payload)
+        for local_node, remote_node in zip(
+            local_payload["nodes"], remote_payload["nodes"], strict=True
+        ):
+            assert list(local_node) == list(remote_node)
+        for local_edge, remote_edge in zip(
+            local_payload["edges"], remote_payload["edges"], strict=True
+        ):
+            assert list(local_edge) == list(remote_edge)
+        # The expanded shape is present with governance markers intact.
+        assert list(local_payload) == [
+            "found",
+            "entity_type",
+            "entity_id",
+            "properties",
+            "metadata",
+            "depth",
+            "state",
+            "nodes",
+            "edges",
+            "truncated",
+            "truncation_reasons",
+            "nodes_returned",
+            "edges_returned",
+        ]
+        assert local_payload["nodes"], "expanded read returned no nodes"
+        pending_edges = [
+            edge
+            for edge in local_payload["edges"]
+            if edge["metadata"].get("assertion", {}).get("review", {}).get("status") == "pending"
+        ]
+        assert pending_edges
+        assert "actor_context" not in json.dumps(local_payload)
+        assert "provenance" not in json.dumps(local_payload)
+
+    def test_inspect_neighborhood_table_groups_by_depth(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "entity",
+                "inspect",
+                "--type",
+                "Vehicle",
+                "--id",
+                "V-2024-CIVIC-EX",
+                "--depth",
+                "2",
+                "--state",
+                "all",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Depth 1 nodes" in result.output
+        assert "Depth 2 nodes" in result.output
+        assert "Edges" in result.output
+        assert "Depth: 2" in result.output

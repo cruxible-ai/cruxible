@@ -87,6 +87,32 @@ queries. New parameters, threaded service → HTTP → client → MCP → CLI:
 - Storage layer: BFS in `graph/entity_graph.py` beside
   `get_neighbor_relationships`, budget-aware (stop expanding, still report).
 
+Decisions (implemented):
+
+- **Shape**: a NEW opt-in result model (`InspectNeighborhoodResult`), not
+  additive fields on `InspectEntityResult` — the pinned `INSPECT_STANDARD`
+  key-list makes always-serialized additive fields impossible, and
+  conditional key omission (custom serializer / `exclude_none`) degrades the
+  OpenAPI response schema. The route response model is the union; providing
+  ANY neighborhood parameter (including an explicit `depth=1`) opts in.
+- **Budgets count RETURNED items, not visited**: `target_types`-filtered
+  neighbors consume no budget and are not expanded. A new node needs node AND
+  edge capacity (its discovery edge travels with it); a cycle/cross edge
+  between returned entities needs edge capacity only. `max_nodes` counts
+  non-root nodes.
+- **Silent-cap fix**: on expanded reads the legacy `limit` maps to
+  `max_nodes` (when `max_nodes` is omitted), so the previously silent
+  single-hop `[:limit]` cap reports `truncated` + `node_budget`. Legacy-shape
+  calls stay bit-for-bit unchanged (the pin forbids new keys there).
+- **Composition**: `projection` selects neighbor PROPERTIES (root exempt);
+  `profile` shapes METADATA — both compose. `relationship_type` (legacy
+  single) unions with `relationship_types`.
+- **Depth reason**: `"depth"` is reported when a node at the horizon still
+  has a visible, filter-passing, un-returned edge. Edges among final-depth
+  nodes are not scanned (only nodes below the horizon are expanded).
+- MCP returns a plain dict (FastMCP wraps union-annotated returns in a
+  `{"result": ...}` envelope that would break the legacy top-level payload).
+
 ## 4. Read revision + explicit truncation + continuation
 
 - Add a monotonic integer `read_revision` to `instance_state`, incremented in

@@ -930,8 +930,23 @@ class CruxibleClient:
         direction: str = "both",
         relationship_type: str | None = None,
         limit: int | None = None,
+        depth: int | None = None,
+        relationship_types: builtins.list[str] | None = None,
+        target_types: builtins.list[str] | None = None,
+        state: contracts.QueryVisibilityState | None = None,
+        projection: builtins.list[str] | None = None,
+        max_nodes: int | None = None,
+        max_edges: int | None = None,
         profile: contracts.ReadProfile | None = None,
-    ) -> contracts.InspectEntityResult:
+    ) -> contracts.InspectEntityResult | contracts.InspectNeighborhoodResult:
+        """Single-hop inspect, or the expanded bounded-neighborhood read.
+
+        Providing any neighborhood parameter (``depth``,
+        ``relationship_types``, ``target_types``, ``state``, ``projection``,
+        ``max_nodes``, ``max_edges``) opts into the expanded
+        :class:`~cruxible_client.contracts.InspectNeighborhoodResult` shape —
+        mirroring the server-side opt-in predicate exactly.
+        """
         response = self._client.get(
             f"/api/v1/{instance_id}/inspect/entity/{entity_type}/{entity_id}",
             params=self._omit_none_params(
@@ -939,10 +954,28 @@ class CruxibleClient:
                     "direction": direction,
                     "relationship_type": relationship_type,
                     "limit": limit,
+                    "depth": depth,
+                    "relationship_types": relationship_types,
+                    "target_types": target_types,
+                    "state": state,
+                    "projection": projection,
+                    "max_nodes": max_nodes,
+                    "max_edges": max_edges,
                     "profile": profile,
                 }
             ),
         )
+        neighborhood = (
+            depth is not None
+            or state is not None
+            or max_nodes is not None
+            or max_edges is not None
+            or bool(relationship_types)
+            or bool(target_types)
+            or bool(projection)
+        )
+        if neighborhood:
+            return self._parse_model(response, contracts.InspectNeighborhoodResult)
         return self._parse_model(response, contracts.InspectEntityResult)
 
     def inspect_entity_history(

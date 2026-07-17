@@ -312,7 +312,7 @@ async def get_entity(
 
 @router.get(
     "/{instance_id}/inspect/entity/{entity_type}/{entity_id}",
-    response_model=contracts.InspectEntityResult,
+    response_model=contracts.InspectEntityResult | contracts.InspectNeighborhoodResult,
 )
 async def inspect_entity(
     instance_id: str,
@@ -321,8 +321,18 @@ async def inspect_entity(
     direction: str = Query("both"),
     relationship_type: str | None = None,
     limit: int | None = None,
+    depth: int | None = Query(None, ge=1, le=4),
+    relationship_types: list[str] | None = Query(None),
+    target_types: list[str] | None = Query(None),
+    state: contracts.QueryVisibilityState | None = Query(None),
+    projection: list[str] | None = Query(None),
+    max_nodes: int | None = Query(None, ge=1, le=500),
+    max_edges: int | None = Query(None, ge=1, le=1000),
     profile: contracts.ReadProfile = Query(default="standard"),
-) -> contracts.InspectEntityResult:
+) -> contracts.InspectEntityResult | contracts.InspectNeighborhoodResult:
+    """Single-hop inspect, or the expanded bounded-neighborhood read when any
+    neighborhood parameter (`depth`, `relationship_types`, `target_types`,
+    `state`, `projection`, `max_nodes`, `max_edges`) is provided."""
     return api.inspect_entity(
         resolve_server_instance_id(instance_id),
         entity_type,
@@ -330,6 +340,13 @@ async def inspect_entity(
         direction=direction,
         relationship_type=relationship_type,
         limit=limit,
+        depth=depth,
+        relationship_types=relationship_types,
+        target_types=target_types,
+        state=state,
+        projection=projection,
+        max_nodes=max_nodes,
+        max_edges=max_edges,
         profile=profile,
     )
 

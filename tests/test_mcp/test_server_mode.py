@@ -272,6 +272,13 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
             direction="both",
             relationship_type=None,
             limit=None,
+            depth=None,
+            relationship_types=None,
+            target_types=None,
+            state=None,
+            projection=None,
+            max_nodes=None,
+            max_edges=None,
             profile=None,
         ):
             assert (instance_id, entity_type, entity_id) == ("inst_123", "Asset", "A1")

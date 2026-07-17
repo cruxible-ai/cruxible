@@ -29,6 +29,8 @@ from cruxible_core.graph.provenance import (
 from cruxible_core.kit_defaults import get_default_base_kit
 from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.query.profiles import (
+    neighborhood_edge_payload,
+    neighborhood_node_payload,
     profile_entity_payload,
     profile_get_entity_payload,
     profile_inspect_neighbor,
@@ -146,6 +148,9 @@ from cruxible_core.service.types import (
     RelationshipTargetInput,
     RelationshipWriteInput,
     SharedEvidenceInput,
+)
+from cruxible_core.service.types import (
+    InspectNeighborhoodResult as ServiceInspectNeighborhoodResult,
 )
 from cruxible_core.temporal import format_datetime, utc_now
 
@@ -2436,9 +2441,22 @@ def inspect_entity(
     direction: str = "both",
     relationship_type: str | None = None,
     limit: int | None = None,
+    depth: int | None = None,
+    relationship_types: list[str] | None = None,
+    target_types: list[str] | None = None,
+    state: contracts.QueryVisibilityState | None = None,
+    projection: list[str] | None = None,
+    max_nodes: int | None = None,
+    max_edges: int | None = None,
     profile: contracts.ReadProfile = "standard",
-) -> contracts.InspectEntityResult:
-    """Inspect an entity and its immediate neighbors."""
+) -> contracts.InspectEntityResult | contracts.InspectNeighborhoodResult:
+    """Inspect an entity and its bounded neighborhood.
+
+    Legacy calls (no neighborhood parameter) keep the single-hop
+    ``InspectEntityResult`` shape bit-for-bit; providing any neighborhood
+    parameter returns the expanded ``InspectNeighborhoodResult``. The root
+    card follows ``profile`` only (projection never trims the root).
+    """
     check_permission("cruxible_inspect_entity", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_inspect_entity(
@@ -2448,7 +2466,61 @@ def inspect_entity(
         direction=direction,  # type: ignore[arg-type]
         relationship_type=relationship_type,
         limit=limit,
+        depth=depth,
+        relationship_types=relationship_types,
+        target_types=target_types,
+        state=state,
+        projection=projection,
+        max_nodes=max_nodes,
+        max_edges=max_edges,
     )
+    if isinstance(result, ServiceInspectNeighborhoodResult):
+        root_payload = profile_get_entity_payload(
+            {"properties": result.properties, "metadata": result.metadata},
+            profile,
+        )
+        return contracts.InspectNeighborhoodResult(
+            found=result.found,
+            entity_type=result.entity_type,
+            entity_id=result.entity_id,
+            properties=root_payload["properties"],
+            metadata=root_payload["metadata"],
+            depth=result.depth,
+            state=result.state,
+            nodes=[
+                contracts.NeighborhoodNodeResult.model_validate(
+                    neighborhood_node_payload(
+                        entity=node.entity.model_dump(mode="json"),
+                        depth=node.depth,
+                        projection=projection,
+                        profile=profile,
+                    )
+                )
+                for node in result.nodes
+            ],
+            edges=[
+                contracts.NeighborhoodEdgeResult.model_validate(
+                    neighborhood_edge_payload(
+                        {
+                            "relationship_type": edge.relationship_type,
+                            "from_type": edge.from_type,
+                            "from_id": edge.from_id,
+                            "to_type": edge.to_type,
+                            "to_id": edge.to_id,
+                            "edge_key": edge.edge_key,
+                            "properties": edge.properties,
+                            "metadata": edge.metadata,
+                        },
+                        profile,
+                    )
+                )
+                for edge in result.edges
+            ],
+            truncated=result.truncated,
+            truncation_reasons=list(result.truncation_reasons),
+            nodes_returned=result.nodes_returned,
+            edges_returned=result.edges_returned,
+        )
     entity_payload = profile_get_entity_payload(
         {"properties": result.properties, "metadata": result.metadata},
         profile,

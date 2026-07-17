@@ -21,7 +21,25 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.query.engine import execute_query
 from cruxible_core.query.enums import QueryVisibilityState
+from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.query.types import QueryResult
+
+# Bounded-neighborhood budgets: defaults keep an unadorned expanded read
+# agent-sized; hard caps bound the worst case a caller can request.
+NEIGHBORHOOD_MAX_DEPTH = 4
+NEIGHBORHOOD_DEFAULT_MAX_NODES = 100
+NEIGHBORHOOD_MAX_NODES = 500
+NEIGHBORHOOD_DEFAULT_MAX_EDGES = 200
+NEIGHBORHOOD_MAX_EDGES = 1000
+
+_NEIGHBORHOOD_STATES: tuple[QueryVisibilityState, ...] = (
+    "live",
+    "accepted",
+    "all",
+    "not-live",
+    "pending",
+    "reviewable",
+)
 
 
 @dataclass
@@ -43,6 +61,41 @@ class ReadInspectEntity:
     metadata: dict[str, Any] = field(default_factory=dict)
     neighbors: list[ReadInspectNeighbor] = field(default_factory=list)
     total_neighbors: int = 0
+
+
+@dataclass
+class ReadNeighborhoodNode:
+    entity: EntityInstance
+    depth: int
+
+
+@dataclass
+class ReadNeighborhoodEdge:
+    relationship_type: str
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    edge_key: int | None
+    properties: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ReadInspectNeighborhood:
+    found: bool
+    entity_type: str
+    entity_id: str
+    properties: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    depth: int = 1
+    state: QueryVisibilityState = "live"
+    nodes: list[ReadNeighborhoodNode] = field(default_factory=list)
+    edges: list[ReadNeighborhoodEdge] = field(default_factory=list)
+    truncated: bool = False
+    truncation_reasons: list[str] = field(default_factory=list)
+    nodes_returned: int = 0
+    edges_returned: int = 0
 
 
 @dataclass
@@ -225,6 +278,198 @@ def inspect_entity(
     )
 
 
+def neighborhood_requested(
+    *,
+    depth: int | None = None,
+    relationship_types: list[str] | None = None,
+    target_types: list[str] | None = None,
+    state: str | None = None,
+    projection: list[str] | None = None,
+    max_nodes: int | None = None,
+    max_edges: int | None = None,
+) -> bool:
+    """Whether an inspect call opted into the expanded neighborhood shape.
+
+    Any explicitly provided neighborhood parameter opts in — including an
+    explicit ``depth=1`` (the documented way to get a single-hop read with
+    visible truncation). Calls providing none of them keep the legacy
+    single-hop ``neighbors`` shape bit-for-bit.
+    """
+    return (
+        depth is not None
+        or state is not None
+        or max_nodes is not None
+        or max_edges is not None
+        or bool(relationship_types)
+        or bool(target_types)
+        or bool(projection)
+    )
+
+
+def validate_neighborhood_projection(
+    config: CoreConfig | None,
+    projection: list[str] | None,
+) -> None:
+    """Reject projection names unknown to EVERY configured entity type.
+
+    Neighborhood nodes span entity types, so a name only needs to exist on
+    one type (nodes of other types simply omit it); a name known to no type
+    is a typo and fails loudly.
+    """
+    if config is None or not projection:
+        return
+    known: set[str] = set(_IDENTITY_PROJECTION_FIELDS)
+    for entity_type in config.entity_types:
+        entity_schema = config.get_entity_type(entity_type)
+        if entity_schema is not None:
+            known.update(entity_schema.properties)
+    unknown = sorted(set(projection) - known)
+    if unknown:
+        raise ConfigError(
+            "Unknown projection propert{} {}: not defined on any entity type".format(
+                "ies" if len(unknown) > 1 else "y",
+                ", ".join(unknown),
+            )
+        )
+
+
+def inspect_neighborhood(
+    graph: EntityGraph,
+    entity_type: str,
+    entity_id: str,
+    *,
+    config: CoreConfig | None = None,
+    depth: int | None = None,
+    direction: Literal["incoming", "outgoing", "both"] = "both",
+    relationship_type: str | None = None,
+    relationship_types: list[str] | None = None,
+    target_types: list[str] | None = None,
+    state: QueryVisibilityState | None = None,
+    limit: int | None = None,
+    max_nodes: int | None = None,
+    max_edges: int | None = None,
+) -> ReadInspectNeighborhood:
+    """Bounded, deterministic neighborhood read around one root entity.
+
+    Parameter semantics:
+
+    * ``depth`` defaults to 1, hard max ``NEIGHBORHOOD_MAX_DEPTH``.
+    * ``relationship_type`` (legacy single filter) and ``relationship_types``
+      compose as a UNION when both are given.
+    * ``state`` gates edges through the query engine's
+      ``relationship_matches_query_state`` — visibility is bit-identical to
+      named-query traversal. Default ``live`` (unlike the legacy single-hop
+      read, which shows every stored edge).
+    * ``limit`` (the legacy single-hop cap) maps to ``max_nodes`` when
+      ``max_nodes`` is not given, so the previously silent cap now reports
+      ``truncated`` with reason ``node_budget``.
+    """
+    resolved_depth = 1 if depth is None else depth
+    if not 1 <= resolved_depth <= NEIGHBORHOOD_MAX_DEPTH:
+        raise ConfigError(
+            f"depth must be between 1 and {NEIGHBORHOOD_MAX_DEPTH}, got {resolved_depth}"
+        )
+    resolved_max_nodes = max_nodes if max_nodes is not None else limit
+    if resolved_max_nodes is None:
+        resolved_max_nodes = NEIGHBORHOOD_DEFAULT_MAX_NODES
+    if not 1 <= resolved_max_nodes <= NEIGHBORHOOD_MAX_NODES:
+        raise ConfigError(
+            f"max_nodes must be between 1 and {NEIGHBORHOOD_MAX_NODES}, got {resolved_max_nodes}"
+        )
+    resolved_max_edges = max_edges if max_edges is not None else NEIGHBORHOOD_DEFAULT_MAX_EDGES
+    if not 1 <= resolved_max_edges <= NEIGHBORHOOD_MAX_EDGES:
+        raise ConfigError(
+            f"max_edges must be between 1 and {NEIGHBORHOOD_MAX_EDGES}, got {resolved_max_edges}"
+        )
+    resolved_state: QueryVisibilityState = state if state is not None else "live"
+    if resolved_state not in _NEIGHBORHOOD_STATES:
+        raise ConfigError(
+            f"state must be one of {', '.join(_NEIGHBORHOOD_STATES)}; got '{resolved_state}'"
+        )
+
+    # Legacy single filter + repeatable filter compose as a union.
+    rel_filter = sorted(
+        set(relationship_types or []) | ({relationship_type} if relationship_type else set())
+    )
+    if config is not None:
+        _require_entity_type(config, entity_type)
+        for name in rel_filter:
+            _require_relationship_type(config, name)
+        for name in target_types or []:
+            _require_entity_type(config, name)
+
+    entity = graph.get_entity(entity_type, entity_id)
+    if entity is None:
+        return ReadInspectNeighborhood(
+            found=False,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            depth=resolved_depth,
+            state=resolved_state,
+        )
+
+    expansion = graph.expand_neighborhood(
+        entity_type,
+        entity_id,
+        depth=resolved_depth,
+        direction=direction,
+        relationship_types=rel_filter or None,
+        target_types=sorted(set(target_types)) if target_types else None,
+        edge_visible=lambda metadata: relationship_matches_query_state(metadata, resolved_state),
+        max_nodes=resolved_max_nodes,
+        max_edges=resolved_max_edges,
+    )
+    nodes = [
+        ReadNeighborhoodNode(
+            entity=(
+                entity_with_identity_properties(config, node_entity)
+                if config is not None
+                else node_entity
+            ),
+            depth=node_depth,
+        )
+        for node_entity, node_depth in expansion.nodes
+    ]
+    edges = [
+        ReadNeighborhoodEdge(
+            relationship_type=str(edge["relationship_type"]),
+            from_type=edge["from_type"],
+            from_id=edge["from_id"],
+            to_type=edge["to_type"],
+            to_id=edge["to_id"],
+            edge_key=edge.get("edge_key"),
+            properties=dict(edge.get("properties", {})),
+            metadata=dict(edge.get("metadata", {})),
+        )
+        for edge in expansion.edges
+    ]
+    entity_props = (
+        entity_properties_with_identity(
+            config,
+            entity.entity_type,
+            entity.entity_id,
+            entity.properties,
+        )
+        if config is not None
+        else dict(entity.properties)
+    )
+    return ReadInspectNeighborhood(
+        found=True,
+        entity_type=entity.entity_type,
+        entity_id=entity.entity_id,
+        properties=entity_props,
+        metadata=entity.metadata.to_metadata_dict(),
+        depth=resolved_depth,
+        state=resolved_state,
+        nodes=nodes,
+        edges=edges,
+        truncated=expansion.truncated,
+        truncation_reasons=list(expansion.truncation_reasons),
+        nodes_returned=len(nodes),
+        edges_returned=len(edges),
+    )
+
+
 def sample_entities(
     graph: EntityGraph,
     entity_type: str,
@@ -312,16 +557,27 @@ def graph_stats(
 
 
 __all__ = [
+    "NEIGHBORHOOD_DEFAULT_MAX_EDGES",
+    "NEIGHBORHOOD_DEFAULT_MAX_NODES",
+    "NEIGHBORHOOD_MAX_DEPTH",
+    "NEIGHBORHOOD_MAX_EDGES",
+    "NEIGHBORHOOD_MAX_NODES",
     "graph_stats",
     "get_entity",
     "get_relationship",
     "inspect_entity",
+    "inspect_neighborhood",
+    "neighborhood_requested",
     "project_entity_fields",
     "ReadInspectEntity",
     "ReadInspectNeighbor",
+    "ReadInspectNeighborhood",
+    "ReadNeighborhoodEdge",
+    "ReadNeighborhoodNode",
     "ReadStatsResult",
     "relationship_sort_key",
     "run_query",
     "sample_entities",
     "validate_entity_projection_fields",
+    "validate_neighborhood_projection",
 ]

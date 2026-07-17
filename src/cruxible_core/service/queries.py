@@ -49,9 +49,14 @@ from cruxible_core.query.read_surface import (
     inspect_entity as read_inspect_entity,
 )
 from cruxible_core.query.read_surface import (
+    inspect_neighborhood as read_inspect_neighborhood,
+)
+from cruxible_core.query.read_surface import (
+    neighborhood_requested,
     project_entity_fields,
     relationship_sort_key,
     validate_entity_projection_fields,
+    validate_neighborhood_projection,
 )
 from cruxible_core.query.read_surface import (
     run_query as read_run_query,
@@ -67,9 +72,12 @@ from cruxible_core.service.types import (
     EntityChangeHistoryItem,
     EntityChangeHistoryResult,
     InspectEntityResult,
+    InspectNeighborhoodResult,
     InspectNeighborResult,
     ListResult,
     NeighborDirection,
+    NeighborhoodEdgeResult,
+    NeighborhoodNodeResult,
     OperationContext,
     PropertyChangeItem,
     QueryDefinitionServiceResult,
@@ -634,10 +642,83 @@ def service_inspect_entity(
     direction: Literal["incoming", "outgoing", "both"] = "both",
     relationship_type: str | None = None,
     limit: int | None = None,
-) -> InspectEntityResult:
-    """Look up an entity and its immediate neighbors."""
+    depth: int | None = None,
+    relationship_types: list[str] | None = None,
+    target_types: list[str] | None = None,
+    state: QueryVisibilityState | None = None,
+    projection: list[str] | None = None,
+    max_nodes: int | None = None,
+    max_edges: int | None = None,
+) -> InspectEntityResult | InspectNeighborhoodResult:
+    """Look up an entity and its neighborhood.
+
+    Legacy calls (no neighborhood parameter provided) return the single-hop
+    :class:`InspectEntityResult` unchanged. Providing ANY neighborhood
+    parameter — including an explicit ``depth=1`` — opts into the bounded
+    BFS :class:`InspectNeighborhoodResult` shape with explicit budgets and
+    truncation reporting. ``projection`` is validated here; property
+    selection itself happens in the serializer layer (root exempt).
+    """
     config = instance.load_config()
     graph = instance.load_graph()
+    if neighborhood_requested(
+        depth=depth,
+        relationship_types=relationship_types,
+        target_types=target_types,
+        state=state,
+        projection=projection,
+        max_nodes=max_nodes,
+        max_edges=max_edges,
+    ):
+        validate_neighborhood_projection(config, projection)
+        neighborhood = read_inspect_neighborhood(
+            graph,
+            entity_type,
+            entity_id,
+            config=config,
+            depth=depth,
+            direction=direction,
+            relationship_type=relationship_type,
+            relationship_types=relationship_types,
+            target_types=target_types,
+            state=state,
+            limit=limit,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+        )
+        return InspectNeighborhoodResult(
+            found=neighborhood.found,
+            entity_type=neighborhood.entity_type,
+            entity_id=neighborhood.entity_id,
+            properties=neighborhood.properties,
+            metadata=neighborhood.metadata,
+            depth=neighborhood.depth,
+            state=neighborhood.state,
+            nodes=[
+                NeighborhoodNodeResult(entity=node.entity, depth=node.depth)
+                for node in neighborhood.nodes
+            ],
+            edges=[
+                NeighborhoodEdgeResult(
+                    relationship_type=edge.relationship_type,
+                    from_type=edge.from_type,
+                    from_id=edge.from_id,
+                    to_type=edge.to_type,
+                    to_id=edge.to_id,
+                    edge_key=edge.edge_key,
+                    properties=edge.properties,
+                    metadata=edge.metadata,
+                )
+                for edge in neighborhood.edges
+            ],
+            truncated=neighborhood.truncated,
+            truncation_reasons=cast(
+                "list[Literal['node_budget', 'edge_budget', 'depth']]",
+                list(neighborhood.truncation_reasons),
+            ),
+            nodes_returned=neighborhood.nodes_returned,
+            edges_returned=neighborhood.edges_returned,
+        )
     result = read_inspect_entity(
         graph,
         entity_type,

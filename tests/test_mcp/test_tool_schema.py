@@ -341,18 +341,6 @@ class TestOutputSchema:
                 {"items", "entity_type", "total", "limit", "offset", "truncated"},
             ),
             (
-                "cruxible_inspect_entity",
-                {
-                    "found",
-                    "entity_type",
-                    "entity_id",
-                    "properties",
-                    "metadata",
-                    "neighbors",
-                    "total_neighbors",
-                },
-            ),
-            (
                 "cruxible_inspect_entity_history",
                 {
                     "entity_type",
@@ -558,7 +546,14 @@ class TestOutputSchema:
         assert output["type"] == "object"
         assert set(output["properties"].keys()) == expected_keys
 
-    @pytest.mark.parametrize("tool_name", ["cruxible_receipt", "cruxible_schema"])
+    @pytest.mark.parametrize(
+        "tool_name",
+        # cruxible_inspect_entity returns a dict because its result is a UNION
+        # of the legacy single-hop and expanded neighborhood contract models;
+        # a union annotation would make FastMCP wrap the payload in a
+        # {"result": ...} envelope and break the legacy top-level shape.
+        ["cruxible_receipt", "cruxible_schema", "cruxible_inspect_entity"],
+    )
     def test_dict_output_schema(self, server, tool_name):
         schemas = _get_tool_schemas(server)
         output = schemas[tool_name].outputSchema

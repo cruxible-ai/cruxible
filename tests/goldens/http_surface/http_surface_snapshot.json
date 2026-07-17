@@ -97,7 +97,7 @@
     "GET": "EntityChangeHistoryResult"
   },
   "/api/v1/{instance_id}/inspect/entity/{entity_type}/{entity_id}": {
-    "GET": "InspectEntityResult"
+    "GET": "InspectEntityResult | InspectNeighborhoodResult"
   },
   "/api/v1/{instance_id}/inspect/{view}": {
     "GET": "CanonicalViewResult"

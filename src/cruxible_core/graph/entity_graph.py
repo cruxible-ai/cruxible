@@ -11,7 +11,8 @@ Node ID format: "{entity_type}:{entity_id}" (e.g., "Vehicle:V-2024-CIVIC-EX")
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass, field
 from itertools import count
 from typing import Any
 
@@ -43,6 +44,30 @@ def _entity_metadata_dict(metadata: EntityMetadata) -> dict[str, Any]:
 
 def _relationship_metadata(edge_data: dict[str, Any]) -> RelationshipMetadata:
     return RelationshipMetadata.model_validate(edge_data.get("metadata") or {})
+
+
+# Canonical truncation-reason order for bounded neighborhood expansion. The
+# result list is always a subsequence of this tuple, so callers (and pinned
+# payloads) see a deterministic reason order regardless of trip order.
+NEIGHBORHOOD_TRUNCATION_REASONS: tuple[str, ...] = ("node_budget", "edge_budget", "depth")
+
+
+@dataclass
+class NeighborhoodExpansion:
+    """Bounded BFS expansion result around one root entity.
+
+    ``nodes`` holds ``(entity, depth)`` pairs for every returned NON-root
+    entity, sorted by ``(depth, entity_type, entity_id)``. ``edges`` holds
+    serialized edge dicts (same shape as ``get_neighbor_relationships`` rows
+    plus explicit endpoint refs), sorted by ``(relationship_type, from_type,
+    from_id, to_type, to_id, edge_key)``. Budgets count RETURNED items, not
+    visited ones: neighbors dropped by ``target_types`` never consume budget.
+    """
+
+    nodes: list[tuple[EntityInstance, int]] = field(default_factory=list)
+    edges: list[dict[str, Any]] = field(default_factory=list)
+    truncated: bool = False
+    truncation_reasons: list[str] = field(default_factory=list)
 
 
 class EntityGraph:
@@ -827,6 +852,187 @@ class EntityGraph:
                     )
 
         return results
+
+    def expand_neighborhood(
+        self,
+        entity_type: str,
+        entity_id: str,
+        *,
+        depth: int = 1,
+        direction: str = "both",
+        relationship_types: list[str] | None = None,
+        target_types: list[str] | None = None,
+        edge_visible: Callable[[RelationshipMetadata], bool] | None = None,
+        max_nodes: int = 100,
+        max_edges: int = 200,
+    ) -> NeighborhoodExpansion:
+        """Deterministic budget-aware BFS expansion around one root entity.
+
+        Semantics (the generic bounded read beneath named traversal queries):
+
+        * Frontier is processed level by level, each level ordered by
+          ``(entity_type, entity_id)``; candidate edges of a node are ordered
+          by ``(relationship_type, to_type, to_id, from_type, from_id,
+          edge_key)`` — so partial (budget-clipped) results are deterministic.
+        * Cycles are visited once: an entity is returned at its minimum depth
+          only; edges back into already-visited entities are still returned.
+        * ``edge_visible`` gates edges (callers pass the query engine's
+          ``relationship_matches_query_state`` bound to a state so visibility
+          is bit-identical to traversal); hidden edges are never walked.
+        * ``target_types`` drops non-matching NEW neighbors before any budget
+          is consumed (budgets count returned items, not visited); the root is
+          exempt. Dropped neighbors are not expanded either.
+        * Budgets: ``max_nodes`` counts returned non-root nodes, ``max_edges``
+          counts returned edges. A new node needs node AND edge capacity (its
+          discovery edge is returned with it); an edge between two returned
+          nodes needs edge capacity only. When a budget trips, expansion stops
+          but everything collected so far is returned with the tripped reason.
+        * Edges among nodes at the final depth are not scanned (only nodes at
+          depth < ``depth`` are expanded); a ``"depth"`` truncation reason is
+          recorded when a final-depth node still has a visible, filter-passing
+          edge that was not returned.
+        """
+        root_node_id = make_node_id(entity_type, entity_id)
+        if root_node_id not in self._graph:
+            return NeighborhoodExpansion()
+
+        rel_filter = set(relationship_types) if relationship_types else None
+        target_filter = set(target_types) if target_types else None
+
+        def _candidate_edges(node_id: str) -> list[tuple[str, str, int, dict[str, Any]]]:
+            """Visible, filter-passing edges of a node in deterministic order."""
+            seen: set[tuple[str, str, int]] = set()
+            candidates: list[tuple[str, str, int, dict[str, Any]]] = []
+            edge_scans: list[Iterable[tuple[str, str, int, dict[str, Any]]]] = []
+            if direction in ("outgoing", "both"):
+                edge_scans.append(self._graph.out_edges(node_id, keys=True, data=True))
+            if direction in ("incoming", "both"):
+                edge_scans.append(self._graph.in_edges(node_id, keys=True, data=True))
+            for scan in edge_scans:
+                for source, target, key, data in scan:
+                    if (source, target, key) in seen:
+                        continue
+                    seen.add((source, target, key))
+                    rel_type = data.get("relationship_type")
+                    if rel_filter is not None and rel_type not in rel_filter:
+                        continue
+                    if edge_visible is not None and not edge_visible(_relationship_metadata(data)):
+                        continue
+                    candidates.append((source, target, key, data))
+            candidates.sort(
+                key=lambda edge: (
+                    str(edge[3].get("relationship_type")),
+                    *split_node_id(edge[1]),
+                    *split_node_id(edge[0]),
+                    edge[2],
+                )
+            )
+            return candidates
+
+        def _edge_payload(
+            source: str, target: str, key: int, data: dict[str, Any]
+        ) -> dict[str, Any]:
+            from_type, from_id = split_node_id(source)
+            to_type, to_id = split_node_id(target)
+            return {
+                "relationship_type": data.get("relationship_type"),
+                "from_type": from_type,
+                "from_id": from_id,
+                "to_type": to_type,
+                "to_id": to_id,
+                "edge_key": key,
+                "properties": dict(data.get("properties", {})),
+                "metadata": _metadata_dict(_relationship_metadata(data)),
+            }
+
+        visited: dict[str, int] = {root_node_id: 0}
+        returned_nodes: list[tuple[EntityInstance, int]] = []
+        collected: dict[tuple[str, str, int], dict[str, Any]] = {}
+        reasons: set[str] = set()
+        frontier = [root_node_id]
+        edge_budget_exhausted = False
+
+        for level in range(depth):
+            if edge_budget_exhausted or not frontier:
+                break
+            frontier.sort(key=lambda node_id: split_node_id(node_id))
+            next_frontier: list[str] = []
+            for node_id in frontier:
+                if edge_budget_exhausted:
+                    break
+                for source, target, key, data in _candidate_edges(node_id):
+                    edge_id = (source, target, key)
+                    if edge_id in collected:
+                        continue
+                    other = target if source == node_id else source
+                    if other in visited:
+                        # Cycle / cross edge between returned entities: edge
+                        # capacity only, the entity is never re-returned.
+                        if len(collected) >= max_edges:
+                            reasons.add("edge_budget")
+                            edge_budget_exhausted = True
+                            break
+                        collected[edge_id] = _edge_payload(source, target, key, data)
+                        continue
+                    other_entity = self.get_entity(*split_node_id(other))
+                    if other_entity is None:
+                        continue
+                    if target_filter is not None and other_entity.entity_type not in target_filter:
+                        # Filtered neighbors consume NO budget and are not
+                        # expanded; their edge is dropped with them.
+                        continue
+                    if len(returned_nodes) >= max_nodes:
+                        reasons.add("node_budget")
+                        continue
+                    if len(collected) >= max_edges:
+                        reasons.add("edge_budget")
+                        edge_budget_exhausted = True
+                        break
+                    visited[other] = level + 1
+                    returned_nodes.append((other_entity, level + 1))
+                    collected[edge_id] = _edge_payload(source, target, key, data)
+                    next_frontier.append(other)
+            frontier = next_frontier
+
+        # Depth-horizon check: a node AT the depth limit with a visible,
+        # filter-passing, un-returned edge means the horizon clipped the read.
+        for node_id in sorted((n for n, d in visited.items() if d == depth), key=split_node_id):
+            if "depth" in reasons:
+                break
+            for source, target, key, _data in _candidate_edges(node_id):
+                if (source, target, key) in collected:
+                    continue
+                other = target if source == node_id else source
+                if other in visited:
+                    reasons.add("depth")
+                    break
+                other_entity = self.get_entity(*split_node_id(other))
+                if other_entity is None:
+                    continue
+                if target_filter is not None and other_entity.entity_type not in target_filter:
+                    continue
+                reasons.add("depth")
+                break
+
+        returned_nodes.sort(key=lambda pair: (pair[1], pair[0].entity_type, pair[0].entity_id))
+        edges = sorted(
+            collected.values(),
+            key=lambda edge: (
+                str(edge["relationship_type"]),
+                edge["from_type"],
+                edge["from_id"],
+                edge["to_type"],
+                edge["to_id"],
+                edge["edge_key"],
+            ),
+        )
+        ordered_reasons = [r for r in NEIGHBORHOOD_TRUNCATION_REASONS if r in reasons]
+        return NeighborhoodExpansion(
+            nodes=returned_nodes,
+            edges=edges,
+            truncated=bool(ordered_reasons),
+            truncation_reasons=ordered_reasons,
+        )
 
     # -------------------------------------------------------------------------
     # Introspection

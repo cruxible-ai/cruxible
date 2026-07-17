@@ -306,6 +306,50 @@ class InspectEntityResult:
     total_neighbors: int = 0
 
 
+NeighborhoodTruncationReason = Literal["node_budget", "edge_budget", "depth"]
+
+
+@dataclass
+class NeighborhoodNodeResult:
+    entity: EntityInstance
+    depth: int
+
+
+@dataclass
+class NeighborhoodEdgeResult:
+    relationship_type: str
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    edge_key: int | None
+    properties: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class InspectNeighborhoodResult:
+    """Expanded bounded-neighborhood inspect result (opt-in shape).
+
+    Returned by ``service_inspect_entity`` when any neighborhood parameter is
+    provided; legacy calls keep :class:`InspectEntityResult` bit-for-bit.
+    """
+
+    found: bool
+    entity_type: str
+    entity_id: str
+    properties: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    depth: int = 1
+    state: QueryVisibilityState = "live"
+    nodes: list[NeighborhoodNodeResult] = field(default_factory=list)
+    edges: list[NeighborhoodEdgeResult] = field(default_factory=list)
+    truncated: bool = False
+    truncation_reasons: list[NeighborhoodTruncationReason] = field(default_factory=list)
+    nodes_returned: int = 0
+    edges_returned: int = 0
+
+
 @dataclass
 class PropertyChangeItem:
     property: str

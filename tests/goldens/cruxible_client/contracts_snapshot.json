@@ -129,6 +129,13 @@
         "reference_model"
       ]
     },
+    "NeighborhoodTruncationReason": {
+      "values": [
+        "node_budget",
+        "edge_budget",
+        "depth"
+      ]
+    },
     "OutcomeAnchorType": {
       "values": [
         "resolution",
@@ -10198,6 +10205,369 @@
         "relationship_type"
       ]
     },
+    "InspectNeighborhoodResult": {
+      "fields": {
+        "depth": {
+          "default": 1,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "depth",
+          "required": false,
+          "schema": {
+            "default": 1,
+            "title": "Depth",
+            "type": "integer"
+          }
+        },
+        "edges": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "edges",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/NeighborhoodEdgeResult"
+            },
+            "title": "Edges",
+            "type": "array"
+          }
+        },
+        "edges_returned": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "edges_returned",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Edges Returned",
+            "type": "integer"
+          }
+        },
+        "entity_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_id",
+          "required": true,
+          "schema": {
+            "title": "Entity Id",
+            "type": "string"
+          }
+        },
+        "entity_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_type",
+          "required": true,
+          "schema": {
+            "title": "Entity Type",
+            "type": "string"
+          }
+        },
+        "found": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "found",
+          "required": true,
+          "schema": {
+            "title": "Found",
+            "type": "boolean"
+          }
+        },
+        "metadata": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "metadata",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          }
+        },
+        "nodes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "nodes",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/NeighborhoodNodeResult"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "nodes_returned": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "nodes_returned",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Nodes Returned",
+            "type": "integer"
+          }
+        },
+        "properties": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "properties",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          }
+        },
+        "state": {
+          "default": "live",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": false,
+          "schema": {
+            "default": "live",
+            "enum": [
+              "live",
+              "accepted",
+              "all",
+              "not-live",
+              "pending",
+              "reviewable"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "truncation_reasons": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "truncation_reasons",
+          "required": false,
+          "schema": {
+            "items": {
+              "enum": [
+                "node_budget",
+                "edge_budget",
+                "depth"
+              ],
+              "type": "string"
+            },
+            "title": "Truncation Reasons",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "NeighborhoodEdgeResult": {
+            "description": "One returned edge of a bounded neighborhood read.\n\n``metadata`` keeps the assertion review/lifecycle markers so\npending/live/rejected/superseded edges never flatten together.",
+            "properties": {
+              "edge_key": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Edge Key"
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship_type": {
+                "title": "Relationship Type",
+                "type": "string"
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relationship_type",
+              "from_type",
+              "from_id",
+              "to_type",
+              "to_id"
+            ],
+            "title": "NeighborhoodEdgeResult",
+            "type": "object"
+          },
+          "NeighborhoodNodeResult": {
+            "description": "One returned non-root entity of a bounded neighborhood read.",
+            "properties": {
+              "depth": {
+                "title": "Depth",
+                "type": "integer"
+              },
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id",
+              "depth"
+            ],
+            "title": "NeighborhoodNodeResult",
+            "type": "object"
+          }
+        },
+        "description": "Expanded bounded-neighborhood inspect result.\n\nOpt-in shape: returned by the inspect-entity surface when any\nneighborhood parameter (``depth``, ``relationship_types``,\n``target_types``, ``state``, ``projection``, ``max_nodes``,\n``max_edges``) is provided. Calls without them keep the legacy\n:class:`InspectEntityResult` single-hop shape bit-for-bit. The root\nentity card is the top-level ``properties``/``metadata``; ``nodes``\nholds non-root entities with their BFS depth.",
+        "properties": {
+          "depth": {
+            "default": 1,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/$defs/NeighborhoodEdgeResult"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "edges_returned": {
+            "default": 0,
+            "title": "Edges Returned",
+            "type": "integer"
+          },
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "found": {
+            "title": "Found",
+            "type": "boolean"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/$defs/NeighborhoodNodeResult"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "nodes_returned": {
+            "default": 0,
+            "title": "Nodes Returned",
+            "type": "integer"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          },
+          "state": {
+            "default": "live",
+            "enum": [
+              "live",
+              "accepted",
+              "all",
+              "not-live",
+              "pending",
+              "reviewable"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "truncation_reasons": {
+            "items": {
+              "enum": [
+                "node_budget",
+                "edge_budget",
+                "depth"
+              ],
+              "type": "string"
+            },
+            "title": "Truncation Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "found",
+          "entity_type",
+          "entity_id"
+        ],
+        "title": "InspectNeighborhoodResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "entity_id",
+        "entity_type",
+        "found"
+      ]
+    },
     "InstanceBackupManifest": {
       "fields": {
         "artifacts": {
@@ -13546,6 +13916,260 @@
         "mode",
         "name",
         "returns"
+      ]
+    },
+    "NeighborhoodEdgeResult": {
+      "fields": {
+        "edge_key": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "edge_key",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Edge Key"
+          }
+        },
+        "from_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_id",
+          "required": true,
+          "schema": {
+            "title": "From Id",
+            "type": "string"
+          }
+        },
+        "from_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_type",
+          "required": true,
+          "schema": {
+            "title": "From Type",
+            "type": "string"
+          }
+        },
+        "metadata": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "metadata",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "properties",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          }
+        },
+        "relationship_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "relationship_type",
+          "required": true,
+          "schema": {
+            "title": "Relationship Type",
+            "type": "string"
+          }
+        },
+        "to_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_id",
+          "required": true,
+          "schema": {
+            "title": "To Id",
+            "type": "string"
+          }
+        },
+        "to_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_type",
+          "required": true,
+          "schema": {
+            "title": "To Type",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "One returned edge of a bounded neighborhood read.\n\n``metadata`` keeps the assertion review/lifecycle markers so\npending/live/rejected/superseded edges never flatten together.",
+        "properties": {
+          "edge_key": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Edge Key"
+          },
+          "from_id": {
+            "title": "From Id",
+            "type": "string"
+          },
+          "from_type": {
+            "title": "From Type",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          },
+          "relationship_type": {
+            "title": "Relationship Type",
+            "type": "string"
+          },
+          "to_id": {
+            "title": "To Id",
+            "type": "string"
+          },
+          "to_type": {
+            "title": "To Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relationship_type",
+          "from_type",
+          "from_id",
+          "to_type",
+          "to_id"
+        ],
+        "title": "NeighborhoodEdgeResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "from_id",
+        "from_type",
+        "relationship_type",
+        "to_id",
+        "to_type"
+      ]
+    },
+    "NeighborhoodNodeResult": {
+      "fields": {
+        "depth": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "depth",
+          "required": true,
+          "schema": {
+            "title": "Depth",
+            "type": "integer"
+          }
+        },
+        "entity_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_id",
+          "required": true,
+          "schema": {
+            "title": "Entity Id",
+            "type": "string"
+          }
+        },
+        "entity_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_type",
+          "required": true,
+          "schema": {
+            "title": "Entity Type",
+            "type": "string"
+          }
+        },
+        "metadata": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "metadata",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "properties",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "One returned non-root entity of a bounded neighborhood read.",
+        "properties": {
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          }
+        },
+        "required": [
+          "entity_type",
+          "entity_id",
+          "depth"
+        ],
+        "title": "NeighborhoodNodeResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "depth",
+        "entity_id",
+        "entity_type"
       ]
     },
     "OutcomeDecisionPolicySuggestion": {

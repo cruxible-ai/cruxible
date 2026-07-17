@@ -153,9 +153,17 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "'full' for complete property bags and metadata."
     ),
     "cruxible_inspect_entity": (
-        "Use when you need one entity plus nearby relationships and related entities. "
-        "Payloads default to the compact output profile; ask for profile='standard' "
-        "or 'full' when you need provenance or actor context."
+        "Use when you need everything relevant about one entity within a bounded "
+        "number of hops — the generic neighborhood read beneath named queries. "
+        "Anchor on the entity, then expand: depth (1-4) sets the hop horizon; "
+        "max_nodes and max_edges are explicit budgets and the response reports "
+        "truncated with truncation_reasons instead of silently clipping. Filter "
+        "with relationship_types and target_types; state selects relationship "
+        "visibility exactly like query traversal (default live — pending edges "
+        "are the norm in governed overlays, so pass state='reviewable' or "
+        "'pending' to include edges awaiting review). projection trims neighbor "
+        "properties; payloads default to the compact output profile — ask for "
+        "profile='standard' or 'full' when you need provenance or actor context."
     ),
     "cruxible_inspect_entity_history": (
         "Use when you need receipt-derived property changes for one entity type or entity."

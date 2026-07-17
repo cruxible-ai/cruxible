@@ -627,14 +627,39 @@ def register_tools(server: FastMCP) -> list[str]:
         direction: str = "both",
         relationship_type: str | None = None,
         limit: int | None = None,
+        depth: int | None = None,
+        relationship_types: list[str] | None = None,
+        target_types: list[str] | None = None,
+        state: contracts.QueryVisibilityState | None = None,
+        projection: list[str] | None = None,
+        max_nodes: int | None = None,
+        max_edges: int | None = None,
         profile: contracts.ReadProfile | None = None,
-    ) -> contracts.InspectEntityResult:
-        """Inspect one entity and its immediate incoming/outgoing neighbors.
+    ) -> dict[str, Any]:
+        """THE generic bounded neighborhood read: anchor on one entity, expand outward.
 
-        `profile` shapes entity and neighbor payloads: `compact` (default
-        here) returns bounded identity cards with governance markers; pass
-        `standard` or `full` when you need provenance or actor context.
+        Answer "everything relevant about X within N hops" in ONE call
+        instead of stitching multiple named queries. Anchor -> expand:
+        `depth` (1-4) sets the hop horizon; `max_nodes` (default 100, cap
+        500) and `max_edges` (default 200, cap 1000) are explicit budgets —
+        the response reports `truncated` + `truncation_reasons`
+        (node_budget/edge_budget/depth) instead of silently clipping.
+        Filters: `relationship_types` (repeatable; unions with the legacy
+        `relationship_type`), `target_types` (only expand into/return these
+        entity types; the anchor is exempt), `direction`. `state` selects
+        relationship visibility exactly like named-query traversal
+        (live/accepted/all/not-live/pending/reviewable; default live) —
+        pending is the NORM for governed overlays, so pass
+        `state='reviewable'` or `'pending'` to see edges awaiting review.
+        `projection` (repeatable) trims neighbor properties to the named
+        ones; `profile` still shapes metadata. Providing any of these
+        returns the expanded nodes/edges shape; a bare call keeps the
+        legacy single-hop `neighbors` shape.
         """
+        # Returned as a plain dict: the result is a UNION of the legacy and
+        # expanded contract models, and FastMCP wraps union-annotated returns
+        # in a {"result": ...} envelope that would break the legacy top-level
+        # payload shape for existing MCP consumers.
         return handlers.handle_inspect_entity(
             instance_id,
             entity_type,
@@ -642,8 +667,15 @@ def register_tools(server: FastMCP) -> list[str]:
             direction=direction,
             relationship_type=relationship_type,
             limit=limit,
+            depth=depth,
+            relationship_types=relationship_types,
+            target_types=target_types,
+            state=state,
+            projection=projection,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
             profile=profile,
-        )
+        ).model_dump(mode="json")
 
     @_tool
     def cruxible_inspect_entity_history(

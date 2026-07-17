@@ -307,9 +307,18 @@ Noun-first read of an entity's history.
 
 **Usage:** `cruxible entity inspect [OPTIONS]`
 
-**Purpose:** Inspect an entity and its immediate neighbors.
+**Purpose:** Inspect an entity and its bounded neighborhood.
 
-Noun-first read of a single entity with its neighbors.
+Noun-first read of a single entity. Without neighborhood options this is the
+legacy single-hop neighbor read. Providing any of `--depth`, `--target-type`,
+`--state`, `--projection`, `--max-nodes`, `--max-edges` (or repeating
+`--relationship`) switches to the expanded bounded BFS read: `nodes`/`edges`
+grouped by depth with explicit budgets and visible truncation
+(`truncated` + `truncation_reasons`: `node_budget`/`edge_budget`/`depth`).
+Every node and edge keeps its lifecycle/review markers. `--projection` selects
+neighbor properties (the root keeps its full properties); `--profile` shapes
+metadata — the two compose. With `--json` the expanded shape is emitted;
+table output groups nodes by depth.
 
 **Options And Arguments:**
 
@@ -318,8 +327,14 @@ Noun-first read of a single entity with its neighbors.
 | `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
 | `--id` | yes | `Sentinel.UNSET` | text | Entity ID. |
 | `--direction` | no | `both` | choice | Neighbor traversal direction. |
-| `--relationship` | no | `` | text | Optional relationship filter. |
-| `--limit` | no | `` | integer range | Max neighbors to show. |
+| `--relationship` | no | `` | text | Relationship type filter; repeatable (multiple values expand the read). |
+| `--limit` | no | `` | integer range | Max neighbors to show (legacy single-hop cap; maps to the node budget on expanded reads). |
+| `--depth` | no | `` | integer range | Hop horizon for the expanded read (1-4). Providing it (even `--depth 1`) opts into the expanded nodes/edges shape. |
+| `--target-type` | no | `` | text | Only expand into/return entities of these types (root exempt); repeatable. |
+| `--state` | no | `` | choice | Relationship visibility for the expanded read: `live` (default), `accepted`, `all`, `not-live`, `pending`, `reviewable` — identical semantics to named-query traversal. |
+| `--projection` | no | `` | text | Neighbor property names to keep (root keeps full properties); repeatable. |
+| `--max-nodes` | no | `` | integer range | Node budget for the expanded read (default 100, hard cap 500). |
+| `--max-edges` | no | `` | integer range | Edge budget for the expanded read (default 200, hard cap 1000). |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 

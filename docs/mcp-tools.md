@@ -891,7 +891,7 @@ error-level finding exists.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need one entity plus nearby relationships and related entities. Payloads default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context.
+**Purpose:** Use when you need everything relevant about one entity within a bounded number of hops — the generic neighborhood read beneath named queries. Anchor on the entity, then expand: depth (1-4) sets the hop horizon; max_nodes and max_edges are explicit budgets and the response reports truncated with truncation_reasons instead of silently clipping. Filter with relationship_types and target_types; state selects relationship visibility exactly like query traversal (default live — pending edges are the norm in governed overlays, so pass state='reviewable' or 'pending' to include edges awaiting review). projection trims neighbor properties; payloads default to the compact output profile — ask for profile='standard' or 'full' when you need provenance or actor context.
 
 **Arguments:**
 
@@ -900,12 +900,19 @@ error-level finding exists.
 | `instance_id` | yes | string |  |
 | `entity_type` | yes | string |  |
 | `entity_id` | yes | string |  |
-| `direction` | no | string |  |
-| `relationship_type` | no | string | null |  |
-| `limit` | no | integer | null |  |
+| `direction` | no | string | `incoming`, `outgoing`, or `both` (default). |
+| `relationship_type` | no | string | null | Legacy single relationship filter; unions with `relationship_types` when both are given. |
+| `limit` | no | integer | null | Legacy single-hop neighbor cap; maps to `max_nodes` on expanded reads so the cap reports `truncated` instead of clipping silently. |
+| `depth` | no | integer | null | Hop horizon for the expanded read (1-4, default 1). Providing it — even `depth=1` — opts into the expanded nodes/edges shape. |
+| `relationship_types` | no | array | null | Repeatable relationship filter for the expanded read; unions with `relationship_type`. |
+| `target_types` | no | array | null | Only expand into/return entities of these types (the anchor is exempt). |
+| `state` | no | string | null | Relationship visibility for the expanded read: `live` (default), `accepted`, `all`, `not-live`, `pending`, `reviewable` — identical semantics to named-query traversal. |
+| `projection` | no | array | null | Neighbor property names to keep (the anchor keeps full properties). Composes with `profile`: projection selects properties, profile shapes metadata. |
+| `max_nodes` | no | integer | null | Node budget for the expanded read (default 100, hard cap 500). |
+| `max_edges` | no | integer | null | Edge budget for the expanded read (default 200, hard cap 1000). |
 | `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
 
-**Returns:** Top-level fields: `found`, `entity_type`, `entity_id`, `properties`, `metadata`, `neighbors`, `total_neighbors`
+**Returns:** Legacy calls (no neighborhood argument): `found`, `entity_type`, `entity_id`, `properties`, `metadata`, `neighbors`, `total_neighbors`. Expanded calls: `found`, `entity_type`, `entity_id`, `properties`, `metadata` (the anchor card), `depth`, `state`, `nodes` (each with `depth` and lifecycle markers), `edges` (each with review/lifecycle markers), `truncated`, `truncation_reasons` (`node_budget`/`edge_budget`/`depth`), `nodes_returned`, `edges_returned`.
 
 **Side Effects:** Read-only.
 

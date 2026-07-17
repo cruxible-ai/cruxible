@@ -65,6 +65,8 @@ from cruxible_core.cli.formatting import (
     entities_table,
     entity_change_history_table,
     inspect_neighbors_table,
+    neighborhood_edges_table,
+    neighborhood_nodes_table,
     query_definitions_detail_table,
     query_definitions_table,
     relationship_table,
@@ -85,13 +87,17 @@ from cruxible_core.graph.types import (
 from cruxible_core.query.profiles import (
     ReadProfile,
     inspect_neighbor_payload,
+    neighborhood_edge_payload,
+    neighborhood_node_payload,
     profile_entity_payload,
+    profile_get_entity_payload,
     profile_inspect_payload,
     profile_query_items,
 )
 from cruxible_core.query.types import ProjectedQueryRow, dump_query_row
 from cruxible_core.service import (
     InspectEntityResult,
+    InspectNeighborhoodResult,
     query_definition_full_payload,
     query_definition_summary_payload,
     service_analyze_feedback,
@@ -1309,6 +1315,64 @@ def _inspect_neighbor_rows(neighbors: list[Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _neighborhood_payload(
+    result: InspectNeighborhoodResult | contracts.InspectNeighborhoodResult,
+    *,
+    projection: list[str] | None,
+    profile: ReadProfile,
+) -> dict[str, Any]:
+    """Assemble the expanded neighborhood payload for local OR remote results.
+
+    Remote results were already profiled/projected server-side and dump in
+    contract field order; the local path routes through the same serializer
+    builders so key order and trimming cannot drift between modes.
+    """
+    if isinstance(result, contracts.InspectNeighborhoodResult):
+        return result.model_dump(mode="json")
+    root = profile_get_entity_payload(
+        {"properties": result.properties, "metadata": result.metadata},
+        profile,
+    )
+    return {
+        "found": result.found,
+        "entity_type": result.entity_type,
+        "entity_id": result.entity_id,
+        "properties": root["properties"],
+        "metadata": root["metadata"],
+        "depth": result.depth,
+        "state": result.state,
+        "nodes": [
+            neighborhood_node_payload(
+                entity=node.entity.model_dump(mode="json"),
+                depth=node.depth,
+                projection=projection,
+                profile=profile,
+            )
+            for node in result.nodes
+        ],
+        "edges": [
+            neighborhood_edge_payload(
+                {
+                    "relationship_type": edge.relationship_type,
+                    "from_type": edge.from_type,
+                    "from_id": edge.from_id,
+                    "to_type": edge.to_type,
+                    "to_id": edge.to_id,
+                    "edge_key": edge.edge_key,
+                    "properties": edge.properties,
+                    "metadata": edge.metadata,
+                },
+                profile,
+            )
+            for edge in result.edges
+        ],
+        "truncated": result.truncated,
+        "truncation_reasons": list(result.truncation_reasons),
+        "nodes_returned": result.nodes_returned,
+        "edges_returned": result.edges_returned,
+    }
+
+
 @click.command("inspect")
 @click.option("--type", "entity_type", required=True, help="Entity type.")
 @click.option("--id", "entity_id", required=True, help="Entity ID.")
@@ -1321,11 +1385,49 @@ def _inspect_neighbor_rows(neighbors: list[Any]) -> list[dict[str, Any]]:
 )
 @click.option(
     "--relationship",
-    "relationship_type",
-    default=None,
-    help="Optional relationship filter.",
+    "relationships",
+    multiple=True,
+    help="Relationship type filter; repeatable (multiple values expand the read).",
 )
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max neighbors to show.")
+@click.option(
+    "--depth",
+    type=click.IntRange(min=1, max=4),
+    default=None,
+    help="Hop horizon for the expanded neighborhood read (1-4). "
+    "Providing it (even --depth 1) opts into the expanded nodes/edges shape.",
+)
+@click.option(
+    "--target-type",
+    "target_types",
+    multiple=True,
+    help="Only expand into/return entities of these types (root exempt); repeatable.",
+)
+@click.option(
+    "--state",
+    type=click.Choice(["live", "accepted", "all", "not-live", "pending", "reviewable"]),
+    default=None,
+    help="Relationship visibility for the expanded read (default live), "
+    "identical to named-query traversal.",
+)
+@click.option(
+    "--projection",
+    "projection",
+    multiple=True,
+    help="Neighbor property names to keep (root keeps full properties); repeatable.",
+)
+@click.option(
+    "--max-nodes",
+    type=click.IntRange(min=1, max=500),
+    default=None,
+    help="Node budget for the expanded read (default 100, hard cap 500).",
+)
+@click.option(
+    "--max-edges",
+    type=click.IntRange(min=1, max=1000),
+    default=None,
+    help="Edge budget for the expanded read (default 200, hard cap 1000).",
+)
 @profile_option
 @json_option
 @handle_errors
@@ -1333,12 +1435,52 @@ def inspect_entity_cmd(
     entity_type: str,
     entity_id: str,
     direction: str,
-    relationship_type: str | None,
+    relationships: tuple[str, ...],
     limit: int | None,
+    depth: int | None,
+    target_types: tuple[str, ...],
+    state: str | None,
+    projection: tuple[str, ...],
+    max_nodes: int | None,
+    max_edges: int | None,
     profile: str,
     output_json: bool,
 ) -> None:
-    """Inspect an entity and its immediate neighbors."""
+    """Inspect an entity and its bounded neighborhood.
+
+    Without neighborhood options this is the legacy single-hop neighbor
+    read. Providing any of --depth/--target-type/--state/--projection/
+    --max-nodes/--max-edges (or repeating --relationship) switches to the
+    expanded bounded BFS read with explicit budgets and visible truncation.
+    """
+    expanded = (
+        depth is not None
+        or state is not None
+        or max_nodes is not None
+        or max_edges is not None
+        or bool(target_types)
+        or bool(projection)
+        or len(relationships) > 1
+    )
+    if expanded:
+        _inspect_neighborhood(
+            entity_type,
+            entity_id,
+            direction=direction,
+            relationships=list(relationships) or None,
+            limit=limit,
+            depth=depth,
+            target_types=list(target_types) or None,
+            state=state,
+            projection=list(projection) or None,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+            profile=cast(ReadProfile, profile),
+            output_json=output_json,
+        )
+        return
+
+    relationship_type = relationships[0] if relationships else None
 
     def _remote_fetch(
         client: CruxibleClient,
@@ -1352,6 +1494,7 @@ def inspect_entity_cmd(
             relationship_type=relationship_type,
             limit=limit,
         )
+        assert isinstance(result, contracts.InspectEntityResult)
         inspect_result = InspectEntityResult(
             found=result.found,
             entity_type=result.entity_type,
@@ -1374,6 +1517,7 @@ def inspect_entity_cmd(
             relationship_type=relationship_type,
             limit=limit,
         )
+        assert isinstance(inspect_result, InspectEntityResult)
         return inspect_result, _inspect_neighbor_rows(list(inspect_result.neighbors))
 
     inspect_result, neighbor_rows = _dispatch_cli_instance(
@@ -1415,6 +1559,102 @@ def inspect_entity_cmd(
     click.echo(f"Neighbors: {inspect_result.total_neighbors}")
     if neighbor_rows:
         console.print(inspect_neighbors_table(neighbor_rows))
+
+
+def _inspect_neighborhood(
+    entity_type: str,
+    entity_id: str,
+    *,
+    direction: str,
+    relationships: list[str] | None,
+    limit: int | None,
+    depth: int | None,
+    target_types: list[str] | None,
+    state: str | None,
+    projection: list[str] | None,
+    max_nodes: int | None,
+    max_edges: int | None,
+    profile: ReadProfile,
+    output_json: bool,
+) -> None:
+    """Run and render the expanded bounded-neighborhood read."""
+
+    def _remote_fetch(
+        client: CruxibleClient,
+        instance_id: str,
+    ) -> InspectNeighborhoodResult | contracts.InspectNeighborhoodResult:
+        result = client.inspect_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            direction=direction,
+            limit=limit,
+            depth=depth if depth is not None else 1,
+            relationship_types=relationships,
+            target_types=target_types,
+            state=cast(Any, state),
+            projection=projection,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+            profile=profile,
+        )
+        assert isinstance(result, contracts.InspectNeighborhoodResult)
+        return result
+
+    def _local_fetch(
+        instance: CruxibleInstance,
+    ) -> InspectNeighborhoodResult | contracts.InspectNeighborhoodResult:
+        result = service_inspect_entity(
+            instance,
+            entity_type,
+            entity_id,
+            direction=cast(Any, direction),
+            limit=limit,
+            depth=depth if depth is not None else 1,
+            relationship_types=relationships,
+            target_types=target_types,
+            state=cast(Any, state),
+            projection=projection,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+        )
+        assert isinstance(result, InspectNeighborhoodResult)
+        return result
+
+    result = _dispatch_cli_instance(_remote_fetch, _local_fetch)
+    payload = _neighborhood_payload(result, projection=projection, profile=profile)
+    if output_json:
+        _emit_json(payload)
+        return
+    if not payload["found"]:
+        click.echo("Not found.")
+        return
+    console.print(
+        entities_table(
+            [
+                EntityInstance(
+                    entity_type=payload["entity_type"],
+                    entity_id=payload["entity_id"],
+                    properties=payload["properties"],
+                    metadata=EntityMetadata.from_metadata(payload["metadata"]),
+                )
+            ],
+            payload["entity_type"],
+        )
+    )
+    summary = (
+        f"Depth: {payload['depth']}  State: {payload['state']}  "
+        f"Nodes: {payload['nodes_returned']}  Edges: {payload['edges_returned']}"
+    )
+    click.echo(summary)
+    if payload["truncated"]:
+        click.echo(f"Truncated: {', '.join(payload['truncation_reasons'])}")
+    nodes = payload["nodes"]
+    for level in sorted({node["depth"] for node in nodes}):
+        level_nodes = [node for node in nodes if node["depth"] == level]
+        console.print(neighborhood_nodes_table(level_nodes, level))
+    if payload["edges"]:
+        console.print(neighborhood_edges_table(payload["edges"]))
 
 
 @click.command("history")

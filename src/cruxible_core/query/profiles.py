@@ -285,6 +285,65 @@ def profile_inspect_payload(payload: dict[str, Any], profile: ReadProfile) -> di
     return compact
 
 
+def neighborhood_node_payload(
+    *,
+    entity: dict[str, Any],
+    depth: int,
+    projection: list[str] | None = None,
+    profile: ReadProfile = "standard",
+) -> dict[str, Any]:
+    """Build one neighborhood node card (the single local/remote assembly point).
+
+    Composition rule: ``projection`` selects PROPERTIES (caller-chosen names,
+    in caller order, silently omitting names the entity does not carry);
+    ``profile`` shapes METADATA (compact keeps only the lifecycle governance
+    marker). When both are given, projection wins for ``properties`` and the
+    profile still shapes ``metadata`` — identity and lifecycle/review markers
+    always survive.
+    """
+    source_properties = entity.get("properties") or {}
+    metadata = entity.get("metadata") or {}
+    if projection is not None:
+        properties = {
+            name: source_properties[name] for name in projection if name in source_properties
+        }
+        shaped_metadata = _compact_entity_metadata(metadata) if profile == "compact" else metadata
+    else:
+        shaped = profile_entity_payload(entity, profile)
+        properties = dict(shaped.get("properties") or {})
+        shaped_metadata = shaped.get("metadata") or {}
+    return {
+        "entity_type": entity.get("entity_type"),
+        "entity_id": entity.get("entity_id"),
+        "depth": depth,
+        "properties": properties,
+        "metadata": shaped_metadata,
+    }
+
+
+def neighborhood_edge_payload(
+    edge: dict[str, Any],
+    profile: ReadProfile = "standard",
+) -> dict[str, Any]:
+    """Build one neighborhood edge row in canonical key order, then profile it.
+
+    Compact keeps the full edge identity, the edge properties (they ARE the
+    assertion payload), and the review/lifecycle markers — pending, rejected,
+    and superseded edges never flatten into live ones.
+    """
+    payload = {
+        "relationship_type": edge.get("relationship_type"),
+        "from_type": edge.get("from_type"),
+        "from_id": edge.get("from_id"),
+        "to_type": edge.get("to_type"),
+        "to_id": edge.get("to_id"),
+        "edge_key": edge.get("edge_key"),
+        "properties": dict(edge.get("properties") or {}),
+        "metadata": edge.get("metadata") or {},
+    }
+    return profile_edge_payload(payload, profile)
+
+
 def profile_get_entity_payload(payload: dict[str, Any], profile: ReadProfile) -> dict[str, Any]:
     """Profile a get-entity payload; ``found`` passes through."""
     if profile != "compact":
@@ -323,6 +382,8 @@ __all__ = [
     "ReadProfile",
     "compact_display_properties",
     "inspect_neighbor_payload",
+    "neighborhood_edge_payload",
+    "neighborhood_node_payload",
     "profile_edge_payload",
     "profile_entity_payload",
     "profile_get_entity_payload",

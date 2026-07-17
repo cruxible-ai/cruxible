@@ -1153,6 +1153,63 @@ class InspectEntityResult(BaseModel):
     total_neighbors: int = 0
 
 
+NeighborhoodTruncationReason = Literal["node_budget", "edge_budget", "depth"]
+
+
+class NeighborhoodNodeResult(BaseModel):
+    """One returned non-root entity of a bounded neighborhood read."""
+
+    entity_type: str
+    entity_id: str
+    depth: int
+    properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class NeighborhoodEdgeResult(BaseModel):
+    """One returned edge of a bounded neighborhood read.
+
+    ``metadata`` keeps the assertion review/lifecycle markers so
+    pending/live/rejected/superseded edges never flatten together.
+    """
+
+    relationship_type: str
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    edge_key: int | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class InspectNeighborhoodResult(BaseModel):
+    """Expanded bounded-neighborhood inspect result.
+
+    Opt-in shape: returned by the inspect-entity surface when any
+    neighborhood parameter (``depth``, ``relationship_types``,
+    ``target_types``, ``state``, ``projection``, ``max_nodes``,
+    ``max_edges``) is provided. Calls without them keep the legacy
+    :class:`InspectEntityResult` single-hop shape bit-for-bit. The root
+    entity card is the top-level ``properties``/``metadata``; ``nodes``
+    holds non-root entities with their BFS depth.
+    """
+
+    found: bool
+    entity_type: str
+    entity_id: str
+    properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    depth: int = 1
+    state: QueryVisibilityState = "live"
+    nodes: list[NeighborhoodNodeResult] = Field(default_factory=list)
+    edges: list[NeighborhoodEdgeResult] = Field(default_factory=list)
+    truncated: bool = False
+    truncation_reasons: list[NeighborhoodTruncationReason] = Field(default_factory=list)
+    nodes_returned: int = 0
+    edges_returned: int = 0
+
+
 class PropertyChangeItem(BaseModel):
     property: str
     from_value: Any | None = None

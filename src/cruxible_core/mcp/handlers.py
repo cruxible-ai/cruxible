@@ -1169,9 +1169,16 @@ def handle_inspect_entity(
     direction: str = "both",
     relationship_type: str | None = None,
     limit: int | None = None,
+    depth: int | None = None,
+    relationship_types: list[str] | None = None,
+    target_types: list[str] | None = None,
+    state: contracts.QueryVisibilityState | None = None,
+    projection: list[str] | None = None,
+    max_nodes: int | None = None,
+    max_edges: int | None = None,
     profile: contracts.ReadProfile | None = None,
-) -> contracts.InspectEntityResult:
-    """Inspect one entity and its immediate neighbors."""
+) -> contracts.InspectEntityResult | contracts.InspectNeighborhoodResult:
+    """Inspect one entity and its bounded neighborhood."""
     resolved_profile = resolve_mcp_read_profile(profile)
     return _dispatch_remote_or_local(
         lambda client: client.inspect_entity(
@@ -1181,6 +1188,13 @@ def handle_inspect_entity(
             direction=direction,
             relationship_type=relationship_type,
             limit=limit,
+            depth=depth,
+            relationship_types=relationship_types,
+            target_types=target_types,
+            state=state,
+            projection=projection,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
             profile=resolved_profile,
         ),
         lambda: api.inspect_entity(
@@ -1190,6 +1204,13 @@ def handle_inspect_entity(
             direction=direction,
             relationship_type=relationship_type,
             limit=limit,
+            depth=depth,
+            relationship_types=relationship_types,
+            target_types=target_types,
+            state=state,
+            projection=projection,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
             profile=resolved_profile,
         ),
     )

@@ -224,6 +224,55 @@ def inspect_neighbors_table(neighbors: list[dict[str, Any]]) -> Table:
     return table
 
 
+def neighborhood_nodes_table(nodes: list[dict[str, Any]], depth: int) -> Table:
+    """Build a Rich table for one depth level of a bounded neighborhood read."""
+    table = Table(title=f"Depth {depth} nodes")
+    table.add_column("Entity", style="cyan")
+    table.add_column("Lifecycle")
+    table.add_column("Properties")
+
+    for node in nodes:
+        label = f"{node.get('entity_type', '')}:{node.get('entity_id', '')}"
+        lifecycle = (node.get("metadata") or {}).get("lifecycle") or {}
+        props = ", ".join(f"{k}={v}" for k, v in (node.get("properties") or {}).items())
+        table.add_row(label, str(lifecycle.get("status", "live")), props)
+
+    return table
+
+
+def neighborhood_edges_table(edges: list[dict[str, Any]]) -> Table:
+    """Build a Rich table for the edges of a bounded neighborhood read.
+
+    Review and lifecycle markers stay visible per edge so pending, rejected,
+    and superseded edges never read as live.
+    """
+    table = Table(title="Edges")
+    table.add_column("Relationship")
+    table.add_column("From", style="cyan")
+    table.add_column("To", style="cyan")
+    table.add_column("Key", justify="right")
+    table.add_column("Review")
+    table.add_column("Lifecycle")
+    table.add_column("Properties")
+
+    for edge in edges:
+        assertion = (edge.get("metadata") or {}).get("assertion") or {}
+        review = (assertion.get("review") or {}).get("status", "unreviewed")
+        lifecycle = (assertion.get("lifecycle") or {}).get("status", "active")
+        props = ", ".join(f"{k}={v}" for k, v in (edge.get("properties") or {}).items())
+        table.add_row(
+            str(edge.get("relationship_type", "")),
+            f"{edge.get('from_type', '')}:{edge.get('from_id', '')}",
+            f"{edge.get('to_type', '')}:{edge.get('to_id', '')}",
+            str(edge.get("edge_key", "")),
+            str(review),
+            str(lifecycle),
+            props,
+        )
+
+    return table
+
+
 def stats_table(
     entity_counts: dict[str, int],
     relationship_counts: dict[str, int],
