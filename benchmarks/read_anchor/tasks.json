@@ -1,0 +1,187 @@
+{
+  "description": "Cold-start read-anchor tasks: each task is a realistic question a cold agent answers via the CLI, scripted as the deterministic sequence of calls a naive agent would plausibly run (discovery included where a cold agent would need it).",
+  "instances": {
+    "operation": {
+      "server_url": "http://127.0.0.1:8121",
+      "instance_id": "inst_d9dd589039054a1a",
+      "read_only": true,
+      "bearer_token_source": {
+        "comment": "Token is read at runtime and injected into the child env only. It is never stored, printed, or written to results.",
+        "file": "~/.cruxible/auth/operation-daemon-tokens.json",
+        "json_path": ["tokens", "claude", "token"]
+      }
+    },
+    "runebench": {
+      "server_url": "http://127.0.0.1:8149",
+      "read_only": true,
+      "home_dir_env": "RB_BASELINE_HOME",
+      "home_dir_default": "/private/tmp/claude-501/-Users-robertmalone-Git-cruxible-core-0-2-stretch-goals/bdafa470-6392-4ab5-9487-7742ee0d046a/scratchpad/rb-baseline/home",
+      "comment": "Throwaway instance composed from runebench rs-world + rs-world-overlay kits. HOME is overridden so the CLI context resolves the throwaway active instance."
+    }
+  },
+  "tasks": [
+    {
+      "id": "op-1-deps-of-runebench-pilot",
+      "instance": "operation",
+      "question": "What work items does wi-runebench-pilot depend on?",
+      "calls": [
+        {
+          "purpose": "Naive first look: fetch the entity, hoping deps are in properties (miss - deps are edges)",
+          "args": ["entity", "get", "--type", "WorkItem", "--id", "wi-runebench-pilot", "--json"]
+        },
+        {
+          "purpose": "Neighborhood inspect to find dependency edges",
+          "args": ["entity", "inspect", "--type", "WorkItem", "--id", "wi-runebench-pilot", "--json"]
+        }
+      ],
+      "expect": {
+        "kind": "neighbor_edge",
+        "relationship_type": "work_item_depends_on_work_item",
+        "direction": "outgoing",
+        "entity_id": "wi-bounded-neighborhood-inspect"
+      }
+    },
+    {
+      "id": "op-2-milestone-of-agent-local-working-set",
+      "instance": "operation",
+      "question": "Which milestone is wi-agent-local-working-set in?",
+      "calls": [
+        {
+          "purpose": "Cold discovery: what queries exist?",
+          "args": ["query", "list", "--json"]
+        },
+        {
+          "purpose": "Learn required params for the context query",
+          "args": ["query", "describe", "--query", "work_item_context", "--json"]
+        },
+        {
+          "purpose": "Run the context query for the work item",
+          "args": ["query", "run", "work_item_context", "--param", "work_item_id=wi-agent-local-working-set", "--json"]
+        }
+      ],
+      "expect": {
+        "kind": "json_contains_string",
+        "value": "ms-dx-friction"
+      }
+    },
+    {
+      "id": "op-3-owner-of-read-output-profiles",
+      "instance": "operation",
+      "question": "Which Actor owns wi-read-output-profiles?",
+      "calls": [
+        {
+          "purpose": "Neighborhood inspect to find the ownership edge",
+          "args": ["entity", "inspect", "--type", "WorkItem", "--id", "wi-read-output-profiles", "--json"]
+        }
+      ],
+      "expect": {
+        "kind": "neighbor_edge",
+        "relationship_type": "work_item_owned_by_actor",
+        "entity_id": "fable-impl"
+      }
+    },
+    {
+      "id": "op-4-workitem-counts-and-recent",
+      "instance": "operation",
+      "question": "How many WorkItems exist, and what was touched most recently?",
+      "calls": [
+        {
+          "purpose": "Get graph-wide counts",
+          "args": ["stats", "--json"]
+        },
+        {
+          "purpose": "Sample the WorkItem listing (also returns total)",
+          "args": ["list", "entities", "--type", "WorkItem", "--limit", "3", "--json"]
+        },
+        {
+          "purpose": "Most recent activity via receipts",
+          "args": ["list", "receipts", "--limit", "3", "--json"]
+        }
+      ],
+      "expect": {
+        "kind": "stats_list_match",
+        "entity_type": "WorkItem",
+        "expected_total": 162
+      }
+    },
+    {
+      "id": "rb-1-who-drops-cow-hide",
+      "instance": "runebench",
+      "question": "Who drops cow_hide?",
+      "calls": [
+        {
+          "purpose": "Cold discovery: what queries exist?",
+          "args": ["query", "list", "--json"]
+        },
+        {
+          "purpose": "Learn required params",
+          "args": ["query", "describe", "--query", "item_dropped_by", "--json"]
+        },
+        {
+          "purpose": "Run the drop-source query",
+          "args": ["query", "run", "item_dropped_by", "--param", "item_id=cow_hide", "--json"]
+        }
+      ],
+      "expect": {
+        "kind": "result_ids",
+        "expected_total": 3,
+        "expected_ids": ["cow", "cow2", "cow_beef"]
+      }
+    },
+    {
+      "id": "rb-2-scenery-at-lumbridge",
+      "instance": "runebench",
+      "question": "What scenery is at lumbridge?",
+      "calls": [
+        {
+          "purpose": "Run the place-scenery query (catalog already discovered in rb-1)",
+          "args": ["query", "run", "scenery_at_place", "--param", "place_id=lumbridge", "--json"]
+        }
+      ],
+      "expect": {
+        "kind": "total_equals",
+        "expected_total": 38
+      }
+    },
+    {
+      "id": "rb-3-buy-bronze-pickaxe",
+      "instance": "runebench",
+      "question": "Where can I buy a bronze_pickaxe?",
+      "calls": [
+        {
+          "purpose": "Check the param name for the buy-locations query",
+          "args": ["query", "describe", "--query", "item_buy_locations", "--json"]
+        },
+        {
+          "purpose": "Run the buy-locations query",
+          "args": ["query", "run", "item_buy_locations", "--param", "item_id=bronze_pickaxe", "--json"]
+        }
+      ],
+      "expect": {
+        "kind": "result_ids",
+        "expected_total": 10,
+        "required_ids": ["lumbridge"]
+      }
+    },
+    {
+      "id": "rb-4-everything-about-cow",
+      "instance": "runebench",
+      "question": "Everything about Npc:cow - where does it spawn, what does it drop?",
+      "calls": [
+        {
+          "purpose": "Fetch the entity itself",
+          "args": ["entity", "get", "--type", "Npc", "--id", "cow", "--json"]
+        },
+        {
+          "purpose": "Full neighborhood inspect",
+          "args": ["entity", "inspect", "--type", "Npc", "--id", "cow", "--json"]
+        }
+      ],
+      "expect": {
+        "kind": "neighbor_edge",
+        "relationship_type": "npc_drops_item",
+        "entity_id": "cow_hide"
+      }
+    }
+  ]
+}

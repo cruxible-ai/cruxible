@@ -1,0 +1,439 @@
+{
+  "captured_at": "2026-07-17T08:50:44-0400",
+  "harness": "benchmarks/read_anchor/capture.py",
+  "notes": {
+    "latency": "each call is run twice; run2 (warm daemon) is headline",
+    "est_tokens": "stdout bytes / 4, rounded",
+    "metadata_share": "1 - stripped/original compact-JSON bytes after recursively removing keys: metadata, actor_context, provenance",
+    "cli_process_overhead_s": 0.433
+  },
+  "tasks": [
+    {
+      "id": "op-1-deps-of-runebench-pilot",
+      "instance": "operation",
+      "question": "What work items does wi-runebench-pilot depend on?",
+      "num_calls": 2,
+      "total_bytes": 50680,
+      "total_est_tokens": 12670,
+      "total_latency_run2_s": 1.154,
+      "total_latency_run1_s": 1.228,
+      "correct": true,
+      "verification_detail": "found work_item_depends_on_work_item -> wi-bounded-neighborhood-inspect",
+      "calls": [
+        {
+          "args": [
+            "entity",
+            "get",
+            "--type",
+            "WorkItem",
+            "--id",
+            "wi-runebench-pilot",
+            "--json"
+          ],
+          "purpose": "Naive first look: fetch the entity, hoping deps are in properties (miss - deps are edges)",
+          "exit_code": 0,
+          "bytes": 5187,
+          "est_tokens": 1297,
+          "latency_run1_s": 0.604,
+          "latency_run2_s": 0.574,
+          "compact_json_bytes": 5136,
+          "metadata_stripped_bytes": 5122,
+          "metadata_share": 0.003
+        },
+        {
+          "args": [
+            "entity",
+            "inspect",
+            "--type",
+            "WorkItem",
+            "--id",
+            "wi-runebench-pilot",
+            "--json"
+          ],
+          "purpose": "Neighborhood inspect to find dependency edges",
+          "exit_code": 0,
+          "bytes": 45493,
+          "est_tokens": 11373,
+          "latency_run1_s": 0.624,
+          "latency_run2_s": 0.58,
+          "compact_json_bytes": 37399,
+          "metadata_stripped_bytes": 28246,
+          "metadata_share": 0.245
+        }
+      ]
+    },
+    {
+      "id": "op-2-milestone-of-agent-local-working-set",
+      "instance": "operation",
+      "question": "Which milestone is wi-agent-local-working-set in?",
+      "num_calls": 3,
+      "total_bytes": 352052,
+      "total_est_tokens": 88013,
+      "total_latency_run2_s": 1.852,
+      "total_latency_run1_s": 1.785,
+      "correct": true,
+      "verification_detail": "'ms-dx-friction' present in final response",
+      "calls": [
+        {
+          "args": [
+            "query",
+            "list",
+            "--json"
+          ],
+          "purpose": "Cold discovery: what queries exist?",
+          "exit_code": 0,
+          "bytes": 68214,
+          "est_tokens": 17054,
+          "latency_run1_s": 0.581,
+          "latency_run2_s": 0.579,
+          "compact_json_bytes": 46973,
+          "metadata_stripped_bytes": 46973,
+          "metadata_share": 0.0
+        },
+        {
+          "args": [
+            "query",
+            "describe",
+            "--query",
+            "work_item_context",
+            "--json"
+          ],
+          "purpose": "Learn required params for the context query",
+          "exit_code": 0,
+          "bytes": 7210,
+          "est_tokens": 1802,
+          "latency_run1_s": 0.577,
+          "latency_run2_s": 0.624,
+          "compact_json_bytes": 5364,
+          "metadata_stripped_bytes": 5364,
+          "metadata_share": 0.0
+        },
+        {
+          "args": [
+            "query",
+            "run",
+            "work_item_context",
+            "--param",
+            "work_item_id=wi-agent-local-working-set",
+            "--json"
+          ],
+          "purpose": "Run the context query for the work item",
+          "exit_code": 0,
+          "bytes": 276628,
+          "est_tokens": 69157,
+          "latency_run1_s": 0.627,
+          "latency_run2_s": 0.649,
+          "compact_json_bytes": 179192,
+          "metadata_stripped_bytes": 135372,
+          "metadata_share": 0.245
+        }
+      ]
+    },
+    {
+      "id": "op-3-owner-of-read-output-profiles",
+      "instance": "operation",
+      "question": "Which Actor owns wi-read-output-profiles?",
+      "num_calls": 1,
+      "total_bytes": 12816,
+      "total_est_tokens": 3204,
+      "total_latency_run2_s": 0.58,
+      "total_latency_run1_s": 0.628,
+      "correct": true,
+      "verification_detail": "found work_item_owned_by_actor -> fable-impl",
+      "calls": [
+        {
+          "args": [
+            "entity",
+            "inspect",
+            "--type",
+            "WorkItem",
+            "--id",
+            "wi-read-output-profiles",
+            "--json"
+          ],
+          "purpose": "Neighborhood inspect to find the ownership edge",
+          "exit_code": 0,
+          "bytes": 12816,
+          "est_tokens": 3204,
+          "latency_run1_s": 0.628,
+          "latency_run2_s": 0.58,
+          "compact_json_bytes": 10526,
+          "metadata_stripped_bytes": 7829,
+          "metadata_share": 0.256
+        }
+      ]
+    },
+    {
+      "id": "op-4-workitem-counts-and-recent",
+      "instance": "operation",
+      "question": "How many WorkItems exist, and what was touched most recently?",
+      "num_calls": 3,
+      "total_bytes": 7208,
+      "total_est_tokens": 1802,
+      "total_latency_run2_s": 1.766,
+      "total_latency_run1_s": 1.747,
+      "correct": true,
+      "verification_detail": "stats WorkItem=162, list total=162, expected 162",
+      "calls": [
+        {
+          "args": [
+            "stats",
+            "--json"
+          ],
+          "purpose": "Get graph-wide counts",
+          "exit_code": 0,
+          "bytes": 3083,
+          "est_tokens": 771,
+          "latency_run1_s": 0.58,
+          "latency_run2_s": 0.586,
+          "compact_json_bytes": 2176,
+          "metadata_stripped_bytes": 2176,
+          "metadata_share": 0.0
+        },
+        {
+          "args": [
+            "list",
+            "entities",
+            "--type",
+            "WorkItem",
+            "--limit",
+            "3",
+            "--json"
+          ],
+          "purpose": "Sample the WorkItem listing (also returns total)",
+          "exit_code": 0,
+          "bytes": 3155,
+          "est_tokens": 789,
+          "latency_run1_s": 0.58,
+          "latency_run2_s": 0.65,
+          "compact_json_bytes": 2813,
+          "metadata_stripped_bytes": 2771,
+          "metadata_share": 0.015
+        },
+        {
+          "args": [
+            "list",
+            "receipts",
+            "--limit",
+            "3",
+            "--json"
+          ],
+          "purpose": "Most recent activity via receipts",
+          "exit_code": 0,
+          "bytes": 970,
+          "est_tokens": 242,
+          "latency_run1_s": 0.587,
+          "latency_run2_s": 0.53,
+          "compact_json_bytes": 720,
+          "metadata_stripped_bytes": 720,
+          "metadata_share": 0.0
+        }
+      ]
+    },
+    {
+      "id": "rb-1-who-drops-cow-hide",
+      "instance": "runebench",
+      "question": "Who drops cow_hide?",
+      "num_calls": 3,
+      "total_bytes": 29192,
+      "total_est_tokens": 7298,
+      "total_latency_run2_s": 2.084,
+      "total_latency_run1_s": 1.844,
+      "correct": true,
+      "verification_detail": "total=3, ids verified",
+      "calls": [
+        {
+          "args": [
+            "query",
+            "list",
+            "--json"
+          ],
+          "purpose": "Cold discovery: what queries exist?",
+          "exit_code": 0,
+          "bytes": 13169,
+          "est_tokens": 3292,
+          "latency_run1_s": 0.745,
+          "latency_run2_s": 0.712,
+          "compact_json_bytes": 8965,
+          "metadata_stripped_bytes": 8965,
+          "metadata_share": 0.0
+        },
+        {
+          "args": [
+            "query",
+            "describe",
+            "--query",
+            "item_dropped_by",
+            "--json"
+          ],
+          "purpose": "Learn required params",
+          "exit_code": 0,
+          "bytes": 711,
+          "est_tokens": 178,
+          "latency_run1_s": 0.545,
+          "latency_run2_s": 0.581,
+          "compact_json_bytes": 560,
+          "metadata_stripped_bytes": 560,
+          "metadata_share": 0.0
+        },
+        {
+          "args": [
+            "query",
+            "run",
+            "item_dropped_by",
+            "--param",
+            "item_id=cow_hide",
+            "--json"
+          ],
+          "purpose": "Run the drop-source query",
+          "exit_code": 0,
+          "bytes": 15312,
+          "est_tokens": 3828,
+          "latency_run1_s": 0.554,
+          "latency_run2_s": 0.791,
+          "compact_json_bytes": 8861,
+          "metadata_stripped_bytes": 4160,
+          "metadata_share": 0.531
+        }
+      ]
+    },
+    {
+      "id": "rb-2-scenery-at-lumbridge",
+      "instance": "runebench",
+      "question": "What scenery is at lumbridge?",
+      "num_calls": 1,
+      "total_bytes": 166955,
+      "total_est_tokens": 41739,
+      "total_latency_run2_s": 0.702,
+      "total_latency_run1_s": 0.723,
+      "correct": true,
+      "verification_detail": "total=38, expected 38",
+      "calls": [
+        {
+          "args": [
+            "query",
+            "run",
+            "scenery_at_place",
+            "--param",
+            "place_id=lumbridge",
+            "--json"
+          ],
+          "purpose": "Run the place-scenery query (catalog already discovered in rb-1)",
+          "exit_code": 0,
+          "bytes": 166955,
+          "est_tokens": 41739,
+          "latency_run1_s": 0.723,
+          "latency_run2_s": 0.702,
+          "compact_json_bytes": 95259,
+          "metadata_stripped_bytes": 35713,
+          "metadata_share": 0.625
+        }
+      ]
+    },
+    {
+      "id": "rb-3-buy-bronze-pickaxe",
+      "instance": "runebench",
+      "question": "Where can I buy a bronze_pickaxe?",
+      "num_calls": 2,
+      "total_bytes": 101214,
+      "total_est_tokens": 25304,
+      "total_latency_run2_s": 1.348,
+      "total_latency_run1_s": 1.403,
+      "correct": true,
+      "verification_detail": "total=10, ids verified",
+      "calls": [
+        {
+          "args": [
+            "query",
+            "describe",
+            "--query",
+            "item_buy_locations",
+            "--json"
+          ],
+          "purpose": "Check the param name for the buy-locations query",
+          "exit_code": 0,
+          "bytes": 777,
+          "est_tokens": 194,
+          "latency_run1_s": 0.737,
+          "latency_run2_s": 0.551,
+          "compact_json_bytes": 626,
+          "metadata_stripped_bytes": 626,
+          "metadata_share": 0.0
+        },
+        {
+          "args": [
+            "query",
+            "run",
+            "item_buy_locations",
+            "--param",
+            "item_id=bronze_pickaxe",
+            "--json"
+          ],
+          "purpose": "Run the buy-locations query",
+          "exit_code": 0,
+          "bytes": 100437,
+          "est_tokens": 25109,
+          "latency_run1_s": 0.666,
+          "latency_run2_s": 0.797,
+          "compact_json_bytes": 58175,
+          "metadata_stripped_bytes": 21965,
+          "metadata_share": 0.622
+        }
+      ]
+    },
+    {
+      "id": "rb-4-everything-about-cow",
+      "instance": "runebench",
+      "question": "Everything about Npc:cow - where does it spawn, what does it drop?",
+      "num_calls": 2,
+      "total_bytes": 23546,
+      "total_est_tokens": 5886,
+      "total_latency_run2_s": 1.063,
+      "total_latency_run1_s": 1.286,
+      "correct": true,
+      "verification_detail": "found npc_drops_item -> cow_hide",
+      "calls": [
+        {
+          "args": [
+            "entity",
+            "get",
+            "--type",
+            "Npc",
+            "--id",
+            "cow",
+            "--json"
+          ],
+          "purpose": "Fetch the entity itself",
+          "exit_code": 0,
+          "bytes": 538,
+          "est_tokens": 134,
+          "latency_run1_s": 0.741,
+          "latency_run2_s": 0.524,
+          "compact_json_bytes": 403,
+          "metadata_stripped_bytes": 223,
+          "metadata_share": 0.447
+        },
+        {
+          "args": [
+            "entity",
+            "inspect",
+            "--type",
+            "Npc",
+            "--id",
+            "cow",
+            "--json"
+          ],
+          "purpose": "Full neighborhood inspect",
+          "exit_code": 0,
+          "bytes": 23008,
+          "est_tokens": 5752,
+          "latency_run1_s": 0.545,
+          "latency_run2_s": 0.539,
+          "compact_json_bytes": 14396,
+          "metadata_stripped_bytes": 4696,
+          "metadata_share": 0.674
+        }
+      ]
+    }
+  ]
+}
