@@ -25,6 +25,7 @@ from cruxible_core.cli.commands._common import (
     json_option,
     profile_option,
     state_option,
+    ws_option,
 )
 from cruxible_core.cli.formatting import (
     edges_table,
@@ -34,6 +35,7 @@ from cruxible_core.cli.formatting import (
     receipts_table,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.cli.working_set import capture_json_read
 from cruxible_core.errors import ConfigError
 from cruxible_core.query.continuation import cursor_int
 from cruxible_core.query.profiles import ReadProfile, profile_list_items
@@ -86,6 +88,7 @@ def list_group() -> None:
 @state_option
 @profile_option
 @continuation_option
+@ws_option
 @json_option
 @handle_errors
 def list_entities(
@@ -97,6 +100,7 @@ def list_entities(
     state: str | None,
     profile: str,
     continuation: str | None,
+    ws_capture: bool,
     output_json: bool,
 ) -> None:
     """List entities of a given type."""
@@ -164,13 +168,13 @@ def list_entities(
             "entities",
             cast(ReadProfile, profile),
         )
-        _emit_json(
-            {
-                "items": item_dicts,
-                **_list_envelope(result, item_count=len(item_dicts), limit=limit, offset=offset),
-                "continuation_token": continuation_token,
-            }
-        )
+        payload = {
+            "items": item_dicts,
+            **_list_envelope(result, item_count=len(item_dicts), limit=limit, offset=offset),
+            "continuation_token": continuation_token,
+        }
+        _emit_json(payload)
+        capture_json_read(payload, source_cmd="list entities", ws_flag=ws_capture)
         return
     console.print(entities_table(entities, entity_type))
     click.echo(f"{len(entities)} entity(ies) shown.")
@@ -361,6 +365,7 @@ def list_outcomes(receipt_id: str | None, limit: int, offset: int, output_json: 
 @state_option
 @profile_option
 @continuation_option
+@ws_option
 @json_option
 @handle_errors
 def list_edges(
@@ -371,6 +376,7 @@ def list_edges(
     state: str | None,
     profile: str,
     continuation: str | None,
+    ws_capture: bool,
     output_json: bool,
 ) -> None:
     """List edges in the graph.
@@ -431,13 +437,13 @@ def list_edges(
         _local_fetch,
     )
     if output_json:
-        _emit_json(
-            {
-                "items": profile_list_items(result.items, "edges", cast(ReadProfile, profile)),
-                **_list_envelope(result, item_count=len(result.items), limit=limit, offset=offset),
-                "continuation_token": continuation_token,
-            }
-        )
+        payload = {
+            "items": profile_list_items(result.items, "edges", cast(ReadProfile, profile)),
+            **_list_envelope(result, item_count=len(result.items), limit=limit, offset=offset),
+            "continuation_token": continuation_token,
+        }
+        _emit_json(payload)
+        capture_json_read(payload, source_cmd="list edges", ws_flag=ws_capture)
         return
     console.print(edges_table(result.items))
     click.echo(f"{len(result.items)} edge(s) shown.")

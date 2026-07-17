@@ -186,6 +186,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     update_entity_cmd,
     update_relationship_cmd,
     validate,
+    ws_group,
 )  # re-exported from cli.commands submodules
 
 cli.add_command(init)
@@ -215,6 +216,7 @@ cli.add_command(evaluate)
 cli.add_command(lint_cmd, "lint")
 cli.add_command(inspect_group, "inspect")
 cli.add_command(gate_group, "gate")
+cli.add_command(ws_group, "ws")
 
 # config group: config-editing and review-surface verbs.
 config_group = click.Group("config", help="Edit, validate, and render the active config.")

@@ -262,6 +262,7 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 | `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
 | `--id` | yes | `Sentinel.UNSET` | text | Entity ID. |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
+| `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -337,6 +338,7 @@ table output groups nodes by depth.
 | `--max-edges` | no | `` | integer range | Edge budget for the expanded read (default 200, hard cap 1000). |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
 | `--continue` | no | `` | text | Continuation token from a previous budget-truncated expanded read; repeat the same structural options (entity, depth, direction, filters, state). Stale after any state mutation — restart the read. |
+| `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1830,6 +1832,7 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
 | `--state` | no | `` | choice | Read-visibility state: `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Omit to return every stored edge (the inspection default); `not-live` surfaces rejected/closed edges, `live` hides them. |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
 | `--continue` | no | `` | text | Continuation token from a previous truncated page; repeat the same filters. Bound to the instance, config, and `read_revision` — stale after any state mutation (restart the read); malformed tokens are rejected. |
+| `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1864,6 +1867,7 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
 | `--state` | no | `` | choice | Read-visibility state by entity lifecycle: `live` (default — hides retired/superseded entities), `all`, or `not-live` (only the gated-out set). Review-only values resolve to `live` (entities have no review axis). |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
 | `--continue` | no | `` | text | Continuation token from a previous truncated page; repeat the same filters. Bound to the instance, config, and `read_revision` — stale after any state mutation (restart the read); malformed tokens are rejected. |
+| `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -2160,6 +2164,7 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
 | `--count` | no | `False` | boolean | Show only summary metadata. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
+| `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -2336,6 +2341,7 @@ drift exits nonzero so the command can be used by hooks and CI. Omitting
 | `--type` | yes | `Sentinel.UNSET` | text | Entity type to sample. |
 | `--field` | no | `` | text | Property field to include. Repeat to project compact entity payloads. |
 | `--limit` | no | `5` | integer | Number of entities to show. |
+| `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -3026,3 +3032,140 @@ cruxible source dereference \
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible ws
+
+**Usage:** `cruxible ws [OPTIONS] COMMAND [ARGS]...`
+
+**Purpose:** Agent-local working set: opt-in, NON-AUTHORITATIVE read cache.
+
+An opt-in prototype (promotion is gated on the RuneBench pilot). When enabled
+— `CRUXIBLE_WORKING_SET=1` in the environment, or `--ws` on a supported
+`--json` read (`query run`, `entity get`, `entity inspect`, `list entities`,
+`list edges`, `sample`) — every entity or edge those reads return is ALSO
+appended, normalized through the compact profile serializer, to
+`~/.cruxible/working-set/<instance-key>/records.jsonl` (instance key = daemon
+instance id in server mode, a hash of the resolved instance root in local
+mode). Re-finding something then costs a grep instead of a re-query:
+`rg BP-1001 "$(cruxible ws path)"`.
+
+Cache contract:
+- Line 1 of every file is a `#`-prefixed header marking the cache
+  NON-AUTHORITATIVE; `jq`/`rg` users skip it naturally.
+- One JSON object per line: `kind` (`entity`|`edge`), identity fields,
+  `props` (compact-profile slice), `lifecycle`, `review`, `read_revision`
+  (`null` = unverifiable, reported as `unknown` by `ws verify`), `as_of`,
+  `receipt_refs`, `source_cmd`.
+- Appends dedupe by identity: newest `read_revision` wins, ties go to the
+  latest `as_of`.
+- The cache is NEVER read by any write path or any other CLI command; capture
+  and this command group are the only code that touches it. Capture never
+  changes the read's stdout — it is a pure side effect.
+
+**Subcommands:**
+
+| Command | Purpose |
+| --- | --- |
+| `path` | Print the records file path for the current context. |
+| `status` | Record counts, file size, cached-vs-current revision spread. |
+| `verify` | Classify records fresh/stale/unknown against the live revision. |
+| `refresh` | Re-fetch stale records; drop deleted targets. |
+| `clear` | Delete the current context's records file. |
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- No local `.cruxible/` instance found (local mode).
+
+## cruxible ws path
+
+**Usage:** `cruxible ws path [OPTIONS]`
+
+**Purpose:** Print the records file path for the current context (for rg/jq).
+
+**Output And Side Effects:**
+- Read-only; prints the path whether or not the file exists yet.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- No local `.cruxible/` instance found (local mode).
+
+## cruxible ws status
+
+**Usage:** `cruxible ws status [OPTIONS]`
+
+**Purpose:** Show record counts, file size, and cached-vs-current revision spread.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Reports the instance key, records file path and size, record
+  counts by kind and by entity/relationship type, and the current instance
+  read revision versus the newest/oldest cached revisions.
+- Fetches the current read revision (stats endpoint in server mode, the local
+  instance otherwise); corrupt cache lines are skipped with a stderr warning.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- No local `.cruxible/` instance found (local mode).
+
+## cruxible ws verify
+
+**Usage:** `cruxible ws verify [OPTIONS]`
+
+**Purpose:** Verify cached records against the current instance read revision.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Classifies every cached record: `fresh` (cached `read_revision`
+  equals the current instance revision), `stale` (any other concrete
+  revision), `unknown` (no revision recorded).
+- Script-friendly exit code: `0` when nothing is stale, `1` when any record
+  is stale (unknown records alone do not fail verification).
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- No local `.cruxible/` instance found (local mode).
+
+## cruxible ws refresh
+
+**Usage:** `cruxible ws refresh [OPTIONS]`
+
+**Purpose:** Re-fetch stale/unknown records; drop deleted ones; leave fresh untouched.
+
+**Output And Side Effects:**
+- Entities are re-read via the compact get-entity read; edges via the owning
+  (from-side) entity's bounded neighborhood inspect, scoped to the edge's
+  relationship type. Fresh records are left byte-identical.
+- Records whose target is gone (entity deleted, edge removed or no longer
+  live, owning entity deleted) are dropped with a note. Records that cannot
+  be confirmed (fetch error, truncated neighborhood) are kept and counted as
+  failed. The file is rewritten atomically and reports
+  refreshed/removed/failed counts.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- No local `.cruxible/` instance found (local mode).
+
+## cruxible ws clear
+
+**Usage:** `cruxible ws clear [OPTIONS]`
+
+**Purpose:** Delete the current context's records file (working-set dir only).
+
+**Output And Side Effects:**
+- Deletes only the current context's `records.jsonl`; refuses any path that
+  resolves outside `~/.cruxible/working-set/` (hostile instance keys are
+  rejected before any filesystem access).
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- No local `.cruxible/` instance found (local mode).

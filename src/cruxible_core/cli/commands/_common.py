@@ -66,6 +66,21 @@ decision_record_option = click.option(
     help="Decision record ID for audit logging.",
 )
 
+# Opt-in agent-local working-set capture for JSON read commands. Capture is a
+# pure side effect after the payload is printed (stdout is never changed); it
+# can also be enabled globally with CRUXIBLE_WORKING_SET=1. See
+# ``cruxible_core.cli.working_set`` and the ``cruxible ws`` group.
+ws_option = click.option(
+    "--ws",
+    "ws_capture",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also capture this --json read into the agent-local working set "
+        "(non-authoritative cache; see 'cruxible ws')."
+    ),
+)
+
 # Output profile for entity-shaped read payloads. ``standard`` (default) is
 # today's full shape; ``compact`` trims JSON items to bounded identity cards
 # that keep governance markers (lifecycle / review status) but drop

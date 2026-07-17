@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     update_relationship_cmd: Any
     validate: Any
     state_group: Any
+    ws_group: Any
 else:
     from cruxible_core.cli.commands.config_views import (
         config_expand_cmd,
@@ -132,6 +133,7 @@ else:
         test_cmd,
         validate,
     )
+    from cruxible_core.cli.commands.working_set import ws_group
 
 __all__ = [
     "add_constraint_cmd",
@@ -189,4 +191,5 @@ __all__ = [
     "update_relationship_cmd",
     "validate",
     "state_group",
+    "ws_group",
 ]

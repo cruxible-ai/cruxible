@@ -65,6 +65,7 @@ from cruxible_core.cli.commands._common import (
     json_option,
     profile_option,
     state_option,
+    ws_option,
 )
 from cruxible_core.cli.formatting import (
     entities_table,
@@ -80,6 +81,7 @@ from cruxible_core.cli.formatting import (
 )
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.cli.working_set import capture_json_read
 from cruxible_core.config.schema import schema_wire_payload
 from cruxible_core.errors import CoreError
 from cruxible_core.errors import QueryNotFoundError as CoreQueryNotFoundError
@@ -323,6 +325,8 @@ def _emit_query_command_result(
     count_only: bool,
     output_json: bool,
     profile: ReadProfile = "standard",
+    capture_source: str | None = None,
+    ws_capture: bool = False,
 ) -> None:
     projected_results, entity_results, structured_results = _split_query_result_items(result)
 
@@ -343,34 +347,40 @@ def _emit_query_command_result(
         # trimmed. `standard` passes items through untouched.
         items = profile_query_items(items, profile)
         param_hints = result.param_hints
-        _emit_json(
-            {
-                "items": items,
-                "total": total,
-                "limit": result.limit,
-                "truncated": result.truncated,
-                "limit_truncated": getattr(result, "limit_truncated", False),
-                "path_truncated": getattr(result, "path_truncated", False),
-                "truncation_reasons": list(getattr(result, "truncation_reasons", [])),
-                "max_paths": getattr(result, "max_paths", None),
-                "max_paths_per_result": getattr(result, "max_paths_per_result", None),
-                "total_path_count": getattr(result, "total_path_count", None),
-                "retained_path_count": getattr(result, "retained_path_count", None),
-                "steps_executed": result.steps_executed,
-                "result_shape": result.result_shape,
-                "dedupe": result.dedupe,
-                "relationship_state": result.relationship_state,
-                "receipt_id": result.receipt_id,
-                "param_hints": (
-                    param_hints.model_dump(mode="python")
-                    if hasattr(param_hints, "model_dump")
-                    else asdict(param_hints)
-                    if param_hints is not None
-                    else None
-                ),
-                "policy_summary": _policy_summary_payload(getattr(result, "policy_summary", None)),
-            }
-        )
+        payload = {
+            "items": items,
+            "total": total,
+            "limit": result.limit,
+            "truncated": result.truncated,
+            "limit_truncated": getattr(result, "limit_truncated", False),
+            "path_truncated": getattr(result, "path_truncated", False),
+            "truncation_reasons": list(getattr(result, "truncation_reasons", [])),
+            "max_paths": getattr(result, "max_paths", None),
+            "max_paths_per_result": getattr(result, "max_paths_per_result", None),
+            "total_path_count": getattr(result, "total_path_count", None),
+            "retained_path_count": getattr(result, "retained_path_count", None),
+            "steps_executed": result.steps_executed,
+            "result_shape": result.result_shape,
+            "dedupe": result.dedupe,
+            "relationship_state": result.relationship_state,
+            "receipt_id": result.receipt_id,
+            "param_hints": (
+                param_hints.model_dump(mode="python")
+                if hasattr(param_hints, "model_dump")
+                else asdict(param_hints)
+                if param_hints is not None
+                else None
+            ),
+            "policy_summary": _policy_summary_payload(getattr(result, "policy_summary", None)),
+        }
+        _emit_json(payload)
+        if capture_source is not None:
+            capture_json_read(
+                payload,
+                source_cmd=capture_source,
+                ws_flag=ws_capture,
+                read_revision=getattr(result, "read_revision", None),
+            )
         return
 
     click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
@@ -405,6 +415,7 @@ def _run_query_command(
     output_json: bool,
     decision_record_id: str | None,
     profile: ReadProfile = "standard",
+    ws_capture: bool = False,
 ) -> None:
     params = _parse_params(param)
     resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
@@ -452,6 +463,8 @@ def _run_query_command(
             count_only=count_only,
             output_json=output_json,
             profile=profile,
+            capture_source="query run",
+            ws_capture=ws_capture,
         )
         return
 
@@ -504,33 +517,34 @@ def _run_query_command(
                 ]
         else:
             items = profile_query_items(structured_results, profile)
-        _emit_json(
-            {
-                "items": items,
-                "total": total,
-                "limit": local_result.limit,
-                "truncated": local_result.truncated,
-                "limit_truncated": getattr(local_result, "limit_truncated", False),
-                "path_truncated": getattr(local_result, "path_truncated", False),
-                "truncation_reasons": list(getattr(local_result, "truncation_reasons", [])),
-                "max_paths": getattr(local_result, "max_paths", None),
-                "max_paths_per_result": getattr(local_result, "max_paths_per_result", None),
-                "total_path_count": getattr(local_result, "total_path_count", None),
-                "retained_path_count": getattr(local_result, "retained_path_count", None),
-                "steps_executed": local_result.steps_executed,
-                "result_shape": local_result.result_shape,
-                "dedupe": local_result.dedupe,
-                "relationship_state": local_result.relationship_state,
-                "receipt_id": local_result.receipt_id,
-                "param_hints": (
-                    asdict(local_result.param_hints)
-                    if local_result.param_hints is not None
-                    else None
-                ),
-                "policy_summary": local_result.policy_summary
-                if local_result.policy_summary
-                else None,
-            }
+        payload = {
+            "items": items,
+            "total": total,
+            "limit": local_result.limit,
+            "truncated": local_result.truncated,
+            "limit_truncated": getattr(local_result, "limit_truncated", False),
+            "path_truncated": getattr(local_result, "path_truncated", False),
+            "truncation_reasons": list(getattr(local_result, "truncation_reasons", [])),
+            "max_paths": getattr(local_result, "max_paths", None),
+            "max_paths_per_result": getattr(local_result, "max_paths_per_result", None),
+            "total_path_count": getattr(local_result, "total_path_count", None),
+            "retained_path_count": getattr(local_result, "retained_path_count", None),
+            "steps_executed": local_result.steps_executed,
+            "result_shape": local_result.result_shape,
+            "dedupe": local_result.dedupe,
+            "relationship_state": local_result.relationship_state,
+            "receipt_id": local_result.receipt_id,
+            "param_hints": (
+                asdict(local_result.param_hints) if local_result.param_hints is not None else None
+            ),
+            "policy_summary": local_result.policy_summary if local_result.policy_summary else None,
+        }
+        _emit_json(payload)
+        capture_json_read(
+            payload,
+            source_cmd="query run",
+            ws_flag=ws_capture,
+            read_revision=getattr(local_result, "read_revision", None),
         )
         return
     click.echo(f"{total} result(s), {local_result.steps_executed} step(s) executed.")
@@ -663,6 +677,7 @@ def query(ctx: click.Context) -> None:
 @profile_option
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
 @decision_record_option
+@ws_option
 @json_option
 @handle_errors
 def query_run(
@@ -673,6 +688,7 @@ def query_run(
     profile: str,
     count_only: bool,
     decision_record_id: str | None,
+    ws_capture: bool,
     output_json: bool,
 ) -> None:
     """Execute a named query and display results plus the receipt."""
@@ -685,6 +701,7 @@ def query_run(
         output_json=output_json,
         decision_record_id=decision_record_id,
         profile=cast(ReadProfile, profile),
+        ws_capture=ws_capture,
     )
 
 
@@ -896,9 +913,16 @@ def stats_cmd(output_json: bool) -> None:
 @click.option("--type", "entity_type", required=True, help="Entity type to sample.")
 @click.option("--field", "fields", multiple=True, help="Property field to include. Repeatable.")
 @click.option("--limit", default=5, help="Number of entities to show.")
+@ws_option
 @json_option
 @handle_errors
-def sample(entity_type: str, fields: tuple[str, ...], limit: int, output_json: bool) -> None:
+def sample(
+    entity_type: str,
+    fields: tuple[str, ...],
+    limit: int,
+    ws_capture: bool,
+    output_json: bool,
+) -> None:
     """Show a sample of entities of a given type."""
     projected_fields = list(fields) or None
     field_kwargs: dict[str, Any] = (
@@ -926,13 +950,13 @@ def sample(entity_type: str, fields: tuple[str, ...], limit: int, output_json: b
     if output_json:
         # total is the TRUE stored count for the type; truncated marks a
         # sample that did not cover it (samples are never silent truncations).
-        _emit_json(
-            {
-                "items": [e.model_dump(mode="python") for e in entities],
-                "entity_type": entity_type,
-                **_list_envelope(result, item_count=len(entities), limit=limit, offset=0),
-            }
-        )
+        payload = {
+            "items": [e.model_dump(mode="python") for e in entities],
+            "entity_type": entity_type,
+            **_list_envelope(result, item_count=len(entities), limit=limit, offset=0),
+        }
+        _emit_json(payload)
+        capture_json_read(payload, source_cmd="sample", ws_flag=ws_capture)
         return
     console.print(entities_table(entities, entity_type))
     total = result.total
@@ -1466,6 +1490,7 @@ def _neighborhood_payload(
 )
 @profile_option
 @continuation_option
+@ws_option
 @json_option
 @handle_errors
 def inspect_entity_cmd(
@@ -1482,6 +1507,7 @@ def inspect_entity_cmd(
     max_edges: int | None,
     profile: str,
     continuation: str | None,
+    ws_capture: bool,
     output_json: bool,
 ) -> None:
     """Inspect an entity and its bounded neighborhood.
@@ -1522,6 +1548,7 @@ def inspect_entity_cmd(
             max_edges=max_edges,
             profile=cast(ReadProfile, profile),
             continuation=continuation,
+            ws_capture=ws_capture,
             output_json=output_json,
         )
         return
@@ -1531,7 +1558,7 @@ def inspect_entity_cmd(
     def _remote_fetch(
         client: CruxibleClient,
         instance_id: str,
-    ) -> tuple[InspectEntityResult, list[dict[str, Any]]]:
+    ) -> tuple[InspectEntityResult, list[dict[str, Any]], int | None]:
         result = client.inspect_entity(
             instance_id,
             entity_type,
@@ -1550,11 +1577,11 @@ def inspect_entity_cmd(
             neighbors=[],
             total_neighbors=result.total_neighbors,
         )
-        return inspect_result, _inspect_neighbor_rows(list(result.neighbors))
+        return inspect_result, _inspect_neighbor_rows(list(result.neighbors)), result.read_revision
 
     def _local_fetch(
         instance: CruxibleInstance,
-    ) -> tuple[InspectEntityResult, list[dict[str, Any]]]:
+    ) -> tuple[InspectEntityResult, list[dict[str, Any]], int | None]:
         inspect_result = service_inspect_entity(
             instance,
             entity_type,
@@ -1564,26 +1591,35 @@ def inspect_entity_cmd(
             limit=limit,
         )
         assert isinstance(inspect_result, InspectEntityResult)
-        return inspect_result, _inspect_neighbor_rows(list(inspect_result.neighbors))
+        return (
+            inspect_result,
+            _inspect_neighbor_rows(list(inspect_result.neighbors)),
+            instance.get_read_revision(),
+        )
 
-    inspect_result, neighbor_rows = _dispatch_cli_instance(
+    inspect_result, neighbor_rows, read_revision = _dispatch_cli_instance(
         _remote_fetch,
         _local_fetch,
     )
     if output_json:
-        _emit_json(
-            profile_inspect_payload(
-                {
-                    "found": inspect_result.found,
-                    "entity_type": inspect_result.entity_type,
-                    "entity_id": inspect_result.entity_id,
-                    "properties": inspect_result.properties,
-                    "metadata": inspect_result.metadata,
-                    "neighbors": neighbor_rows,
-                    "total_neighbors": inspect_result.total_neighbors,
-                },
-                cast(ReadProfile, profile),
-            )
+        payload = profile_inspect_payload(
+            {
+                "found": inspect_result.found,
+                "entity_type": inspect_result.entity_type,
+                "entity_id": inspect_result.entity_id,
+                "properties": inspect_result.properties,
+                "metadata": inspect_result.metadata,
+                "neighbors": neighbor_rows,
+                "total_neighbors": inspect_result.total_neighbors,
+            },
+            cast(ReadProfile, profile),
+        )
+        _emit_json(payload)
+        capture_json_read(
+            payload,
+            source_cmd="entity inspect",
+            ws_flag=ws_capture,
+            read_revision=read_revision,
         )
         return
     if not inspect_result.found:
@@ -1622,6 +1658,7 @@ def _inspect_neighborhood(
     max_edges: int | None,
     profile: ReadProfile,
     continuation: str | None = None,
+    ws_capture: bool = False,
     output_json: bool,
 ) -> None:
     """Run and render the expanded bounded-neighborhood read."""
@@ -1712,6 +1749,12 @@ def _inspect_neighborhood(
         payload["continuation_token"] = continuation_token
     if output_json:
         _emit_json(payload)
+        capture_json_read(
+            payload,
+            source_cmd="entity inspect",
+            ws_flag=ws_capture,
+            read_revision=read_revision,
+        )
         return
     if not payload["found"]:
         click.echo("Not found.")
@@ -1875,9 +1918,16 @@ def inspect_relationship_lineage_cmd(
 @click.option("--type", "entity_type", required=True, help="Entity type.")
 @click.option("--id", "entity_id", required=True, help="Entity ID.")
 @profile_option
+@ws_option
 @json_option
 @handle_errors
-def get_entity_cmd(entity_type: str, entity_id: str, profile: str, output_json: bool) -> None:
+def get_entity_cmd(
+    entity_type: str,
+    entity_id: str,
+    profile: str,
+    ws_capture: bool,
+    output_json: bool,
+) -> None:
     """Look up a specific entity by type and ID."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.get_entity(instance_id, entity_type, entity_id),
@@ -1905,16 +1955,21 @@ def get_entity_cmd(entity_type: str, entity_id: str, profile: str, output_json: 
             return
         entity = result
     if output_json:
-        _emit_json(
-            profile_entity_payload(
-                {
-                    "entity_type": entity.entity_type,
-                    "entity_id": entity.entity_id,
-                    "properties": dict(entity.properties),
-                    "metadata": entity.metadata.to_metadata_dict(),
-                },
-                cast(ReadProfile, profile),
-            )
+        payload = profile_entity_payload(
+            {
+                "entity_type": entity.entity_type,
+                "entity_id": entity.entity_id,
+                "properties": dict(entity.properties),
+                "metadata": entity.metadata.to_metadata_dict(),
+            },
+            cast(ReadProfile, profile),
+        )
+        _emit_json(payload)
+        capture_json_read(
+            payload,
+            source_cmd="entity get",
+            ws_flag=ws_capture,
+            read_revision=getattr(result, "read_revision", None),
         )
         return
     console.print(entities_table([entity], entity_type))
