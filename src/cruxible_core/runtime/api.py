@@ -38,6 +38,7 @@ from cruxible_core.query.continuation import (
     compute_filter_hash,
     cursor_int,
     decode_continuation_token,
+    keyset_str,
     mint_continuation_token,
     validate_continuation_token,
 )
@@ -1986,8 +1987,18 @@ def list_resources(
         instance=instance,
         filter_hash=filter_hash,
     )
+    receipt_before: tuple[str, str] | None = None
     if token is not None:
         offset = cursor_int(token, "offset")
+        if resource_type == "receipts":
+            # Receipts are audit rows: inserting one (any query receipt) does
+            # NOT bump read_revision, so an offset cursor would silently shift
+            # between pages. Receipt tokens therefore carry a keyset
+            # high-water mark and resume strictly older than it.
+            receipt_before = (
+                keyset_str(token, "created_at"),
+                keyset_str(token, "receipt_id"),
+            )
 
     result = service_list(
         instance,
@@ -2003,6 +2014,7 @@ def list_resources(
         relationship_state=relationship_state,
         limit=limit,
         offset=offset,
+        receipt_before=receipt_before,
     )
 
     if resource_type in ("entities", "feedback", "outcomes"):
@@ -2017,6 +2029,13 @@ def list_resources(
 
     continuation_token: str | None = None
     if result.truncated and result.items:
+        keyset: dict[str, str] | None = None
+        if resource_type == "receipts":
+            last = result.items[-1]
+            keyset = {
+                "created_at": str(last["created_at"]),
+                "receipt_id": str(last["receipt_id"]),
+            }
         continuation_token = mint_continuation_token(
             surface="list",
             instance_key=instance_id,
@@ -2024,6 +2043,7 @@ def list_resources(
             read_revision=result.read_revision or 0,
             filter_hash=filter_hash,
             cursor={"offset": result.offset + len(result.items)},
+            keyset=keyset,
         )
 
     return contracts.ListResult(

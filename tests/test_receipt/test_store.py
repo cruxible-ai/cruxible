@@ -102,6 +102,48 @@ class TestSQLiteReceiptStore:
         offset_items = store.list_receipts(limit=2, offset=3)
         assert len(offset_items) == 2
 
+    def test_list_receipts_before_keyset_is_stable_under_insertion(self, store: SQLiteReceiptStore):
+        for i in range(5):
+            receipt = ReceiptBuilder(query_name="q", parameters={"i": i}).build(results=[])
+            receipt = receipt.model_copy(
+                update={"created_at": datetime(2026, 1, 1, 0, 0, i, tzinfo=timezone.utc)}
+            )
+            store.save_receipt(receipt)
+        newest_first = store.list_receipts()
+        assert len(newest_first) == 5
+
+        page1 = store.list_receipts(limit=2)
+        high_water = (page1[-1]["created_at"], page1[-1]["receipt_id"])
+        assert store.count_receipts(before=high_water) == 3
+
+        # A receipt inserted between pages is NEWER than the high-water mark:
+        # keyset resumption must neither duplicate nor skip.
+        inserted = ReceiptBuilder(query_name="q", parameters={"i": 99}).build(results=[])
+        inserted = inserted.model_copy(
+            update={"created_at": datetime(2026, 1, 2, tzinfo=timezone.utc)}
+        )
+        store.save_receipt(inserted)
+
+        page2 = store.list_receipts(limit=2, before=high_water)
+        assert [r["receipt_id"] for r in page2] == [r["receipt_id"] for r in newest_first[2:4]]
+        assert store.count_receipts(before=high_water) == 3
+
+    def test_list_receipts_before_tie_breaks_on_receipt_id(self, store: SQLiteReceiptStore):
+        same_moment = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        receipts = []
+        for i in range(3):
+            receipt = ReceiptBuilder(query_name="q", parameters={"i": i}).build(results=[])
+            receipts.append(receipt.model_copy(update={"created_at": same_moment}))
+            store.save_receipt(receipts[-1])
+        ordered = store.list_receipts()
+        ids = [r["receipt_id"] for r in ordered]
+        assert ids == sorted(ids, reverse=True)  # created_at tie -> receipt_id DESC
+
+        high_water = (ordered[0]["created_at"], ordered[0]["receipt_id"])
+        rest = store.list_receipts(before=high_water)
+        assert [r["receipt_id"] for r in rest] == ids[1:]
+        assert store.count_receipts(before=high_water) == 2
+
     def test_delete_receipt(self, store: SQLiteReceiptStore, sample_receipt: Receipt):
         store.save_receipt(sample_receipt)
         assert store.delete_receipt(sample_receipt.receipt_id) is True

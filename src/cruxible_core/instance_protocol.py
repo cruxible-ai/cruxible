@@ -65,10 +65,15 @@ class ReceiptStoreProtocol(ABC):
         operation_type: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        before: tuple[str, str] | None = None,
     ) -> list[dict[str, Any]]: ...
     @abstractmethod
     def count_receipts(
-        self, *, query_name: str | None = None, operation_type: str | None = None
+        self,
+        *,
+        query_name: str | None = None,
+        operation_type: str | None = None,
+        before: tuple[str, str] | None = None,
     ) -> int: ...
     @abstractmethod
     def get_receipts_for_entity(self, entity_type: str, entity_id: str) -> list[str]: ...

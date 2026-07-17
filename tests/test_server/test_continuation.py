@@ -235,6 +235,103 @@ class TestListContinuation:
         assert response.json()["error_type"] == "InvalidContinuationError"
 
 
+class TestReceiptContinuation:
+    """Receipts are audit rows: inserting one does NOT bump read_revision, so
+    receipt continuation must be keyset-based (resume strictly older than the
+    last-seen receipt), never offset-based."""
+
+    @staticmethod
+    def _run_query(app_client: TestClient, instance_id: str) -> None:
+        response = app_client.post(
+            f"/api/v1/{instance_id}/queries/run",
+            json={"query_name": "vehicles_for_part", "params": {"part_number": "HUB-1"}},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["receipt_id"]
+
+    @staticmethod
+    def _list_receipts(app_client: TestClient, instance_id: str, **params) -> dict:
+        response = app_client.get(
+            f"/api/v1/{instance_id}/list/receipts",
+            params=params,
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def test_page2_is_stable_when_a_receipt_is_inserted_between_pages(
+        self, app_client: TestClient, tmp_path: Path
+    ) -> None:
+        instance_id = _create_instance(app_client, tmp_path / "p1")
+        _seed_star_graph(app_client, instance_id, spokes=2)
+        for _ in range(6):
+            self._run_query(app_client, instance_id)
+
+        # Baseline: every receipt that exists before pagination starts
+        # (6 query receipts + the seeding mutation receipts), newest first.
+        baseline = self._list_receipts(app_client, instance_id, limit=50)
+        assert baseline["truncated"] is False
+        baseline_ids = [item["receipt_id"] for item in baseline["items"]]
+        assert len(baseline_ids) >= 6
+
+        page1 = self._list_receipts(app_client, instance_id, limit=2)
+        assert page1["truncated"] is True
+        token = page1["continuation_token"]
+        assert token
+        ids1 = [item["receipt_id"] for item in page1["items"]]
+
+        # Control: resume WITHOUT any insertion in between.
+        control = self._list_receipts(app_client, instance_id, limit=2, continuation=token)
+        control_ids = [item["receipt_id"] for item in control["items"]]
+        assert len(control_ids) == 2
+        assert set(ids1).isdisjoint(control_ids)
+
+        # Insert a new (query) receipt between pages. This does not bump
+        # read_revision, so the token stays valid — page 2 must still be
+        # identical to the no-insertion control: no duplicate, no skip.
+        self._run_query(app_client, instance_id)
+        page2 = self._list_receipts(app_client, instance_id, limit=2, continuation=token)
+        assert [item["receipt_id"] for item in page2["items"]] == control_ids
+        assert set(ids1).isdisjoint(item["receipt_id"] for item in page2["items"])
+
+        # Walking to the end returns exactly the receipts that existed when
+        # page 1 was read, in order — the mid-scan insert never appears, and
+        # nothing is skipped.
+        collected = list(ids1)
+        payload = page2
+        collected.extend(item["receipt_id"] for item in payload["items"])
+        while payload["truncated"]:
+            token = payload["continuation_token"]
+            assert token
+            payload = self._list_receipts(app_client, instance_id, limit=2, continuation=token)
+            page_ids = [item["receipt_id"] for item in payload["items"]]
+            assert set(collected).isdisjoint(page_ids)
+            collected.extend(page_ids)
+        assert payload["continuation_token"] is None
+        assert collected == baseline_ids
+        # The post-token receipt shows up only on a fresh (restarted) read.
+        fresh = self._list_receipts(app_client, instance_id, limit=50)
+        assert len(fresh["items"]) == len(baseline_ids) + 1
+
+    def test_receipt_token_is_still_revision_bound(
+        self, app_client: TestClient, tmp_path: Path
+    ) -> None:
+        instance_id = _create_instance(app_client, tmp_path / "p1")
+        _seed_star_graph(app_client, instance_id, spokes=2)
+        for _ in range(3):
+            self._run_query(app_client, instance_id)
+        token = self._list_receipts(app_client, instance_id, limit=1)["continuation_token"]
+        assert token
+
+        _mutate(app_client, instance_id)  # graph mutation DOES bump read_revision
+
+        response = app_client.get(
+            f"/api/v1/{instance_id}/list/receipts",
+            params={"limit": 1, "continuation": token},
+        )
+        assert response.status_code == 409
+        assert response.json()["error_type"] == "StaleContinuationError"
+
+
 class TestQueryCatalogContinuation:
     def test_round_trip(self, app_client: TestClient, tmp_path: Path) -> None:
         instance_id = _create_instance(app_client, tmp_path / "p1")

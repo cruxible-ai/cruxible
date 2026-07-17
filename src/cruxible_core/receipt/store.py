@@ -229,8 +229,15 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         operation_type: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        before: tuple[str, str] | None = None,
     ) -> list[dict[str, Any]]:
-        """List receipt summaries, optionally filtered by query name or operation type."""
+        """List receipt summaries, optionally filtered by query name or operation type.
+
+        ``before`` is a keyset high-water mark ``(created_at, receipt_id)``:
+        only receipts strictly older than it (in the newest-first sort order)
+        are returned. It makes continuation pages stable under concurrent
+        receipt insertion, which offset pagination is not.
+        """
         conditions: list[str] = []
         params: list[Any] = []
         if query_name is not None:
@@ -239,6 +246,9 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         if operation_type is not None:
             conditions.append("operation_type = ?")
             params.append(operation_type)
+        if before is not None:
+            conditions.append("(created_at, receipt_id) < (?, ?)")
+            params.extend(before)
 
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         params.extend([limit, offset])
@@ -340,8 +350,13 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         *,
         query_name: str | None = None,
         operation_type: str | None = None,
+        before: tuple[str, str] | None = None,
     ) -> int:
-        """Count receipt records with optional filters."""
+        """Count receipt records with optional filters.
+
+        ``before`` counts only receipts strictly older than the
+        ``(created_at, receipt_id)`` high-water mark (see :meth:`list_receipts`).
+        """
         conditions: list[str] = []
         params: list[Any] = []
         if query_name is not None:
@@ -350,6 +365,9 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         if operation_type is not None:
             conditions.append("operation_type = ?")
             params.append(operation_type)
+        if before is not None:
+            conditions.append("(created_at, receipt_id) < (?, ?)")
+            params.extend(before)
 
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         row = self._conn.execute(

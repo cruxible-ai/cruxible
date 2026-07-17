@@ -44,6 +44,10 @@ class ContinuationToken(BaseModel):
     read_revision: int
     filter_hash: str
     cursor: dict[str, int]
+    # Keyset high-water mark for resources whose backing table can grow
+    # without bumping read_revision (receipts): string-valued components
+    # (created_at / receipt_id) that page 2 resumes strictly older than.
+    keyset: dict[str, str] | None = None
 
 
 def compute_filter_hash(params: Mapping[str, Any]) -> str:
@@ -68,6 +72,7 @@ def mint_continuation_token(
     read_revision: int,
     filter_hash: str,
     cursor: Mapping[str, int],
+    keyset: Mapping[str, str] | None = None,
 ) -> str:
     """Encode an opaque continuation token for a truncated, resumable read."""
     payload = ContinuationToken(
@@ -78,8 +83,10 @@ def mint_continuation_token(
         read_revision=read_revision,
         filter_hash=filter_hash,
         cursor=dict(cursor),
+        keyset=dict(keyset) if keyset is not None else None,
     )
-    raw = canonical_json(payload.model_dump(mode="json")).encode("utf-8")
+    # exclude_none keeps offset-only tokens byte-identical to pre-keyset ones.
+    raw = canonical_json(payload.model_dump(mode="json", exclude_none=True)).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
@@ -154,6 +161,14 @@ def cursor_int(token: ContinuationToken, key: str) -> int:
     return value
 
 
+def keyset_str(token: ContinuationToken, key: str) -> str:
+    """Read a non-empty string keyset component, 422 on anything else."""
+    value = (token.keyset or {}).get(key)
+    if not isinstance(value, str) or not value:
+        raise InvalidContinuationError(f"token keyset is missing a valid '{key}' component")
+    return value
+
+
 __all__ = [
     "TOKEN_VERSION",
     "ContinuationSurface",
@@ -161,6 +176,7 @@ __all__ = [
     "compute_filter_hash",
     "cursor_int",
     "decode_continuation_token",
+    "keyset_str",
     "mint_continuation_token",
     "validate_continuation_token",
 ]

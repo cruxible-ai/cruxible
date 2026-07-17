@@ -1078,8 +1078,17 @@ def service_list(
     fields: list[str] | None = None,
     limit: int = 50,
     offset: int = 0,
+    receipt_before: tuple[str, str] | None = None,
 ) -> ListResult:
     """List entities, edges, receipts, feedback, or outcomes.
+
+    ``receipt_before`` (receipts only) is the keyset continuation cursor: a
+    ``(created_at, receipt_id)`` high-water mark; the page holds only receipts
+    strictly older than it in the newest-first ordering. Keyset resumption is
+    stable under receipt insertion between pages (receipts are audit rows and
+    do not bump ``read_revision``, so an offset cursor would silently shift).
+    When set, ``offset`` is reported in the envelope for progression display
+    but never applied to the scan.
 
     ``relationship_state`` is the unified read-visibility selector. For ENTITIES
     it gates by lifecycle through the shared :func:`entity_matches_query_state`
@@ -1107,6 +1116,10 @@ def service_list(
         raise ConfigError("state is only supported for entities and edges")
     if fields is not None and resource != "entities":
         raise ConfigError("fields is only supported for entities")
+    if receipt_before is not None and resource != "receipts":
+        raise ConfigError("receipt_before is only supported for receipts")
+
+    receipts_remaining: int | None = None
 
     if resource == "entities":
         if not entity_type:
@@ -1138,9 +1151,22 @@ def service_list(
                 query_name=query_name,
                 operation_type=operation_type,
                 limit=limit,
-                offset=offset,
+                # Keyset resumption replaces the offset scan entirely; the
+                # nominal offset stays in the envelope for progression only.
+                offset=0 if receipt_before is not None else offset,
+                before=receipt_before,
             )
             total = store.count_receipts(query_name=query_name, operation_type=operation_type)
+            # Keyset truncation: receipts strictly older than the last item of
+            # this page. Receipts inserted mid-scan are NEWER than any cursor,
+            # so this is exact where offset math would drift.
+            if summaries:
+                last = summaries[-1]
+                receipts_remaining = store.count_receipts(
+                    query_name=query_name,
+                    operation_type=operation_type,
+                    before=(str(last["created_at"]), str(last["receipt_id"])),
+                )
         finally:
             store.close()
         result = ListResult(items=summaries, total=total)
@@ -1182,6 +1208,16 @@ def service_list(
     result.limit = limit
     result.offset = offset
     result.truncated = list_truncated(total=result.total, offset=offset, returned=len(result.items))
+    if resource == "receipts":
+        if receipts_remaining is not None:
+            # Truncation for receipts is keyset-derived (strictly-older count
+            # below the page's last item), never offset math: the audit table
+            # grows without bumping read_revision, so offsets drift mid-scan.
+            result.truncated = receipts_remaining > 0
+        elif receipt_before is not None:
+            # A resumed page with no rows means nothing older remains (the
+            # tail was deleted); that is the end of the scan, not a drop.
+            result.truncated = False
     result.read_revision = instance.get_read_revision()
     return result
 
