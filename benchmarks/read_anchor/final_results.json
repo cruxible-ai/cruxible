@@ -1,0 +1,493 @@
+{
+  "captured_at": "2026-07-17T16:47:55-0400",
+  "harness": "benchmarks/read_anchor/capture.py",
+  "code_ref": "feature/read-ergonomics @ f159c2b (full track incl. layout=graph and expanded-inspect state=all default)",
+  "baseline_ref": "baseline_results.json @ 9b879f3 (pre-track, cruxible 0.2.5)",
+  "instances_note": "rb-* against a fresh branch-served runebench instance on 8149 rebuilt from ~/Git/runebench/cruxible/kits (rs-world-overlay composed init; 5,838 entities / 7,257 edges, counts verified: Item 2535/Npc 1357/Scenery 1592/Place 136/Shop 197/Skill 21). op-* in serverless local mode over a fresh 2026-07-17 copy of the operation instance (rsync of instance root excluding state.db + sqlite3 .backup of state.db); the live 8121 daemon (released 0.2.5) received reads only during the copy. op-2/3/4 final numbers carried forward from post_track_results.json measurement_b per the identical-sequence rule.",
+  "notes": {
+    "latency": "each call is run twice; run2 (warm daemon) is headline",
+    "est_tokens": "stdout bytes / 4, rounded",
+    "metadata_share": "1 - stripped/original compact-JSON bytes after recursively removing keys: metadata, actor_context, provenance",
+    "cli_process_overhead_s": 0.57
+  },
+  "tasks": [
+    {
+      "id": "op-1-deps-of-runebench-pilot",
+      "flow": "ergonomic_v2",
+      "instance": "operation_local",
+      "question": "What work items does wi-runebench-pilot depend on?",
+      "num_calls": 1,
+      "total_bytes": 12507,
+      "total_est_tokens": 3127,
+      "total_latency_run2_s": 0.706,
+      "total_latency_run1_s": 0.774,
+      "correct": true,
+      "verification_detail": "found work_item_depends_on_work_item -> wi-bounded-neighborhood-inspect",
+      "calls": [
+        {
+          "args": [
+            "entity",
+            "inspect",
+            "--type",
+            "WorkItem",
+            "--id",
+            "wi-runebench-pilot",
+            "--depth",
+            "1",
+            "--target-type",
+            "WorkItem",
+            "--profile",
+            "compact",
+            "--json"
+          ],
+          "purpose": "Same bounded neighborhood read, NO --state flag: expanded inspect now defaults to state=all (with per-edge/entity state markers), so the pending dependency edges appear in the default flow instead of silently vanishing.",
+          "exit_code": 0,
+          "bytes": 12507,
+          "est_tokens": 3127,
+          "latency_run1_s": 0.774,
+          "latency_run2_s": 0.706,
+          "compact_json_bytes": 8709,
+          "metadata_stripped_bytes": 6579,
+          "metadata_share": 0.245
+        }
+      ],
+      "final_provenance": "measured 2026-07-17 (ergonomic_v2, HEAD f159c2b)"
+    },
+    {
+      "id": "op-2-milestone-of-agent-local-working-set",
+      "flow": "ergonomic (carried forward)",
+      "instance": "operation_local",
+      "question": "Which milestone is wi-agent-local-working-set in?",
+      "num_calls": 2,
+      "total_bytes": 4587,
+      "total_est_tokens": 1147,
+      "total_latency_run2_s": 1.544,
+      "total_latency_run1_s": 1.513,
+      "correct": true,
+      "verification_detail": "'ms-dx-friction' present in final response",
+      "calls": [
+        {
+          "args": [
+            "stats",
+            "--json"
+          ],
+          "purpose": "Cold orientation: stats lists entity types AND relationship vocabulary (work_item_in_milestone) in ~3 KB",
+          "exit_code": 0,
+          "bytes": 3083,
+          "est_tokens": 771,
+          "latency_run1_s": 0.805,
+          "latency_run2_s": 0.751,
+          "compact_json_bytes": 2176,
+          "metadata_stripped_bytes": 2176,
+          "metadata_share": 0.0
+        },
+        {
+          "args": [
+            "entity",
+            "inspect",
+            "--type",
+            "WorkItem",
+            "--id",
+            "wi-agent-local-working-set",
+            "--depth",
+            "1",
+            "--relationship",
+            "work_item_in_milestone",
+            "--profile",
+            "compact",
+            "--json"
+          ],
+          "purpose": "One bounded neighborhood read filtered to the milestone edge, compact cards. Replaces query list + describe + a 276 KB context query for a one-edge answer.",
+          "exit_code": 0,
+          "bytes": 1504,
+          "est_tokens": 376,
+          "latency_run1_s": 0.708,
+          "latency_run2_s": 0.793,
+          "compact_json_bytes": 1132,
+          "metadata_stripped_bytes": 994,
+          "metadata_share": 0.122
+        }
+      ],
+      "final_provenance": "carried forward from post_track_results.json measurement_b (v2 sequence identical: no query-run step, no state flag); same-day recheck values on the fresh 2026-07-17 copy recorded in cross_checks"
+    },
+    {
+      "id": "op-3-owner-of-read-output-profiles",
+      "flow": "ergonomic (carried forward)",
+      "instance": "operation_local",
+      "question": "Which Actor owns wi-read-output-profiles?",
+      "num_calls": 1,
+      "total_bytes": 4652,
+      "total_est_tokens": 1163,
+      "total_latency_run2_s": 0.733,
+      "total_latency_run1_s": 0.769,
+      "correct": true,
+      "verification_detail": "found work_item_owned_by_actor -> fable-impl",
+      "calls": [
+        {
+          "args": [
+            "entity",
+            "inspect",
+            "--type",
+            "WorkItem",
+            "--id",
+            "wi-read-output-profiles",
+            "--profile",
+            "compact",
+            "--json"
+          ],
+          "purpose": "Same single-hop inspect, compact profile (no extra knowledge needed; the win is pure serialization)",
+          "exit_code": 0,
+          "bytes": 4652,
+          "est_tokens": 1163,
+          "latency_run1_s": 0.769,
+          "latency_run2_s": 0.733,
+          "compact_json_bytes": 3246,
+          "metadata_stripped_bytes": 2444,
+          "metadata_share": 0.247
+        }
+      ],
+      "final_provenance": "carried forward from post_track_results.json measurement_b (v2 sequence identical: no query-run step, no state flag); same-day recheck values on the fresh 2026-07-17 copy recorded in cross_checks"
+    },
+    {
+      "id": "op-4-workitem-counts-and-recent",
+      "flow": "ergonomic (carried forward)",
+      "instance": "operation_local",
+      "question": "How many WorkItems exist, and what was touched most recently?",
+      "num_calls": 3,
+      "total_bytes": 5575,
+      "total_est_tokens": 1394,
+      "total_latency_run2_s": 2.152,
+      "total_latency_run1_s": 2.144,
+      "correct": true,
+      "verification_detail": "stats WorkItem=164, list total=164, expected 164",
+      "calls": [
+        {
+          "args": [
+            "stats",
+            "--json"
+          ],
+          "purpose": "Get graph-wide counts",
+          "exit_code": 0,
+          "bytes": 3083,
+          "est_tokens": 771,
+          "latency_run1_s": 0.741,
+          "latency_run2_s": 0.714,
+          "compact_json_bytes": 2176,
+          "metadata_stripped_bytes": 2176,
+          "metadata_share": 0.0
+        },
+        {
+          "args": [
+            "list",
+            "entities",
+            "--type",
+            "WorkItem",
+            "--limit",
+            "3",
+            "--profile",
+            "compact",
+            "--json"
+          ],
+          "purpose": "Sample the WorkItem listing with compact cards (also returns total)",
+          "exit_code": 0,
+          "bytes": 1548,
+          "est_tokens": 387,
+          "latency_run1_s": 0.816,
+          "latency_run2_s": 0.832,
+          "compact_json_bytes": 1298,
+          "metadata_stripped_bytes": 1256,
+          "metadata_share": 0.032
+        },
+        {
+          "args": [
+            "list",
+            "receipts",
+            "--limit",
+            "3",
+            "--json"
+          ],
+          "purpose": "Most recent activity via receipts (no profile flag on receipts; already bounded)",
+          "exit_code": 0,
+          "bytes": 944,
+          "est_tokens": 236,
+          "latency_run1_s": 0.587,
+          "latency_run2_s": 0.606,
+          "compact_json_bytes": 690,
+          "metadata_stripped_bytes": 690,
+          "metadata_share": 0.0
+        }
+      ],
+      "final_provenance": "carried forward from post_track_results.json measurement_b (v2 sequence identical: no query-run step, no state flag); same-day recheck values on the fresh 2026-07-17 copy recorded in cross_checks"
+    },
+    {
+      "id": "rb-1-who-drops-cow-hide",
+      "flow": "ergonomic_v2",
+      "instance": "runebench",
+      "question": "Who drops cow_hide?",
+      "num_calls": 2,
+      "total_bytes": 9397,
+      "total_est_tokens": 2349,
+      "total_latency_run2_s": 1.663,
+      "total_latency_run1_s": 1.774,
+      "correct": true,
+      "verification_detail": "total=3, ids verified",
+      "calls": [
+        {
+          "args": [
+            "query",
+            "list",
+            "--json"
+          ],
+          "purpose": "Cold discovery via the summary catalog (unchanged from ergonomic)",
+          "exit_code": 0,
+          "bytes": 6042,
+          "est_tokens": 1510,
+          "latency_run1_s": 1.097,
+          "latency_run2_s": 0.74,
+          "compact_json_bytes": 4659,
+          "metadata_stripped_bytes": 4659,
+          "metadata_share": 0.0
+        },
+        {
+          "args": [
+            "query",
+            "run",
+            "item_dropped_by",
+            "--param",
+            "item_id=cow_hide",
+            "--profile",
+            "compact",
+            "--layout",
+            "graph",
+            "--json"
+          ],
+          "purpose": "Run the drop-source query with compact cards in graph layout: each entity and edge serialized once instead of per row",
+          "exit_code": 0,
+          "bytes": 3355,
+          "est_tokens": 839,
+          "latency_run1_s": 0.677,
+          "latency_run2_s": 0.923,
+          "compact_json_bytes": 2058,
+          "metadata_stripped_bytes": 1672,
+          "metadata_share": 0.188
+        }
+      ],
+      "final_provenance": "measured 2026-07-17 (ergonomic_v2, HEAD f159c2b)"
+    },
+    {
+      "id": "rb-2-scenery-at-lumbridge",
+      "flow": "ergonomic_v2",
+      "instance": "runebench",
+      "question": "What scenery is at lumbridge?",
+      "num_calls": 1,
+      "total_bytes": 33355,
+      "total_est_tokens": 8339,
+      "total_latency_run2_s": 0.897,
+      "total_latency_run1_s": 0.912,
+      "correct": true,
+      "verification_detail": "total=38, expected 38",
+      "calls": [
+        {
+          "args": [
+            "query",
+            "run",
+            "scenery_at_place",
+            "--param",
+            "place_id=lumbridge",
+            "--profile",
+            "compact",
+            "--layout",
+            "graph",
+            "--json"
+          ],
+          "purpose": "Same query, compact cards + graph layout: the anchor place and each edge serialize once instead of being repeated in all 38 rows",
+          "exit_code": 0,
+          "bytes": 33355,
+          "est_tokens": 8339,
+          "latency_run1_s": 0.912,
+          "latency_run2_s": 0.897,
+          "compact_json_bytes": 19183,
+          "metadata_stripped_bytes": 14457,
+          "metadata_share": 0.246
+        }
+      ],
+      "final_provenance": "measured 2026-07-17 (ergonomic_v2, HEAD f159c2b)"
+    },
+    {
+      "id": "rb-3-buy-bronze-pickaxe",
+      "flow": "ergonomic_v2",
+      "instance": "runebench",
+      "question": "Where can I buy a bronze_pickaxe?",
+      "num_calls": 1,
+      "total_bytes": 22274,
+      "total_est_tokens": 5568,
+      "total_latency_run2_s": 0.936,
+      "total_latency_run1_s": 0.949,
+      "correct": true,
+      "verification_detail": "total=10, ids verified",
+      "calls": [
+        {
+          "args": [
+            "query",
+            "run",
+            "item_buy_locations",
+            "--param",
+            "item_id=bronze_pickaxe",
+            "--profile",
+            "compact",
+            "--layout",
+            "graph",
+            "--json"
+          ],
+          "purpose": "Single call, compact cards + graph layout: multi-hop path rows (item->shop->place) collapse to nodes/edges serialized once with path index sequences",
+          "exit_code": 0,
+          "bytes": 22274,
+          "est_tokens": 5568,
+          "latency_run1_s": 0.949,
+          "latency_run2_s": 0.936,
+          "compact_json_bytes": 13209,
+          "metadata_stripped_bytes": 9613,
+          "metadata_share": 0.272
+        }
+      ],
+      "final_provenance": "measured 2026-07-17 (ergonomic_v2, HEAD f159c2b)"
+    },
+    {
+      "id": "rb-4-everything-about-cow",
+      "flow": "ergonomic (re-measured, same flow)",
+      "instance": "runebench",
+      "question": "Everything about Npc:cow - where does it spawn, what does it drop?",
+      "num_calls": 1,
+      "total_bytes": 10307,
+      "total_est_tokens": 2577,
+      "total_latency_run2_s": 0.635,
+      "total_latency_run1_s": 0.902,
+      "correct": true,
+      "verification_detail": "found npc_drops_item -> cow_hide",
+      "calls": [
+        {
+          "args": [
+            "entity",
+            "inspect",
+            "--type",
+            "Npc",
+            "--id",
+            "cow",
+            "--depth",
+            "1",
+            "--profile",
+            "compact",
+            "--json"
+          ],
+          "purpose": "One bounded neighborhood read replaces get + inspect: root keeps full properties, depth-1 neighbors arrive as compact cards",
+          "exit_code": 0,
+          "bytes": 10307,
+          "est_tokens": 2577,
+          "latency_run1_s": 0.902,
+          "latency_run2_s": 0.635,
+          "compact_json_bytes": 6150,
+          "metadata_stripped_bytes": 4400,
+          "metadata_share": 0.285
+        }
+      ],
+      "final_provenance": "measured 2026-07-17 on HEAD f159c2b; sequence identical to the ergonomic variant, but on frozen data current code emits +29 B vs post-track (10,307 vs 10,278) from the always-present edges_hidden_by_state / state fields the state-default commit added to expanded inspect, so the post-track number could not be carried forward verbatim"
+    }
+  ],
+  "cross_checks": {
+    "comment": "Same-day same-code same-data control runs used for the v2 delta attribution.",
+    "op1_state_default_attribution": {
+      "ergonomic_with_state_all_on_fresh_copy": {
+        "bytes": 12507,
+        "correct": true
+      },
+      "ergonomic_v2_no_state_flag": {
+        "bytes": 12507,
+        "correct": true
+      },
+      "finding": "byte-identical (12,507 B both): the state=all default costs nothing and removes the correctness-critical flag; the +967 B vs the post-track 11,540 B is live-instance data drift, not code"
+    },
+    "ergonomic_flow_recheck_2026_07_17": [
+      {
+        "id": "op-1-deps-of-runebench-pilot",
+        "flow": "ergonomic",
+        "num_calls": 1,
+        "total_bytes": 12507,
+        "correct": true,
+        "verification_detail": "found work_item_depends_on_work_item -> wi-bounded-neighborhood-inspect"
+      },
+      {
+        "id": "rb-1-who-drops-cow-hide",
+        "flow": "ergonomic",
+        "num_calls": 2,
+        "total_bytes": 11019,
+        "correct": true,
+        "verification_detail": "total=3, ids verified"
+      },
+      {
+        "id": "rb-2-scenery-at-lumbridge",
+        "flow": "ergonomic",
+        "num_calls": 1,
+        "total_bytes": 57263,
+        "correct": true,
+        "verification_detail": "total=38, expected 38"
+      },
+      {
+        "id": "rb-3-buy-bronze-pickaxe",
+        "flow": "ergonomic",
+        "num_calls": 1,
+        "total_bytes": 31789,
+        "correct": true,
+        "verification_detail": "total=10, ids verified"
+      },
+      {
+        "id": "rb-4-everything-about-cow",
+        "flow": "ergonomic",
+        "num_calls": 1,
+        "total_bytes": 10307,
+        "correct": true,
+        "verification_detail": "found npc_drops_item -> cow_hide"
+      },
+      {
+        "id": "op-2-milestone-of-agent-local-working-set",
+        "flow": "ergonomic",
+        "num_calls": 2,
+        "total_bytes": 4617,
+        "correct": true,
+        "verification_detail": "'ms-dx-friction' present in final response"
+      },
+      {
+        "id": "op-3-owner-of-read-output-profiles",
+        "flow": "ergonomic",
+        "num_calls": 1,
+        "total_bytes": 5741,
+        "correct": true,
+        "verification_detail": "found work_item_owned_by_actor -> fable-impl"
+      },
+      {
+        "id": "op-4-workitem-counts-and-recent",
+        "flow": "ergonomic",
+        "num_calls": 3,
+        "total_bytes": 5876,
+        "correct": false,
+        "verification_detail": "stats WorkItem=167, list total=167, expected 164"
+      }
+    ],
+    "frozen_data_reproducibility": "rb-1/rb-2/rb-3 ergonomic (rows-compact) calls reproduce the post-track bytes exactly on the rebuilt instance (6,042 / 4,977 / 57,263 / 31,789); rb-4 and op-2 expanded inspects are +29 B (additive edges_hidden_by_state + state fields)",
+    "op4_pin_drift": "fresh-copy op-4 recheck FAILs only its stale pin (WorkItem total now 167, pinned 164 at post-track); stats and list agree with each other (167 == 167) \u2014 data drift, not code",
+    "rb2_deep_dive": {
+      "rows_standard_stdout_bytes": 166955,
+      "rows_compact_stdout_bytes": 57263,
+      "graph_compact_stdout_bytes": 33355,
+      "rows_compact_json_bytes": 29951,
+      "graph_compact_json_bytes": 19183,
+      "rows_items_section_bytes": 29422,
+      "graph_sections_bytes": 18647,
+      "graph_edges_section_bytes": 12784,
+      "graph_nodes_section_bytes": 3723,
+      "graph_results_section_bytes": 1920,
+      "stdout_ratio_rows_to_graph": 1.72,
+      "section_ratio_rows_to_graph": 1.58,
+      "finding": "real-data ratio is 1.72x stdout (1.58x at section level), far below the 5.7x fixture: rs-world node cards are tiny ({name} only) so per-row duplication was small, and all 38 edges are unique (zero dedupe), each carrying ~336 B of coords properties + assertion metadata + alias; pretty-print whitespace (14,172 B, 42%) is untouched by layout"
+    }
+  }
+}

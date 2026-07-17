@@ -135,7 +135,18 @@ def check_json_contains_string(expect, outputs):
 
 def check_result_ids(expect, outputs):
     doc = _final_json(outputs)
-    ids = sorted({item["result"]["entity_id"] for item in doc.get("items", [])})
+    if doc.get("layout") == "graph":
+        # Graph layout: results[] carry node indexes into nodes[].
+        nodes = doc.get("nodes", [])
+        ids = sorted(
+            {
+                nodes[ref["result"]]["entity_id"]
+                for ref in doc.get("results", [])
+                if isinstance(ref.get("result"), int)
+            }
+        )
+    else:
+        ids = sorted({item["result"]["entity_id"] for item in doc.get("items", [])})
     total = doc.get("total")
     if total != expect["expected_total"]:
         return False, f"total={total}, expected {expect['expected_total']}"
@@ -292,11 +303,14 @@ def main() -> int:
     parser.add_argument("--only", nargs="*", default=None, help="task ids to run")
     parser.add_argument(
         "--flow",
-        choices=["baseline", "ergonomic"],
+        choices=["baseline", "ergonomic", "ergonomic_v2"],
         default="baseline",
         help=(
-            "baseline runs each task's original call sequence; ergonomic runs "
-            "the task's 'ergonomic' variant (calls/expect/instance overrides)."
+            "baseline runs each task's original call sequence; ergonomic / "
+            "ergonomic_v2 run the task's variant of that name (calls/expect/"
+            "instance overrides). Tasks without the requested variant are "
+            "skipped (v2 variants exist only where the new machinery changes "
+            "the flow; identical flows carry their ergonomic numbers forward)."
         ),
     )
     args = parser.parse_args()
@@ -311,10 +325,10 @@ def main() -> int:
     for task in tasks:
         calls = expect = None
         instance_name = task["instance"]
-        if args.flow == "ergonomic":
-            variant = task.get("ergonomic")
+        if args.flow != "baseline":
+            variant = task.get(args.flow)
             if not variant:
-                print(f"skipping {task['id']} (no ergonomic variant)", flush=True)
+                print(f"skipping {task['id']} (no {args.flow} variant)", flush=True)
                 continue
             calls = variant["calls"]
             expect = variant.get("expect")

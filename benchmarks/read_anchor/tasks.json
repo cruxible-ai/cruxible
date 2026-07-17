@@ -61,6 +61,20 @@
           "relationship_type": "work_item_depends_on_work_item",
           "entity_id": "wi-bounded-neighborhood-inspect"
         }
+      },
+      "ergonomic_v2": {
+        "instance": "operation_local",
+        "calls": [
+          {
+            "purpose": "Same bounded neighborhood read, NO --state flag: expanded inspect now defaults to state=all (with per-edge/entity state markers), so the pending dependency edges appear in the default flow instead of silently vanishing.",
+            "args": ["entity", "inspect", "--type", "WorkItem", "--id", "wi-runebench-pilot", "--depth", "1", "--target-type", "WorkItem", "--profile", "compact", "--json"]
+          }
+        ],
+        "expect": {
+          "kind": "graph_edge",
+          "relationship_type": "work_item_depends_on_work_item",
+          "entity_id": "wi-bounded-neighborhood-inspect"
+        }
       }
     },
     {
@@ -205,6 +219,18 @@
             "args": ["query", "run", "item_dropped_by", "--param", "item_id=cow_hide", "--profile", "compact", "--json"]
           }
         ]
+      },
+      "ergonomic_v2": {
+        "calls": [
+          {
+            "purpose": "Cold discovery via the summary catalog (unchanged from ergonomic)",
+            "args": ["query", "list", "--json"]
+          },
+          {
+            "purpose": "Run the drop-source query with compact cards in graph layout: each entity and edge serialized once instead of per row",
+            "args": ["query", "run", "item_dropped_by", "--param", "item_id=cow_hide", "--profile", "compact", "--layout", "graph", "--json"]
+          }
+        ]
       }
     },
     {
@@ -226,6 +252,14 @@
           {
             "purpose": "Same query, compact cards (answer needs identity only)",
             "args": ["query", "run", "scenery_at_place", "--param", "place_id=lumbridge", "--profile", "compact", "--json"]
+          }
+        ]
+      },
+      "ergonomic_v2": {
+        "calls": [
+          {
+            "purpose": "Same query, compact cards + graph layout: the anchor place and each edge serialize once instead of being repeated in all 38 rows",
+            "args": ["query", "run", "scenery_at_place", "--param", "place_id=lumbridge", "--profile", "compact", "--layout", "graph", "--json"]
           }
         ]
       }
@@ -254,6 +288,14 @@
           {
             "purpose": "Run directly with compact cards; the describe call is dropped because the rb-1 summary catalog already carried required_params for every query",
             "args": ["query", "run", "item_buy_locations", "--param", "item_id=bronze_pickaxe", "--profile", "compact", "--json"]
+          }
+        ]
+      },
+      "ergonomic_v2": {
+        "calls": [
+          {
+            "purpose": "Single call, compact cards + graph layout: multi-hop path rows (item->shop->place) collapse to nodes/edges serialized once with path index sequences",
+            "args": ["query", "run", "item_buy_locations", "--param", "item_id=bronze_pickaxe", "--profile", "compact", "--layout", "graph", "--json"]
           }
         ]
       }
