@@ -39,6 +39,18 @@ def test_client_contract_snapshot_is_current() -> None:
     )
 
 
+def test_inspect_neighborhood_state_defaults_to_all() -> None:
+    """The public model default matches the runtime/service/docs default.
+
+    The expanded inspect contract defaults to state="all" (every stored edge
+    with its review/lifecycle markers); the client model must agree so an
+    absent `state` in a wire payload never misreports the read's visibility.
+    """
+    assert contracts.InspectNeighborhoodResult.model_fields["state"].default == "all"
+    schema = contracts.InspectNeighborhoodResult.model_json_schema()
+    assert schema["properties"]["state"]["default"] == "all"
+
+
 def test_group_status_contract_is_persisted_lifecycle_only() -> None:
     assert set(get_args(contracts.GroupStatus)) == {
         "pending_review",

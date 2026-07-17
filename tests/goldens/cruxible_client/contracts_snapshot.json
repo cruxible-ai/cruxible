@@ -10544,14 +10544,14 @@
           }
         },
         "state": {
-          "default": "live",
+          "default": "all",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "state",
           "required": false,
           "schema": {
-            "default": "live",
+            "default": "all",
             "enum": [
               "live",
               "accepted",
@@ -10772,7 +10772,7 @@
             "title": "Read Revision"
           },
           "state": {
-            "default": "live",
+            "default": "all",
             "enum": [
               "live",
               "accepted",

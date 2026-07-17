@@ -1347,7 +1347,7 @@ class InspectNeighborhoodResult(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     depth: int = 1
-    state: QueryVisibilityState = "live"
+    state: QueryVisibilityState = "all"
     nodes: list[NeighborhoodNodeResult] = Field(default_factory=list)
     edges: list[NeighborhoodEdgeResult] = Field(default_factory=list)
     truncated: bool = False
