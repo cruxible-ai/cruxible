@@ -73,11 +73,13 @@ def test_server_mode_client_ignores_legacy_server_token(monkeypatch: pytest.Monk
 
 def test_public_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
-        def query(self, instance_id, query_name, params, limit=None, offset=0):
+        def query(self, instance_id, query_name, params, limit=None, offset=0, profile=None):
             assert instance_id == "inst_123"
             assert query_name == "parts_for_vehicle"
             assert params == {"vehicle_id": "V-1"}
             assert limit == 5
+            # The MCP surface defaults entity-shaped reads to compact.
+            assert profile == "compact"
             return contracts.QueryToolResult(
                 items=[],
                 receipt_id="RCPT-1",
@@ -105,12 +107,13 @@ def test_list_and_sample_handlers_forward_fields_to_client(monkeypatch: pytest.M
             captured["list"] = {"instance_id": instance_id, **kwargs}
             return contracts.ListResult(items=[], total=0, limit=10, offset=0)
 
-        def sample(self, instance_id, entity_type, *, limit=5, fields=None):
+        def sample(self, instance_id, entity_type, *, limit=5, fields=None, profile=None):
             captured["sample"] = {
                 "instance_id": instance_id,
                 "entity_type": entity_type,
                 "limit": limit,
                 "fields": fields,
+                "profile": profile,
             }
             return contracts.SampleResult(
                 items=[],
@@ -133,7 +136,9 @@ def test_list_and_sample_handlers_forward_fields_to_client(monkeypatch: pytest.M
 
     assert captured["list"]["where"] == {"name": {"contains": "Brake"}}
     assert captured["list"]["fields"] == ["name", "category"]
+    assert captured["list"]["profile"] == "compact"
     assert captured["sample"]["fields"] == ["name"]
+    assert captured["sample"]["profile"] == "compact"
 
 
 def test_server_info_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
@@ -267,11 +272,13 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
             direction="both",
             relationship_type=None,
             limit=None,
+            profile=None,
         ):
             assert (instance_id, entity_type, entity_id) == ("inst_123", "Asset", "A1")
             assert direction == "outgoing"
             assert relationship_type == "runs"
             assert limit == 3
+            assert profile == "compact"
             return contracts.InspectEntityResult(
                 found=True,
                 entity_type="Asset",

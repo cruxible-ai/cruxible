@@ -169,6 +169,7 @@ def register_tools(server: FastMCP) -> list[str]:
         offset: int = 0,
         relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.QueryToolResult:
         """Run a named query and return results plus a receipt.
 
@@ -185,6 +186,10 @@ def register_tools(server: FastMCP) -> list[str]:
         the inline receipt (fetch it later via `cruxible_receipt`).
         Use `offset` with `limit` to request later pages; ordering is
         deterministic per snapshot.
+
+        `profile` shapes item payloads: `compact` (default here) returns
+        bounded identity cards with governance markers; pass `standard`
+        or `full` when you need provenance or actor context.
         """
         return handlers.handle_query(
             instance_id,
@@ -194,6 +199,7 @@ def register_tools(server: FastMCP) -> list[str]:
             offset=offset,
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
+            profile=profile,
         )
 
     @_tool
@@ -204,6 +210,7 @@ def register_tools(server: FastMCP) -> list[str]:
         limit: int | None = None,
         relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.QueryToolResult:
         """Run a bounded inline graph query for read-only agent exploration.
 
@@ -211,6 +218,10 @@ def register_tools(server: FastMCP) -> list[str]:
         queries plus a required `name`, but they are not persisted to config.
         Use this for one-off filtering and candidate discovery. Promote repeated
         or workflow-critical queries into config as named queries.
+
+        `profile` shapes item payloads: `compact` (default here) returns
+        bounded identity cards with governance markers; pass `standard`
+        or `full` when you need provenance or actor context.
         """
         return handlers.handle_query_inline(
             instance_id,
@@ -219,6 +230,7 @@ def register_tools(server: FastMCP) -> list[str]:
             limit=limit,
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
+            profile=profile,
         )
 
     @_tool
@@ -422,6 +434,7 @@ def register_tools(server: FastMCP) -> list[str]:
         operation_type: str | None = None,
         fields: list[str] | None = None,
         relationship_state: contracts.QueryVisibilityState | None = None,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.ListResult:
         """List `entities|edges|receipts|feedback|outcomes` with optional filters.
 
@@ -438,6 +451,9 @@ def register_tools(server: FastMCP) -> list[str]:
         not-live|pending|reviewable`): for entities it gates by lifecycle, for
         edges by review+lifecycle. Entities default to `live`; edges return all
         stored edges unless a selector is given.
+        `profile` shapes entity/edge item payloads: `compact` (default here)
+        returns bounded identity cards with governance markers; pass `standard`
+        or `full` when you need provenance or actor context.
 
         Edge items include `edge_key` for use with `cruxible_feedback` when
         multiple edges exist between the same endpoints.
@@ -456,6 +472,7 @@ def register_tools(server: FastMCP) -> list[str]:
             operation_type=operation_type,
             fields=fields,
             relationship_state=relationship_state,
+            profile=profile,
         )
 
     @_tool
@@ -592,9 +609,15 @@ def register_tools(server: FastMCP) -> list[str]:
         entity_type: str,
         limit: int = 5,
         fields: list[str] | None = None,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.SampleResult:
-        """Return up to `limit` entities for quick data inspection."""
-        return handlers.handle_sample(instance_id, entity_type, limit, fields)
+        """Return up to `limit` entities for quick data inspection.
+
+        `profile` shapes item payloads: `compact` (default here) returns
+        bounded identity cards; pass `standard` or `full` for full
+        property bags and metadata.
+        """
+        return handlers.handle_sample(instance_id, entity_type, limit, fields, profile=profile)
 
     @_tool
     def cruxible_inspect_entity(
@@ -604,8 +627,14 @@ def register_tools(server: FastMCP) -> list[str]:
         direction: str = "both",
         relationship_type: str | None = None,
         limit: int | None = None,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.InspectEntityResult:
-        """Inspect one entity and its immediate incoming/outgoing neighbors."""
+        """Inspect one entity and its immediate incoming/outgoing neighbors.
+
+        `profile` shapes entity and neighbor payloads: `compact` (default
+        here) returns bounded identity cards with governance markers; pass
+        `standard` or `full` when you need provenance or actor context.
+        """
         return handlers.handle_inspect_entity(
             instance_id,
             entity_type,
@@ -613,6 +642,7 @@ def register_tools(server: FastMCP) -> list[str]:
             direction=direction,
             relationship_type=relationship_type,
             limit=limit,
+            profile=profile,
         )
 
     @_tool
@@ -1233,9 +1263,15 @@ def register_tools(server: FastMCP) -> list[str]:
         instance_id: str,
         entity_type: str,
         entity_id: str,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.GetEntityResult:
-        """Look up a specific entity by type and ID. Returns properties and metadata."""
-        return handlers.handle_get_entity(instance_id, entity_type, entity_id)
+        """Look up a specific entity by type and ID. Returns properties and metadata.
+
+        `profile` shapes the payload: `compact` (default here) returns a
+        bounded identity card with governance markers; pass `standard` or
+        `full` for the complete property bag and metadata.
+        """
+        return handlers.handle_get_entity(instance_id, entity_type, entity_id, profile=profile)
 
     @_tool
     def cruxible_get_relationship(

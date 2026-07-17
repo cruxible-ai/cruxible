@@ -14,6 +14,11 @@ from typing import Any, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 QueryVisibilityState = Literal["live", "accepted", "all", "not-live", "pending", "reviewable"]
+# Output profile for entity-shaped read payloads: `standard` is the unchanged
+# full shape (HTTP default), `compact` is the bounded identity card that keeps
+# governance markers (lifecycle / review status) but drops actor_context and
+# provenance blobs, `full` is reserved as a superset of standard (today equal).
+ReadProfile = Literal["compact", "standard", "full"]
 QueryMode = Literal["collection", "traversal"]
 QueryResultShape = Literal["entity", "path", "relationship"]
 QueryDedupe = Literal["entity", "path", "none"]

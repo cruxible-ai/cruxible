@@ -28,6 +28,12 @@ from cruxible_core.graph.provenance import (
 )
 from cruxible_core.kit_defaults import get_default_base_kit
 from cruxible_core.primitives import canonical_json, new_id
+from cruxible_core.query.profiles import (
+    profile_entity_payload,
+    profile_get_entity_payload,
+    profile_inspect_neighbor,
+    profile_list_items,
+)
 from cruxible_core.query.types import dump_query_row
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
@@ -1496,6 +1502,7 @@ def query(
     relationship_state: contracts.QueryVisibilityState | None = None,
     decision_record_id: str | None = None,
     surface: str = "local",
+    profile: contracts.ReadProfile = "standard",
 ) -> contracts.QueryToolResult:
     """Execute a named query."""
     check_permission("cruxible_query", instance_id=instance_id)
@@ -1512,7 +1519,7 @@ def query(
 
     include_receipt = limit is None and offset == 0
 
-    return _query_tool_result(result, include_receipt=include_receipt)
+    return _query_tool_result(result, include_receipt=include_receipt, profile=profile)
 
 
 def query_inline(
@@ -1524,6 +1531,7 @@ def query_inline(
     relationship_state: contracts.QueryVisibilityState | None = None,
     decision_record_id: str | None = None,
     surface: str = "local",
+    profile: contracts.ReadProfile = "standard",
 ) -> contracts.QueryToolResult:
     """Execute a bounded inline query definition without persisting it to config."""
     check_permission("cruxible_query_inline", instance_id=instance_id)
@@ -1543,18 +1551,22 @@ def query_inline(
     )
 
     include_receipt = limit is None
-    return _query_tool_result(result, include_receipt=include_receipt)
+    return _query_tool_result(result, include_receipt=include_receipt, profile=profile)
 
 
 def _query_tool_result(
     result: QueryServiceResult,
     *,
     include_receipt: bool,
+    profile: contracts.ReadProfile = "standard",
 ) -> contracts.QueryToolResult:
     return contracts.QueryToolResult(
         items=cast(
             list[contracts.QueryItem],
-            [dump_query_row(row, include_source=True, mode="json") for row in result.items],
+            [
+                dump_query_row(row, include_source=True, mode="json", profile=profile)
+                for row in result.items
+            ],
         ),
         receipt_id=result.receipt_id,
         receipt=(
@@ -1870,6 +1882,7 @@ def list_resources(
     fields: list[str] | None = None,
     offset: int = 0,
     relationship_state: contracts.QueryVisibilityState | None = None,
+    profile: contracts.ReadProfile = "standard",
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
     check_permission("cruxible_list", instance_id=instance_id)
@@ -1898,6 +1911,8 @@ def list_resources(
         ]
     else:
         items = result.items
+    # Item-level trimming only: the list envelope below is never profiled.
+    items = profile_list_items(items, resource_type, profile)
 
     return contracts.ListResult(
         items=items,
@@ -2421,6 +2436,7 @@ def inspect_entity(
     direction: str = "both",
     relationship_type: str | None = None,
     limit: int | None = None,
+    profile: contracts.ReadProfile = "standard",
 ) -> contracts.InspectEntityResult:
     """Inspect an entity and its immediate neighbors."""
     check_permission("cruxible_inspect_entity", instance_id=instance_id)
@@ -2433,20 +2449,31 @@ def inspect_entity(
         relationship_type=relationship_type,
         limit=limit,
     )
+    entity_payload = profile_get_entity_payload(
+        {"properties": result.properties, "metadata": result.metadata},
+        profile,
+    )
     return contracts.InspectEntityResult(
         found=result.found,
         entity_type=result.entity_type,
         entity_id=result.entity_id,
-        properties=result.properties,
-        metadata=result.metadata,
+        properties=entity_payload["properties"],
+        metadata=entity_payload["metadata"],
         neighbors=[
-            contracts.InspectNeighborResult(
-                direction=neighbor.direction,
-                relationship_type=neighbor.relationship_type,
-                edge_key=neighbor.edge_key,
-                properties=neighbor.properties,
-                metadata=neighbor.metadata,
-                entity=neighbor.entity.model_dump(mode="json") if neighbor.entity else {},
+            contracts.InspectNeighborResult.model_validate(
+                profile_inspect_neighbor(
+                    {
+                        "direction": neighbor.direction,
+                        "relationship_type": neighbor.relationship_type,
+                        "edge_key": neighbor.edge_key,
+                        "properties": neighbor.properties,
+                        "metadata": neighbor.metadata,
+                        "entity": (
+                            neighbor.entity.model_dump(mode="json") if neighbor.entity else {}
+                        ),
+                    },
+                    profile,
+                )
             )
             for neighbor in result.neighbors
         ],
@@ -2584,13 +2611,16 @@ def sample(
     entity_type: str,
     limit: int = 5,
     fields: list[str] | None = None,
+    profile: contracts.ReadProfile = "standard",
 ) -> contracts.SampleResult:
     """Sample entities of a given type."""
     check_permission("cruxible_sample", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     sampled = service_sample(instance, entity_type, limit=limit, fields=fields)
     return contracts.SampleResult(
-        items=[entity.model_dump(mode="json") for entity in sampled],
+        items=[
+            profile_entity_payload(entity.model_dump(mode="json"), profile) for entity in sampled
+        ],
         entity_type=entity_type,
         total=len(sampled),
         limit=limit,
@@ -3016,6 +3046,7 @@ def get_entity(
     instance_id: str,
     entity_type: str,
     entity_id: str,
+    profile: contracts.ReadProfile = "standard",
 ) -> contracts.GetEntityResult:
     """Look up a specific entity by type and ID."""
     check_permission("cruxible_get_entity", instance_id=instance_id)
@@ -3023,12 +3054,16 @@ def get_entity(
     entity = service_get_entity(instance, entity_type, entity_id)
     if entity is None:
         return contracts.GetEntityResult(found=False, entity_type=entity_type, entity_id=entity_id)
+    entity_payload = profile_get_entity_payload(
+        {"properties": entity.properties, "metadata": entity.metadata.to_metadata_dict()},
+        profile,
+    )
     return contracts.GetEntityResult(
         found=True,
         entity_type=entity.entity_type,
         entity_id=entity.entity_id,
-        properties=entity.properties,
-        metadata=entity.metadata.to_metadata_dict(),
+        properties=entity_payload["properties"],
+        metadata=entity_payload["metadata"],
     )
 
 

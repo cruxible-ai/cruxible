@@ -3380,3 +3380,277 @@ def test_get_relationship_server_result_preserves_trust_metadata() -> None:
     payload = _json.loads(result.output)
     assert payload["metadata"]["provenance"]["source"] == "group_resolve"
     assert payload["metadata"]["assertion"]["review"]["status"] == "approved"
+
+
+class TestReadProfiles:
+    """CLI --profile option: standard stays the default, compact trims JSON."""
+
+    @staticmethod
+    def _seed_pending_edge(populated_instance: CruxibleInstance) -> None:
+        from cruxible_core.graph.assertion_state import (
+            RelationshipAssertion,
+            RelationshipReviewState,
+        )
+        from cruxible_core.graph.provenance import RelationshipProvenance
+        from cruxible_core.graph.types import RelationshipMetadata
+
+        graph = populated_instance.load_graph()
+        graph.update_relationship_state(
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC-EX",
+            "fits",
+            metadata=RelationshipMetadata(
+                provenance=RelationshipProvenance(source="direct", source_ref="add_relationship"),
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="pending", source="agent")
+                ),
+            ),
+        )
+        populated_instance.save_graph(graph)
+
+    def test_query_run_standard_json_shape_is_unchanged(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        default = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "query",
+                "run",
+                "parts_for_vehicle",
+                "--param",
+                "vehicle_id=V-2024-CIVIC-EX",
+                "--json",
+            ],
+        )
+        explicit = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "query",
+                "run",
+                "parts_for_vehicle",
+                "--param",
+                "vehicle_id=V-2024-CIVIC-EX",
+                "--profile",
+                "standard",
+                "--json",
+            ],
+        )
+        assert default.exit_code == 0
+        assert explicit.exit_code == 0
+        default_payload = json.loads(default.output)
+        explicit_payload = json.loads(explicit.output)
+        # Receipt ids differ per run; items and envelope shape must be identical.
+        assert default_payload["items"] == explicit_payload["items"]
+        # Snapshot-style pin of the pre-change local path-row shape.
+        row = default_payload["items"][0]
+        assert list(row) == ["entry", "result", "entities", "path", "includes"]
+        # Standard rows keep the full trust metadata on path segments.
+        assert "assertion" in row["path"][0]["metadata"]
+        assert row["path"][0]["metadata"]["provenance"] is None
+
+    def test_query_run_profile_compact_bounds_items_and_keeps_envelope(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "query",
+                "run",
+                "parts_for_vehicle",
+                "--param",
+                "vehicle_id=V-2024-CIVIC-EX",
+                "--profile",
+                "compact",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["total"] == 2
+        row = payload["items"][0]
+        assert list(row) == ["entry", "result", "entities", "path", "includes"]
+        # Parts carry a `name` display property; the compact card keeps it only.
+        assert set(row["result"]["properties"]) == {"name"}
+        assert list(row["result"]) == ["entity_type", "entity_id", "properties", "metadata"]
+        # Compact path segments drop null/blob metadata but keep the edge card.
+        segment = row["path"][0]
+        assert segment["relationship_type"] == "fits"
+        assert "provenance" not in segment["metadata"]
+        assert payload["receipt_id"] is not None
+
+    def test_get_entity_profile_compact_json(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "entity",
+                "get",
+                "--type",
+                "Part",
+                "--id",
+                "BP-1001",
+                "--profile",
+                "compact",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload == {
+            "entity_type": "Part",
+            "entity_id": "BP-1001",
+            "properties": {"name": "Ceramic Brake Pads"},
+            "metadata": {},
+        }
+
+    def test_list_edges_profile_compact_keeps_review_markers(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        self._seed_pending_edge(populated_instance)
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "edges", "--relationship", "fits", "--profile", "compact", "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        pending = next(
+            item
+            for item in payload["items"]
+            if item["from_id"] == "BP-1001" and item["to_id"] == "V-2024-CIVIC-EX"
+        )
+        assert pending["metadata"]["assertion"]["review"]["status"] == "pending"
+        assert pending["metadata"]["assertion"]["lifecycle"] == {"status": "active"}
+        assert "provenance" not in pending["metadata"]
+        assert pending["properties"] == {"verified": True, "source": "catalog"}
+        # Envelope survives untouched.
+        assert set(payload) == {"items", "total", "limit", "offset", "truncated"}
+
+    def test_list_entities_profile_compact_bounds_properties(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "entities", "--type", "Part", "--profile", "compact", "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert all(set(item["properties"]) == {"name"} for item in payload["items"])
+        assert payload["total"] == 2
+
+    def test_inspect_profile_compact_local_and_remote_json_parity(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Local and server-mode inspect emit identical compact JSON, key order included.
+
+        The remote path is driven through a stub client returning the REAL
+        `api.inspect_entity` standard contract result for the same instance, so
+        both modes exercise their full emit chains (shared serializer included).
+        """
+        from cruxible_core.runtime import api
+        from cruxible_core.runtime.instance_manager import get_manager
+
+        self._seed_pending_edge(populated_instance)
+
+        local = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "entity",
+                "inspect",
+                "--type",
+                "Vehicle",
+                "--id",
+                "V-2024-CIVIC-EX",
+                "--profile",
+                "compact",
+                "--json",
+            ],
+        )
+        assert local.exit_code == 0
+        local_payload = json.loads(local.output)
+
+        get_manager().clear()
+        try:
+            remote_result = api.inspect_entity(
+                str(populated_instance.root), "Vehicle", "V-2024-CIVIC-EX"
+            )
+        finally:
+            get_manager().clear()
+
+        class StubClient:
+            def inspect_entity(
+                self,
+                _instance_id,
+                _entity_type,
+                _entity_id,
+                *,
+                direction="both",
+                relationship_type=None,
+                limit=None,
+                profile=None,
+            ):
+                return remote_result
+
+        monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+        monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+        remote = runner.invoke(
+            cli,
+            [
+                "--server-url",
+                "http://server",
+                "--instance-id",
+                "inst_x",
+                "entity",
+                "inspect",
+                "--type",
+                "Vehicle",
+                "--id",
+                "V-2024-CIVIC-EX",
+                "--profile",
+                "compact",
+                "--json",
+            ],
+        )
+        assert remote.exit_code == 0, remote.output
+        remote_payload = json.loads(remote.output)
+
+        assert local_payload == remote_payload
+        # Ordered-key parity, following the catalog WI pattern.
+        assert list(local_payload) == list(remote_payload)
+        for local_row, remote_row in zip(
+            local_payload["neighbors"], remote_payload["neighbors"], strict=True
+        ):
+            assert list(local_row) == list(remote_row)
+            assert list(local_row["entity"]) == list(remote_row["entity"])
+        # Governance markers survive compact on the reviewable edge.
+        pending_rows = [
+            row
+            for row in local_payload["neighbors"]
+            if row["metadata"].get("assertion", {}).get("review", {}).get("status") == "pending"
+        ]
+        assert pending_rows
+        assert "actor_context" not in json.dumps(local_payload)
+        assert "provenance" not in json.dumps(local_payload)

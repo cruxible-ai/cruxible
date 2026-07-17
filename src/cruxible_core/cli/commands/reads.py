@@ -58,6 +58,7 @@ from cruxible_core.cli.commands._common import (
     console,
     decision_record_option,
     json_option,
+    profile_option,
     state_option,
 )
 from cruxible_core.cli.formatting import (
@@ -80,6 +81,13 @@ from cruxible_core.graph.types import (
     EntityMetadata,
     RelationshipInstance,
     RelationshipMetadata,
+)
+from cruxible_core.query.profiles import (
+    ReadProfile,
+    inspect_neighbor_payload,
+    profile_entity_payload,
+    profile_inspect_payload,
+    profile_query_items,
 )
 from cruxible_core.query.types import ProjectedQueryRow, dump_query_row
 from cruxible_core.service import (
@@ -303,6 +311,7 @@ def _emit_query_command_result(
     limit: int | None,
     count_only: bool,
     output_json: bool,
+    profile: ReadProfile = "standard",
 ) -> None:
     projected_results, entity_results, structured_results = _split_query_result_items(result)
 
@@ -319,6 +328,9 @@ def _emit_query_command_result(
         )
         if limit is not None and not count_only:
             items = items[:limit]
+        # Profile trimming applies to items only; the envelope below is never
+        # trimmed. `standard` passes items through untouched.
+        items = profile_query_items(items, profile)
         param_hints = result.param_hints
         _emit_json(
             {
@@ -381,6 +393,7 @@ def _run_query_command(
     count_only: bool,
     output_json: bool,
     decision_record_id: str | None,
+    profile: ReadProfile = "standard",
 ) -> None:
     params = _parse_params(param)
     resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
@@ -427,6 +440,7 @@ def _run_query_command(
             limit=limit,
             count_only=count_only,
             output_json=output_json,
+            profile=profile,
         )
         return
 
@@ -457,11 +471,19 @@ def _run_query_command(
     structured_results = _query_rows_payload(results)
     total = local_result.total
     if output_json:
-        items = (
-            []
-            if count_only
-            else (
-                [
+        if count_only:
+            items = []
+        elif local_result.result_shape == "entity" and not projected_results:
+            if profile == "compact":
+                # The legacy local entity payload drops metadata entirely, so
+                # the compact identity card is built from the full row dump to
+                # preserve the lifecycle governance marker.
+                items = profile_query_items(
+                    [dump_query_row(e, mode="python") for e in entity_results],
+                    profile,
+                )
+            else:
+                items = [
                     {
                         "entity_type": e.entity_type,
                         "entity_id": e.entity_id,
@@ -469,10 +491,8 @@ def _run_query_command(
                     }
                     for e in entity_results
                 ]
-                if local_result.result_shape == "entity" and not projected_results
-                else structured_results
-            )
-        )
+        else:
+            items = profile_query_items(structured_results, profile)
         _emit_json(
             {
                 "items": items,
@@ -605,6 +625,7 @@ def query(ctx: click.Context) -> None:
 @click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
 @state_option
+@profile_option
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
 @decision_record_option
 @json_option
@@ -614,6 +635,7 @@ def query_run(
     param: tuple[str, ...],
     limit: int | None,
     state: str | None,
+    profile: str,
     count_only: bool,
     decision_record_id: str | None,
     output_json: bool,
@@ -627,6 +649,7 @@ def query_run(
         count_only=count_only,
         output_json=output_json,
         decision_record_id=decision_record_id,
+        profile=cast(ReadProfile, profile),
     )
 
 
@@ -841,18 +864,21 @@ def stats_cmd(output_json: bool) -> None:
 def sample(entity_type: str, fields: tuple[str, ...], limit: int, output_json: bool) -> None:
     """Show a sample of entities of a given type."""
     projected_fields = list(fields) or None
+    field_kwargs: dict[str, Any] = (
+        {"fields": projected_fields} if projected_fields is not None else {}
+    )
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.sample(
             instance_id,
             entity_type,
             limit=limit,
-            **({"fields": projected_fields} if projected_fields is not None else {}),
+            **field_kwargs,
         ),
         lambda instance: service_sample(
             instance,
             entity_type,
             limit=limit,
-            **({"fields": projected_fields} if projected_fields is not None else {}),
+            **field_kwargs,
         ),
     )
     entities = (
@@ -1256,6 +1282,33 @@ def inspect_overview_cmd(fmt: str, limit: int) -> None:
     click.echo(render_overview_markdown(overview))
 
 
+def _inspect_neighbor_rows(neighbors: list[Any]) -> list[dict[str, Any]]:
+    """Assemble standard-profile neighbor rows for local OR remote results.
+
+    Both modes previously hand-built these dicts separately; they now share the
+    serializer-owned builder so the row shape and key order cannot drift. The
+    only mode difference — local carries a typed ``EntityInstance``, remote a
+    serialized dict — is normalized here.
+    """
+    rows: list[dict[str, Any]] = []
+    for neighbor in neighbors:
+        entity = neighbor.entity
+        entity_payload: dict[str, Any] = (
+            entity.model_dump(mode="json") if isinstance(entity, EntityInstance) else entity or {}
+        )
+        rows.append(
+            inspect_neighbor_payload(
+                direction=neighbor.direction,
+                relationship_type=neighbor.relationship_type,
+                edge_key=neighbor.edge_key,
+                properties=neighbor.properties,
+                metadata=neighbor.metadata,
+                entity=entity_payload,
+            )
+        )
+    return rows
+
+
 @click.command("inspect")
 @click.option("--type", "entity_type", required=True, help="Entity type.")
 @click.option("--id", "entity_id", required=True, help="Entity ID.")
@@ -1273,6 +1326,7 @@ def inspect_overview_cmd(fmt: str, limit: int) -> None:
     help="Optional relationship filter.",
 )
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max neighbors to show.")
+@profile_option
 @json_option
 @handle_errors
 def inspect_entity_cmd(
@@ -1281,6 +1335,7 @@ def inspect_entity_cmd(
     direction: str,
     relationship_type: str | None,
     limit: int | None,
+    profile: str,
     output_json: bool,
 ) -> None:
     """Inspect an entity and its immediate neighbors."""
@@ -1306,18 +1361,7 @@ def inspect_entity_cmd(
             neighbors=[],
             total_neighbors=result.total_neighbors,
         )
-        neighbor_rows = [
-            {
-                "direction": neighbor.direction,
-                "relationship_type": neighbor.relationship_type,
-                "edge_key": neighbor.edge_key,
-                "properties": neighbor.properties,
-                "metadata": neighbor.metadata,
-                "entity": neighbor.entity,
-            }
-            for neighbor in result.neighbors
-        ]
-        return inspect_result, neighbor_rows
+        return inspect_result, _inspect_neighbor_rows(list(result.neighbors))
 
     def _local_fetch(
         instance: CruxibleInstance,
@@ -1330,18 +1374,7 @@ def inspect_entity_cmd(
             relationship_type=relationship_type,
             limit=limit,
         )
-        neighbor_rows = [
-            {
-                "direction": neighbor.direction,
-                "relationship_type": neighbor.relationship_type,
-                "edge_key": neighbor.edge_key,
-                "properties": neighbor.properties,
-                "metadata": neighbor.metadata,
-                "entity": neighbor.entity.model_dump(mode="json") if neighbor.entity else {},
-            }
-            for neighbor in inspect_result.neighbors
-        ]
-        return inspect_result, neighbor_rows
+        return inspect_result, _inspect_neighbor_rows(list(inspect_result.neighbors))
 
     inspect_result, neighbor_rows = _dispatch_cli_instance(
         _remote_fetch,
@@ -1349,15 +1382,18 @@ def inspect_entity_cmd(
     )
     if output_json:
         _emit_json(
-            {
-                "found": inspect_result.found,
-                "entity_type": inspect_result.entity_type,
-                "entity_id": inspect_result.entity_id,
-                "properties": inspect_result.properties,
-                "metadata": inspect_result.metadata,
-                "neighbors": neighbor_rows,
-                "total_neighbors": inspect_result.total_neighbors,
-            }
+            profile_inspect_payload(
+                {
+                    "found": inspect_result.found,
+                    "entity_type": inspect_result.entity_type,
+                    "entity_id": inspect_result.entity_id,
+                    "properties": inspect_result.properties,
+                    "metadata": inspect_result.metadata,
+                    "neighbors": neighbor_rows,
+                    "total_neighbors": inspect_result.total_neighbors,
+                },
+                cast(ReadProfile, profile),
+            )
         )
         return
     if not inspect_result.found:
@@ -1510,9 +1546,10 @@ def inspect_relationship_lineage_cmd(
 @click.command("get-entity")
 @click.option("--type", "entity_type", required=True, help="Entity type.")
 @click.option("--id", "entity_id", required=True, help="Entity ID.")
+@profile_option
 @json_option
 @handle_errors
-def get_entity_cmd(entity_type: str, entity_id: str, output_json: bool) -> None:
+def get_entity_cmd(entity_type: str, entity_id: str, profile: str, output_json: bool) -> None:
     """Look up a specific entity by type and ID."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.get_entity(instance_id, entity_type, entity_id),
@@ -1541,12 +1578,15 @@ def get_entity_cmd(entity_type: str, entity_id: str, output_json: bool) -> None:
         entity = result
     if output_json:
         _emit_json(
-            {
-                "entity_type": entity.entity_type,
-                "entity_id": entity.entity_id,
-                "properties": dict(entity.properties),
-                "metadata": entity.metadata.to_metadata_dict(),
-            }
+            profile_entity_payload(
+                {
+                    "entity_type": entity.entity_type,
+                    "entity_id": entity.entity_id,
+                    "properties": dict(entity.properties),
+                    "metadata": entity.metadata.to_metadata_dict(),
+                },
+                cast(ReadProfile, profile),
+            )
         )
         return
     console.print(entities_table([entity], entity_type))

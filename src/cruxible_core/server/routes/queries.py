@@ -62,6 +62,7 @@ async def query(instance_id: str, req: QueryRequest) -> contracts.QueryToolResul
         relationship_state=req.relationship_state,
         decision_record_id=req.decision_record_id,
         surface="http",
+        profile=req.profile,
     )
 
 
@@ -114,6 +115,7 @@ async def query_inline(
         relationship_state=req.relationship_state,
         decision_record_id=req.decision_record_id,
         surface="http",
+        profile=req.profile,
     )
 
 
@@ -181,6 +183,7 @@ async def list_resources(
     operation_type: str | None = None,
     fields: list[str] | None = Query(default=None),
     relationship_state: contracts.QueryVisibilityState | None = None,
+    profile: contracts.ReadProfile = Query(default="standard"),
 ) -> contracts.ListResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return api.list_resources(
@@ -197,6 +200,7 @@ async def list_resources(
         operation_type=operation_type,
         fields=fields,
         relationship_state=relationship_state,
+        profile=profile,
     )
 
 
@@ -253,12 +257,14 @@ async def sample(
     entity_type: str,
     limit: int = 5,
     fields: list[str] | None = Query(default=None),
+    profile: contracts.ReadProfile = Query(default="standard"),
 ) -> contracts.SampleResult:
     return api.sample(
         resolve_server_instance_id(instance_id),
         entity_type,
         limit=limit,
         fields=fields,
+        profile=profile,
     )
 
 
@@ -294,11 +300,13 @@ async def get_entity(
     instance_id: str,
     entity_type: str,
     entity_id: str,
+    profile: contracts.ReadProfile = Query(default="standard"),
 ) -> contracts.GetEntityResult:
     return api.get_entity(
         resolve_server_instance_id(instance_id),
         entity_type,
         entity_id,
+        profile=profile,
     )
 
 
@@ -313,6 +321,7 @@ async def inspect_entity(
     direction: str = Query("both"),
     relationship_type: str | None = None,
     limit: int | None = None,
+    profile: contracts.ReadProfile = Query(default="standard"),
 ) -> contracts.InspectEntityResult:
     return api.inspect_entity(
         resolve_server_instance_id(instance_id),
@@ -321,6 +330,7 @@ async def inspect_entity(
         direction=direction,
         relationship_type=relationship_type,
         limit=limit,
+        profile=profile,
     )
 
 

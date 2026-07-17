@@ -201,6 +201,7 @@ def test_handle_query_inline_preserves_definition(
             limit=None,
             relationship_state=None,
             decision_record_id=None,
+            profile=None,
         ):
             captured["instance_id"] = instance_id
             captured["definition"] = definition
@@ -208,6 +209,7 @@ def test_handle_query_inline_preserves_definition(
             captured["limit"] = limit
             captured["relationship_state"] = relationship_state
             captured["decision_record_id"] = decision_record_id
+            captured["profile"] = profile
             return contracts.QueryToolResult(
                 items=[],
                 receipt_id="RCP-inline",
@@ -243,6 +245,8 @@ def test_handle_query_inline_preserves_definition(
         "limit": 10,
         "relationship_state": "reviewable",
         "decision_record_id": "DR-1",
+        # The MCP surface defaults entity-shaped reads to compact.
+        "profile": "compact",
     }
 
 

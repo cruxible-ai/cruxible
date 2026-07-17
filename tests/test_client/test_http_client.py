@@ -2726,3 +2726,78 @@ def test_register_source_artifact_sends_caller_supplied_id():
     )
     assert result.source_artifact_id == "opinion_text_op_loper_bright"
     assert captured[0]["source_artifact_id"] == "opinion_text_op_loper_bright"
+
+
+def test_read_profile_params_are_threaded_and_omitted_when_none():
+    """`profile` reaches the wire when set and is absent otherwise (additive)."""
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["params"] = dict(request.url.params)
+        if request.method == "POST":
+            captured["payload"] = json.loads(request.content.decode())
+        if "queries/run" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "items": [],
+                    "receipt_id": None,
+                    "receipt": None,
+                    "total": 0,
+                    "limit": None,
+                    "offset": 0,
+                    "truncated": False,
+                    "steps_executed": 0,
+                },
+            )
+        if "/entities/" in request.url.path:
+            return httpx.Response(
+                200,
+                json={"found": False, "entity_type": "Part", "entity_id": "BP-1"},
+            )
+        if "/inspect/entity/" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "found": False,
+                    "entity_type": "Part",
+                    "entity_id": "BP-1",
+                    "properties": {},
+                    "metadata": {},
+                    "neighbors": [],
+                    "total_neighbors": 0,
+                },
+            )
+        if "/sample/" in request.url.path:
+            return httpx.Response(
+                200,
+                json={"items": [], "entity_type": "Part", "total": 0, "limit": 5},
+            )
+        return httpx.Response(
+            200,
+            json={"items": [], "total": 0, "limit": 50, "offset": 0, "truncated": False},
+        )
+
+    client = _build_client(handler)
+
+    client.query("inst_1", "q", profile="compact")
+    assert captured["payload"]["profile"] == "compact"
+    client.query("inst_1", "q")
+    assert "profile" not in captured["payload"]
+
+    client.list("inst_1", resource_type="edges", profile="compact")
+    assert captured["params"]["profile"] == "compact"
+    client.list("inst_1", resource_type="edges")
+    assert "profile" not in captured["params"]
+
+    client.get_entity("inst_1", "Part", "BP-1", profile="compact")
+    assert captured["params"]["profile"] == "compact"
+    client.get_entity("inst_1", "Part", "BP-1")
+    assert "profile" not in captured["params"]
+
+    client.inspect_entity("inst_1", "Part", "BP-1", profile="standard")
+    assert captured["params"]["profile"] == "standard"
+
+    client.sample("inst_1", "Part", profile="compact")
+    assert captured["params"]["profile"] == "compact"

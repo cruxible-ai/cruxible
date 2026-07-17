@@ -61,12 +61,16 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "params, result shape, or examples. For traversal queries, params must "
         "include the entry_point primary-key field, such as {'vehicle_id': 'V-123'} "
         "when the entry point is Vehicle and its primary key is vehicle_id; "
-        "cruxible_schema shows entity primary keys."
+        "cruxible_schema shows entity primary keys. Items default to the compact "
+        "output profile; ask for profile='standard' or 'full' when you need "
+        "provenance or actor context."
     ),
     "cruxible_query_inline": (
         "Use when you need a one-off bounded graph query without adding it to the "
         "config. Inline definitions use the configured named-query JSON shape plus "
-        "a required name; promote repeated or workflow-critical queries into config."
+        "a required name; promote repeated or workflow-critical queries into config. "
+        "Items default to the compact output profile; ask for profile='standard' "
+        "or 'full' when you need provenance or actor context."
     ),
     "cruxible_list_queries": (
         "Use when you need to discover the named queries available in the active "
@@ -110,7 +114,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need a paged list of entities, relationships, receipts, feedback, "
         "or outcomes with optional filters. Use resource_type='entities' with "
         "entity_type and optional fields to reduce payload size; use where for "
-        "bounded property predicates such as {'status': {'eq': 'active'}}."
+        "bounded property predicates such as {'status': {'eq': 'active'}}. Entity "
+        "and edge items default to the compact output profile; ask for "
+        "profile='standard' or 'full' when you need provenance or actor context."
     ),
     "cruxible_evaluate": (
         "Use when you need graph quality findings such as orphaned entities, "
@@ -142,10 +148,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "and governance settings."
     ),
     "cruxible_sample": (
-        "Use when you need example entities of one type before writing a query or review."
+        "Use when you need example entities of one type before writing a query or review. "
+        "Items default to the compact output profile; ask for profile='standard' or "
+        "'full' for complete property bags and metadata."
     ),
     "cruxible_inspect_entity": (
-        "Use when you need one entity plus nearby relationships and related entities."
+        "Use when you need one entity plus nearby relationships and related entities. "
+        "Payloads default to the compact output profile; ask for profile='standard' "
+        "or 'full' when you need provenance or actor context."
     ),
     "cruxible_inspect_entity_history": (
         "Use when you need receipt-derived property changes for one entity type or entity."
@@ -275,7 +285,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_state_pull_apply": (
         "Use when a pull preview returned an apply digest and you are ready to apply it."
     ),
-    "cruxible_get_entity": ("Use when you need to fetch one entity by type and ID."),
+    "cruxible_get_entity": (
+        "Use when you need to fetch one entity by type and ID. The payload defaults "
+        "to the compact output profile; ask for profile='standard' or 'full' for "
+        "the complete property bag and metadata."
+    ),
     "cruxible_get_relationship": (
         "Use when you need to fetch one relationship by endpoints and relationship type."
     ),

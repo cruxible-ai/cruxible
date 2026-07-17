@@ -56,6 +56,25 @@ decision_record_option = click.option(
     help="Decision record ID for audit logging.",
 )
 
+# Output profile for entity-shaped read payloads. ``standard`` (default) is
+# today's full shape; ``compact`` trims JSON items to bounded identity cards
+# that keep governance markers (lifecycle / review status) but drop
+# actor_context and provenance blobs; ``full`` is reserved as a superset of
+# standard. The profile is applied at JSON-emit time through the shared
+# serializer (cruxible_core.query.profiles) in BOTH local and server mode, so
+# the two modes cannot drift. Table output is already bounded and unaffected.
+profile_option = click.option(
+    "--profile",
+    "profile",
+    type=click.Choice(["compact", "standard", "full"]),
+    default="standard",
+    show_default=True,
+    help=(
+        "JSON output profile: compact (bounded identity cards with governance "
+        "markers), standard (full shape), or full (reserved superset of standard)."
+    ),
+)
+
 # Unified read-visibility selector. Gates entities by lifecycle and edges by
 # review+lifecycle through the same engine filter, so a single flag controls
 # every read surface. ``live`` is the implicit default (None => server/service

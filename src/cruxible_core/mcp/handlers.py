@@ -6,9 +6,10 @@ configured. In local mode, they forward to the shared runtime API.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import yaml
 
@@ -83,6 +84,35 @@ def _dispatch_remote_or_local(
             f"Local mutation disabled for {operation_name or 'this operation'}; configure a server."
         )
     return local_call()
+
+
+# MCP is the agent surface: entity-shaped read tools default to the compact
+# output profile (identity card + governance markers) unless the caller passes
+# an explicit `profile` or overrides the default via env.
+_MCP_READ_PROFILE_ENV = "CRUXIBLE_MCP_READ_PROFILE"
+_MCP_DEFAULT_READ_PROFILE: contracts.ReadProfile = "compact"
+_VALID_READ_PROFILES = ("compact", "standard", "full")
+
+
+def resolve_mcp_read_profile(
+    profile: contracts.ReadProfile | None,
+) -> contracts.ReadProfile:
+    """Resolve the effective read profile for an MCP read tool call.
+
+    Precedence: explicit per-call ``profile`` > ``CRUXIBLE_MCP_READ_PROFILE``
+    env override > the MCP default (``compact``).
+    """
+    if profile is not None:
+        return profile
+    env_profile = os.environ.get(_MCP_READ_PROFILE_ENV)
+    if env_profile:
+        if env_profile not in _VALID_READ_PROFILES:
+            raise ConfigError(
+                f"{_MCP_READ_PROFILE_ENV} must be one of {', '.join(_VALID_READ_PROFILES)}; "
+                f"got {env_profile!r}"
+            )
+        return cast(contracts.ReadProfile, env_profile)
+    return _MCP_DEFAULT_READ_PROFILE
 
 
 def _required_pending_version(expected_pending_version: int | None) -> int:
@@ -364,8 +394,10 @@ def handle_query(
     offset: int = 0,
     relationship_state: contracts.QueryVisibilityState | None = None,
     decision_record_id: str | None = None,
+    profile: contracts.ReadProfile | None = None,
 ) -> contracts.QueryToolResult:
     """Execute a named query."""
+    resolved_profile = resolve_mcp_read_profile(profile)
     return _dispatch_remote_or_local(
         lambda client: _client_query(
             client,
@@ -376,6 +408,7 @@ def handle_query(
             offset=offset,
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
+            profile=resolved_profile,
         ),
         lambda: api.query(
             instance_id,
@@ -386,6 +419,7 @@ def handle_query(
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
             surface="mcp",
+            profile=resolved_profile,
         ),
     )
 
@@ -397,8 +431,10 @@ def handle_query_inline(
     limit: int | None = None,
     relationship_state: contracts.QueryVisibilityState | None = None,
     decision_record_id: str | None = None,
+    profile: contracts.ReadProfile | None = None,
 ) -> contracts.QueryToolResult:
     """Execute a bounded inline query definition without persisting it to config."""
+    resolved_profile = resolve_mcp_read_profile(profile)
     return _dispatch_remote_or_local(
         lambda client: client.query_inline(
             instance_id,
@@ -407,6 +443,7 @@ def handle_query_inline(
             limit=limit,
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
+            profile=resolved_profile,
         ),
         lambda: api.query_inline(
             instance_id,
@@ -416,6 +453,7 @@ def handle_query_inline(
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
             surface="mcp",
+            profile=resolved_profile,
         ),
     )
 
@@ -430,9 +468,17 @@ def _client_query(
     offset: int,
     relationship_state: contracts.QueryVisibilityState | None,
     decision_record_id: str | None,
+    profile: contracts.ReadProfile | None = None,
 ) -> contracts.QueryToolResult:
     if relationship_state is None and decision_record_id is None:
-        return client.query(instance_id, query_name, params, limit=limit, offset=offset)
+        return client.query(
+            instance_id,
+            query_name,
+            params,
+            limit=limit,
+            offset=offset,
+            profile=profile,
+        )
     if relationship_state is None:
         return client.query(
             instance_id,
@@ -441,6 +487,7 @@ def _client_query(
             limit=limit,
             offset=offset,
             decision_record_id=decision_record_id,
+            profile=profile,
         )
     if decision_record_id is None:
         return client.query(
@@ -450,6 +497,7 @@ def _client_query(
             limit=limit,
             offset=offset,
             relationship_state=relationship_state,
+            profile=profile,
         )
     return client.query(
         instance_id,
@@ -459,6 +507,7 @@ def _client_query(
         offset=offset,
         relationship_state=relationship_state,
         decision_record_id=decision_record_id,
+        profile=profile,
     )
 
 
@@ -977,8 +1026,10 @@ def handle_list(
     operation_type: str | None = None,
     fields: list[str] | None = None,
     relationship_state: contracts.QueryVisibilityState | None = None,
+    profile: contracts.ReadProfile | None = None,
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
+    resolved_profile = resolve_mcp_read_profile(profile)
     return _dispatch_remote_or_local(
         lambda client: client.list(
             instance_id,
@@ -994,6 +1045,7 @@ def handle_list(
             operation_type=operation_type,
             fields=fields,
             relationship_state=relationship_state,
+            profile=resolved_profile,
         ),
         lambda: api.list_resources(
             instance_id,
@@ -1009,6 +1061,7 @@ def handle_list(
             operation_type=operation_type,
             fields=fields,
             relationship_state=relationship_state,
+            profile=resolved_profile,
         ),
     )
 
@@ -1086,11 +1139,25 @@ def handle_sample(
     entity_type: str,
     limit: int = 5,
     fields: list[str] | None = None,
+    profile: contracts.ReadProfile | None = None,
 ) -> contracts.SampleResult:
     """Sample entities of a given type."""
+    resolved_profile = resolve_mcp_read_profile(profile)
     return _dispatch_remote_or_local(
-        lambda client: client.sample(instance_id, entity_type, limit=limit, fields=fields),
-        lambda: api.sample(instance_id, entity_type, limit=limit, fields=fields),
+        lambda client: client.sample(
+            instance_id,
+            entity_type,
+            limit=limit,
+            fields=fields,
+            profile=resolved_profile,
+        ),
+        lambda: api.sample(
+            instance_id,
+            entity_type,
+            limit=limit,
+            fields=fields,
+            profile=resolved_profile,
+        ),
     )
 
 
@@ -1102,8 +1169,10 @@ def handle_inspect_entity(
     direction: str = "both",
     relationship_type: str | None = None,
     limit: int | None = None,
+    profile: contracts.ReadProfile | None = None,
 ) -> contracts.InspectEntityResult:
     """Inspect one entity and its immediate neighbors."""
+    resolved_profile = resolve_mcp_read_profile(profile)
     return _dispatch_remote_or_local(
         lambda client: client.inspect_entity(
             instance_id,
@@ -1112,6 +1181,7 @@ def handle_inspect_entity(
             direction=direction,
             relationship_type=relationship_type,
             limit=limit,
+            profile=resolved_profile,
         ),
         lambda: api.inspect_entity(
             instance_id,
@@ -1120,6 +1190,7 @@ def handle_inspect_entity(
             direction=direction,
             relationship_type=relationship_type,
             limit=limit,
+            profile=resolved_profile,
         ),
     )
 
@@ -1348,11 +1419,18 @@ def handle_get_entity(
     instance_id: str,
     entity_type: str,
     entity_id: str,
+    profile: contracts.ReadProfile | None = None,
 ) -> contracts.GetEntityResult:
     """Look up a specific entity by type and ID."""
+    resolved_profile = resolve_mcp_read_profile(profile)
     return _dispatch_remote_or_local(
-        lambda client: client.get_entity(instance_id, entity_type, entity_id),
-        lambda: api.get_entity(instance_id, entity_type, entity_id),
+        lambda client: client.get_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            profile=resolved_profile,
+        ),
+        lambda: api.get_entity(instance_id, entity_type, entity_id, profile=resolved_profile),
     )
 
 

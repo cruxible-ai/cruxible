@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.query.enums import QueryDedupe, QueryResultShape, QueryVisibilityState
+from cruxible_core.query.profiles import ReadProfile, profile_query_item
 from cruxible_core.receipt.types import Receipt
 
 
@@ -81,13 +82,22 @@ def dump_query_row(
     *,
     include_source: bool = False,
     mode: str = "python",
+    profile: ReadProfile = "standard",
 ) -> dict[str, Any]:
-    """Serialize a query row with explicit projected-source handling."""
+    """Serialize a query row with explicit projected-source handling.
+
+    ``profile`` shapes the serialized payload: ``standard`` (default) is the
+    unchanged full dump, ``compact`` trims to the identity card, and ``full``
+    is today an alias of standard (see ``cruxible_core.query.profiles``).
+    """
     if isinstance(row, ProjectedQueryRow):
         if include_source:
-            return row.model_dump(mode=mode)
-        return row.model_dump(mode=mode, exclude={"source"})
-    return row.model_dump(mode=mode)
+            payload = row.model_dump(mode=mode)
+        else:
+            payload = row.model_dump(mode=mode, exclude={"source"})
+    else:
+        payload = row.model_dump(mode=mode)
+    return profile_query_item(payload, profile)
 
 
 class QueryResult(BaseModel):

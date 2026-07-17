@@ -261,6 +261,7 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 | --- | --- | --- | --- | --- |
 | `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
 | `--id` | yes | `Sentinel.UNSET` | text | Entity ID. |
+| `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -319,6 +320,7 @@ Noun-first read of a single entity with its neighbors.
 | `--direction` | no | `both` | choice | Neighbor traversal direction. |
 | `--relationship` | no | `` | text | Optional relationship filter. |
 | `--limit` | no | `` | integer range | Max neighbors to show. |
+| `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1803,6 +1805,7 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
 | `--limit` | no | `50` | integer | Max edges to show. |
 | `--offset` | no | `0` | integer | Rows to skip. |
 | `--state` | no | `` | choice | Read-visibility state: `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Omit to return every stored edge (the inspection default); `not-live` surfaces rejected/closed edges, `live` hides them. |
+| `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1835,6 +1838,7 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
 | `--limit` | no | `50` | integer | Max entities to show. |
 | `--offset` | no | `0` | integer | Rows to skip. |
 | `--state` | no | `` | choice | Read-visibility state by entity lifecycle: `live` (default — hides retired/superseded entities), `all`, or `not-live` (only the gated-out set). Review-only values resolve to `live` (entities have no review axis). |
+| `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -2126,6 +2130,7 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
 | `--state` | no | `` | choice | Read-visibility state: `live` (default), `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. Overriding a named query's configured state requires `allow_relationship_state_override: true`. |
 | `--count` | no | `False` | boolean | Show only summary metadata. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |
+| `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**

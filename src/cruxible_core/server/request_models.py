@@ -89,6 +89,7 @@ class QueryRequest(BaseModel):
     offset: int = Field(default=0, ge=0)
     relationship_state: contracts.QueryVisibilityState | None = None
     decision_record_id: str | None = None
+    profile: contracts.ReadProfile = "standard"
 
 
 class InlineQueryRequest(BaseModel):
@@ -97,6 +98,7 @@ class InlineQueryRequest(BaseModel):
     limit: int | None = None
     relationship_state: contracts.QueryVisibilityState | None = None
     decision_record_id: str | None = None
+    profile: contracts.ReadProfile = "standard"
 
 
 class AddEntitiesRequest(BaseModel):

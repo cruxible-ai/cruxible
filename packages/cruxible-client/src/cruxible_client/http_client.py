@@ -340,17 +340,21 @@ class CruxibleClient:
         offset: int = 0,
         relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.QueryToolResult:
+        payload: dict[str, Any] = {
+            "query_name": query_name,
+            "params": params,
+            "limit": limit,
+            "offset": offset,
+            "relationship_state": relationship_state,
+            "decision_record_id": decision_record_id,
+        }
+        if profile is not None:
+            payload["profile"] = profile
         response = self._client.post(
             f"/api/v1/{instance_id}/queries/run",
-            json={
-                "query_name": query_name,
-                "params": params,
-                "limit": limit,
-                "offset": offset,
-                "relationship_state": relationship_state,
-                "decision_record_id": decision_record_id,
-            },
+            json=payload,
         )
         return self._parse_model(response, contracts.QueryToolResult)
 
@@ -393,16 +397,20 @@ class CruxibleClient:
         limit: int | None = None,
         relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.QueryToolResult:
+        payload: dict[str, Any] = {
+            "definition": definition.model_dump(mode="json", exclude_none=True),
+            "params": params,
+            "limit": limit,
+            "relationship_state": relationship_state,
+            "decision_record_id": decision_record_id,
+        }
+        if profile is not None:
+            payload["profile"] = profile
         response = self._client.post(
             f"/api/v1/{instance_id}/queries/run-inline",
-            json={
-                "definition": definition.model_dump(mode="json", exclude_none=True),
-                "params": params,
-                "limit": limit,
-                "relationship_state": relationship_state,
-                "decision_record_id": decision_record_id,
-            },
+            json=payload,
         )
         return self._parse_model(response, contracts.QueryToolResult)
 
@@ -727,6 +735,7 @@ class CruxibleClient:
         operation_type: str | None = None,
         fields: builtins.list[str] | None = None,
         relationship_state: contracts.QueryVisibilityState | None = None,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.ListResult:
         params: dict[str, Any] = {
             "entity_type": entity_type,
@@ -738,6 +747,7 @@ class CruxibleClient:
             "operation_type": operation_type,
             "fields": fields,
             "relationship_state": relationship_state,
+            "profile": profile,
         }
         if property_filter is not None:
             params["property_filter"] = json.dumps(property_filter)
@@ -920,6 +930,7 @@ class CruxibleClient:
         direction: str = "both",
         relationship_type: str | None = None,
         limit: int | None = None,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.InspectEntityResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/inspect/entity/{entity_type}/{entity_id}",
@@ -928,6 +939,7 @@ class CruxibleClient:
                     "direction": direction,
                     "relationship_type": relationship_type,
                     "limit": limit,
+                    "profile": profile,
                 }
             ),
         )
@@ -1015,10 +1027,11 @@ class CruxibleClient:
         limit: int = 5,
         *,
         fields: builtins.list[str] | None = None,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.SampleResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/sample/{entity_type}",
-            params=self._omit_none_params({"limit": limit, "fields": fields}),
+            params=self._omit_none_params({"limit": limit, "fields": fields, "profile": profile}),
         )
         return self._parse_model(response, contracts.SampleResult)
 
@@ -1464,8 +1477,13 @@ class CruxibleClient:
         instance_id: str,
         entity_type: str,
         entity_id: str,
+        *,
+        profile: contracts.ReadProfile | None = None,
     ) -> contracts.GetEntityResult:
-        response = self._client.get(f"/api/v1/{instance_id}/entities/{entity_type}/{entity_id}")
+        response = self._client.get(
+            f"/api/v1/{instance_id}/entities/{entity_type}/{entity_id}",
+            params=self._omit_none_params({"profile": profile}),
+        )
         return self._parse_model(response, contracts.GetEntityResult)
 
     def get_relationship(

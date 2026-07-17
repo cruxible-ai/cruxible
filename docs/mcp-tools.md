@@ -325,7 +325,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need to run a named query from the active config and receive matching items plus a receipt. First call cruxible_list_queries or cruxible_describe_query when you do not know the query name, required params, result shape, or examples. For traversal queries, params must include the entry_point primary-key field, such as {'vehicle_id': 'V-123'} when the entry point is Vehicle and its primary key is vehicle_id; cruxible_schema shows entity primary keys.
+**Purpose:** Use when you need to run a named query from the active config and receive matching items plus a receipt. First call cruxible_list_queries or cruxible_describe_query when you do not know the query name, required params, result shape, or examples. For traversal queries, params must include the entry_point primary-key field, such as {'vehicle_id': 'V-123'} when the entry point is Vehicle and its primary key is vehicle_id; cruxible_schema shows entity primary keys. Items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context.
 
 **Arguments:**
 
@@ -338,6 +338,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `offset` | no | integer | Number of results to skip before the returned window. |
 | `relationship_state` | no | string | null | Read-visibility state: one of `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. |
 | `decision_record_id` | no | string | null |  |
+| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
 
 **Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary`
 
@@ -352,7 +353,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need a one-off bounded graph query without adding it to the config. Inline definitions use the configured named-query JSON shape plus a required name; promote repeated or workflow-critical queries into config.
+**Purpose:** Use when you need a one-off bounded graph query without adding it to the config. Inline definitions use the configured named-query JSON shape plus a required name; promote repeated or workflow-critical queries into config. Items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context.
 
 **Arguments:**
 
@@ -364,6 +365,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `limit` | no | integer | null |  |
 | `relationship_state` | no | string | null | Read-visibility state: one of `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. |
 | `decision_record_id` | no | string | null |  |
+| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
 
 **Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary`
 
@@ -614,7 +616,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need a paged list of entities, relationships, receipts, feedback, or outcomes with optional filters. Use resource_type='entities' with entity_type and optional fields to reduce payload size; use where for bounded property predicates such as {'status': {'eq': 'active'}}.
+**Purpose:** Use when you need a paged list of entities, relationships, receipts, feedback, or outcomes with optional filters. Use resource_type='entities' with entity_type and optional fields to reduce payload size; use where for bounded property predicates such as {'status': {'eq': 'active'}}. Entity and edge items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context.
 
 **Arguments:**
 
@@ -633,6 +635,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `operation_type` | no | string | null |  |
 | `fields` | no | array[string] | null | Entity property fields to include for `resource_type="entities"`. |
 | `relationship_state` | no | string | null | Read-visibility state (`live`, `accepted`, `all`, `not-live`, `pending`, `reviewable`). For entities it gates by lifecycle (default `live`); for edges by review+lifecycle (default returns all stored edges). |
+| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
 
 **Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
@@ -860,7 +863,7 @@ error-level finding exists.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need example entities of one type before writing a query or review.
+**Purpose:** Use when you need example entities of one type before writing a query or review. Items default to the compact output profile; ask for profile='standard' or 'full' for complete property bags and metadata.
 
 **Arguments:**
 
@@ -870,6 +873,7 @@ error-level finding exists.
 | `entity_type` | yes | string |  |
 | `limit` | no | integer |  |
 | `fields` | no | array[string] | null | Entity property fields to include in sampled entities. |
+| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
 
 **Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`, `entity_type`
 
@@ -887,7 +891,7 @@ error-level finding exists.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need one entity plus nearby relationships and related entities.
+**Purpose:** Use when you need one entity plus nearby relationships and related entities. Payloads default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context.
 
 **Arguments:**
 
@@ -899,6 +903,7 @@ error-level finding exists.
 | `direction` | no | string |  |
 | `relationship_type` | no | string | null |  |
 | `limit` | no | integer | null |  |
+| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
 
 **Returns:** Top-level fields: `found`, `entity_type`, `entity_id`, `properties`, `metadata`, `neighbors`, `total_neighbors`
 
@@ -1767,7 +1772,7 @@ without it, only the active materialized digest is checked.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need to fetch one entity by type and ID.
+**Purpose:** Use when you need to fetch one entity by type and ID. The payload defaults to the compact output profile; ask for profile='standard' or 'full' for the complete property bag and metadata.
 
 **Arguments:**
 
@@ -1776,6 +1781,7 @@ without it, only the active materialized digest is checked.
 | `instance_id` | yes | string |  |
 | `entity_type` | yes | string |  |
 | `entity_id` | yes | string |  |
+| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
 
 **Returns:** Top-level fields: `found`, `entity_type`, `entity_id`, `properties`, `metadata`
 

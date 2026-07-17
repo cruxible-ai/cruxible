@@ -187,6 +187,7 @@ class GovernedLocalClient:
         limit: int | None = None,
         offset: int = 0,
         decision_record_id: str | None = None,
+        profile: contracts.ReadProfile | None = None,
     ):
         return api.query(
             instance_id,
@@ -196,6 +197,7 @@ class GovernedLocalClient:
             offset=offset,
             decision_record_id=decision_record_id,
             surface="mcp",
+            profile=profile or "standard",
         )
 
     def create_decision_record(

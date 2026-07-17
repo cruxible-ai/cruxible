@@ -19,6 +19,7 @@ from cruxible_core.cli.commands._common import (
     _require_local_instance,
     console,
     json_option,
+    profile_option,
     state_option,
 )
 from cruxible_core.cli.formatting import (
@@ -30,6 +31,7 @@ from cruxible_core.cli.formatting import (
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.errors import ConfigError
+from cruxible_core.query.profiles import ReadProfile, profile_list_items
 from cruxible_core.service import service_export_edges, service_list, service_list_traces
 
 
@@ -76,6 +78,7 @@ def list_group() -> None:
 @click.option("--limit", default=50, help="Max entities to show.")
 @click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @state_option
+@profile_option
 @json_option
 @handle_errors
 def list_entities(
@@ -85,6 +88,7 @@ def list_entities(
     limit: int,
     offset: int,
     state: str | None,
+    profile: str,
     output_json: bool,
 ) -> None:
     """List entities of a given type."""
@@ -119,7 +123,11 @@ def list_entities(
         else result.items
     )
     if output_json:
-        item_dicts = [e.model_dump(mode="python") for e in entities]
+        item_dicts = profile_list_items(
+            [e.model_dump(mode="python") for e in entities],
+            "entities",
+            cast(ReadProfile, profile),
+        )
         _emit_json(
             {
                 "items": item_dicts,
@@ -313,6 +321,7 @@ def list_outcomes(receipt_id: str | None, limit: int, offset: int, output_json: 
 @click.option("--limit", default=50, help="Max edges to show.")
 @click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @state_option
+@profile_option
 @json_option
 @handle_errors
 def list_edges(
@@ -321,6 +330,7 @@ def list_edges(
     limit: int,
     offset: int,
     state: str | None,
+    profile: str,
     output_json: bool,
 ) -> None:
     """List edges in the graph.
@@ -355,7 +365,7 @@ def list_edges(
     if output_json:
         _emit_json(
             {
-                "items": result.items,
+                "items": profile_list_items(result.items, "edges", cast(ReadProfile, profile)),
                 **_list_envelope(result, item_count=len(result.items), limit=limit, offset=offset),
             }
         )
