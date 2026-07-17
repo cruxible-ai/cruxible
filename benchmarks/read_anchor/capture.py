@@ -81,16 +81,23 @@ def build_env(instance_cfg: dict) -> dict:
 
 
 def build_argv(instance_cfg: dict, call_args: list[str]) -> list[str]:
+    if instance_cfg.get("local"):
+        # Local (serverless) mode: run the branch CLI from inside the copied
+        # instance root; CruxibleInstance.load() walks up from cwd.
+        argv = ["uv", "run", "--project", str(REPO_ROOT), "cruxible"]
+        return argv + list(call_args)
     argv = ["uv", "run", "cruxible", "--server-url", instance_cfg["server_url"]]
     if instance_cfg.get("instance_id"):
         argv += ["--instance-id", instance_cfg["instance_id"]]
     return argv + list(call_args)
 
 
-def run_call(argv: list[str], env: dict) -> tuple[bytes, bytes, int, float]:
+def run_call(
+    argv: list[str], env: dict, cwd: Path = REPO_ROOT
+) -> tuple[bytes, bytes, int, float]:
     t0 = time.perf_counter()
     proc = subprocess.run(
-        argv, cwd=REPO_ROOT, env=env, capture_output=True, timeout=300
+        argv, cwd=cwd, env=env, capture_output=True, timeout=300
     )
     latency = time.perf_counter() - t0
     return proc.stdout, proc.stderr, proc.returncode, latency
@@ -148,6 +155,18 @@ def check_total_equals(expect, outputs):
     return ok, f"total={total}, expected {expect['expected_total']}"
 
 
+def check_graph_edge(expect, outputs):
+    """Edge assertion for the expanded bounded-neighborhood (nodes/edges) shape."""
+    doc = _final_json(outputs)
+    for e in doc.get("edges", []):
+        if (
+            e.get("relationship_type") == expect["relationship_type"]
+            and expect["entity_id"] in (e.get("to_id"), e.get("from_id"))
+        ):
+            return True, f"found {expect['relationship_type']} -> {expect['entity_id']}"
+    return False, f"edge {expect['relationship_type']} -> {expect['entity_id']} not found"
+
+
 def check_stats_list_match(expect, outputs):
     stats = json.loads(outputs[0].decode("utf-8"))
     listing = json.loads(outputs[1].decode("utf-8"))
@@ -163,6 +182,7 @@ def check_stats_list_match(expect, outputs):
 
 CHECKERS = {
     "neighbor_edge": check_neighbor_edge,
+    "graph_edge": check_graph_edge,
     "json_contains_string": check_json_contains_string,
     "result_ids": check_result_ids,
     "total_equals": check_total_equals,
@@ -187,16 +207,27 @@ def measure_cli_overhead(env: dict) -> float:
     return statistics.median(samples)
 
 
-def run_task(task: dict, instance_cfg: dict) -> dict:
+def run_task(
+    task: dict,
+    instance_cfg: dict,
+    *,
+    calls: list[dict] | None = None,
+    expect: dict | None = None,
+    flow: str = "baseline",
+    instance_name: str | None = None,
+) -> dict:
+    calls = calls if calls is not None else task["calls"]
+    expect = expect if expect is not None else task["expect"]
+    cwd = Path(instance_cfg["cwd"]) if instance_cfg.get("cwd") else REPO_ROOT
     env = build_env(instance_cfg)
     call_records = []
     outputs: list[bytes] = []
 
-    for call in task["calls"]:
+    for call in calls:
         argv = build_argv(instance_cfg, call["args"])
         # Run 1 (cold-ish), then Run 2 (warm daemon) — warm is headline.
-        _, _, _, latency1 = run_call(argv, env)
-        stdout, stderr, code, latency2 = run_call(argv, env)
+        _, _, _, latency1 = run_call(argv, env, cwd)
+        stdout, stderr, code, latency2 = run_call(argv, env, cwd)
         outputs.append(stdout)
 
         n_bytes = len(stdout)
@@ -223,16 +254,17 @@ def run_task(task: dict, instance_cfg: dict) -> dict:
             record["metadata_share"] = None
         call_records.append(record)
 
-    checker = CHECKERS[task["expect"]["kind"]]
+    checker = CHECKERS[expect["kind"]]
     try:
-        correct, detail = checker(task["expect"], outputs)
+        correct, detail = checker(expect, outputs)
     except Exception as exc:  # noqa: BLE001 - verification must never crash the run
         correct, detail = False, f"checker error: {exc!r}"
 
     total_bytes = sum(c["bytes"] for c in call_records)
     return {
         "id": task["id"],
-        "instance": task["instance"],
+        "flow": flow,
+        "instance": instance_name or task["instance"],
         "question": task["question"],
         "num_calls": len(call_records),
         "total_bytes": total_bytes,
@@ -258,6 +290,15 @@ def main() -> int:
         "--out", default=str(Path(__file__).parent / "baseline_results.json")
     )
     parser.add_argument("--only", nargs="*", default=None, help="task ids to run")
+    parser.add_argument(
+        "--flow",
+        choices=["baseline", "ergonomic"],
+        default="baseline",
+        help=(
+            "baseline runs each task's original call sequence; ergonomic runs "
+            "the task's 'ergonomic' variant (calls/expect/instance overrides)."
+        ),
+    )
     args = parser.parse_args()
 
     spec = json.loads(Path(args.tasks).read_text())
@@ -268,9 +309,26 @@ def main() -> int:
     overhead = measure_cli_overhead(dict(os.environ))
     results = []
     for task in tasks:
-        instance_cfg = spec["instances"][task["instance"]]
-        print(f"running {task['id']} ...", flush=True)
-        result = run_task(task, instance_cfg)
+        calls = expect = None
+        instance_name = task["instance"]
+        if args.flow == "ergonomic":
+            variant = task.get("ergonomic")
+            if not variant:
+                print(f"skipping {task['id']} (no ergonomic variant)", flush=True)
+                continue
+            calls = variant["calls"]
+            expect = variant.get("expect")
+            instance_name = variant.get("instance", task["instance"])
+        instance_cfg = spec["instances"][instance_name]
+        print(f"running {task['id']} [{args.flow}] ...", flush=True)
+        result = run_task(
+            task,
+            instance_cfg,
+            calls=calls,
+            expect=expect,
+            flow=args.flow,
+            instance_name=instance_name,
+        )
         status = "OK " if result["correct"] else "FAIL"
         print(
             f"  [{status}] calls={result['num_calls']} "

@@ -17,6 +17,14 @@
       "home_dir_env": "RB_BASELINE_HOME",
       "home_dir_default": "/private/tmp/claude-501/-Users-robertmalone-Git-cruxible-core-0-2-stretch-goals/bdafa470-6392-4ab5-9487-7742ee0d046a/scratchpad/rb-baseline/home",
       "comment": "Throwaway instance composed from runebench rs-world + rs-world-overlay kits. HOME is overridden so the CLI context resolves the throwaway active instance."
+    },
+    "operation_local": {
+      "local": true,
+      "read_only": true,
+      "cwd": "/private/tmp/claude-501/-Users-robertmalone-Git-cruxible-core-0-2-stretch-goals/bdafa470-6392-4ab5-9487-7742ee0d046a/scratchpad/op-local/inst",
+      "home_dir_env": "OP_LOCAL_HOME",
+      "home_dir_default": "/private/tmp/claude-501/-Users-robertmalone-Git-cruxible-core-0-2-stretch-goals/bdafa470-6392-4ab5-9487-7742ee0d046a/scratchpad/op-local/home",
+      "comment": "Serverless (local-mode) CLI over a same-day filesystem copy of the operation instance root (rsync of the instance dir + sqlite backup of state.db). Needed because the live 8121 daemon runs released 0.2.5, which lacks the server-side read-ergonomics features. Rebuild the copy before rerunning; cwd must be the copied instance root."
     }
   },
   "tasks": [
@@ -39,6 +47,20 @@
         "relationship_type": "work_item_depends_on_work_item",
         "direction": "outgoing",
         "entity_id": "wi-bounded-neighborhood-inspect"
+      },
+      "ergonomic": {
+        "instance": "operation_local",
+        "calls": [
+          {
+            "purpose": "One bounded neighborhood read: depth-1, WorkItem neighbors only, compact cards. --state all is REQUIRED here: this instance's dependency edges are pending direct adds, and the expanded read defaults to live (the legacy single-hop inspect showed them regardless).",
+            "args": ["entity", "inspect", "--type", "WorkItem", "--id", "wi-runebench-pilot", "--depth", "1", "--target-type", "WorkItem", "--state", "all", "--profile", "compact", "--json"]
+          }
+        ],
+        "expect": {
+          "kind": "graph_edge",
+          "relationship_type": "work_item_depends_on_work_item",
+          "entity_id": "wi-bounded-neighborhood-inspect"
+        }
       }
     },
     {
@@ -62,6 +84,19 @@
       "expect": {
         "kind": "json_contains_string",
         "value": "ms-dx-friction"
+      },
+      "ergonomic": {
+        "instance": "operation_local",
+        "calls": [
+          {
+            "purpose": "Cold orientation: stats lists entity types AND relationship vocabulary (work_item_in_milestone) in ~3 KB",
+            "args": ["stats", "--json"]
+          },
+          {
+            "purpose": "One bounded neighborhood read filtered to the milestone edge, compact cards. Replaces query list + describe + a 276 KB context query for a one-edge answer.",
+            "args": ["entity", "inspect", "--type", "WorkItem", "--id", "wi-agent-local-working-set", "--depth", "1", "--relationship", "work_item_in_milestone", "--profile", "compact", "--json"]
+          }
+        ]
       }
     },
     {
@@ -78,6 +113,15 @@
         "kind": "neighbor_edge",
         "relationship_type": "work_item_owned_by_actor",
         "entity_id": "fable-impl"
+      },
+      "ergonomic": {
+        "instance": "operation_local",
+        "calls": [
+          {
+            "purpose": "Same single-hop inspect, compact profile (no extra knowledge needed; the win is pure serialization)",
+            "args": ["entity", "inspect", "--type", "WorkItem", "--id", "wi-read-output-profiles", "--profile", "compact", "--json"]
+          }
+        ]
       }
     },
     {
@@ -102,6 +146,29 @@
         "kind": "stats_list_match",
         "entity_type": "WorkItem",
         "expected_total": 162
+      },
+      "ergonomic": {
+        "instance": "operation_local",
+        "calls": [
+          {
+            "purpose": "Get graph-wide counts",
+            "args": ["stats", "--json"]
+          },
+          {
+            "purpose": "Sample the WorkItem listing with compact cards (also returns total)",
+            "args": ["list", "entities", "--type", "WorkItem", "--limit", "3", "--profile", "compact", "--json"]
+          },
+          {
+            "purpose": "Most recent activity via receipts (no profile flag on receipts; already bounded)",
+            "args": ["list", "receipts", "--limit", "3", "--json"]
+          }
+        ],
+        "expect": {
+          "kind": "stats_list_match",
+          "entity_type": "WorkItem",
+          "expected_total": 164,
+          "comment": "164 = the live total at post-track capture time; the baseline task pins 162 from the pre-track capture (instance drift, not a code change)."
+        }
       }
     },
     {
@@ -126,6 +193,18 @@
         "kind": "result_ids",
         "expected_total": 3,
         "expected_ids": ["cow", "cow2", "cow_beef"]
+      },
+      "ergonomic": {
+        "calls": [
+          {
+            "purpose": "Cold discovery via the summary catalog (now the default; includes required_params, so no describe call needed)",
+            "args": ["query", "list", "--json"]
+          },
+          {
+            "purpose": "Run the drop-source query with compact cards",
+            "args": ["query", "run", "item_dropped_by", "--param", "item_id=cow_hide", "--profile", "compact", "--json"]
+          }
+        ]
       }
     },
     {
@@ -141,6 +220,14 @@
       "expect": {
         "kind": "total_equals",
         "expected_total": 38
+      },
+      "ergonomic": {
+        "calls": [
+          {
+            "purpose": "Same query, compact cards (answer needs identity only)",
+            "args": ["query", "run", "scenery_at_place", "--param", "place_id=lumbridge", "--profile", "compact", "--json"]
+          }
+        ]
       }
     },
     {
@@ -161,6 +248,14 @@
         "kind": "result_ids",
         "expected_total": 10,
         "required_ids": ["lumbridge"]
+      },
+      "ergonomic": {
+        "calls": [
+          {
+            "purpose": "Run directly with compact cards; the describe call is dropped because the rb-1 summary catalog already carried required_params for every query",
+            "args": ["query", "run", "item_buy_locations", "--param", "item_id=bronze_pickaxe", "--profile", "compact", "--json"]
+          }
+        ]
       }
     },
     {
@@ -181,6 +276,19 @@
         "kind": "neighbor_edge",
         "relationship_type": "npc_drops_item",
         "entity_id": "cow_hide"
+      },
+      "ergonomic": {
+        "calls": [
+          {
+            "purpose": "One bounded neighborhood read replaces get + inspect: root keeps full properties, depth-1 neighbors arrive as compact cards",
+            "args": ["entity", "inspect", "--type", "Npc", "--id", "cow", "--depth", "1", "--profile", "compact", "--json"]
+          }
+        ],
+        "expect": {
+          "kind": "graph_edge",
+          "relationship_type": "npc_drops_item",
+          "entity_id": "cow_hide"
+        }
       }
     }
   ]
