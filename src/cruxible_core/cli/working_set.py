@@ -22,6 +22,19 @@ File layout
     marking the cache non-authoritative; readers (this module included) must
     tolerate it, and ``jq``/``rg`` users skip it naturally.
 
+Credential scope (server mode)
+    When a bearer credential is configured, the server-mode instance key gains
+    a ``-cred-<scope>`` suffix so two different credentials used on one host
+    never share (or leak into) each other's records. The scope is derived from
+    the credential WITHOUT storing any token material: ``scope =
+    sha256(salt || token)[:12]`` where ``salt`` is a random per-user value
+    created once at ``~/.cruxible/working-set/.scope-salt`` (mode 0600). The
+    salt never leaves the machine and the hash is truncated, so the scope is
+    neither reversible nor correlatable across hosts. Tokenless server mode
+    maps to the daemon's single local-operator identity and local mode is
+    already partitioned per OS user by ``~`` — both are single-credential
+    contexts, so they take no suffix.
+
 Record shape (one JSON object per line)
     ``kind`` (``entity`` | ``edge``), identity fields (``entity_type`` /
     ``entity_id`` or ``relationship_type``/``from_type``/``from_id``/
@@ -30,10 +43,14 @@ Record shape (one JSON object per line)
     projection), ``lifecycle``, ``review`` (``None`` for entities — they have
     no review axis), ``read_revision`` (``None`` means the source response
     carried no revision and none could be resolved locally; ``ws verify``
-    reports such records as ``unknown``), ``as_of`` (local wall-clock ISO
-    timestamp at write), ``receipt_refs`` (receipt ids carried by the source
-    response, usually empty or one element), and ``source_cmd`` (the CLI
-    subcommand that produced the read).
+    reports such records as ``unknown``), ``config_digest`` (the active config
+    digest at capture time — local mode uses the lock digest continuation
+    tokens bind to, server mode the daemon's recorded active config digest;
+    ``None`` when unresolvable), ``as_of`` (local wall-clock ISO timestamp at
+    write), ``receipt_refs`` (receipt ids carried by the source response,
+    usually empty or one element), and ``source_cmd`` (the CLI subcommand that
+    produced the read). A config reload does not bump ``read_revision``, so
+    ``ws verify`` compares ``config_digest`` too: a mismatch is ``stale``.
 
 Dedupe
     Appends dedupe by identity key: the record with the newest
@@ -67,6 +84,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -74,7 +92,9 @@ import click
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.query.profiles import neighborhood_edge_payload, profile_entity_payload
+from cruxible_core.server.config import get_runtime_bearer_token
 from cruxible_core.temporal import format_datetime, utc_now
+from cruxible_core.workflow.compiler import compute_lock_config_digest
 
 WORKING_SET_ENV = "CRUXIBLE_WORKING_SET"
 
@@ -111,9 +131,56 @@ def local_instance_key(root: Path) -> str:
 
     Continuation tokens bind local reads to ``local:<resolved root>``; the
     working set uses the same identity, hashed so it is a safe directory name.
+    Local mode needs no credential scope: the cache lives under ``~``, so the
+    OS user IS the (single) credential.
     """
     digest = hashlib.sha256(str(Path(root).resolve()).encode("utf-8")).hexdigest()
     return f"local-{digest[:16]}"
+
+
+_SCOPE_SALT_FILENAME = ".scope-salt"
+
+
+def _credential_scope_salt() -> bytes:
+    """Load (or create, 0600) the random per-user credential-scope salt."""
+    salt_path = working_set_dir() / _SCOPE_SALT_FILENAME
+    if salt_path.exists():
+        return salt_path.read_bytes()
+    salt = os.urandom(32)
+    salt_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(salt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, salt)
+    finally:
+        os.close(fd)
+    return salt
+
+
+def credential_scope() -> str | None:
+    """Non-secret scope tag for the active server-mode credential.
+
+    Derivation: ``sha256(salt || token)[:12]`` with a random per-user salt
+    persisted at ``<working-set dir>/.scope-salt`` — never raw token material
+    and never an unsalted hash, so the tag cannot be reversed or correlated
+    across machines. ``None`` when no bearer credential is configured
+    (tokenless server mode is the single local-operator identity).
+    """
+    token = get_runtime_bearer_token()
+    if not token:
+        return None
+    digest = hashlib.sha256(_credential_scope_salt() + token.encode("utf-8")).hexdigest()
+    return digest[:12]
+
+
+def server_instance_key(instance_id: str) -> str:
+    """Instance key for server mode: the daemon instance id, credential-scoped.
+
+    Different credentials against one daemon must never share working-set
+    records; the ``-cred-<scope>`` suffix partitions them (see
+    :func:`credential_scope` for the non-secret derivation).
+    """
+    scope = credential_scope()
+    return f"{instance_id}-cred-{scope}" if scope else instance_id
 
 
 def records_path(instance_key: str) -> Path:
@@ -133,22 +200,69 @@ def _cli_root_obj() -> dict[str, Any]:
     return obj if isinstance(obj, dict) else {}
 
 
-def resolve_capture_context() -> tuple[str, CruxibleInstance | None] | None:
-    """Resolve (instance_key, local instance) for the current CLI invocation.
+@dataclass
+class CaptureContext:
+    """Resolved identity for one capture: records key + digest/revision sources."""
 
-    Server mode returns the daemon instance id with no local instance; local
-    mode loads the on-disk instance (cheap: one metadata file read). Returns
-    ``None`` when no instance can be resolved — capture then no-ops.
+    instance_key: str
+    local_instance: CruxibleInstance | None = None
+    server_instance_id: str | None = None
+
+
+def resolve_capture_context() -> CaptureContext | None:
+    """Resolve the capture context for the current CLI invocation.
+
+    Server mode returns the credential-scoped daemon instance key with no
+    local instance; local mode loads the on-disk instance (cheap: one
+    metadata file read). Returns ``None`` when no instance can be resolved —
+    capture then no-ops.
     """
     obj = _cli_root_obj()
     if obj.get("server_url") or obj.get("server_socket"):
         instance_id = obj.get("instance_id")
-        return (str(instance_id), None) if instance_id else None
+        if not instance_id:
+            return None
+        return CaptureContext(
+            instance_key=server_instance_key(str(instance_id)),
+            server_instance_id=str(instance_id),
+        )
     try:
         instance = CruxibleInstance.load()
     except Exception:
         return None
-    return local_instance_key(instance.get_root_path()), instance
+    return CaptureContext(
+        instance_key=local_instance_key(instance.get_root_path()),
+        local_instance=instance,
+    )
+
+
+def resolve_active_config_digest(context: CaptureContext) -> str | None:
+    """Resolve the active config digest for stamping/verifying records.
+
+    Local mode computes the same lock digest continuation tokens bind to;
+    server mode reads the daemon's recorded active config digest via the
+    config-status endpoint (one extra read per capture — acceptable for an
+    opt-in cache). ``None`` when unresolvable; such records verify as
+    ``unknown`` on the config axis.
+    """
+    if context.local_instance is not None:
+        try:
+            return compute_lock_config_digest(context.local_instance.load_config())
+        except Exception:
+            return None
+    if context.server_instance_id is None:
+        return None
+    try:
+        # Imported lazily: _common pulls in the full command surface.
+        from cruxible_core.cli.commands._common import _get_client
+
+        client = _get_client()
+        if client is None:
+            return None
+        provenance = client.config_status(context.server_instance_id).provenance
+        return provenance.active_config_digest if provenance is not None else None
+    except Exception:
+        return None
 
 
 # ---- record normalization (compact profile serializer, never a new shape) ----
@@ -161,6 +275,7 @@ def normalize_entity_record(
     as_of: str,
     receipt_refs: list[str],
     source_cmd: str,
+    config_digest: str | None = None,
 ) -> dict[str, Any]:
     """Build one entity working-set record from a serialized entity payload."""
     compact = profile_entity_payload(
@@ -180,6 +295,7 @@ def normalize_entity_record(
         "lifecycle": (compact.get("metadata") or {}).get("lifecycle"),
         "review": None,
         "read_revision": read_revision,
+        "config_digest": config_digest,
         "as_of": as_of,
         "receipt_refs": receipt_refs,
         "source_cmd": source_cmd,
@@ -193,6 +309,7 @@ def normalize_edge_record(
     as_of: str,
     receipt_refs: list[str],
     source_cmd: str,
+    config_digest: str | None = None,
 ) -> dict[str, Any]:
     """Build one edge working-set record from a serialized edge payload."""
     compact = neighborhood_edge_payload(payload, "compact")
@@ -209,6 +326,7 @@ def normalize_edge_record(
         "lifecycle": assertion.get("lifecycle"),
         "review": assertion.get("review"),
         "read_revision": read_revision,
+        "config_digest": config_digest,
         "as_of": as_of,
         "receipt_refs": receipt_refs,
         "source_cmd": source_cmd,
@@ -484,15 +602,15 @@ def capture_json_read(
         context = resolve_capture_context()
         if context is None:
             return
-        instance_key, local_instance = context
         pairs = extract_read_records(payload)
         if not pairs:
             return
         effective_revision = read_revision
         if isinstance(payload, dict) and isinstance(payload.get("read_revision"), int):
             effective_revision = payload["read_revision"]
-        if effective_revision is None and local_instance is not None:
-            effective_revision = local_instance.get_read_revision()
+        if effective_revision is None and context.local_instance is not None:
+            effective_revision = context.local_instance.get_read_revision()
+        config_digest = resolve_active_config_digest(context)
         receipt_refs: list[str] = []
         if isinstance(payload, dict) and isinstance(payload.get("receipt_id"), str):
             receipt_refs = [payload["receipt_id"]]
@@ -507,6 +625,7 @@ def capture_json_read(
                         as_of=as_of,
                         receipt_refs=receipt_refs,
                         source_cmd=source_cmd,
+                        config_digest=config_digest,
                     )
                 )
             else:
@@ -517,9 +636,10 @@ def capture_json_read(
                         as_of=as_of,
                         receipt_refs=receipt_refs,
                         source_cmd=source_cmd,
+                        config_digest=config_digest,
                     )
                 )
-        append_records(records_path(instance_key), records)
+        append_records(records_path(context.instance_key), records)
     except Exception as exc:  # pragma: no cover - capture must never break a read
         _warn(f"working-set capture failed ({exc.__class__.__name__}: {exc})")
 
@@ -542,8 +662,10 @@ __all__ = [
     "COMPACT_THRESHOLD_BYTES",
     "HEADER_LINE",
     "WORKING_SET_ENV",
+    "CaptureContext",
     "append_records",
     "capture_json_read",
+    "credential_scope",
     "extract_read_records",
     "iter_record_lines",
     "local_instance_key",
@@ -553,7 +675,9 @@ __all__ = [
     "record_identity",
     "record_wins",
     "records_path",
+    "resolve_active_config_digest",
     "resolve_capture_context",
+    "server_instance_key",
     "working_set_dir",
     "working_set_enabled",
     "write_records",

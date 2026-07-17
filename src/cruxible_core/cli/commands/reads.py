@@ -1982,6 +1982,7 @@ def get_entity_cmd(
 @click.option("--to-type", required=True, help="Target entity type.")
 @click.option("--to-id", required=True, help="Target entity ID.")
 @click.option("--edge-key", default=None, type=int, help="Edge key (multi-edge disambiguation).")
+@ws_option
 @json_option
 @handle_errors
 def get_relationship_cmd(
@@ -1991,6 +1992,7 @@ def get_relationship_cmd(
     to_type: str,
     to_id: str,
     edge_key: int | None,
+    ws_capture: bool,
     output_json: bool,
 ) -> None:
     """Look up a specific relationship by its endpoints and type."""
@@ -2043,7 +2045,16 @@ def get_relationship_cmd(
             return
         rel = result
     if output_json:
-        _emit_json(rel.model_dump(mode="python"))
+        payload = rel.model_dump(mode="python")
+        _emit_json(payload)
+        # Direct relationship inspection carries its endpoints explicitly, so
+        # the payload is edge-shaped and captures as one edge record.
+        capture_json_read(
+            payload,
+            source_cmd="relationship get",
+            ws_flag=ws_capture,
+            read_revision=getattr(result, "read_revision", None),
+        )
         return
     console.print(relationship_table(rel))
 

@@ -27,12 +27,14 @@ from cruxible_core.cli.working_set import (
     read_records,
     record_identity,
     records_path,
+    server_instance_key,
     working_set_dir,
     write_records,
 )
 from cruxible_core.service import service_get_entity, service_inspect_entity
 from cruxible_core.service.types import InspectNeighborhoodResult
 from cruxible_core.temporal import format_datetime, utc_now
+from cruxible_core.workflow.compiler import compute_lock_config_digest
 
 # Edge budget used when re-fetching an owning entity's neighborhood during
 # refresh: the read-surface hard cap, so a refresh misses an edge only when
@@ -54,7 +56,11 @@ def _ws_context() -> _WsContext:
     client = _get_client()
     if client is not None:
         instance_id = _require_instance_id()
-        return _WsContext(instance_key=instance_id, client=client, instance_id=instance_id)
+        return _WsContext(
+            instance_key=server_instance_key(instance_id),
+            client=client,
+            instance_id=instance_id,
+        )
     _guard_local_read_fallback()
     instance = CruxibleInstance.load()
     return _WsContext(
@@ -71,24 +77,54 @@ def _current_read_revision(context: _WsContext) -> int | None:
     return context.instance.get_read_revision()
 
 
+def _current_config_digest(context: _WsContext) -> str | None:
+    """Fetch the CURRENT active config digest — capture's stamping source.
+
+    Local mode computes the same lock digest continuation tokens bind to;
+    server mode reads the daemon's recorded active config digest. ``None``
+    when unresolvable (records then verify as ``unknown`` on the config axis).
+    """
+    try:
+        if context.client is not None and context.instance_id is not None:
+            provenance = context.client.config_status(context.instance_id).provenance
+            return provenance.active_config_digest if provenance is not None else None
+        assert context.instance is not None
+        return compute_lock_config_digest(context.instance.load_config())
+    except Exception:
+        return None
+
+
 def _classify(
     records: list[dict[str, Any]],
     current_revision: int | None,
+    current_config_digest: str | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    """Split records into (fresh, stale, unknown) against the current revision.
+    """Split records into (fresh, stale, unknown) against the current state.
 
-    ``fresh`` means the cached revision equals the current one; any other
-    concrete revision (older — or newer, which only a rebuilt instance can
-    produce) is ``stale``; a missing revision is ``unknown``.
+    ``fresh`` means the cached revision equals the current one AND the cached
+    config digest matches (a config reload does not bump ``read_revision``,
+    so old-schema records would otherwise verify fresh forever); any concrete
+    mismatch on either axis is ``stale``; a missing revision — or a missing
+    cached digest when the current digest is known — is ``unknown``
+    (unverifiable, re-fetched by refresh but never a verify failure).
     """
     fresh: list[dict[str, Any]] = []
     stale: list[dict[str, Any]] = []
     unknown: list[dict[str, Any]] = []
     for record in records:
         revision = record.get("read_revision")
+        record_digest = record.get("config_digest")
         if not isinstance(revision, int):
             unknown.append(record)
-        elif current_revision is not None and revision == current_revision:
+        elif current_revision is None or revision != current_revision:
+            stale.append(record)
+        elif current_config_digest is None:
+            # No current digest to compare against: the config axis is
+            # unverifiable everywhere, so fall back to revision-only.
+            fresh.append(record)
+        elif not isinstance(record_digest, str):
+            unknown.append(record)
+        elif record_digest == current_config_digest:
             fresh.append(record)
         else:
             stale.append(record)
@@ -203,7 +239,8 @@ def ws_verify_cmd(output_json: bool) -> None:
     path = records_path(context.instance_key)
     records = read_records(path)
     current_revision = _current_read_revision(context)
-    fresh, stale, unknown = _classify(records, current_revision)
+    current_config_digest = _current_config_digest(context)
+    fresh, stale, unknown = _classify(records, current_revision, current_config_digest)
 
     if output_json:
         click.echo(
@@ -211,6 +248,7 @@ def ws_verify_cmd(output_json: bool) -> None:
                 {
                     "instance_key": context.instance_key,
                     "current_read_revision": current_revision,
+                    "current_config_digest": current_config_digest,
                     "total": len(records),
                     "fresh": len(fresh),
                     "stale": len(stale),
@@ -230,7 +268,15 @@ def ws_verify_cmd(output_json: bool) -> None:
         )
         for record in stale:
             revision = record.get("read_revision")
-            click.echo(f"  stale: {_identity_label(record)} (revision {revision})")
+            if (
+                current_config_digest is not None
+                and isinstance(record.get("config_digest"), str)
+                and record.get("config_digest") != current_config_digest
+                and revision == current_revision
+            ):
+                click.echo(f"  stale: {_identity_label(record)} (config changed)")
+            else:
+                click.echo(f"  stale: {_identity_label(record)} (revision {revision})")
     if stale:
         raise SystemExit(1)
 
@@ -247,6 +293,7 @@ def _fetch_entity_record(
     context: _WsContext,
     record: dict[str, Any],
     as_of: str,
+    config_digest: str | None,
 ) -> dict[str, Any] | None:
     """Re-fetch one entity record (compact profile). ``None`` => entity gone."""
     entity_type = str(record.get("entity_type"))
@@ -280,7 +327,19 @@ def _fetch_entity_record(
         as_of=as_of,
         receipt_refs=[],
         source_cmd="ws refresh",
+        config_digest=config_digest,
     )
+
+
+def _budget_truncated(truncation_reasons: list[str]) -> bool:
+    """Whether a scan stopped for BUDGET reasons (node/edge caps).
+
+    Only budget truncation can hide an edge that still exists. Depth
+    truncation merely marks the horizon beyond the depth-1 scope — every
+    requested edge of the owner was still enumerated — so a depth-only (or
+    un-truncated) read stays authoritative for edge presence.
+    """
+    return any(reason in ("node_budget", "edge_budget") for reason in truncation_reasons)
 
 
 def _fetch_owner_neighborhood(
@@ -291,7 +350,10 @@ def _fetch_owner_neighborhood(
 ) -> tuple[bool, bool, list[dict[str, Any]], int | None]:
     """Fetch the owning entity's outgoing edges of one relationship type.
 
-    Returns (owner_found, truncated, edge_payloads, read_revision).
+    Returns (owner_found, budget_truncated, edge_payloads, read_revision).
+    ``budget_truncated`` is True only for node/edge-budget truncation — the
+    one case where the scan may have MISSED a surviving edge; depth-horizon
+    truncation cannot hide an outgoing edge of the depth-1 owner.
     """
     if context.client is not None and context.instance_id is not None:
         result = context.client.inspect_entity(
@@ -305,7 +367,12 @@ def _fetch_owner_neighborhood(
         )
         assert isinstance(result, contracts.InspectNeighborhoodResult)
         edges = [edge.model_dump(mode="python") for edge in result.edges]
-        return result.found, result.truncated, edges, result.read_revision
+        return (
+            result.found,
+            _budget_truncated(list(result.truncation_reasons)),
+            edges,
+            result.read_revision,
+        )
     assert context.instance is not None
     local_result = service_inspect_entity(
         context.instance,
@@ -332,7 +399,7 @@ def _fetch_owner_neighborhood(
     ]
     return (
         local_result.found,
-        local_result.truncated,
+        _budget_truncated(list(local_result.truncation_reasons)),
         edges,
         context.instance.get_read_revision(),
     )
@@ -343,6 +410,7 @@ def _refresh_edge_records(
     stale_edges: list[dict[str, Any]],
     as_of: str,
     report: _RefreshReport,
+    config_digest: str | None,
 ) -> list[dict[str, Any]]:
     """Re-fetch stale edge records via the owning entity's inspect."""
     refreshed: list[dict[str, Any]] = []
@@ -357,7 +425,7 @@ def _refresh_edge_records(
 
     for (from_type, from_id, relationship_type), records in grouped.items():
         try:
-            found, truncated, edges, revision = _fetch_owner_neighborhood(
+            found, budget_truncated, edges, revision = _fetch_owner_neighborhood(
                 context, from_type, from_id, relationship_type
             )
         except Exception as exc:
@@ -395,13 +463,18 @@ def _refresh_edge_records(
                         as_of=as_of,
                         receipt_refs=[],
                         source_cmd="ws refresh",
+                        config_digest=config_digest,
                     )
                 )
                 report.refreshed += 1
-            elif truncated:
+            elif budget_truncated:
+                # Only a budget-truncated scan may have missed a surviving
+                # edge; a filter-complete or depth-only-truncated read is
+                # authoritative — the edge is genuinely gone.
                 report.failed += 1
                 report.notes.append(
-                    f"failed: {_identity_label(record)} (neighborhood truncated; could not confirm)"
+                    f"failed: {_identity_label(record)} "
+                    "(neighborhood budget-truncated; could not confirm)"
                 )
                 refreshed.append(record)
             else:
@@ -426,7 +499,8 @@ def ws_refresh_cmd() -> None:
         click.echo("No working-set records to refresh.")
         return
     current_revision = _current_read_revision(context)
-    fresh, stale, unknown = _classify(records, current_revision)
+    current_config_digest = _current_config_digest(context)
+    fresh, stale, unknown = _classify(records, current_revision, current_config_digest)
     to_refresh = stale + unknown
     as_of = format_datetime(utc_now()) or ""
     report = _RefreshReport()
@@ -437,7 +511,7 @@ def ws_refresh_cmd() -> None:
         if record.get("kind") != "entity":
             continue
         try:
-            new_record = _fetch_entity_record(context, record, as_of)
+            new_record = _fetch_entity_record(context, record, as_of, current_config_digest)
         except Exception as exc:
             report.failed += 1
             report.notes.append(
@@ -452,7 +526,9 @@ def ws_refresh_cmd() -> None:
         else:
             report.refreshed += 1
             refreshed_by_identity[record_identity(record)] = new_record
-    for record in _refresh_edge_records(context, stale_edge_records, as_of, report):
+    for record in _refresh_edge_records(
+        context, stale_edge_records, as_of, report, current_config_digest
+    ):
         refreshed_by_identity[record_identity(record)] = record
     removed_edge_identities = {record_identity(r) for r in stale_edge_records} - set(
         refreshed_by_identity

@@ -16,6 +16,8 @@ from cruxible_core.cli.working_set import (
     local_instance_key,
     read_records,
     records_path,
+    server_instance_key,
+    working_set_dir,
     working_set_enabled,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -349,6 +351,198 @@ class TestVerify:
         assert payload["current_read_revision"] == populated_instance.get_read_revision()
 
 
+class TestConfigDigest:
+    def test_config_reload_marks_records_stale_and_refresh_restamps(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        tmp_project: Path,
+    ) -> None:
+        root = populated_instance.get_root_path()
+        assert (
+            _chdir_run(
+                runner,
+                root,
+                ["entity", "get", "--type", "Part", "--id", "BP-1001", "--ws", "--json"],
+            ).exit_code
+            == 0
+        )
+        records = read_records(_ws_file(populated_instance))
+        assert len(records) == 1
+        assert isinstance(records[0]["config_digest"], str)
+
+        fresh_verify = _chdir_run(runner, root, ["ws", "verify", "--json"])
+        assert fresh_verify.exit_code == 0
+        payload = json.loads(fresh_verify.output)
+        assert payload["fresh"] == 1
+        assert payload["current_config_digest"] == records[0]["config_digest"]
+
+        # Config change WITHOUT any graph mutation: read_revision does not
+        # move, so only the config digest can catch the drift.
+        config_path = tmp_project / "config.yaml"
+        config_path.write_text(
+            config_path.read_text().replace(
+                "description: Vehicle-to-part fitment",
+                "description: Vehicle-to-part fitment (reloaded)",
+            )
+        )
+        stale_verify = _chdir_run(runner, root, ["ws", "verify", "--json"])
+        assert stale_verify.exit_code == 1
+        payload = json.loads(stale_verify.output)
+        assert payload["stale"] == 1
+        assert payload["fresh"] == 0
+        assert payload["current_config_digest"] != records[0]["config_digest"]
+
+        # Text mode names the config axis, not a phantom revision drift.
+        stale_text = _chdir_run(runner, root, ["ws", "verify"])
+        assert stale_text.exit_code == 1
+        assert "config changed" in stale_text.output
+
+        # Refresh re-fetches and re-stamps with the new digest.
+        refresh = _chdir_run(runner, root, ["ws", "refresh"])
+        assert refresh.exit_code == 0
+        clean_verify = _chdir_run(runner, root, ["ws", "verify", "--json"])
+        assert clean_verify.exit_code == 0
+        payload = json.loads(clean_verify.output)
+        assert payload["fresh"] == 1
+        assert payload["stale"] == 0
+
+    def test_record_without_digest_is_unknown_not_fresh(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        root = populated_instance.get_root_path()
+        assert (
+            _chdir_run(
+                runner,
+                root,
+                ["entity", "get", "--type", "Part", "--id", "BP-1001", "--ws", "--json"],
+            ).exit_code
+            == 0
+        )
+        path = _ws_file(populated_instance)
+        # Simulate a pre-digest record: current revision but no config_digest.
+        record = read_records(path)[0]
+        legacy = {key: value for key, value in record.items() if key != "config_digest"}
+        legacy["entity_id"] = "BP-1002"
+        with path.open("a") as handle:
+            handle.write(json.dumps(legacy) + "\n")
+
+        verify = _chdir_run(runner, root, ["ws", "verify", "--json"])
+        assert verify.exit_code == 0  # unknown alone never fails verification
+        payload = json.loads(verify.output)
+        assert payload["fresh"] == 1
+        assert payload["unknown"] == 1
+
+
+class TestCredentialScope:
+    def test_distinct_credentials_get_distinct_dirs(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", "crx_secret_token_aaa")
+        key_a = server_instance_key("inst_1")
+        key_a_again = server_instance_key("inst_1")
+        monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", "crx_secret_token_bbb")
+        key_b = server_instance_key("inst_1")
+
+        assert key_a == key_a_again  # stable across invocations (persisted salt)
+        assert key_a != key_b  # different credentials never share records
+        assert key_a.startswith("inst_1-cred-")
+        assert key_b.startswith("inst_1-cred-")
+        assert records_path(key_a) != records_path(key_b)
+        assert records_path(key_a).parent.parent == records_path(key_b).parent.parent
+
+    def test_scope_never_leaks_token_material(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import hashlib
+
+        token = "crx_secret_token_ccc"
+        monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", token)
+        key = server_instance_key("inst_1")
+        assert token not in key
+        # Not the raw (unsalted) hash either.
+        assert hashlib.sha256(token.encode()).hexdigest()[:12] not in key
+        salt_path = working_set_dir() / ".scope-salt"
+        assert salt_path.exists()
+        assert (salt_path.stat().st_mode & 0o777) == 0o600
+
+    def test_tokenless_server_mode_uses_plain_instance_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
+        assert server_instance_key("inst_1") == "inst_1"
+
+
+class TestRelationshipGetCapture:
+    def test_relationship_get_ws_captures_edge_record(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        root = populated_instance.get_root_path()
+        result = _chdir_run(
+            runner,
+            root,
+            [
+                "relationship",
+                "get",
+                "--from-type",
+                "Part",
+                "--from-id",
+                "BP-1002",
+                "--relationship",
+                "replaces",
+                "--to-type",
+                "Part",
+                "--to-id",
+                "BP-1001",
+                "--ws",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0
+        records = read_records(_ws_file(populated_instance))
+        assert len(records) == 1
+        record = records[0]
+        assert record["kind"] == "edge"
+        assert record["relationship_type"] == "replaces"
+        assert record["from_id"] == "BP-1002"
+        assert record["to_id"] == "BP-1001"
+        assert record["props"]["direction"] == "upgrade"
+        assert record["source_cmd"] == "relationship get"
+        assert record["read_revision"] == populated_instance.get_read_revision()
+        assert isinstance(record["config_digest"], str)
+
+    def test_relationship_get_without_ws_captures_nothing(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        isolated_home: Path,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.get_root_path(),
+            [
+                "relationship",
+                "get",
+                "--from-type",
+                "Part",
+                "--from-id",
+                "BP-1002",
+                "--relationship",
+                "replaces",
+                "--to-type",
+                "Part",
+                "--to-id",
+                "BP-1001",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0
+        assert not (isolated_home / ".cruxible" / "working-set").exists()
+
+
 class TestRefresh:
     def test_refresh_updates_stale_drops_deleted_keeps_fresh(
         self,
@@ -434,6 +628,105 @@ class TestRefresh:
         assert fresh["source_cmd"] == "entity get"
 
         # After refresh everything verifies clean.
+        verify = _chdir_run(runner, root, ["ws", "verify"])
+        assert verify.exit_code == 0
+
+    def test_refresh_drops_deleted_edge_despite_depth_truncation(
+        self,
+        runner: CliRunner,
+        initialized_project: CruxibleInstance,
+    ) -> None:
+        """A deleted cached edge must be dropped even when the owner's scan is
+        depth-truncated: the owner keeps another same-type outgoing edge whose
+        target has onward same-type edges, so the depth-1 read reports
+        ``truncation_reasons == ["depth"]`` — which cannot hide any of the
+        owner's own edges and must stay authoritative for edge presence."""
+        from cruxible_core.service import service_inspect_entity
+        from cruxible_core.service.types import InspectNeighborhoodResult
+
+        instance = initialized_project
+        root = instance.get_root_path()
+
+        def _part(part_id: str) -> EntityInstance:
+            return EntityInstance(
+                entity_type="Part",
+                entity_id=part_id,
+                properties={"part_number": part_id, "name": part_id, "category": "brakes"},
+            )
+
+        def _replaces(from_id: str, to_id: str) -> RelationshipInstance:
+            return RelationshipInstance(
+                relationship_type="replaces",
+                from_type="Part",
+                from_id=from_id,
+                to_type="Part",
+                to_id=to_id,
+                properties={"direction": "upgrade", "confidence": 0.9},
+            )
+
+        graph = EntityGraph()
+        for part_id in ("P-0", "P-1", "P-2", "P-3"):
+            graph.add_entity(_part(part_id))
+        graph.add_relationship(_replaces("P-3", "P-1"))  # the edge we cache, then delete
+        graph.add_relationship(_replaces("P-3", "P-2"))  # owner keeps this same-type edge
+        graph.add_relationship(_replaces("P-2", "P-0"))  # forces depth truncation at P-2
+        instance.save_graph(graph)
+
+        capture = _chdir_run(
+            runner,
+            root,
+            [
+                "relationship",
+                "get",
+                "--from-type",
+                "Part",
+                "--from-id",
+                "P-3",
+                "--relationship",
+                "replaces",
+                "--to-type",
+                "Part",
+                "--to-id",
+                "P-1",
+                "--ws",
+                "--json",
+            ],
+        )
+        assert capture.exit_code == 0
+        assert len(read_records(_ws_file(instance))) == 1
+
+        # Delete ONLY the cached edge; everything else survives.
+        new_graph = EntityGraph()
+        for part_id in ("P-0", "P-1", "P-2", "P-3"):
+            new_graph.add_entity(_part(part_id))
+        new_graph.add_relationship(_replaces("P-3", "P-2"))
+        new_graph.add_relationship(_replaces("P-2", "P-0"))
+        instance.save_graph(new_graph)
+
+        # Pin the topology: the owner's scoped depth-1 scan really is
+        # depth-truncated (and ONLY depth-truncated).
+        scan = service_inspect_entity(
+            instance,
+            "Part",
+            "P-3",
+            direction="outgoing",
+            depth=1,
+            relationship_types=["replaces"],
+            max_edges=1000,
+        )
+        assert isinstance(scan, InspectNeighborhoodResult)
+        assert scan.truncated is True
+        assert list(scan.truncation_reasons) == ["depth"]
+
+        refresh = _chdir_run(runner, root, ["ws", "refresh"])
+        assert refresh.exit_code == 0
+        assert "removed" in refresh.output
+        assert "edge gone" in refresh.output
+        assert "could not confirm" not in refresh.output
+
+        by_identity = _records_by_identity(instance)
+        assert not any(identity[0] == "edge" and "P-1" in identity for identity in by_identity)
+
         verify = _chdir_run(runner, root, ["ws", "verify"])
         assert verify.exit_code == 0
 
