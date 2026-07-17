@@ -110,6 +110,22 @@ Decisions (implemented):
 - **Depth reason**: `"depth"` is reported when a node at the horizon still
   has a visible, filter-passing, un-returned edge. Edges among final-depth
   nodes are not scanned (only nodes below the horizon are expanded).
+- **Default state = `all` (corrected pre-release; was `live`)**: the expanded
+  read originally defaulted `state` to `live`, silently hiding pending edges.
+  That contradicted the inspection contract — legacy single-hop inspect and
+  `list edges` return every stored edge by default, gated only on request —
+  and governed overlays make pending the NORM, so default expanded reads
+  produced confident wrong empties (the six pending dependency edges of
+  wi-runebench-pilot vanished; benchmarks/read_anchor/POST_TRACK.md). The
+  default is now `all`: every stored edge with its review/lifecycle markers.
+  Explicit `state=<x>` filters exactly as before (per-state parity with
+  `relationship_matches_query_state` untouched), and the response reports
+  `edges_hidden_by_state`: distinct edges that passed every OTHER filter
+  (direction, relationship types, target types) and were excluded solely by
+  state, counted at the frontier the BFS actually explored — hidden edges
+  consume no budget and are never traversed, so the count is
+  "hidden at the explored frontier", not global. Always present on the
+  expanded shape (0 under `state=all`) so absence is never ambiguous.
 - MCP returns a plain dict (FastMCP wraps union-annotated returns in a
   `{"result": ...}` envelope that would break the legacy top-level payload).
 

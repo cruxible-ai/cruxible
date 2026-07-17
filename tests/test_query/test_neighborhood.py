@@ -293,12 +293,18 @@ class TestStateParity:
                 "from relationship_matches_query_state"
             )
 
-    def test_default_state_is_live(self) -> None:
-        graph, _ = self._governed_graph()
+    def test_default_state_is_all_per_the_inspection_contract(self) -> None:
+        """No explicit state returns EVERY stored edge, like single-hop/list edges."""
+        graph, metadata_by_target = self._governed_graph()
         default = inspect_neighborhood(graph, "Node", "ROOT", depth=1)
-        live = inspect_neighborhood(graph, "Node", "ROOT", depth=1, state="live")
-        assert default.state == "live"
-        assert _edge_ids(default) == _edge_ids(live)
+        explicit_all = inspect_neighborhood(graph, "Node", "ROOT", depth=1, state="all")
+        assert default.state == "all"
+        assert _edge_ids(default) == _edge_ids(explicit_all)
+        assert {e.to_id for e in default.edges} == set(metadata_by_target)
+        assert default.edges_hidden_by_state == 0
+        # Governance markers survive on the default read: pending is marked.
+        by_target = {edge.to_id: edge.metadata for edge in default.edges}
+        assert by_target["PENDING"]["assertion"]["review"]["status"] == "pending"
 
     def test_pending_edge_hidden_from_live_visible_to_pending_states(self) -> None:
         graph, _ = self._governed_graph()
@@ -317,6 +323,128 @@ class TestStateParity:
         assert by_target["REJECTED"]["assertion"]["review"]["status"] == "rejected"
         assert by_target["SUPERSEDED"]["assertion"]["lifecycle"]["status"] == "superseded"
         assert by_target["LIVE"]["assertion"]["review"]["status"] == "unreviewed"
+
+
+class TestEdgesHiddenByState:
+    """`edges_hidden_by_state`: edges excluded SOLELY by an explicit state.
+
+    The count covers the frontier the BFS actually explored — hidden edges
+    consume no budget and are never walked, so regions reachable only through
+    hidden edges are never speculatively counted.
+    """
+
+    def _pending_star(self, count: int = 6) -> EntityGraph:
+        """ROOT with `count` pending-only dependency edges (the op-1 shape)."""
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Node", entity_id="ROOT"))
+        for index in range(count):
+            target = f"DEP-{index}"
+            graph.add_entity(EntityInstance(entity_type="Node", entity_id=target))
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="depends_on",
+                    from_type="Node",
+                    from_id="ROOT",
+                    to_type="Node",
+                    to_id=target,
+                    metadata=_metadata(review="pending"),
+                )
+            )
+        return graph
+
+    def test_op1_regression_default_shows_pending_explicit_live_reports_hidden(self) -> None:
+        """Pending-only neighborhoods must never read as confident empties."""
+        graph = self._pending_star(6)
+        default = inspect_neighborhood(graph, "Node", "ROOT", depth=1)
+        assert default.edges_returned == 6
+        assert default.edges_hidden_by_state == 0
+        assert all(
+            edge.metadata["assertion"]["review"]["status"] == "pending" for edge in default.edges
+        )
+        live = inspect_neighborhood(graph, "Node", "ROOT", depth=1, state="live")
+        assert live.edges == []
+        assert live.nodes == []
+        assert live.edges_hidden_by_state == 6
+
+    def test_count_is_per_state_not_just_live(self) -> None:
+        graph = self._pending_star(2)
+        # `pending` shows the pending edges and hides nothing here.
+        pending = inspect_neighborhood(graph, "Node", "ROOT", depth=1, state="pending")
+        assert pending.edges_returned == 2
+        assert pending.edges_hidden_by_state == 0
+        accepted = inspect_neighborhood(graph, "Node", "ROOT", depth=1, state="accepted")
+        assert accepted.edges_returned == 0
+        assert accepted.edges_hidden_by_state == 2
+
+    def test_edges_failing_other_filters_are_not_counted(self) -> None:
+        """Only edges excluded SOLELY by state count as hidden."""
+        graph = EntityGraph()
+        for entity_type, entity_id in [("Hub", "H"), ("Widget", "W"), ("Gadget", "G")]:
+            graph.add_entity(EntityInstance(entity_type=entity_type, entity_id=entity_id))
+        for rel, to_type, to_id in [("makes", "Widget", "W"), ("owns", "Gadget", "G")]:
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type=rel,
+                    from_type="Hub",
+                    from_id="H",
+                    to_type=to_type,
+                    to_id=to_id,
+                    metadata=_metadata(review="pending"),
+                )
+            )
+        # Relationship filter drops `owns` before state is consulted: only the
+        # `makes` edge is hidden by state.
+        by_rel = inspect_neighborhood(
+            graph, "Hub", "H", depth=1, relationship_types=["makes"], state="live"
+        )
+        assert by_rel.edges_hidden_by_state == 1
+        # Target filter drops the Widget endpoint first: only the Gadget edge
+        # is hidden by state.
+        by_target = inspect_neighborhood(
+            graph, "Hub", "H", depth=1, target_types=["Gadget"], state="live"
+        )
+        assert by_target.edges_hidden_by_state == 1
+
+    def test_count_covers_only_the_explored_frontier(self) -> None:
+        """Hidden regions are not speculatively traversed: a pending edge
+        behind another pending edge is invisible to the count."""
+        graph = EntityGraph()
+        for entity_id in ("ROOT", "A", "B"):
+            graph.add_entity(EntityInstance(entity_type="Node", entity_id=entity_id))
+        for from_id, to_id in (("ROOT", "A"), ("A", "B")):
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="linked",
+                    from_type="Node",
+                    from_id=from_id,
+                    to_type="Node",
+                    to_id=to_id,
+                    metadata=_metadata(review="pending"),
+                )
+            )
+        result = inspect_neighborhood(graph, "Node", "ROOT", depth=2, state="live")
+        # ROOT->A is hidden at the root; A is never visited, so A->B is never
+        # scanned and never counted.
+        assert result.edges_hidden_by_state == 1
+
+    def test_hidden_edges_consume_no_budget(self) -> None:
+        graph = self._pending_star(3)
+        graph.add_entity(EntityInstance(entity_type="Node", entity_id="LIVE-1"))
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="depends_on",
+                from_type="Node",
+                from_id="ROOT",
+                to_type="Node",
+                to_id="LIVE-1",
+            )
+        )
+        result = inspect_neighborhood(
+            graph, "Node", "ROOT", depth=1, state="live", max_edges=1, max_nodes=1
+        )
+        assert result.edges_returned == 1
+        assert result.truncated is False
+        assert result.edges_hidden_by_state == 3
 
 
 class TestValidationAndOptIn:

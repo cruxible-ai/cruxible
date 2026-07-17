@@ -89,13 +89,16 @@ class ReadInspectNeighborhood:
     properties: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     depth: int = 1
-    state: QueryVisibilityState = "live"
+    state: QueryVisibilityState = "all"
     nodes: list[ReadNeighborhoodNode] = field(default_factory=list)
     edges: list[ReadNeighborhoodEdge] = field(default_factory=list)
     truncated: bool = False
     truncation_reasons: list[str] = field(default_factory=list)
     nodes_returned: int = 0
     edges_returned: int = 0
+    # Edges excluded solely by an explicit state filter at the explored
+    # frontier (all other filters passed); always 0 when state is "all".
+    edges_hidden_by_state: int = 0
     # Continuation support: cumulative budgets consumed by this read (the
     # deterministic-replay cursor) and whether the truncation is resumable.
     resumable: bool = False
@@ -365,8 +368,14 @@ def inspect_neighborhood(
       compose as a UNION when both are given.
     * ``state`` gates edges through the query engine's
       ``relationship_matches_query_state`` — visibility is bit-identical to
-      named-query traversal. Default ``live`` (unlike the legacy single-hop
-      read, which shows every stored edge).
+      named-query traversal. Default ``all``: every stored edge (with its
+      review/lifecycle markers), matching the inspection contract of the
+      legacy single-hop read and ``list edges`` — filtering happens only on
+      request. When an explicit non-``all`` state hides edges,
+      ``edges_hidden_by_state`` reports how many edges at the explored
+      frontier passed every other filter and were excluded solely by state
+      (hidden edges consume no budget and are never traversed, so the count
+      is frontier-local, not global).
     * ``limit`` (the legacy single-hop cap) maps to ``max_nodes`` when
       ``max_nodes`` is not given, so the previously silent cap now reports
       ``truncated`` with reason ``node_budget``.
@@ -396,7 +405,7 @@ def inspect_neighborhood(
         raise ConfigError(
             f"max_edges must be between 1 and {NEIGHBORHOOD_MAX_EDGES}, got {resolved_max_edges}"
         )
-    resolved_state: QueryVisibilityState = state if state is not None else "live"
+    resolved_state: QueryVisibilityState = state if state is not None else "all"
     if resolved_state not in _NEIGHBORHOOD_STATES:
         raise ConfigError(
             f"state must be one of {', '.join(_NEIGHBORHOOD_STATES)}; got '{resolved_state}'"
@@ -534,6 +543,9 @@ def inspect_neighborhood(
         truncation_reasons=list(expansion.truncation_reasons),
         nodes_returned=len(nodes),
         edges_returned=len(edges),
+        # Counted on the cumulative expansion (the traversal actually
+        # performed for this page), deduplicated across the whole BFS.
+        edges_hidden_by_state=expansion.hidden_edge_count,
         # Budget truncation is resumable via deterministic replay; a pure
         # depth-horizon clip is not (a deeper read is a different read).
         resumable=any(

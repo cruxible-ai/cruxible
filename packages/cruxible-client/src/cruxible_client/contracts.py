@@ -1227,6 +1227,12 @@ class InspectNeighborhoodResult(BaseModel):
     truncation_reasons: list[NeighborhoodTruncationReason] = Field(default_factory=list)
     nodes_returned: int = 0
     edges_returned: int = 0
+    # Edges excluded solely by an explicit state filter: they passed the
+    # direction/relationship/target filters and were hidden by state alone,
+    # counted at the frontier the BFS actually explored (hidden edges consume
+    # no budget and are never traversed). Always 0 when state is "all" (the
+    # default — nothing is hidden); always present so absence is unambiguous.
+    edges_hidden_by_state: int = 0
     # Monotonic state revision at read time; receipts prove computation,
     # never freshness — compare read_revision to detect staleness.
     read_revision: int | None = None

@@ -341,13 +341,17 @@ class InspectNeighborhoodResult:
     properties: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     depth: int = 1
-    state: QueryVisibilityState = "live"
+    state: QueryVisibilityState = "all"
     nodes: list[NeighborhoodNodeResult] = field(default_factory=list)
     edges: list[NeighborhoodEdgeResult] = field(default_factory=list)
     truncated: bool = False
     truncation_reasons: list[NeighborhoodTruncationReason] = field(default_factory=list)
     nodes_returned: int = 0
     edges_returned: int = 0
+    # Edges excluded solely by an explicit state filter (all other filters
+    # passed) at the frontier the BFS actually explored; 0 when state="all".
+    # Hidden edges consume no budget and are never traversed.
+    edges_hidden_by_state: int = 0
     # Continuation support: cumulative budget totals consumed so far (the
     # deterministic-replay cursor) and whether a truncated read can be resumed
     # with a continuation token (budget truncation yes, pure depth-horizon no).

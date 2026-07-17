@@ -1430,6 +1430,7 @@ def _neighborhood_payload(
         "truncation_reasons": list(result.truncation_reasons),
         "nodes_returned": result.nodes_returned,
         "edges_returned": result.edges_returned,
+        "edges_hidden_by_state": result.edges_hidden_by_state,
     }
 
 
@@ -1467,8 +1468,9 @@ def _neighborhood_payload(
     "--state",
     type=click.Choice(["live", "accepted", "all", "not-live", "pending", "reviewable"]),
     default=None,
-    help="Relationship visibility for the expanded read (default live), "
-    "identical to named-query traversal.",
+    help="Relationship visibility for the expanded read (default all: every stored "
+    "edge, the inspection contract); explicit states filter identically to "
+    "named-query traversal.",
 )
 @click.option(
     "--projection",
@@ -1671,7 +1673,7 @@ def _inspect_neighborhood(
         "direction": direction,
         "relationship_types": sorted(set(relationships or [])),
         "target_types": sorted(set(target_types or [])),
-        "state": state if state is not None else "live",
+        "state": state if state is not None else "all",
     }
 
     def _remote_fetch(
@@ -1780,6 +1782,11 @@ def _inspect_neighborhood(
     if payload["truncated"]:
         click.echo(f"Truncated: {', '.join(payload['truncation_reasons'])}")
         _echo_continuation_hint(continuation_token)
+    if payload["edges_hidden_by_state"]:
+        click.echo(
+            f"{payload['edges_hidden_by_state']} edge(s) hidden by "
+            f"state={payload['state']}; pass --state all to see them"
+        )
     nodes = payload["nodes"]
     for level in sorted({node["depth"] for node in nodes}):
         level_nodes = [node for node in nodes if node["depth"] == level]

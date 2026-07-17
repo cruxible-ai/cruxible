@@ -737,6 +737,7 @@ def service_inspect_entity(
             ),
             nodes_returned=neighborhood.nodes_returned,
             edges_returned=neighborhood.edges_returned,
+            edges_hidden_by_state=neighborhood.edges_hidden_by_state,
             resumable=neighborhood.resumable,
             cursor_nodes_seen=neighborhood.cursor_nodes_seen,
             cursor_edges_seen=neighborhood.cursor_edges_seen,

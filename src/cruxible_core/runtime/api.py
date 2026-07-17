@@ -2647,7 +2647,7 @@ def inspect_entity(
                 | ({relationship_type} if relationship_type else set())
             ),
             "target_types": sorted(set(target_types or [])),
-            "state": state if state is not None else "live",
+            "state": state if state is not None else "all",
         }
     )
     if continuation is not None:
@@ -2741,6 +2741,7 @@ def inspect_entity(
             truncation_reasons=list(result.truncation_reasons),
             nodes_returned=result.nodes_returned,
             edges_returned=result.edges_returned,
+            edges_hidden_by_state=result.edges_hidden_by_state,
             read_revision=read_revision,
             continuation_token=continuation_token,
         )

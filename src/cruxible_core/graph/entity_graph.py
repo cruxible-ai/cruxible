@@ -62,12 +62,20 @@ class NeighborhoodExpansion:
     plus explicit endpoint refs), sorted by ``(relationship_type, from_type,
     from_id, to_type, to_id, edge_key)``. Budgets count RETURNED items, not
     visited ones: neighbors dropped by ``target_types`` never consume budget.
+
+    ``hidden_edge_count`` counts distinct edges excluded solely by the
+    ``edge_visible`` gate at nodes the BFS actually expanded: they passed the
+    direction/relationship/target filters but the visibility predicate said
+    no. Hidden edges consume no budget and are never walked, so the count
+    covers the explored frontier only — never regions reachable exclusively
+    through hidden edges.
     """
 
     nodes: list[tuple[EntityInstance, int]] = field(default_factory=list)
     edges: list[dict[str, Any]] = field(default_factory=list)
     truncated: bool = False
     truncation_reasons: list[str] = field(default_factory=list)
+    hidden_edge_count: int = 0
 
 
 class EntityGraph:
@@ -879,6 +887,10 @@ class EntityGraph:
         * ``edge_visible`` gates edges (callers pass the query engine's
           ``relationship_matches_query_state`` bound to a state so visibility
           is bit-identical to traversal); hidden edges are never walked.
+          Edges rejected solely by ``edge_visible`` while otherwise passing
+          every filter are tallied in ``hidden_edge_count`` (deduplicated;
+          counted only at nodes the BFS expanded — the explored frontier —
+          never speculatively behind other hidden edges; no budget consumed).
         * ``target_types`` drops non-matching NEW neighbors before any budget
           is consumed (budgets count returned items, not visited); the root is
           exempt. Dropped neighbors are not expanded either.
@@ -899,7 +911,30 @@ class EntityGraph:
         rel_filter = set(relationship_types) if relationship_types else None
         target_filter = set(target_types) if target_types else None
 
-        def _candidate_edges(node_id: str) -> list[tuple[str, str, int, dict[str, Any]]]:
+        def _record_hidden_edge(node_id: str, source: str, target: str, key: int) -> None:
+            """Tally an edge excluded SOLELY by ``edge_visible`` at an expanded node.
+
+            Mirrors the visible path's remaining filters so the count means
+            "this edge would have been returned under a permissive gate":
+            the far endpoint must exist, and ``target_types`` applies exactly
+            as it does for visible edges (edges back into already-returned
+            entities are exempt from the target filter).
+            """
+            edge_id = (source, target, key)
+            if edge_id in hidden_edges:
+                return
+            other = target if source == node_id else source
+            if other not in visited:
+                other_entity = self.get_entity(*split_node_id(other))
+                if other_entity is None:
+                    return
+                if target_filter is not None and other_entity.entity_type not in target_filter:
+                    return
+            hidden_edges.add(edge_id)
+
+        def _candidate_edges(
+            node_id: str, *, count_hidden: bool = False
+        ) -> list[tuple[str, str, int, dict[str, Any]]]:
             """Visible, filter-passing edges of a node in deterministic order."""
             seen: set[tuple[str, str, int]] = set()
             candidates: list[tuple[str, str, int, dict[str, Any]]] = []
@@ -917,6 +952,8 @@ class EntityGraph:
                     if rel_filter is not None and rel_type not in rel_filter:
                         continue
                     if edge_visible is not None and not edge_visible(_relationship_metadata(data)):
+                        if count_hidden:
+                            _record_hidden_edge(node_id, source, target, key)
                         continue
                     candidates.append((source, target, key, data))
             candidates.sort(
@@ -948,6 +985,7 @@ class EntityGraph:
         visited: dict[str, int] = {root_node_id: 0}
         returned_nodes: list[tuple[EntityInstance, int]] = []
         collected: dict[tuple[str, str, int], dict[str, Any]] = {}
+        hidden_edges: set[tuple[str, str, int]] = set()
         reasons: set[str] = set()
         frontier = [root_node_id]
         edge_budget_exhausted = False
@@ -960,7 +998,7 @@ class EntityGraph:
             for node_id in frontier:
                 if edge_budget_exhausted:
                     break
-                for source, target, key, data in _candidate_edges(node_id):
+                for source, target, key, data in _candidate_edges(node_id, count_hidden=True):
                     edge_id = (source, target, key)
                     if edge_id in collected:
                         continue
@@ -1032,6 +1070,7 @@ class EntityGraph:
             edges=edges,
             truncated=bool(ordered_reasons),
             truncation_reasons=ordered_reasons,
+            hidden_edge_count=len(hidden_edges),
         )
 
     # -------------------------------------------------------------------------

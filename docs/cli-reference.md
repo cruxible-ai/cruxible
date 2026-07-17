@@ -316,7 +316,12 @@ legacy single-hop neighbor read. Providing any of `--depth`, `--target-type`,
 `--relationship`) switches to the expanded bounded BFS read: `nodes`/`edges`
 grouped by depth with explicit budgets and visible truncation
 (`truncated` + `truncation_reasons`: `node_budget`/`edge_budget`/`depth`).
-Every node and edge keeps its lifecycle/review markers. `--projection` selects
+Every node and edge keeps its lifecycle/review markers. By default every
+stored edge is returned (`state=all`, the inspection contract); an explicit
+`--state` filters like named-query traversal and the response reports
+`edges_hidden_by_state` — edges at the explored frontier that passed every
+other filter and were hidden by state alone (table output prints a
+`pass --state all` hint when the count is non-zero). `--projection` selects
 neighbor properties (the root keeps its full properties); `--profile` shapes
 metadata — the two compose. With `--json` the expanded shape is emitted;
 table output groups nodes by depth.
@@ -332,7 +337,7 @@ table output groups nodes by depth.
 | `--limit` | no | `` | integer range | Max neighbors to show (legacy single-hop cap; maps to the node budget on expanded reads). |
 | `--depth` | no | `` | integer range | Hop horizon for the expanded read (1-4). Providing it (even `--depth 1`) opts into the expanded nodes/edges shape. |
 | `--target-type` | no | `` | text | Only expand into/return entities of these types (root exempt); repeatable. |
-| `--state` | no | `` | choice | Relationship visibility for the expanded read: `live` (default), `accepted`, `all`, `not-live`, `pending`, `reviewable` — identical semantics to named-query traversal. |
+| `--state` | no | `` | choice | Relationship visibility for the expanded read: `all` (default — every stored edge, the inspection contract), `live`, `accepted`, `not-live`, `pending`, `reviewable` — explicit states filter with identical semantics to named-query traversal. |
 | `--projection` | no | `` | text | Neighbor property names to keep (root keeps full properties); repeatable. |
 | `--max-nodes` | no | `` | integer range | Node budget for the expanded read (default 100, hard cap 500). |
 | `--max-edges` | no | `` | integer range | Edge budget for the expanded read (default 200, hard cap 1000). |

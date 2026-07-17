@@ -215,6 +215,41 @@ class TestMcpDefaultsCompact:
         )
         assert neighbor["entity"]["metadata"] == {"lifecycle": {"status": "superseded"}}
 
+    def test_inspect_entity_expanded_default_state_all_and_hidden_count(
+        self, server, governed_read_instance_id: str
+    ) -> None:
+        """The expanded dict output follows the inspection contract: every
+        stored edge by default, and edges_hidden_by_state under explicit state."""
+        default = call_tool(
+            server,
+            "cruxible_inspect_entity",
+            {
+                "instance_id": governed_read_instance_id,
+                "entity_type": "Part",
+                "entity_id": "BP-1",
+                "depth": 1,
+            },
+        )
+        assert default["state"] == "all"
+        assert default["edges_hidden_by_state"] == 0
+        assert {edge["to_id"] for edge in default["edges"]} == {"V-1", "V-2", "V-3"}
+        pending = next(edge for edge in default["edges"] if edge["to_id"] == "V-1")
+        assert pending["metadata"]["assertion"]["review"]["status"] == "pending"
+        live = call_tool(
+            server,
+            "cruxible_inspect_entity",
+            {
+                "instance_id": governed_read_instance_id,
+                "entity_type": "Part",
+                "entity_id": "BP-1",
+                "depth": 1,
+                "state": "live",
+            },
+        )
+        assert live["state"] == "live"
+        assert {edge["to_id"] for edge in live["edges"]} == {"V-2"}
+        assert live["edges_hidden_by_state"] == 2
+
 
 class TestMcpProfileOverrides:
     def test_env_override_restores_standard(

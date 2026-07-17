@@ -130,8 +130,11 @@ and durable state notes should remain distinct relationships.
 
 Reads are gated at one read-visibility state, set with the `--state` flag (CLI),
 the `state` MCP/HTTP parameter, or the `relationship_state` query-config field
-(default `live`). The SAME selector gates **entities** (by lifecycle) and
-**relationships** (by review AND lifecycle), so one flag controls every surface:
+(default `live` for named queries; inspection surfaces — `entity inspect`,
+including the expanded neighborhood read, and edge listing — default to `all`:
+every stored edge with its markers, filtered only on request). The SAME
+selector gates **entities** (by lifecycle) and **relationships** (by review AND
+lifecycle), so one flag controls every surface:
 
 | State | Entities (lifecycle) | Relationships (review + lifecycle) |
 |-------|----------------------|------------------------------------|

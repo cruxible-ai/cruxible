@@ -3762,7 +3762,9 @@ class TestReadProfiles:
             assert list(local_edge) == list(remote_edge)
         # The expanded shape is present with governance markers intact.
         # (read_revision/continuation_token: deliberate
-        # wi-read-revision-and-continuation envelope extension.)
+        # wi-read-revision-and-continuation envelope extension;
+        # edges_hidden_by_state: deliberate wi-inspect-state-default-asymmetry
+        # extension — always present, 0 under state=all.)
         assert list(local_payload) == [
             "found",
             "entity_type",
@@ -3777,6 +3779,7 @@ class TestReadProfiles:
             "truncation_reasons",
             "nodes_returned",
             "edges_returned",
+            "edges_hidden_by_state",
             "read_revision",
             "continuation_token",
         ]
@@ -3816,3 +3819,66 @@ class TestReadProfiles:
         assert "Depth 2 nodes" in result.output
         assert "Edges" in result.output
         assert "Depth: 2" in result.output
+
+    def test_inspect_neighborhood_default_shows_pending_edges_with_markers(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        """Op-1 regression: default expanded read follows the inspection
+        contract — pending edges visible and marked, nothing hidden."""
+        self._seed_pending_edge(populated_instance)
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "entity",
+                "inspect",
+                "--type",
+                "Vehicle",
+                "--id",
+                "V-2024-CIVIC-EX",
+                "--depth",
+                "1",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["state"] == "all"
+        assert payload["edges_hidden_by_state"] == 0
+        pending_edges = [
+            edge
+            for edge in payload["edges"]
+            if edge["metadata"].get("assertion", {}).get("review", {}).get("status") == "pending"
+        ]
+        assert len(pending_edges) == 1
+        assert pending_edges[0]["from_id"] == "BP-1001"
+
+    def test_inspect_neighborhood_explicit_live_reports_hidden_count_and_hint(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        self._seed_pending_edge(populated_instance)
+        cli_args = [
+            "entity",
+            "inspect",
+            "--type",
+            "Vehicle",
+            "--id",
+            "V-2024-CIVIC-EX",
+            "--depth",
+            "1",
+            "--state",
+            "live",
+        ]
+        as_json = _chdir_run(runner, populated_instance.root, [*cli_args, "--json"])
+        assert as_json.exit_code == 0, as_json.output
+        payload = json.loads(as_json.output)
+        assert payload["state"] == "live"
+        assert [n["entity_id"] for n in payload["nodes"]] == ["BP-1002"]
+        assert payload["edges_hidden_by_state"] == 1
+        table = _chdir_run(runner, populated_instance.root, cli_args)
+        assert table.exit_code == 0, table.output
+        assert "1 edge(s) hidden by state=live; pass --state all to see them" in table.output

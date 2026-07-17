@@ -662,9 +662,14 @@ def register_tools(server: FastMCP) -> list[str]:
         `relationship_type`), `target_types` (only expand into/return these
         entity types; the anchor is exempt), `direction`. `state` selects
         relationship visibility exactly like named-query traversal
-        (live/accepted/all/not-live/pending/reviewable; default live) —
-        pending is the NORM for governed overlays, so pass
-        `state='reviewable'` or `'pending'` to see edges awaiting review.
+        (live/accepted/all/not-live/pending/reviewable; default all —
+        every stored edge with its review/lifecycle markers, matching the
+        inspection contract of the single-hop read and `list edges`).
+        An explicit non-`all` state filters exactly like traversal and the
+        response reports `edges_hidden_by_state`: edges at the explored
+        frontier that passed every other filter but were hidden by state
+        alone (no budget consumed; regions behind hidden edges are not
+        speculatively counted).
         `projection` (repeatable) trims neighbor properties to the named
         ones; `profile` still shapes metadata. Providing any of these
         returns the expanded nodes/edges shape; a bare call keeps the

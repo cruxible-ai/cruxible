@@ -24,6 +24,8 @@ from tests.test_cli.conftest import CAR_PARTS_YAML
 # Deliberate wi-read-revision-and-continuation extension: every read result
 # now carries read_revision (state freshness marker), and the expanded shape
 # carries continuation_token (present iff budget-truncated and resumable).
+# Deliberate wi-inspect-state-default-asymmetry extension: the expanded shape
+# always carries edges_hidden_by_state (0 under state=all, the default).
 EXPANDED_KEYS = [
     "found",
     "entity_type",
@@ -38,6 +40,7 @@ EXPANDED_KEYS = [
     "truncation_reasons",
     "nodes_returned",
     "edges_returned",
+    "edges_hidden_by_state",
     "read_revision",
     "continuation_token",
 ]
@@ -200,20 +203,34 @@ class TestExpandedShape:
         second = _inspect(app_client, seeded_instance, depth=2, state="all")
         assert first == second
 
-    def test_state_defaults_to_live_and_hides_pending(
+    def test_state_defaults_to_all_and_shows_pending_with_markers(
         self, app_client: TestClient, seeded_instance: str
     ) -> None:
+        """Inspection contract: every stored edge by default, markers intact."""
         payload = _inspect(app_client, seeded_instance, depth=1)
+        assert payload["state"] == "all"
+        assert [n["entity_id"] for n in payload["nodes"]] == ["V-1", "V-2"]
+        assert payload["edges_hidden_by_state"] == 0
+        pending = next(e for e in payload["edges"] if e["to_id"] == "V-1")
+        assert pending["metadata"]["assertion"]["review"]["status"] == "pending"
+
+    def test_explicit_live_hides_pending_and_reports_hidden_count(
+        self, app_client: TestClient, seeded_instance: str
+    ) -> None:
+        payload = _inspect(app_client, seeded_instance, depth=1, state="live")
         assert payload["state"] == "live"
         assert [n["entity_id"] for n in payload["nodes"]] == ["V-2"]
+        assert payload["edges_hidden_by_state"] == 1
 
     def test_state_pending_and_reviewable_surface_the_pending_edge(
         self, app_client: TestClient, seeded_instance: str
     ) -> None:
         pending = _inspect(app_client, seeded_instance, depth=1, state="pending")
         assert [n["entity_id"] for n in pending["nodes"]] == ["V-1"]
+        assert pending["edges_hidden_by_state"] == 1
         reviewable = _inspect(app_client, seeded_instance, depth=1, state="reviewable")
         assert [n["entity_id"] for n in reviewable["nodes"]] == ["V-1", "V-2"]
+        assert reviewable["edges_hidden_by_state"] == 0
 
     def test_single_hop_truncation_is_visible(
         self, app_client: TestClient, seeded_instance: str
