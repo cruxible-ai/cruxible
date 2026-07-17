@@ -3041,21 +3041,29 @@ cruxible source dereference \
 
 An opt-in prototype (promotion is gated on the RuneBench pilot). When enabled
 — `CRUXIBLE_WORKING_SET=1` in the environment, or `--ws` on a supported
-`--json` read (`query run`, `entity get`, `entity inspect`, `list entities`,
-`list edges`, `sample`) — every entity or edge those reads return is ALSO
-appended, normalized through the compact profile serializer, to
-`~/.cruxible/working-set/<instance-key>/records.jsonl` (instance key = daemon
-instance id in server mode, a hash of the resolved instance root in local
-mode). Re-finding something then costs a grep instead of a re-query:
-`rg BP-1001 "$(cruxible ws path)"`.
+`--json` read (`query run`, `entity get`, `entity inspect`,
+`relationship get`, `list entities`, `list edges`, `sample`) — every entity
+or edge those reads return is ALSO appended, normalized through the compact
+profile serializer, to
+`~/.cruxible/working-set/<instance-key>/records.jsonl`. In authenticated
+server mode the instance key is credential-scoped —
+`<instance-id>-cred-<scope>`, where the scope is a salted hash of the bearer
+credential (random salt persisted once at
+`~/.cruxible/working-set/.scope-salt`, mode 0600; no token material is ever
+written) — so different credentials on the same host never share records.
+Tokenless server mode uses the bare instance id; local mode uses a hash of
+the resolved instance root (per-OS-user via `~`). Re-finding something then
+costs a grep instead of a re-query: `rg BP-1001 "$(cruxible ws path)"`.
 
 Cache contract:
 - Line 1 of every file is a `#`-prefixed header marking the cache
   NON-AUTHORITATIVE; `jq`/`rg` users skip it naturally.
 - One JSON object per line: `kind` (`entity`|`edge`), identity fields,
   `props` (compact-profile slice), `lifecycle`, `review`, `read_revision`
-  (`null` = unverifiable, reported as `unknown` by `ws verify`), `as_of`,
-  `receipt_refs`, `source_cmd`.
+  (`null` = unverifiable, reported as `unknown` by `ws verify`),
+  `config_digest` (the active config digest at capture time; missing digests
+  are classified `unknown`, never fresh), `as_of`, `receipt_refs`,
+  `source_cmd`.
 - Appends dedupe by identity: newest `read_revision` wins, ties go to the
   latest `as_of`.
 - The cache is NEVER read by any write path or any other CLI command; capture
@@ -3068,7 +3076,7 @@ Cache contract:
 | --- | --- |
 | `path` | Print the records file path for the current context. |
 | `status` | Record counts, file size, cached-vs-current revision spread. |
-| `verify` | Classify records fresh/stale/unknown against the live revision. |
+| `verify` | Classify records fresh/stale/unknown against the live revision AND active config digest. |
 | `refresh` | Re-fetch stale records; drop deleted targets. |
 | `clear` | Delete the current context's records file. |
 
@@ -3116,7 +3124,7 @@ Cache contract:
 
 **Usage:** `cruxible ws verify [OPTIONS]`
 
-**Purpose:** Verify cached records against the current instance read revision.
+**Purpose:** Verify cached records against the current instance read revision and active config digest.
 
 **Options And Arguments:**
 
@@ -3126,8 +3134,10 @@ Cache contract:
 
 **Output And Side Effects:**
 - Read-only. Classifies every cached record: `fresh` (cached `read_revision`
-  equals the current instance revision), `stale` (any other concrete
-  revision), `unknown` (no revision recorded).
+  equals the current instance revision AND the cached `config_digest` matches
+  the active config), `stale` (any other concrete revision, or a config-digest
+  mismatch — reported as "config changed"), `unknown` (no revision or no
+  config digest recorded).
 - Script-friendly exit code: `0` when nothing is stale, `1` when any record
   is stale (unknown records alone do not fail verification).
 
