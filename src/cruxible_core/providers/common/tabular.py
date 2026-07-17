@@ -262,7 +262,10 @@ def _parse_file(file_path: Path, *, root: Path, options: _TabularOptions) -> lis
         ]
     if extension in {".jsonl", ".ndjson"}:
         rows = _read_json_lines(file_path)
-        frame = pl.DataFrame(rows) if rows else pl.DataFrame()
+        # Scan all rows for schema inference: optional columns can be null
+        # for the first N rows, and the default 100-row window then locks a
+        # Null dtype that any later concrete value fails to append to.
+        frame = pl.DataFrame(rows, infer_schema_length=None) if rows else pl.DataFrame()
         return [
             _table_from_frame(
                 frame,
@@ -277,7 +280,10 @@ def _parse_file(file_path: Path, *, root: Path, options: _TabularOptions) -> lis
         ]
     if extension == ".json":
         rows = _read_json_rows(file_path)
-        frame = pl.DataFrame(rows) if rows else pl.DataFrame()
+        # Scan all rows for schema inference: optional columns can be null
+        # for the first N rows, and the default 100-row window then locks a
+        # Null dtype that any later concrete value fails to append to.
+        frame = pl.DataFrame(rows, infer_schema_length=None) if rows else pl.DataFrame()
         return [
             _table_from_frame(
                 frame,

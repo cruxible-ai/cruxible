@@ -118,3 +118,22 @@ def test_source_diff_reports_added_changed_removed_rows() -> None:
         "removed": 1,
         "unchanged": 0,
     }
+
+
+def test_load_tabular_artifact_bundle_infers_schema_past_leading_nulls(tmp_path: Path) -> None:
+    """Optional columns null beyond polars' default 100-row window still load."""
+    import json
+
+    rows = [{"id": f"row-{i:04d}", "extra": None} for i in range(150)]
+    rows.append({"id": "row-0150", "extra": '{"nested": 1}'})
+    (tmp_path / "sparse.json").write_text(json.dumps(rows))
+
+    payload = load_tabular_artifact_bundle(
+        {"expected_tables": ["sparse"]},
+        _provider_context(tmp_path),
+    )
+
+    table = payload["tables"]["sparse"]
+    assert len(table["rows"]) == 151
+    assert table["rows"][-1]["extra"] == '{"nested": 1}'
+    assert table["rows"][0]["extra"] is None
