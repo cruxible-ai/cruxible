@@ -76,7 +76,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need to discover the named queries available in the active "
         "config. Returns bounded summaries (name, entry point, required params); "
         "call cruxible_describe_query for one query's full definition. Pass "
-        "detail='full' only when you truly need every definition expanded."
+        "detail='full' only when you truly need every definition expanded. "
+        "If truncated is true, pass the returned continuation_token back as "
+        "continuation to fetch the next page."
     ),
     "cruxible_describe_query": (
         "Use when you need the purpose, parameters, and result shape for one named query."
@@ -116,7 +118,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "entity_type and optional fields to reduce payload size; use where for "
         "bounded property predicates such as {'status': {'eq': 'active'}}. Entity "
         "and edge items default to the compact output profile; ask for "
-        "profile='standard' or 'full' when you need provenance or actor context."
+        "profile='standard' or 'full' when you need provenance or actor context. "
+        "Always check truncated: when true, pass the returned continuation_token "
+        "back as continuation (same filters) to fetch the next page; a stale-"
+        "continuation error means state changed - restart from the first page. "
+        "read_revision on the envelope is the state freshness marker; receipts "
+        "prove computation, never freshness."
     ),
     "cruxible_evaluate": (
         "Use when you need graph quality findings such as orphaned entities, "
@@ -163,7 +170,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "are the norm in governed overlays, so pass state='reviewable' or "
         "'pending' to include edges awaiting review). projection trims neighbor "
         "properties; payloads default to the compact output profile — ask for "
-        "profile='standard' or 'full' when you need provenance or actor context."
+        "profile='standard' or 'full' when you need provenance or actor context. "
+        "When the expanded read reports truncated on a budget, pass the returned "
+        "continuation_token back as continuation (same parameters) to resume the "
+        "expansion where it stopped; a stale-continuation error means state "
+        "changed - restart the read."
     ),
     "cruxible_inspect_entity_history": (
         "Use when you need receipt-derived property changes for one entity type or entity."

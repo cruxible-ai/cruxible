@@ -21,6 +21,9 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import reset_registry
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
+# Deliberate wi-read-revision-and-continuation extension: every read result
+# now carries read_revision (state freshness marker), and the expanded shape
+# carries continuation_token (present iff budget-truncated and resumable).
 EXPANDED_KEYS = [
     "found",
     "entity_type",
@@ -35,6 +38,8 @@ EXPANDED_KEYS = [
     "truncation_reasons",
     "nodes_returned",
     "edges_returned",
+    "read_revision",
+    "continuation_token",
 ]
 
 LEGACY_KEYS = [
@@ -45,6 +50,7 @@ LEGACY_KEYS = [
     "metadata",
     "neighbors",
     "total_neighbors",
+    "read_revision",
 ]
 
 

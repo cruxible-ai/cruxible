@@ -3539,7 +3539,15 @@ class TestReadProfiles:
         assert "provenance" not in pending["metadata"]
         assert pending["properties"] == {"verified": True, "source": "catalog"}
         # Envelope survives untouched.
-        assert set(payload) == {"items", "total", "limit", "offset", "truncated"}
+        assert set(payload) == {
+            "items",
+            "total",
+            "limit",
+            "offset",
+            "truncated",
+            "read_revision",
+            "continuation_token",
+        }
 
     def test_list_entities_profile_compact_bounds_properties(
         self,
@@ -3725,6 +3733,7 @@ class TestReadProfiles:
                 max_nodes=None,
                 max_edges=None,
                 profile=None,
+                continuation=None,
             ):
                 assert depth == 2
                 assert state == "all"
@@ -3752,6 +3761,8 @@ class TestReadProfiles:
         ):
             assert list(local_edge) == list(remote_edge)
         # The expanded shape is present with governance markers intact.
+        # (read_revision/continuation_token: deliberate
+        # wi-read-revision-and-continuation envelope extension.)
         assert list(local_payload) == [
             "found",
             "entity_type",
@@ -3766,6 +3777,8 @@ class TestReadProfiles:
             "truncation_reasons",
             "nodes_returned",
             "edges_returned",
+            "read_revision",
+            "continuation_token",
         ]
         assert local_payload["nodes"], "expanded read returned no nodes"
         pending_edges = [

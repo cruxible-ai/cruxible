@@ -644,12 +644,19 @@ class ValidateResult(BaseModel):
 
 
 class ListEnvelopeFields(BaseModel):
-    """Standard list envelope carried by every top-level list result."""
+    """Standard list envelope carried by every top-level list result.
+
+    ``read_revision`` is the instance's monotonic state revision at read time —
+    the freshness marker for pagination and caching. Receipts prove a
+    computation happened; they never prove its inputs are still current, so
+    freshness checks must compare ``read_revision``, not receipt IDs.
+    """
 
     total: int
     limit: int | None = None
     offset: int = 0
     truncated: bool = False
+    read_revision: int | None = None
 
 
 class SourceArtifactListResult(ListEnvelopeFields):
@@ -760,6 +767,9 @@ class QueryToolResult(BaseModel):
     relationship_state: QueryVisibilityState = "live"
     param_hints: "QueryParamHints | None" = None
     policy_summary: dict[str, int] = Field(default_factory=dict)
+    # Monotonic state revision at read time; receipts prove computation,
+    # never freshness — compare read_revision to detect staleness.
+    read_revision: int | None = None
 
 
 class InlineQueryDefinition(BaseModel):
@@ -866,6 +876,10 @@ class OutcomeProfileResult(BaseModel):
 
 class ListResult(ListEnvelopeFields):
     items: list[dict[str, Any]]
+    # Present iff truncated and resumable: opaque cursor for the next page,
+    # bound to this instance/config/read_revision/filter set. Replay after a
+    # mutation raises a typed 409 StaleContinuationError — restart the read.
+    continuation_token: str | None = None
 
 
 class TraceListResult(ListEnvelopeFields):
@@ -1025,6 +1039,7 @@ class GetEntityResult(BaseModel):
     entity_id: str
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    read_revision: int | None = None
 
 
 class GetRelationshipResult(BaseModel):
@@ -1066,6 +1081,7 @@ class StatsResult(BaseModel):
     relationship_counts: dict[str, int] = Field(default_factory=dict)
     status_counts: dict[str, dict[str, int]] = Field(default_factory=dict)
     head_snapshot_id: str | None = None
+    read_revision: int | None = None
 
 
 class ServerInfoResult(BaseModel):
@@ -1128,10 +1144,12 @@ class QueryDefinitionSummary(BaseModel):
 
 class QueryListResult(ListEnvelopeFields):
     items: list[QueryDefinitionSummary] = Field(default_factory=list)
+    continuation_token: str | None = None
 
 
 class QueryListDetailResult(ListEnvelopeFields):
     items: list[NamedQueryInfoResult] = Field(default_factory=list)
+    continuation_token: str | None = None
 
 
 class InspectNeighborResult(BaseModel):
@@ -1151,6 +1169,7 @@ class InspectEntityResult(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     neighbors: list[InspectNeighborResult] = Field(default_factory=list)
     total_neighbors: int = 0
+    read_revision: int | None = None
 
 
 NeighborhoodTruncationReason = Literal["node_budget", "edge_budget", "depth"]
@@ -1208,6 +1227,12 @@ class InspectNeighborhoodResult(BaseModel):
     truncation_reasons: list[NeighborhoodTruncationReason] = Field(default_factory=list)
     nodes_returned: int = 0
     edges_returned: int = 0
+    # Monotonic state revision at read time; receipts prove computation,
+    # never freshness — compare read_revision to detect staleness.
+    read_revision: int | None = None
+    # Present iff truncated on a budget (node_budget/edge_budget) — resume the
+    # BFS with `continuation=...`; depth-horizon truncation is not resumable.
+    continuation_token: str | None = None
 
 
 class PropertyChangeItem(BaseModel):

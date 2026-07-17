@@ -184,6 +184,7 @@ async def list_resources(
     fields: list[str] | None = Query(default=None),
     relationship_state: contracts.QueryVisibilityState | None = None,
     profile: contracts.ReadProfile = Query(default="standard"),
+    continuation: str | None = None,
 ) -> contracts.ListResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return api.list_resources(
@@ -201,6 +202,7 @@ async def list_resources(
         fields=fields,
         relationship_state=relationship_state,
         profile=profile,
+        continuation=continuation,
     )
 
 
@@ -223,12 +225,14 @@ async def list_queries(
     detail: contracts.QueryListDetail = Query(default="summary"),
     limit: int | None = Query(default=None, ge=1),
     offset: int = Query(default=0, ge=0),
+    continuation: str | None = None,
 ) -> contracts.QueryListResult | contracts.QueryListDetailResult:
     return api.list_queries(
         resolve_server_instance_id(instance_id),
         detail=detail,
         limit=limit,
         offset=offset,
+        continuation=continuation,
     )
 
 
@@ -329,10 +333,13 @@ async def inspect_entity(
     max_nodes: int | None = Query(None, ge=1, le=500),
     max_edges: int | None = Query(None, ge=1, le=1000),
     profile: contracts.ReadProfile = Query(default="standard"),
+    continuation: str | None = None,
 ) -> contracts.InspectEntityResult | contracts.InspectNeighborhoodResult:
     """Single-hop inspect, or the expanded bounded-neighborhood read when any
     neighborhood parameter (`depth`, `relationship_types`, `target_types`,
-    `state`, `projection`, `max_nodes`, `max_edges`) is provided."""
+    `state`, `projection`, `max_nodes`, `max_edges`) is provided.
+    `continuation` resumes a budget-truncated neighborhood read; repeat the
+    same structural parameters with the returned `continuation_token`."""
     return api.inspect_entity(
         resolve_server_instance_id(instance_id),
         entity_type,
@@ -348,6 +355,7 @@ async def inspect_entity(
         max_nodes=max_nodes,
         max_edges=max_edges,
         profile=profile,
+        continuation=continuation,
     )
 
 

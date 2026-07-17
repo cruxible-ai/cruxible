@@ -138,6 +138,9 @@ VOLATILE_LEAF_KEYS = {
     "receipt_id",
     "duration_ms",
     "head_snapshot_id",
+    # wi-read-revision-and-continuation: monotonic state revision — value is
+    # the fixture's mutation count, structurally pinned but value-normalized.
+    "read_revision",
 }
 
 
@@ -249,12 +252,17 @@ UNREVIEWED_ASSERTION_FULL = {
     "group_override": False,
 }
 
+# Deliberate wi-read-revision-and-continuation envelope extension:
+# read_revision on every list envelope; continuation_token on ListResult
+# (present iff truncated and resumable).
 LIST_ENTITIES_STANDARD = {
     "total": 1,
     "limit": 50,
     "offset": 0,
     "truncated": False,
+    "read_revision": "<varies>",
     "items": [PART_STANDARD],
+    "continuation_token": None,
 }
 
 # Live edge (V-2) seeded first (edge_key 0), pending edge (V-1) second
@@ -264,6 +272,7 @@ LIST_EDGES_STANDARD = {
     "limit": 50,
     "offset": 0,
     "truncated": False,
+    "read_revision": "<varies>",
     "items": [
         {
             "from_type": "Part",
@@ -292,6 +301,7 @@ LIST_EDGES_STANDARD = {
             },
         },
     ],
+    "continuation_token": None,
 }
 
 SAMPLE_STANDARD = {
@@ -299,6 +309,7 @@ SAMPLE_STANDARD = {
     "limit": 5,
     "offset": 0,
     "truncated": False,
+    "read_revision": "<varies>",
     "items": [PART_STANDARD],
     "entity_type": "Part",
 }
@@ -335,6 +346,7 @@ INSPECT_STANDARD = {
         },
     ],
     "total_neighbors": 2,
+    "read_revision": "<varies>",
 }
 
 QUERY_EXECUTION_OPTIONS = {
@@ -485,6 +497,7 @@ QUERY_RUN_STANDARD = {
         "example_ids": ["BP-1"],
     },
     "policy_summary": {},
+    "read_revision": "<varies>",
 }
 
 GET_ENTITY_STANDARD = {
@@ -493,6 +506,7 @@ GET_ENTITY_STANDARD = {
     "entity_id": "BP-1",
     "properties": PART_PROPERTIES,
     "metadata": {"actor_context": NORMALIZED_ACTOR_CONTEXT},
+    "read_revision": "<varies>",
 }
 
 
@@ -585,12 +599,13 @@ class TestCompactProfile:
             f"/api/v1/{seeded_instance}/entities/Part/BP-1",
             params={"profile": "compact"},
         ).json()
-        assert compact == {
+        assert _normalized(compact) == {
             "found": True,
             "entity_type": "Part",
             "entity_id": "BP-1",
             "properties": {"name": "Ceramic Brake Pads"},
             "metadata": {},
+            "read_revision": "<varies>",
         }
 
     def test_compact_edge_keeps_identity_and_review_markers(
@@ -600,7 +615,15 @@ class TestCompactProfile:
             f"/api/v1/{seeded_instance}/list/edges", params={"profile": "compact"}
         ).json()
         # Envelope fields are never trimmed.
-        assert set(edges) == {"items", "total", "limit", "offset", "truncated"}
+        assert set(edges) == {
+            "items",
+            "total",
+            "limit",
+            "offset",
+            "truncated",
+            "read_revision",
+            "continuation_token",
+        }
         edge = edges["items"][0]
         assert edge["relationship_type"] == "fits"
         assert edge["from_type"] == "Part"

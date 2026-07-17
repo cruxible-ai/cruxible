@@ -19,6 +19,7 @@ from cruxible_core.errors import (
     IngestionError,
     InstanceNotFoundError,
     InstanceScopeError,
+    InvalidContinuationError,
     MutationError,
     OutcomeNotFoundError,
     OwnershipError,
@@ -30,6 +31,7 @@ from cruxible_core.errors import (
     RelationshipNotFoundError,
     RuntimeCredentialNotFoundError,
     SourceArtifactNotFoundError,
+    StaleContinuationError,
     TraceNotFoundError,
 )
 
@@ -86,9 +88,9 @@ def _status_for_error(exc: CoreError) -> int:
         ),
     ):
         return 404
-    if isinstance(exc, RelationshipAmbiguityError):
+    if isinstance(exc, (RelationshipAmbiguityError, StaleContinuationError)):
         return 409
-    if isinstance(exc, ConstraintViolationError):
+    if isinstance(exc, (ConstraintViolationError, InvalidContinuationError)):
         return 422
     if isinstance(exc, MutationError):
         return 500
@@ -146,6 +148,12 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["source_artifact_id"] = exc.source_artifact_id
     if isinstance(exc, RuntimeCredentialNotFoundError):
         context["credential_id"] = exc.credential_id
+    if isinstance(exc, InvalidContinuationError):
+        context["reason"] = exc.reason
+    if isinstance(exc, StaleContinuationError):
+        context["reason"] = exc.reason
+        context["token_read_revision"] = exc.token_read_revision
+        context["current_read_revision"] = exc.current_read_revision
 
     body = ErrorResponse(
         error_type=exc.__class__.__name__,

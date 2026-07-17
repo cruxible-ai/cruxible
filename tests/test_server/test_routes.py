@@ -1336,7 +1336,16 @@ def test_source_artifact_read_routes_list_paginate_and_get_text(
 
     empty = app_client.get(f"/api/v1/{instance_id}/source-artifacts")
     assert empty.status_code == 200
-    assert empty.json() == {"items": [], "total": 0, "limit": None, "offset": 0, "truncated": False}
+    assert empty.json() == {
+        "items": [],
+        "total": 0,
+        "limit": None,
+        "offset": 0,
+        "truncated": False,
+        # wi-read-revision-and-continuation: state freshness marker on every
+        # list envelope (receipts prove computation, never freshness).
+        "read_revision": 1,
+    }
 
     for artifact_id, source_path in (
         ("source_b", "docs/source-b.md"),

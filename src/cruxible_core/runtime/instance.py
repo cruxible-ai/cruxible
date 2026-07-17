@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 InstanceMode = Literal["dev", "governed"]
 _HEAD_SNAPSHOT_STATE_KEY = "head_snapshot_id"
+_READ_REVISION_STATE_KEY = "read_revision"
 _ORIGIN_SNAPSHOT_STATE_KEY = "origin_snapshot_id"
 CONFIG_INTEGRITY_OVERRIDE_ENV = "CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH"
 
@@ -309,6 +310,17 @@ class CruxibleInstance(InstanceProtocol):
         """Return the current head snapshot identifier, if any."""
         value = self._get_snapshot_state(_HEAD_SNAPSHOT_STATE_KEY)
         return value if isinstance(value, str) else None
+
+    def get_read_revision(self) -> int:
+        """Return the monotonic read revision for this instance's state DB.
+
+        Advanced by the storage layer inside every state-mutating commit and
+        never reset (snapshot restores keep counting forward). This is the
+        freshness marker for read envelopes and continuation tokens; receipts
+        prove computation, never freshness.
+        """
+        value = self._get_snapshot_state(_READ_REVISION_STATE_KEY)
+        return int(value) if isinstance(value, int) else 0
 
     def get_upstream_metadata(self) -> UpstreamMetadata | None:
         """Return typed upstream metadata for release-backed overlay instances."""

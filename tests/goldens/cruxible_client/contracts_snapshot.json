@@ -4547,6 +4547,26 @@
             "type": "integer"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total": {
           "has_default": false,
           "has_default_factory": false,
@@ -4597,6 +4617,18 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total": {
             "title": "Total",
@@ -4992,6 +5024,26 @@
             "type": "integer"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total": {
           "has_default": false,
           "has_default_factory": false,
@@ -5042,6 +5094,18 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total": {
             "title": "Total",
@@ -6134,6 +6198,26 @@
             "type": "integer"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total": {
           "default": 0,
           "default_json_serializable": true,
@@ -6318,6 +6402,18 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total": {
             "default": 0,
@@ -7938,6 +8034,26 @@
             "title": "Properties",
             "type": "object"
           }
+        },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
         }
       },
       "json_schema": {
@@ -7963,6 +8079,18 @@
             "additionalProperties": true,
             "title": "Properties",
             "type": "object"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           }
         },
         "required": [
@@ -9952,6 +10080,26 @@
             "type": "object"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total_neighbors": {
           "default": 0,
           "default_json_serializable": true,
@@ -10048,6 +10196,18 @@
             "additionalProperties": true,
             "title": "Properties",
             "type": "object"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total_neighbors": {
             "default": 0,
@@ -10207,6 +10367,26 @@
     },
     "InspectNeighborhoodResult": {
       "fields": {
+        "continuation_token": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "continuation_token",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Continuation Token"
+          }
+        },
         "depth": {
           "default": 1,
           "default_json_serializable": true,
@@ -10322,6 +10502,26 @@
             "additionalProperties": true,
             "title": "Properties",
             "type": "object"
+          }
+        },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           }
         },
         "state": {
@@ -10472,6 +10672,18 @@
         },
         "description": "Expanded bounded-neighborhood inspect result.\n\nOpt-in shape: returned by the inspect-entity surface when any\nneighborhood parameter (``depth``, ``relationship_types``,\n``target_types``, ``state``, ``projection``, ``max_nodes``,\n``max_edges``) is provided. Calls without them keep the legacy\n:class:`InspectEntityResult` single-hop shape bit-for-bit. The root\nentity card is the top-level ``properties``/``metadata``; ``nodes``\nholds non-root entities with their BFS depth.",
         "properties": {
+          "continuation_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Continuation Token"
+          },
           "depth": {
             "default": 1,
             "title": "Depth",
@@ -10522,6 +10734,18 @@
             "additionalProperties": true,
             "title": "Properties",
             "type": "object"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "state": {
             "default": "live",
@@ -12520,6 +12744,26 @@
             "type": "integer"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total": {
           "has_default": false,
           "has_default_factory": false,
@@ -12545,7 +12789,7 @@
         }
       },
       "json_schema": {
-        "description": "Standard list envelope carried by every top-level list result.",
+        "description": "Standard list envelope carried by every top-level list result.\n\n``read_revision`` is the instance's monotonic state revision at read time —\nthe freshness marker for pagination and caching. Receipts prove a\ncomputation happened; they never prove its inputs are still current, so\nfreshness checks must compare ``read_revision``, not receipt IDs.",
         "properties": {
           "limit": {
             "anyOf": [
@@ -12563,6 +12807,18 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total": {
             "title": "Total",
@@ -12633,6 +12889,26 @@
             "type": "integer"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total": {
           "has_default": false,
           "has_default_factory": false,
@@ -12683,6 +12959,18 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total": {
             "title": "Total",
@@ -12755,6 +13043,26 @@
             "type": "integer"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total": {
           "has_default": false,
           "has_default_factory": false,
@@ -12806,6 +13114,18 @@
             "title": "Offset",
             "type": "integer"
           },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          },
           "total": {
             "title": "Total",
             "type": "integer"
@@ -12830,6 +13150,26 @@
     },
     "ListResult": {
       "fields": {
+        "continuation_token": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "continuation_token",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Continuation Token"
+          }
+        },
         "items": {
           "has_default": false,
           "has_default_factory": false,
@@ -12877,6 +13217,26 @@
             "type": "integer"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total": {
           "has_default": false,
           "has_default_factory": false,
@@ -12903,6 +13263,18 @@
       },
       "json_schema": {
         "properties": {
+          "continuation_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Continuation Token"
+          },
           "items": {
             "items": {
               "additionalProperties": true,
@@ -12927,6 +13299,18 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total": {
             "title": "Total",
@@ -16373,6 +16757,26 @@
     },
     "QueryListDetailResult": {
       "fields": {
+        "continuation_token": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "continuation_token",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Continuation Token"
+          }
+        },
         "items": {
           "has_default": false,
           "has_default_factory": true,
@@ -16417,6 +16821,26 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          }
+        },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           }
         },
         "total": {
@@ -16615,6 +17039,18 @@
           }
         },
         "properties": {
+          "continuation_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Continuation Token"
+          },
           "items": {
             "items": {
               "$ref": "#/$defs/NamedQueryInfoResult"
@@ -16639,6 +17075,18 @@
             "title": "Offset",
             "type": "integer"
           },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          },
           "total": {
             "title": "Total",
             "type": "integer"
@@ -16661,6 +17109,26 @@
     },
     "QueryListResult": {
       "fields": {
+        "continuation_token": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "continuation_token",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Continuation Token"
+          }
+        },
         "items": {
           "has_default": false,
           "has_default_factory": true,
@@ -16705,6 +17173,26 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          }
+        },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           }
         },
         "total": {
@@ -16809,6 +17297,18 @@
           }
         },
         "properties": {
+          "continuation_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Continuation Token"
+          },
           "items": {
             "items": {
               "$ref": "#/$defs/QueryDefinitionSummary"
@@ -16832,6 +17332,18 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total": {
             "title": "Total",
@@ -18526,6 +19038,26 @@
             "type": "object"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "receipt": {
           "has_default": false,
           "has_default_factory": false,
@@ -19170,6 +19702,18 @@
             },
             "title": "Policy Summary",
             "type": "object"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "receipt": {
             "anyOf": [
@@ -21307,6 +21851,26 @@
             "type": "integer"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total": {
           "has_default": false,
           "has_default_factory": false,
@@ -21361,6 +21925,18 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total": {
             "title": "Total",
@@ -22426,6 +23002,26 @@
             "type": "integer"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total": {
           "has_default": false,
           "has_default_factory": false,
@@ -22553,6 +23149,18 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total": {
             "title": "Total",
@@ -23222,6 +23830,26 @@
             "type": "integer"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total": {
           "has_default": false,
           "has_default_factory": false,
@@ -23345,6 +23973,18 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total": {
             "title": "Total",
@@ -25735,6 +26375,26 @@
             "title": "Head Snapshot Id"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "relationship_counts": {
           "has_default": false,
           "has_default_factory": true,
@@ -25793,6 +26453,18 @@
             ],
             "default": null,
             "title": "Head Snapshot Id"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "relationship_counts": {
             "additionalProperties": {
@@ -26119,6 +26791,26 @@
             "type": "integer"
           }
         },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
         "total": {
           "has_default": false,
           "has_default_factory": false,
@@ -26169,6 +26861,18 @@
             "default": 0,
             "title": "Offset",
             "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
           },
           "total": {
             "title": "Total",

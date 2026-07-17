@@ -517,11 +517,24 @@ def handle_list_queries(
     detail: contracts.QueryListDetail = "summary",
     limit: int | None = None,
     offset: int = 0,
+    continuation: str | None = None,
 ) -> contracts.QueryListResult | contracts.QueryListDetailResult:
     """List named-query definitions for an instance."""
     return _dispatch_remote_or_local(
-        lambda client: client.list_queries(instance_id, detail=detail, limit=limit, offset=offset),
-        lambda: api.list_queries(instance_id, detail=detail, limit=limit, offset=offset),
+        lambda client: client.list_queries(
+            instance_id,
+            detail=detail,
+            limit=limit,
+            offset=offset,
+            continuation=continuation,
+        ),
+        lambda: api.list_queries(
+            instance_id,
+            detail=detail,
+            limit=limit,
+            offset=offset,
+            continuation=continuation,
+        ),
     )
 
 
@@ -1027,6 +1040,7 @@ def handle_list(
     fields: list[str] | None = None,
     relationship_state: contracts.QueryVisibilityState | None = None,
     profile: contracts.ReadProfile | None = None,
+    continuation: str | None = None,
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
     resolved_profile = resolve_mcp_read_profile(profile)
@@ -1046,6 +1060,7 @@ def handle_list(
             fields=fields,
             relationship_state=relationship_state,
             profile=resolved_profile,
+            continuation=continuation,
         ),
         lambda: api.list_resources(
             instance_id,
@@ -1062,6 +1077,7 @@ def handle_list(
             fields=fields,
             relationship_state=relationship_state,
             profile=resolved_profile,
+            continuation=continuation,
         ),
     )
 
@@ -1177,6 +1193,7 @@ def handle_inspect_entity(
     max_nodes: int | None = None,
     max_edges: int | None = None,
     profile: contracts.ReadProfile | None = None,
+    continuation: str | None = None,
 ) -> contracts.InspectEntityResult | contracts.InspectNeighborhoodResult:
     """Inspect one entity and its bounded neighborhood."""
     resolved_profile = resolve_mcp_read_profile(profile)
@@ -1196,6 +1213,7 @@ def handle_inspect_entity(
             max_nodes=max_nodes,
             max_edges=max_edges,
             profile=resolved_profile,
+            continuation=continuation,
         ),
         lambda: api.inspect_entity(
             instance_id,
@@ -1212,6 +1230,7 @@ def handle_inspect_entity(
             max_nodes=max_nodes,
             max_edges=max_edges,
             profile=resolved_profile,
+            continuation=continuation,
         ),
     )
 

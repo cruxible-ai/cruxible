@@ -96,6 +96,11 @@ class ReadInspectNeighborhood:
     truncation_reasons: list[str] = field(default_factory=list)
     nodes_returned: int = 0
     edges_returned: int = 0
+    # Continuation support: cumulative budgets consumed by this read (the
+    # deterministic-replay cursor) and whether the truncation is resumable.
+    resumable: bool = False
+    cursor_nodes_seen: int = 0
+    cursor_edges_seen: int = 0
 
 
 @dataclass
@@ -348,6 +353,8 @@ def inspect_neighborhood(
     limit: int | None = None,
     max_nodes: int | None = None,
     max_edges: int | None = None,
+    resume_nodes_seen: int = 0,
+    resume_edges_seen: int = 0,
 ) -> ReadInspectNeighborhood:
     """Bounded, deterministic neighborhood read around one root entity.
 
@@ -363,6 +370,14 @@ def inspect_neighborhood(
     * ``limit`` (the legacy single-hop cap) maps to ``max_nodes`` when
       ``max_nodes`` is not given, so the previously silent cap now reports
       ``truncated`` with reason ``node_budget``.
+    * ``resume_nodes_seen``/``resume_edges_seen`` resume a budget-truncated
+      read: the BFS is deterministic, so the expansion is replayed with
+      cumulative budgets (``resume + page budget``) and the previously
+      returned prefix — reproduced exactly by a replay at the resume budgets —
+      is subtracted by identity. Pages are therefore disjoint per cursor and
+      their union converges on exactly the untruncated result set once the
+      cumulative budgets stop tripping. Depth-horizon truncation is NOT
+      resumable (a deeper read is a different read; pass a larger ``depth``).
     """
     resolved_depth = 1 if depth is None else depth
     if not 1 <= resolved_depth <= NEIGHBORHOOD_MAX_DEPTH:
@@ -398,6 +413,9 @@ def inspect_neighborhood(
         for name in target_types or []:
             _require_entity_type(config, name)
 
+    if resume_nodes_seen < 0 or resume_edges_seen < 0:
+        raise ConfigError("resume cursors must be non-negative")
+
     entity = graph.get_entity(entity_type, entity_id)
     if entity is None:
         return ReadInspectNeighborhood(
@@ -408,17 +426,66 @@ def inspect_neighborhood(
             state=resolved_state,
         )
 
-    expansion = graph.expand_neighborhood(
-        entity_type,
-        entity_id,
-        depth=resolved_depth,
-        direction=direction,
-        relationship_types=rel_filter or None,
-        target_types=sorted(set(target_types)) if target_types else None,
-        edge_visible=lambda metadata: relationship_matches_query_state(metadata, resolved_state),
-        max_nodes=resolved_max_nodes,
-        max_edges=resolved_max_edges,
-    )
+    def _expand(node_budget: int, edge_budget: int) -> Any:
+        return graph.expand_neighborhood(
+            entity_type,
+            entity_id,
+            depth=resolved_depth,
+            direction=direction,
+            relationship_types=rel_filter or None,
+            target_types=sorted(set(target_types)) if target_types else None,
+            edge_visible=lambda metadata: relationship_matches_query_state(
+                metadata, resolved_state
+            ),
+            max_nodes=node_budget,
+            max_edges=edge_budget,
+        )
+
+    # Cumulative budgets for this page. The replay budgets may exceed the
+    # per-call caps (validated above on the caller-supplied page budgets);
+    # per-page RETURNED sizes stay within the caps.
+    cursor_nodes_seen = resume_nodes_seen + resolved_max_nodes
+    cursor_edges_seen = resume_edges_seen + resolved_max_edges
+    expansion = _expand(cursor_nodes_seen, cursor_edges_seen)
+    expansion_nodes = expansion.nodes
+    expansion_edges = expansion.edges
+    if resume_nodes_seen or resume_edges_seen:
+        # Deterministic replay of everything earlier pages already covered,
+        # then subtract it by identity. Ordering of the remaining page items
+        # is preserved from the cumulative expansion.
+        previous = _expand(max(resume_nodes_seen, 1), max(resume_edges_seen, 1))
+        prev_node_ids = {
+            (node_entity.entity_type, node_entity.entity_id) for node_entity, _ in previous.nodes
+        }
+        prev_edge_ids = {
+            (
+                edge["relationship_type"],
+                edge["from_type"],
+                edge["from_id"],
+                edge["to_type"],
+                edge["to_id"],
+                edge["edge_key"],
+            )
+            for edge in previous.edges
+        }
+        expansion_nodes = [
+            (node_entity, node_depth)
+            for node_entity, node_depth in expansion_nodes
+            if (node_entity.entity_type, node_entity.entity_id) not in prev_node_ids
+        ]
+        expansion_edges = [
+            edge
+            for edge in expansion_edges
+            if (
+                edge["relationship_type"],
+                edge["from_type"],
+                edge["from_id"],
+                edge["to_type"],
+                edge["to_id"],
+                edge["edge_key"],
+            )
+            not in prev_edge_ids
+        ]
     nodes = [
         ReadNeighborhoodNode(
             entity=(
@@ -428,7 +495,7 @@ def inspect_neighborhood(
             ),
             depth=node_depth,
         )
-        for node_entity, node_depth in expansion.nodes
+        for node_entity, node_depth in expansion_nodes
     ]
     edges = [
         ReadNeighborhoodEdge(
@@ -441,7 +508,7 @@ def inspect_neighborhood(
             properties=dict(edge.get("properties", {})),
             metadata=dict(edge.get("metadata", {})),
         )
-        for edge in expansion.edges
+        for edge in expansion_edges
     ]
     entity_props = (
         entity_properties_with_identity(
@@ -467,6 +534,13 @@ def inspect_neighborhood(
         truncation_reasons=list(expansion.truncation_reasons),
         nodes_returned=len(nodes),
         edges_returned=len(edges),
+        # Budget truncation is resumable via deterministic replay; a pure
+        # depth-horizon clip is not (a deeper read is a different read).
+        resumable=any(
+            reason in ("node_budget", "edge_budget") for reason in expansion.truncation_reasons
+        ),
+        cursor_nodes_seen=cursor_nodes_seen,
+        cursor_edges_seen=cursor_edges_seen,
     )
 
 

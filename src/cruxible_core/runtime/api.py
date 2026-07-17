@@ -16,7 +16,11 @@ from pydantic import BaseModel, ValidationError
 from cruxible_client import contracts
 from cruxible_core.config.provenance import ConfigSourceManifest
 from cruxible_core.config.schema import schema_wire_payload
-from cruxible_core.errors import AuthenticationError, ConfigError
+from cruxible_core.errors import (
+    AuthenticationError,
+    ConfigError,
+    InvalidContinuationError,
+)
 from cruxible_core.governance.actors import (
     GovernedActorContext,
     dump_actor_context,
@@ -26,8 +30,17 @@ from cruxible_core.graph.provenance import (
     SOURCE_REF_ADD_RELATIONSHIP,
     SOURCE_REF_BATCH_DIRECT_WRITE,
 )
+from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kit_defaults import get_default_base_kit
 from cruxible_core.primitives import canonical_json, new_id
+from cruxible_core.query.continuation import (
+    ContinuationSurface,
+    compute_filter_hash,
+    cursor_int,
+    decode_continuation_token,
+    mint_continuation_token,
+    validate_continuation_token,
+)
 from cruxible_core.query.profiles import (
     neighborhood_edge_payload,
     neighborhood_node_payload,
@@ -36,6 +49,7 @@ from cruxible_core.query.profiles import (
     profile_inspect_neighbor,
     profile_list_items,
 )
+from cruxible_core.query.read_surface import neighborhood_requested
 from cruxible_core.query.types import dump_query_row
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
@@ -148,13 +162,49 @@ from cruxible_core.service.types import (
     RelationshipTargetInput,
     RelationshipWriteInput,
     SharedEvidenceInput,
+    list_truncated,
 )
 from cruxible_core.service.types import (
     InspectNeighborhoodResult as ServiceInspectNeighborhoodResult,
 )
 from cruxible_core.temporal import format_datetime, utc_now
+from cruxible_core.workflow.compiler import compute_lock_config_digest
 
 logger = logging.getLogger(__name__)
+
+
+def _instance_config_digest(instance: InstanceProtocol) -> str:
+    """Digest of the active config, used to bind continuation tokens."""
+    return compute_lock_config_digest(instance.load_config())
+
+
+def _accept_continuation(
+    continuation: str | None,
+    *,
+    surface: ContinuationSurface,
+    instance_id: str,
+    instance: InstanceProtocol,
+    filter_hash: str,
+) -> Any:
+    """Decode + validate a continuation token against the current read context.
+
+    Returns the decoded token (or ``None``). Structural/binding problems raise
+    :class:`InvalidContinuationError` (422); state or config drift since the
+    token was minted raises :class:`StaleContinuationError` (409).
+    """
+    if continuation is None:
+        return None
+    token = decode_continuation_token(continuation)
+    validate_continuation_token(
+        token,
+        surface=surface,
+        instance_key=instance_id,
+        config_digest=_instance_config_digest(instance),
+        read_revision=instance.get_read_revision(),
+        filter_hash=filter_hash,
+    )
+    return token
+
 
 WorkflowExecutionContractT = TypeVar(
     "WorkflowExecutionContractT",
@@ -1338,7 +1388,8 @@ def list_decision_records(
         total=result.total,
         limit=limit,
         offset=offset,
-        truncated=offset + len(records) < result.total,
+        truncated=list_truncated(total=result.total, offset=offset, returned=len(records)),
+        read_revision=instance.get_read_revision(),
     )
 
 
@@ -1369,7 +1420,8 @@ def list_decision_events(
         total=result.total,
         limit=limit,
         offset=offset,
-        truncated=offset + len(events) < result.total,
+        truncated=list_truncated(total=result.total, offset=offset, returned=len(events)),
+        read_revision=instance.get_read_revision(),
     )
 
 
@@ -1440,7 +1492,8 @@ def list_snapshots(
         total=result.total,
         limit=limit,
         offset=offset,
-        truncated=offset + len(snapshots) < result.total,
+        truncated=list_truncated(total=result.total, offset=offset, returned=len(snapshots)),
+        read_revision=instance.get_read_revision(),
     )
 
 
@@ -1524,7 +1577,12 @@ def query(
 
     include_receipt = limit is None and offset == 0
 
-    return _query_tool_result(result, include_receipt=include_receipt, profile=profile)
+    return _query_tool_result(
+        result,
+        include_receipt=include_receipt,
+        profile=profile,
+        read_revision=instance.get_read_revision(),
+    )
 
 
 def query_inline(
@@ -1556,7 +1614,12 @@ def query_inline(
     )
 
     include_receipt = limit is None
-    return _query_tool_result(result, include_receipt=include_receipt, profile=profile)
+    return _query_tool_result(
+        result,
+        include_receipt=include_receipt,
+        profile=profile,
+        read_revision=instance.get_read_revision(),
+    )
 
 
 def _query_tool_result(
@@ -1564,6 +1627,7 @@ def _query_tool_result(
     *,
     include_receipt: bool,
     profile: contracts.ReadProfile = "standard",
+    read_revision: int | None = None,
 ) -> contracts.QueryToolResult:
     return contracts.QueryToolResult(
         items=cast(
@@ -1603,6 +1667,7 @@ def _query_tool_result(
             if result.param_hints is not None
             else None
         ),
+        read_revision=read_revision,
     )
 
 
@@ -1662,7 +1727,8 @@ def list_traces(
         total=result.total,
         limit=limit,
         offset=offset,
-        truncated=offset + len(result.items) < result.total,
+        truncated=list_truncated(total=result.total, offset=offset, returned=len(result.items)),
+        read_revision=instance.get_read_revision(),
     )
 
 
@@ -1888,10 +1954,40 @@ def list_resources(
     offset: int = 0,
     relationship_state: contracts.QueryVisibilityState | None = None,
     profile: contracts.ReadProfile = "standard",
+    continuation: str | None = None,
 ) -> contracts.ListResult:
-    """List entities, edges, receipts, feedback, or outcomes."""
+    """List entities, edges, receipts, feedback, or outcomes.
+
+    ``continuation`` resumes a truncated page: pass the ``continuation_token``
+    from the previous response together with the SAME filters. Tokens are
+    bound to the instance, config, and ``read_revision`` — any mutation in
+    between raises a typed 409 ``StaleContinuationError`` (restart the read).
+    """
     check_permission("cruxible_list", instance_id=instance_id)
     instance = get_manager().get(instance_id)
+
+    filter_hash = compute_filter_hash(
+        {
+            "resource_type": resource_type,
+            "entity_type": entity_type,
+            "relationship_type": relationship_type,
+            "query_name": query_name,
+            "receipt_id": receipt_id,
+            "property_filter": property_filter,
+            "where": where,
+            "operation_type": operation_type,
+            "relationship_state": relationship_state,
+        }
+    )
+    token = _accept_continuation(
+        continuation,
+        surface="list",
+        instance_id=instance_id,
+        instance=instance,
+        filter_hash=filter_hash,
+    )
+    if token is not None:
+        offset = cursor_int(token, "offset")
 
     result = service_list(
         instance,
@@ -1919,12 +2015,25 @@ def list_resources(
     # Item-level trimming only: the list envelope below is never profiled.
     items = profile_list_items(items, resource_type, profile)
 
+    continuation_token: str | None = None
+    if result.truncated and result.items:
+        continuation_token = mint_continuation_token(
+            surface="list",
+            instance_key=instance_id,
+            config_digest=_instance_config_digest(instance),
+            read_revision=result.read_revision or 0,
+            filter_hash=filter_hash,
+            cursor={"offset": result.offset + len(result.items)},
+        )
+
     return contracts.ListResult(
         items=items,
         total=result.total,
-        limit=limit,
-        offset=offset,
-        truncated=offset + len(items) < result.total,
+        limit=result.limit,
+        offset=result.offset,
+        truncated=result.truncated,
+        read_revision=result.read_revision,
+        continuation_token=continuation_token,
     )
 
 
@@ -2060,24 +2169,50 @@ def list_queries(
     detail: contracts.QueryListDetail = "summary",
     limit: int | None = None,
     offset: int = 0,
+    continuation: str | None = None,
 ) -> contracts.QueryListResult | contracts.QueryListDetailResult:
     """List named-query definitions for an instance, ordered by name.
 
     Default `detail="summary"` returns bounded discovery cards; `detail="full"`
     returns complete definitions (byte-identical items to describe_query).
+    ``continuation`` resumes a truncated page; tokens are revision-bound and
+    replay after any mutation raises a typed 409 ``StaleContinuationError``.
     """
     check_permission("cruxible_list_queries", instance_id=instance_id)
     instance = get_manager().get(instance_id)
+    filter_hash = compute_filter_hash({"detail": detail})
+    token = _accept_continuation(
+        continuation,
+        surface="query_catalog",
+        instance_id=instance_id,
+        instance=instance,
+        filter_hash=filter_hash,
+    )
+    if token is not None:
+        offset = cursor_int(token, "offset")
     # Summaries never expose example IDs, so skip that per-query entity scan.
     queries = service_list_queries(instance, include_examples=detail == "full")
     total = len(queries)
     end = None if limit is None else offset + limit
     page = queries[offset:end]
+    truncated = list_truncated(total=total, offset=offset, returned=len(page))
+    continuation_token: str | None = None
+    if truncated and page:
+        continuation_token = mint_continuation_token(
+            surface="query_catalog",
+            instance_key=instance_id,
+            config_digest=_instance_config_digest(instance),
+            read_revision=instance.get_read_revision(),
+            filter_hash=filter_hash,
+            cursor={"offset": offset + len(page)},
+        )
     envelope: dict[str, Any] = {
         "total": total,
         "limit": limit,
         "offset": offset,
-        "truncated": offset + len(page) < total,
+        "truncated": truncated,
+        "read_revision": instance.get_read_revision(),
+        "continuation_token": continuation_token,
     }
     if detail == "full":
         return contracts.QueryListDetailResult(
@@ -2430,6 +2565,7 @@ def stats(instance_id: str) -> contracts.StatsResult:
         relationship_counts=result.relationship_counts,
         status_counts=result.status_counts,
         head_snapshot_id=result.head_snapshot_id,
+        read_revision=instance.get_read_revision(),
     )
 
 
@@ -2449,6 +2585,7 @@ def inspect_entity(
     max_nodes: int | None = None,
     max_edges: int | None = None,
     profile: contracts.ReadProfile = "standard",
+    continuation: str | None = None,
 ) -> contracts.InspectEntityResult | contracts.InspectNeighborhoodResult:
     """Inspect an entity and its bounded neighborhood.
 
@@ -2456,9 +2593,58 @@ def inspect_entity(
     ``InspectEntityResult`` shape bit-for-bit; providing any neighborhood
     parameter returns the expanded ``InspectNeighborhoodResult``. The root
     card follows ``profile`` only (projection never trims the root).
+
+    ``continuation`` resumes a budget-truncated neighborhood read: pass the
+    ``continuation_token`` from the previous response with the SAME structural
+    parameters (entity, depth, direction, filters, state). Tokens are bound to
+    the instance, config, and ``read_revision``; replay after a mutation
+    raises a typed 409 ``StaleContinuationError``.
     """
     check_permission("cruxible_inspect_entity", instance_id=instance_id)
     instance = get_manager().get(instance_id)
+    read_revision = instance.get_read_revision()
+    resume_nodes_seen = 0
+    resume_edges_seen = 0
+    is_neighborhood = neighborhood_requested(
+        depth=depth,
+        relationship_types=relationship_types,
+        target_types=target_types,
+        state=state,
+        projection=projection,
+        max_nodes=max_nodes,
+        max_edges=max_edges,
+    )
+    # Structural read identity only: budgets, projection, and profile may vary
+    # between pages without invalidating the token.
+    filter_hash = compute_filter_hash(
+        {
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "depth": depth if depth is not None else 1,
+            "direction": direction,
+            "relationship_types": sorted(
+                set(relationship_types or [])
+                | ({relationship_type} if relationship_type else set())
+            ),
+            "target_types": sorted(set(target_types or [])),
+            "state": state if state is not None else "live",
+        }
+    )
+    if continuation is not None:
+        if not is_neighborhood:
+            raise InvalidContinuationError(
+                "continuation applies only to the expanded neighborhood read; "
+                "repeat the original neighborhood parameters"
+            )
+        token = _accept_continuation(
+            continuation,
+            surface="neighborhood",
+            instance_id=instance_id,
+            instance=instance,
+            filter_hash=filter_hash,
+        )
+        resume_nodes_seen = cursor_int(token, "nodes_seen")
+        resume_edges_seen = cursor_int(token, "edges_seen")
     result = service_inspect_entity(
         instance,
         entity_type,
@@ -2473,8 +2659,23 @@ def inspect_entity(
         projection=projection,
         max_nodes=max_nodes,
         max_edges=max_edges,
+        resume_nodes_seen=resume_nodes_seen,
+        resume_edges_seen=resume_edges_seen,
     )
     if isinstance(result, ServiceInspectNeighborhoodResult):
+        continuation_token: str | None = None
+        if result.truncated and result.resumable:
+            continuation_token = mint_continuation_token(
+                surface="neighborhood",
+                instance_key=instance_id,
+                config_digest=_instance_config_digest(instance),
+                read_revision=read_revision,
+                filter_hash=filter_hash,
+                cursor={
+                    "nodes_seen": result.cursor_nodes_seen,
+                    "edges_seen": result.cursor_edges_seen,
+                },
+            )
         root_payload = profile_get_entity_payload(
             {"properties": result.properties, "metadata": result.metadata},
             profile,
@@ -2520,6 +2721,8 @@ def inspect_entity(
             truncation_reasons=list(result.truncation_reasons),
             nodes_returned=result.nodes_returned,
             edges_returned=result.edges_returned,
+            read_revision=read_revision,
+            continuation_token=continuation_token,
         )
     entity_payload = profile_get_entity_payload(
         {"properties": result.properties, "metadata": result.metadata},
@@ -2550,6 +2753,7 @@ def inspect_entity(
             for neighbor in result.neighbors
         ],
         total_neighbors=result.total_neighbors,
+        read_revision=read_revision,
     )
 
 
@@ -2598,6 +2802,7 @@ def inspect_entity_history(
         limit=result.limit,
         offset=result.offset,
         truncated=result.truncated,
+        read_revision=instance.get_read_revision(),
         legacy_entity_write_count=result.legacy_entity_write_count,
         warnings=result.warnings,
     )
@@ -2685,17 +2890,26 @@ def sample(
     fields: list[str] | None = None,
     profile: contracts.ReadProfile = "standard",
 ) -> contracts.SampleResult:
-    """Sample entities of a given type."""
+    """Sample entities of a given type.
+
+    ``total`` is the TRUE stored count for the type, and ``truncated`` is set
+    whenever the sample did not cover it — a sample is an explicit, never a
+    silent, truncation of the type.
+    """
     check_permission("cruxible_sample", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    sampled = service_sample(instance, entity_type, limit=limit, fields=fields)
+    result = service_sample(instance, entity_type, limit=limit, fields=fields)
     return contracts.SampleResult(
         items=[
-            profile_entity_payload(entity.model_dump(mode="json"), profile) for entity in sampled
+            profile_entity_payload(entity.model_dump(mode="json"), profile)
+            for entity in result.items
         ],
         entity_type=entity_type,
-        total=len(sampled),
-        limit=limit,
+        total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        truncated=result.truncated,
+        read_revision=result.read_revision,
     )
 
 
@@ -3123,9 +3337,15 @@ def get_entity(
     """Look up a specific entity by type and ID."""
     check_permission("cruxible_get_entity", instance_id=instance_id)
     instance = get_manager().get(instance_id)
+    read_revision = instance.get_read_revision()
     entity = service_get_entity(instance, entity_type, entity_id)
     if entity is None:
-        return contracts.GetEntityResult(found=False, entity_type=entity_type, entity_id=entity_id)
+        return contracts.GetEntityResult(
+            found=False,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            read_revision=read_revision,
+        )
     entity_payload = profile_get_entity_payload(
         {"properties": entity.properties, "metadata": entity.metadata.to_metadata_dict()},
         profile,
@@ -3136,6 +3356,7 @@ def get_entity(
         entity_id=entity.entity_id,
         properties=entity_payload["properties"],
         metadata=entity_payload["metadata"],
+        read_revision=read_revision,
     )
 
 
@@ -3313,7 +3534,9 @@ def list_source_artifacts(
     check_permission("cruxible_list_source_artifacts", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_list_source_artifacts(instance, limit=limit, offset=offset)
-    return contracts.SourceArtifactListResult.model_validate(result.model_dump(mode="json"))
+    contract = contracts.SourceArtifactListResult.model_validate(result.model_dump(mode="json"))
+    contract.read_revision = instance.get_read_revision()
+    return contract
 
 
 def get_source_artifact(

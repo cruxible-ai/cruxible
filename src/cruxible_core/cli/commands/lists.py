@@ -11,13 +11,17 @@ import click
 from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
+    _echo_continuation_hint,
     _emit_json,
     _entities_from_payload,
     _feedback_from_payload,
     _list_envelope,
+    _local_accept_continuation,
+    _local_mint_continuation,
     _outcomes_from_payload,
     _require_local_instance,
     console,
+    continuation_option,
     json_option,
     profile_option,
     state_option,
@@ -31,8 +35,10 @@ from cruxible_core.cli.formatting import (
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.errors import ConfigError
+from cruxible_core.query.continuation import cursor_int
 from cruxible_core.query.profiles import ReadProfile, profile_list_items
 from cruxible_core.service import service_export_edges, service_list, service_list_traces
+from cruxible_core.service.types import ListResult as ServiceListResult
 
 
 def _parse_where_options(values: tuple[str, ...]) -> dict[str, dict[str, Any]] | None:
@@ -79,6 +85,7 @@ def list_group() -> None:
 @click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @state_option
 @profile_option
+@continuation_option
 @json_option
 @handle_errors
 def list_entities(
@@ -89,33 +96,62 @@ def list_entities(
     offset: int,
     state: str | None,
     profile: str,
+    continuation: str | None,
     output_json: bool,
 ) -> None:
     """List entities of a given type."""
     projected_fields = list(fields) or None
     where = _parse_where_options(where_values)
     visibility_state = cast("contracts.QueryVisibilityState | None", state)
-    result = _dispatch_cli_instance(
-        lambda client, instance_id: client.list(
-            instance_id,
-            resource_type="entities",
-            entity_type=entity_type,
-            limit=limit,
-            offset=offset,
-            relationship_state=visibility_state,
-            where=where,
-            fields=projected_fields,
-        ),
-        lambda instance: service_list(
+    filters: dict[str, Any] = {
+        "resource_type": "entities",
+        "entity_type": entity_type,
+        "where": where,
+        "relationship_state": visibility_state,
+    }
+
+    def _local_fetch(instance: Any) -> tuple[ServiceListResult, str | None]:
+        local_offset = offset
+        token = _local_accept_continuation(
+            instance, surface="list", filters=filters, continuation=continuation
+        )
+        if token is not None:
+            local_offset = cursor_int(token, "offset")
+        result = service_list(
             instance,
             "entities",
             entity_type=entity_type,
             limit=limit,
-            offset=offset,
+            offset=local_offset,
             relationship_state=visibility_state,
             where=where,
             fields=projected_fields,
+        )
+        token_out = None
+        if result.truncated and result.items:
+            token_out = _local_mint_continuation(
+                instance,
+                surface="list",
+                filters=filters,
+                cursor={"offset": result.offset + len(result.items)},
+            )
+        return result, token_out
+
+    result, continuation_token = _dispatch_cli_instance(
+        lambda client, instance_id: (lambda r: (r, r.continuation_token))(
+            client.list(
+                instance_id,
+                resource_type="entities",
+                entity_type=entity_type,
+                limit=limit,
+                offset=offset,
+                relationship_state=visibility_state,
+                where=where,
+                fields=projected_fields,
+                continuation=continuation,
+            )
         ),
+        _local_fetch,
     )
     entities = (
         _entities_from_payload(result.items)
@@ -132,11 +168,13 @@ def list_entities(
             {
                 "items": item_dicts,
                 **_list_envelope(result, item_count=len(item_dicts), limit=limit, offset=offset),
+                "continuation_token": continuation_token,
             }
         )
         return
     console.print(entities_table(entities, entity_type))
     click.echo(f"{len(entities)} entity(ies) shown.")
+    _echo_continuation_hint(continuation_token)
 
 
 @list_group.command("receipts")
@@ -322,6 +360,7 @@ def list_outcomes(receipt_id: str | None, limit: int, offset: int, output_json: 
 @click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @state_option
 @profile_option
+@continuation_option
 @json_option
 @handle_errors
 def list_edges(
@@ -331,6 +370,7 @@ def list_edges(
     offset: int,
     state: str | None,
     profile: str,
+    continuation: str | None,
     output_json: bool,
 ) -> None:
     """List edges in the graph.
@@ -342,36 +382,66 @@ def list_edges(
     """
     where = _parse_where_options(where_values)
     visibility_state = cast("contracts.QueryVisibilityState | None", state)
-    result = _dispatch_cli_instance(
-        lambda client, instance_id: client.list(
-            instance_id,
-            resource_type="edges",
-            relationship_type=relationship,
-            limit=limit,
-            offset=offset,
-            relationship_state=visibility_state,
-            where=where,
-        ),
-        lambda instance: service_list(
+    filters: dict[str, Any] = {
+        "resource_type": "edges",
+        "relationship_type": relationship,
+        "where": where,
+        "relationship_state": visibility_state,
+    }
+
+    def _local_fetch(instance: Any) -> tuple[ServiceListResult, str | None]:
+        local_offset = offset
+        token = _local_accept_continuation(
+            instance, surface="list", filters=filters, continuation=continuation
+        )
+        if token is not None:
+            local_offset = cursor_int(token, "offset")
+        result = service_list(
             instance,
             "edges",
             relationship_type=relationship,
             limit=limit,
-            offset=offset,
+            offset=local_offset,
             relationship_state=visibility_state,
             where=where,
+        )
+        token_out = None
+        if result.truncated and result.items:
+            token_out = _local_mint_continuation(
+                instance,
+                surface="list",
+                filters=filters,
+                cursor={"offset": result.offset + len(result.items)},
+            )
+        return result, token_out
+
+    result, continuation_token = _dispatch_cli_instance(
+        lambda client, instance_id: (lambda r: (r, r.continuation_token))(
+            client.list(
+                instance_id,
+                resource_type="edges",
+                relationship_type=relationship,
+                limit=limit,
+                offset=offset,
+                relationship_state=visibility_state,
+                where=where,
+                continuation=continuation,
+            )
         ),
+        _local_fetch,
     )
     if output_json:
         _emit_json(
             {
                 "items": profile_list_items(result.items, "edges", cast(ReadProfile, profile)),
                 **_list_envelope(result, item_count=len(result.items), limit=limit, offset=offset),
+                "continuation_token": continuation_token,
             }
         )
         return
     console.print(edges_table(result.items))
     click.echo(f"{len(result.items)} edge(s) shown.")
+    _echo_continuation_hint(continuation_token)
 
 
 @click.group("export")

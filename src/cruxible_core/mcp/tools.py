@@ -239,8 +239,13 @@ def register_tools(server: FastMCP) -> list[str]:
         detail: contracts.QueryListDetail = "summary",
         limit: int | None = None,
         offset: int = 0,
+        continuation: str | None = None,
     ) -> dict[str, Any]:
         """List named queries as bounded summaries; `detail='full'` expands every definition.
+
+        When `truncated` is true the response carries a `continuation_token`;
+        pass it back as `continuation` (same `detail`) for the next page. A
+        409 stale-continuation error means state changed — restart the read.
 
         Returns a dict rather than the QueryListResult | QueryListDetailResult
         union because FastMCP nests union returns under a `result` key, which
@@ -251,6 +256,7 @@ def register_tools(server: FastMCP) -> list[str]:
             detail=detail,
             limit=limit,
             offset=offset,
+            continuation=continuation,
         )
         return result.model_dump(mode="json")
 
@@ -435,6 +441,7 @@ def register_tools(server: FastMCP) -> list[str]:
         fields: list[str] | None = None,
         relationship_state: contracts.QueryVisibilityState | None = None,
         profile: contracts.ReadProfile | None = None,
+        continuation: str | None = None,
     ) -> contracts.ListResult:
         """List `entities|edges|receipts|feedback|outcomes` with optional filters.
 
@@ -457,6 +464,11 @@ def register_tools(server: FastMCP) -> list[str]:
 
         Edge items include `edge_key` for use with `cruxible_feedback` when
         multiple edges exist between the same endpoints.
+
+        Pagination loop: when `truncated` is true the response carries a
+        `continuation_token` — pass it back as `continuation` with the SAME
+        filters to fetch the next page. A 409 stale-continuation error means
+        state mutated between pages; restart from the first page.
         """
         return handlers.handle_list(
             instance_id,
@@ -473,6 +485,7 @@ def register_tools(server: FastMCP) -> list[str]:
             fields=fields,
             relationship_state=relationship_state,
             profile=profile,
+            continuation=continuation,
         )
 
     @_tool
@@ -635,6 +648,7 @@ def register_tools(server: FastMCP) -> list[str]:
         max_nodes: int | None = None,
         max_edges: int | None = None,
         profile: contracts.ReadProfile | None = None,
+        continuation: str | None = None,
     ) -> dict[str, Any]:
         """THE generic bounded neighborhood read: anchor on one entity, expand outward.
 
@@ -655,6 +669,12 @@ def register_tools(server: FastMCP) -> list[str]:
         ones; `profile` still shapes metadata. Providing any of these
         returns the expanded nodes/edges shape; a bare call keeps the
         legacy single-hop `neighbors` shape.
+
+        Pagination loop: when the expanded read reports `truncated` on a
+        budget it carries a `continuation_token` — pass it back as
+        `continuation` with the SAME structural parameters to resume the
+        expansion where the budget stopped it. A 409 stale-continuation
+        error means state mutated between pages; restart the read.
         """
         # Returned as a plain dict: the result is a UNION of the legacy and
         # expanded contract models, and FastMCP wraps union-annotated returns
@@ -675,6 +695,7 @@ def register_tools(server: FastMCP) -> list[str]:
             max_nodes=max_nodes,
             max_edges=max_edges,
             profile=profile,
+            continuation=continuation,
         ).model_dump(mode="json")
 
     @_tool

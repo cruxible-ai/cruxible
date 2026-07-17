@@ -28,8 +28,18 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember
+from cruxible_core.query.continuation import (
+    ContinuationSurface,
+    ContinuationToken,
+    compute_filter_hash,
+    decode_continuation_token,
+    mint_continuation_token,
+    validate_continuation_token,
+)
 from cruxible_core.server.config import get_runtime_bearer_token
 from cruxible_core.service import OperationContext, service_sample, service_schema
+from cruxible_core.service.types import list_truncated
+from cruxible_core.workflow.compiler import compute_lock_config_digest
 
 console = Console()
 LocalResultT = TypeVar("LocalResultT")
@@ -90,6 +100,71 @@ state_option = click.option(
 )
 
 
+# Continuation token option shared by resumable read commands. Tokens are
+# opaque, bound to the instance/config/read_revision/filter set; replay after
+# any mutation fails with a typed stale-continuation error (restart the read).
+continuation_option = click.option(
+    "--continue",
+    "continuation",
+    default=None,
+    metavar="TOKEN",
+    help=(
+        "Continuation token from a previous truncated page; repeat the same "
+        "filters. Stale after any state mutation - restart the read."
+    ),
+)
+
+
+def _local_continuation_binding(
+    instance: CruxibleInstance, filters: dict[str, Any]
+) -> dict[str, Any]:
+    """Token binding for CLI local mode (no daemon instance id available).
+
+    Local tokens use the resolved instance root as the instance key, so they
+    are valid only for local-mode reads of the same workspace; daemon-minted
+    tokens are bound to the daemon instance id instead and are rejected here.
+    """
+    return {
+        "instance_key": f"local:{Path(instance.get_root_path()).resolve()}",
+        "config_digest": compute_lock_config_digest(instance.load_config()),
+        "read_revision": instance.get_read_revision(),
+        "filter_hash": compute_filter_hash(filters),
+    }
+
+
+def _local_accept_continuation(
+    instance: CruxibleInstance,
+    *,
+    surface: ContinuationSurface,
+    filters: dict[str, Any],
+    continuation: str | None,
+) -> ContinuationToken | None:
+    if continuation is None:
+        return None
+    token = decode_continuation_token(continuation)
+    binding = _local_continuation_binding(instance, filters)
+    validate_continuation_token(token, surface=surface, **binding)
+    return token
+
+
+def _local_mint_continuation(
+    instance: CruxibleInstance,
+    *,
+    surface: ContinuationSurface,
+    filters: dict[str, Any],
+    cursor: dict[str, int],
+) -> str:
+    return mint_continuation_token(
+        surface=surface, cursor=cursor, **_local_continuation_binding(instance, filters)
+    )
+
+
+def _echo_continuation_hint(continuation_token: str | None) -> None:
+    """Print the resume hint for truncated table output."""
+    if continuation_token:
+        click.echo(f"Truncated. Continue with: --continue {continuation_token}")
+
+
 def _emit_json(data: Any) -> None:
     """Emit structured JSON to stdout, bypassing Rich."""
     click.echo(_json.dumps(data, indent=2, default=str))
@@ -98,12 +173,13 @@ def _emit_json(data: Any) -> None:
 def _list_envelope(
     result: Any, *, item_count: int, limit: int | None, offset: int
 ) -> dict[str, Any]:
-    """Build the standard list envelope (total/limit/offset/truncated) for CLI --json.
+    """Build the standard list envelope (total/limit/offset/truncated/read_revision).
 
-    Server mode hands back a contract model that already carries the envelope, so
-    those values are used verbatim. Local mode returns a service result with only
-    items/total, so limit/offset/truncated are synthesized from the CLI's own
-    pagination args to match the contract/server/MCP shape.
+    Server mode hands back a contract model that already carries the envelope;
+    local mode now gets it from the service ``ListResult`` (which owns
+    truncation/read_revision), so both branches consume rather than re-derive.
+    The synthesized fallback remains only for service results that predate the
+    envelope (e.g. traces).
     """
     total = result.total
     if all(hasattr(result, name) for name in ("limit", "offset", "truncated")):
@@ -112,12 +188,14 @@ def _list_envelope(
             "limit": result.limit,
             "offset": result.offset,
             "truncated": result.truncated,
+            "read_revision": getattr(result, "read_revision", None),
         }
     return {
         "total": total,
         "limit": limit,
         "offset": offset,
-        "truncated": offset + item_count < total,
+        "truncated": list_truncated(total=total, offset=offset, returned=item_count),
+        "read_revision": getattr(result, "read_revision", None),
     }
 
 
@@ -450,7 +528,7 @@ def _lookup_query_param_hints_local(
         return None
     if query_schema.entry_point is None:
         return _build_query_param_hints(config, query_name, [])
-    examples = service_sample(instance, query_schema.entry_point, limit=3)
+    examples = service_sample(instance, query_schema.entry_point, limit=3).items
     return _build_query_param_hints(config, query_name, examples)
 
 

@@ -736,6 +736,7 @@ class CruxibleClient:
         fields: builtins.list[str] | None = None,
         relationship_state: contracts.QueryVisibilityState | None = None,
         profile: contracts.ReadProfile | None = None,
+        continuation: str | None = None,
     ) -> contracts.ListResult:
         params: dict[str, Any] = {
             "entity_type": entity_type,
@@ -748,6 +749,7 @@ class CruxibleClient:
             "fields": fields,
             "relationship_state": relationship_state,
             "profile": profile,
+            "continuation": continuation,
         }
         if property_filter is not None:
             params["property_filter"] = json.dumps(property_filter)
@@ -897,10 +899,13 @@ class CruxibleClient:
         detail: contracts.QueryListDetail = "summary",
         limit: int | None = None,
         offset: int = 0,
+        continuation: str | None = None,
     ) -> contracts.QueryListResult | contracts.QueryListDetailResult:
         params: dict[str, int | str] = {"detail": detail, "offset": offset}
         if limit is not None:
             params["limit"] = limit
+        if continuation is not None:
+            params["continuation"] = continuation
         response = self._client.get(
             f"/api/v1/{instance_id}/queries",
             params=params,
@@ -938,6 +943,7 @@ class CruxibleClient:
         max_nodes: int | None = None,
         max_edges: int | None = None,
         profile: contracts.ReadProfile | None = None,
+        continuation: str | None = None,
     ) -> contracts.InspectEntityResult | contracts.InspectNeighborhoodResult:
         """Single-hop inspect, or the expanded bounded-neighborhood read.
 
@@ -945,7 +951,9 @@ class CruxibleClient:
         ``relationship_types``, ``target_types``, ``state``, ``projection``,
         ``max_nodes``, ``max_edges``) opts into the expanded
         :class:`~cruxible_client.contracts.InspectNeighborhoodResult` shape —
-        mirroring the server-side opt-in predicate exactly.
+        mirroring the server-side opt-in predicate exactly. ``continuation``
+        resumes a budget-truncated neighborhood read: repeat the same
+        structural parameters with the previous ``continuation_token``.
         """
         response = self._client.get(
             f"/api/v1/{instance_id}/inspect/entity/{entity_type}/{entity_id}",
@@ -962,6 +970,7 @@ class CruxibleClient:
                     "max_nodes": max_nodes,
                     "max_edges": max_edges,
                     "profile": profile,
+                    "continuation": continuation,
                 }
             ),
         )

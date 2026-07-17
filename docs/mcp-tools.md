@@ -380,7 +380,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need to discover the named queries available in the active config. Returns bounded summaries (name, entry point, required params); call cruxible_describe_query for one query's full definition. Pass detail='full' only when you truly need every definition expanded.
+**Purpose:** Use when you need to discover the named queries available in the active config. Returns bounded summaries (name, entry point, required params); call cruxible_describe_query for one query's full definition. Pass detail='full' only when you truly need every definition expanded. If truncated is true, pass the returned continuation_token back as continuation to fetch the next page.
 
 **Arguments:**
 
@@ -390,14 +390,20 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `detail` | no | string | `summary` (default) returns bounded discovery cards; `full` returns complete definitions. |
 | `limit` | no | integer |  |
 | `offset` | no | integer |  |
+| `continuation` | no | string | null | Continuation token from a previous truncated page (same `detail`). Bound to the instance, config, and `read_revision`; replay after a mutation fails with a typed 409 stale-continuation error — restart the read. |
 
-**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
+**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`, `read_revision`, `continuation_token`
+
+`read_revision` is the instance's monotonic state revision at read time — the
+freshness marker for pagination and caching. Receipts prove a computation
+happened; they never prove its inputs are still current.
 
 **Side Effects:** Read-only.
 
 **Common Errors:**
 - Unknown `instance_id` or missing daemon configuration.
 - Permission mode too low for this tool.
+- Stale continuation token after a mutation (409) or malformed token (422).
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
 ## cruxible_describe_query
@@ -616,7 +622,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need a paged list of entities, relationships, receipts, feedback, or outcomes with optional filters. Use resource_type='entities' with entity_type and optional fields to reduce payload size; use where for bounded property predicates such as {'status': {'eq': 'active'}}. Entity and edge items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context.
+**Purpose:** Use when you need a paged list of entities, relationships, receipts, feedback, or outcomes with optional filters. Use resource_type='entities' with entity_type and optional fields to reduce payload size; use where for bounded property predicates such as {'status': {'eq': 'active'}}. Entity and edge items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context. Always check truncated: when true, pass the returned continuation_token back as continuation (same filters) to fetch the next page; a stale-continuation error means state changed - restart from the first page. read_revision on the envelope is the state freshness marker; receipts prove computation, never freshness.
 
 **Arguments:**
 
@@ -636,8 +642,15 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `fields` | no | array[string] | null | Entity property fields to include for `resource_type="entities"`. |
 | `relationship_state` | no | string | null | Read-visibility state (`live`, `accepted`, `all`, `not-live`, `pending`, `reviewable`). For entities it gates by lifecycle (default `live`); for edges by review+lifecycle (default returns all stored edges). |
 | `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
+| `continuation` | no | string | null | Continuation token from a previous truncated page; repeat the SAME filters. Bound to the instance, config, and `read_revision`; replay after a mutation fails with a typed 409 stale-continuation error — restart the read. Malformed or re-bound tokens fail with 422. |
 
-**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
+**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`, `read_revision`, `continuation_token`
+
+`continuation_token` is present iff the page is truncated and resumable —
+the pagination loop is: check `truncated`, pass `continuation_token` back as
+`continuation` with the same filters. `read_revision` is the instance's
+monotonic state revision at read time; receipts prove computation, never
+freshness.
 
 **Side Effects:** Read-only.
 
@@ -891,7 +904,7 @@ error-level finding exists.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need everything relevant about one entity within a bounded number of hops — the generic neighborhood read beneath named queries. Anchor on the entity, then expand: depth (1-4) sets the hop horizon; max_nodes and max_edges are explicit budgets and the response reports truncated with truncation_reasons instead of silently clipping. Filter with relationship_types and target_types; state selects relationship visibility exactly like query traversal (default live — pending edges are the norm in governed overlays, so pass state='reviewable' or 'pending' to include edges awaiting review). projection trims neighbor properties; payloads default to the compact output profile — ask for profile='standard' or 'full' when you need provenance or actor context.
+**Purpose:** Use when you need everything relevant about one entity within a bounded number of hops — the generic neighborhood read beneath named queries. Anchor on the entity, then expand: depth (1-4) sets the hop horizon; max_nodes and max_edges are explicit budgets and the response reports truncated with truncation_reasons instead of silently clipping. Filter with relationship_types and target_types; state selects relationship visibility exactly like query traversal (default live — pending edges are the norm in governed overlays, so pass state='reviewable' or 'pending' to include edges awaiting review). projection trims neighbor properties; payloads default to the compact output profile — ask for profile='standard' or 'full' when you need provenance or actor context. When the expanded read reports truncated on a budget, pass the returned continuation_token back as continuation (same parameters) to resume the expansion where it stopped; a stale-continuation error means state changed - restart the read.
 
 **Arguments:**
 
@@ -911,8 +924,9 @@ error-level finding exists.
 | `max_nodes` | no | integer | null | Node budget for the expanded read (default 100, hard cap 500). |
 | `max_edges` | no | integer | null | Edge budget for the expanded read (default 200, hard cap 1000). |
 | `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
+| `continuation` | no | string | null | Continuation token from a previous budget-truncated expanded read; repeat the SAME structural parameters (entity, depth, direction, filters, state). Bound to the instance, config, and `read_revision`; replay after a mutation fails with a typed 409 stale-continuation error — restart the read. |
 
-**Returns:** Legacy calls (no neighborhood argument): `found`, `entity_type`, `entity_id`, `properties`, `metadata`, `neighbors`, `total_neighbors`. Expanded calls: `found`, `entity_type`, `entity_id`, `properties`, `metadata` (the anchor card), `depth`, `state`, `nodes` (each with `depth` and lifecycle markers), `edges` (each with review/lifecycle markers), `truncated`, `truncation_reasons` (`node_budget`/`edge_budget`/`depth`), `nodes_returned`, `edges_returned`.
+**Returns:** Legacy calls (no neighborhood argument): `found`, `entity_type`, `entity_id`, `properties`, `metadata`, `neighbors`, `total_neighbors`, `read_revision`. Expanded calls: `found`, `entity_type`, `entity_id`, `properties`, `metadata` (the anchor card), `depth`, `state`, `nodes` (each with `depth` and lifecycle markers), `edges` (each with review/lifecycle markers), `truncated`, `truncation_reasons` (`node_budget`/`edge_budget`/`depth`), `nodes_returned`, `edges_returned`, `read_revision`, `continuation_token` (present iff truncated on a budget — depth-horizon truncation is a different read, not a resumable page; the resumed pages are disjoint and their union is exactly the untruncated result set). `read_revision` marks state freshness; receipts prove computation, never freshness.
 
 **Side Effects:** Read-only.
 

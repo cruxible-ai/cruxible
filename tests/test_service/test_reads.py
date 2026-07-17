@@ -908,9 +908,19 @@ class TestSchema:
 
 class TestSample:
     def test_entities(self, populated_instance: CruxibleInstance) -> None:
-        entities = service_sample(populated_instance, "Vehicle", limit=10)
-        assert len(entities) == 2  # 2 vehicles in populated graph
-        assert all(e.entity_type == "Vehicle" for e in entities)
+        result = service_sample(populated_instance, "Vehicle", limit=10)
+        assert len(result.items) == 2  # 2 vehicles in populated graph
+        assert all(e.entity_type == "Vehicle" for e in result.items)
+        assert result.total == 2
+        assert result.truncated is False
+
+    def test_sample_reports_true_total_and_truncation(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        result = service_sample(populated_instance, "Vehicle", limit=1)
+        assert len(result.items) == 1
+        assert result.total == 2  # TRUE stored count, not the sampled count
+        assert result.truncated is True
 
     def test_bad_type(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(EntityTypeNotFoundError) as exc_info:

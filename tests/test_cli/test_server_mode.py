@@ -625,7 +625,9 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
     runner: CliRunner,
 ):
     class StubClient:
-        def list_queries(self, instance_id, *, detail="summary", limit=None, offset=0):
+        def list_queries(
+            self, instance_id, *, detail="summary", limit=None, offset=0, continuation=None
+        ):
             assert instance_id == "inst_123"
             assert detail == "summary"
             return contracts.QueryListResult(

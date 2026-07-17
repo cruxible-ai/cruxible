@@ -162,6 +162,27 @@ CREATE TABLE IF NOT EXISTS source_artifact_archives (
 
 _UNIFIED_STATE_MIGRATION = "0001_unified_sqlite_state"
 SNAPSHOT_SCHEMA_MIGRATION = "0002_snapshot_tables"
+READ_REVISION_MIGRATION = "0003_read_revision"
+
+# Monotonic state counter, stored in instance_state and incremented in the SAME
+# transaction as every state-mutating commit. It is a freshness marker for read
+# envelopes and continuation tokens; receipts prove computation, never
+# freshness. It only ever moves forward — restores and rollbacks bump it too.
+READ_REVISION_STATE_KEY = "read_revision"
+
+# Tables whose writes are audit/proof records rather than state mutations.
+# Read paths persist query receipts and decision-record audit events, so writes
+# to these tables must NOT advance read_revision (reads never bump it).
+_AUDIT_ONLY_TABLES = frozenset(
+    {
+        "receipts",
+        "receipt_entities",
+        "execution_traces",
+        "decision_events",
+        "instance_state",
+        "storage_migrations",
+    }
+)
 
 
 def _configure_connection(conn: sqlite3.Connection) -> None:
@@ -432,6 +453,11 @@ class SQLiteSnapshotRepository:
             return None
         return json.loads(row["value_json"])
 
+    def get_read_revision(self) -> int:
+        """Return the monotonic read revision (0 for a never-mutated state DB)."""
+        value = self.get_instance_state(READ_REVISION_STATE_KEY)
+        return int(value) if isinstance(value, int) else 0
+
 
 class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
     """Stores source artifact manifests, parsed chunks, and optional source copies."""
@@ -689,6 +715,22 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
         self._started_transaction = False
         self._after_commit: list[Any] = []
         self._after_rollback: list[Any] = []
+        # State-mutation tracking for the monotonic read revision: the SQLite
+        # authorizer observes every INSERT/UPDATE/DELETE prepared on this
+        # connection; touching any non-audit table marks the unit of work as a
+        # state mutation, and commit() then advances read_revision inside the
+        # same transaction. Audit-only writes (receipts, traces, decision
+        # events) never bump it, so read paths that persist proof records keep
+        # the revision unchanged.
+        self._state_mutated = False
+        self._conn.set_authorizer(self._authorize)
+
+    def _authorize(self, action: int, arg1: Any, arg2: Any, db_name: Any, source: Any) -> int:
+        if action in (sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE):
+            table = arg1 if isinstance(arg1, str) else ""
+            if table and table not in _AUDIT_ONLY_TABLES and not table.startswith("sqlite_"):
+                self._state_mutated = True
+        return sqlite3.SQLITE_OK
 
     def __enter__(self) -> SQLiteUnitOfWork:
         self.begin()
@@ -730,6 +772,8 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
     def commit(self) -> None:
         try:
             if self._started_transaction:
+                if self._state_mutated:
+                    self._advance_read_revision()
                 self._conn.commit()
         except Exception:
             self.rollback()
@@ -743,9 +787,26 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
         for callback in callbacks:
             callback()
 
+    def _advance_read_revision(self) -> None:
+        """Increment read_revision inside the still-open transaction.
+
+        Runs exactly once per state-mutating commit, immediately before the
+        SQLite COMMIT, so the revision advance is atomic with the mutation it
+        marks. Rollbacks discard it with everything else.
+        """
+        self._conn.execute(
+            "INSERT INTO instance_state(key, value_json, updated_at) VALUES (?, '1', ?) "
+            "ON CONFLICT(key) DO UPDATE SET "
+            "value_json = CAST(CAST(value_json AS INTEGER) + 1 AS TEXT), "
+            "updated_at = excluded.updated_at",
+            (READ_REVISION_STATE_KEY, format_datetime(utc_now())),
+        )
+        self._state_mutated = False
+
     def rollback(self) -> None:
         if self._conn.in_transaction:
             self._conn.rollback()
+        self._state_mutated = False
         for callback in reversed(self._after_rollback):
             callback()
         self._after_commit.clear()
@@ -840,3 +901,14 @@ class SQLiteStorageBackend:
             ).fetchone()
             if row is None:
                 self.mark_migration_on_connection(conn, migration_id)
+        if not self.has_migration_on_connection(conn, READ_REVISION_MIGRATION):
+            # Backfill for pre-revision state DBs: seed the monotonic counter
+            # from the snapshot count (every snapshot was a mutation commit),
+            # so existing instances start with a plausible, non-zero history.
+            # INSERT OR IGNORE keeps any value already present.
+            conn.execute(
+                "INSERT OR IGNORE INTO instance_state(key, value_json, updated_at) "
+                "SELECT ?, CAST((SELECT COUNT(*) FROM snapshots) AS TEXT), ?",
+                (READ_REVISION_STATE_KEY, format_datetime(utc_now())),
+            )
+            self.mark_migration_on_connection(conn, READ_REVISION_MIGRATION)

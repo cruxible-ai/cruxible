@@ -185,7 +185,9 @@ def test_init_handler_delegates_kit_to_client(monkeypatch: pytest.MonkeyPatch):
 
 def test_query_discovery_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
-        def list_queries(self, instance_id, *, detail="summary", limit=None, offset=0):
+        def list_queries(
+            self, instance_id, *, detail="summary", limit=None, offset=0, continuation=None
+        ):
             assert instance_id == "inst_123"
             assert detail == "summary"
             return contracts.QueryListResult(
@@ -280,6 +282,7 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
             max_nodes=None,
             max_edges=None,
             profile=None,
+            continuation=None,
         ):
             assert (instance_id, entity_type, entity_id) == ("inst_123", "Asset", "A1")
             assert direction == "outgoing"

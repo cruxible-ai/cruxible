@@ -45,9 +45,13 @@ from cruxible_core.canonical_views import (
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
+    _echo_continuation_hint,
     _emit_json,
     _entities_from_payload,
     _get_client,
+    _list_envelope,
+    _local_accept_continuation,
+    _local_mint_continuation,
     _lookup_query_param_hints_local,
     _lookup_query_param_hints_server,
     _operation_context,
@@ -56,6 +60,7 @@ from cruxible_core.cli.commands._common import (
     _require_instance_id,
     _resolve_decision_record_id,
     console,
+    continuation_option,
     decision_record_option,
     json_option,
     profile_option,
@@ -565,18 +570,45 @@ def _run_query_command(
 def _query_list_envelope(
     *,
     detail: contracts.QueryListDetail = "summary",
+    continuation: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Return (normalized item payloads, list-envelope metadata) for query list.
 
-    Server mode carries the envelope on the list contract; local mode returns
-    the full unpaginated list, so the envelope is synthesized to match the
-    contract/server/MCP shape (limit/offset/truncated). Both modes serialize
-    items through the shared service builders / contract models, so local and
-    remote JSON payloads are identical.
+    Server mode carries the envelope (including read_revision and any
+    continuation_token) on the list contract; local mode consumes the same
+    service builders and synthesizes the envelope. Both modes serialize items
+    through the shared service builders / contract models, so local and remote
+    JSON payloads are identical.
     """
+
+    def _local_fetch(instance: CruxibleInstance) -> tuple[list[Any], dict[str, Any]]:
+        offset = 0
+        token = _local_accept_continuation(
+            instance,
+            surface="query_catalog",
+            filters={"detail": detail},
+            continuation=continuation,
+        )
+        if token is not None:
+            offset = token.cursor.get("offset", 0)
+        queries = service_list_queries(instance, include_examples=detail == "full")
+        page = queries[offset:]
+        # Local mode returns the full remainder: nothing left to truncate.
+        envelope = {
+            "total": len(queries),
+            "limit": None,
+            "offset": offset,
+            "truncated": False,
+            "read_revision": instance.get_read_revision(),
+            "continuation_token": None,
+        }
+        return page, envelope
+
     result = _dispatch_cli_instance(
-        lambda client, instance_id: client.list_queries(instance_id, detail=detail),
-        lambda instance: service_list_queries(instance, include_examples=detail == "full"),
+        lambda client, instance_id: client.list_queries(
+            instance_id, detail=detail, continuation=continuation
+        ),
+        _local_fetch,
     )
     if isinstance(result, contracts.QueryListResult | contracts.QueryListDetailResult):
         payload = [item.model_dump(mode="json") for item in result.items]
@@ -585,20 +617,15 @@ def _query_list_envelope(
             "limit": result.limit,
             "offset": result.offset,
             "truncated": result.truncated,
+            "read_revision": result.read_revision,
+            "continuation_token": result.continuation_token,
         }
     else:
-        # Local mode returns the full, unpaginated list: nothing is truncated.
-        queries = cast(list[Any], result)
+        queries, envelope = result
         builder = (
             query_definition_full_payload if detail == "full" else query_definition_summary_payload
         )
         payload = [builder(query) for query in queries]
-        envelope = {
-            "total": len(queries),
-            "limit": None,
-            "offset": 0,
-            "truncated": False,
-        }
     return payload, envelope
 
 
@@ -606,15 +633,17 @@ def _emit_query_list(
     *,
     output_json: bool,
     detail: contracts.QueryListDetail = "summary",
+    continuation: str | None = None,
 ) -> None:
-    payload, envelope = _query_list_envelope(detail=detail)
+    payload, envelope = _query_list_envelope(detail=detail, continuation=continuation)
     if output_json:
         _emit_json({"items": payload, **envelope})
         return
     if detail == "full":
         console.print(query_definitions_detail_table(payload))
-        return
-    console.print(query_definitions_table(payload))
+    else:
+        console.print(query_definitions_table(payload))
+    _echo_continuation_hint(envelope.get("continuation_token"))
 
 
 @click.group(invoke_without_command=True)
@@ -742,9 +771,10 @@ def query_inline_cmd(
         "columns to the table and emits complete definitions with --json."
     ),
 )
+@continuation_option
 @json_option
 @handle_errors
-def query_list_cmd(detail: str, output_json: bool) -> None:
+def query_list_cmd(detail: str, continuation: str | None, output_json: bool) -> None:
     """List named queries as bounded summaries.
 
     Shows name, mode, entry point, returns, and required params per query.
@@ -754,6 +784,7 @@ def query_list_cmd(detail: str, output_json: bool) -> None:
     _emit_query_list(
         output_json=output_json,
         detail=cast(contracts.QueryListDetail, detail),
+        continuation=continuation,
     )
 
 
@@ -890,18 +921,23 @@ def sample(entity_type: str, fields: tuple[str, ...], limit: int, output_json: b
     entities = (
         _entities_from_payload(result.items)
         if isinstance(result, contracts.SampleResult)
-        else result
+        else result.items
     )
     if output_json:
+        # total is the TRUE stored count for the type; truncated marks a
+        # sample that did not cover it (samples are never silent truncations).
         _emit_json(
             {
                 "items": [e.model_dump(mode="python") for e in entities],
-                "total": len(entities),
                 "entity_type": entity_type,
+                **_list_envelope(result, item_count=len(entities), limit=limit, offset=0),
             }
         )
         return
     console.print(entities_table(entities, entity_type))
+    total = result.total
+    if len(entities) < total:
+        click.echo(f"{len(entities)} of {total} {entity_type} entities shown.")
 
 
 @click.command()
@@ -1429,6 +1465,7 @@ def _neighborhood_payload(
     help="Edge budget for the expanded read (default 200, hard cap 1000).",
 )
 @profile_option
+@continuation_option
 @json_option
 @handle_errors
 def inspect_entity_cmd(
@@ -1444,6 +1481,7 @@ def inspect_entity_cmd(
     max_nodes: int | None,
     max_edges: int | None,
     profile: str,
+    continuation: str | None,
     output_json: bool,
 ) -> None:
     """Inspect an entity and its bounded neighborhood.
@@ -1452,6 +1490,8 @@ def inspect_entity_cmd(
     read. Providing any of --depth/--target-type/--state/--projection/
     --max-nodes/--max-edges (or repeating --relationship) switches to the
     expanded bounded BFS read with explicit budgets and visible truncation.
+    A budget-truncated expanded read prints a continuation token; resume it
+    with --continue TOKEN and the same options.
     """
     expanded = (
         depth is not None
@@ -1462,6 +1502,11 @@ def inspect_entity_cmd(
         or bool(projection)
         or len(relationships) > 1
     )
+    if continuation is not None and not expanded:
+        raise click.UsageError(
+            "--continue applies only to the expanded neighborhood read; "
+            "repeat the original neighborhood options (e.g. --depth)."
+        )
     if expanded:
         _inspect_neighborhood(
             entity_type,
@@ -1476,6 +1521,7 @@ def inspect_entity_cmd(
             max_nodes=max_nodes,
             max_edges=max_edges,
             profile=cast(ReadProfile, profile),
+            continuation=continuation,
             output_json=output_json,
         )
         return
@@ -1575,14 +1621,26 @@ def _inspect_neighborhood(
     max_nodes: int | None,
     max_edges: int | None,
     profile: ReadProfile,
+    continuation: str | None = None,
     output_json: bool,
 ) -> None:
     """Run and render the expanded bounded-neighborhood read."""
+    # Structural read identity only (mirrors api.inspect_entity): budgets,
+    # projection, and profile may vary between pages.
+    continuation_filters: dict[str, Any] = {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "depth": depth if depth is not None else 1,
+        "direction": direction,
+        "relationship_types": sorted(set(relationships or [])),
+        "target_types": sorted(set(target_types or [])),
+        "state": state if state is not None else "live",
+    }
 
     def _remote_fetch(
         client: CruxibleClient,
         instance_id: str,
-    ) -> InspectNeighborhoodResult | contracts.InspectNeighborhoodResult:
+    ) -> tuple[contracts.InspectNeighborhoodResult, str | None, int | None]:
         result = client.inspect_entity(
             instance_id,
             entity_type,
@@ -1597,13 +1655,25 @@ def _inspect_neighborhood(
             max_nodes=max_nodes,
             max_edges=max_edges,
             profile=profile,
+            continuation=continuation,
         )
         assert isinstance(result, contracts.InspectNeighborhoodResult)
-        return result
+        return result, result.continuation_token, result.read_revision
 
     def _local_fetch(
         instance: CruxibleInstance,
-    ) -> InspectNeighborhoodResult | contracts.InspectNeighborhoodResult:
+    ) -> tuple[InspectNeighborhoodResult, str | None, int | None]:
+        resume_nodes = 0
+        resume_edges = 0
+        token = _local_accept_continuation(
+            instance,
+            surface="neighborhood",
+            filters=continuation_filters,
+            continuation=continuation,
+        )
+        if token is not None:
+            resume_nodes = token.cursor.get("nodes_seen", 0)
+            resume_edges = token.cursor.get("edges_seen", 0)
         result = service_inspect_entity(
             instance,
             entity_type,
@@ -1617,12 +1687,29 @@ def _inspect_neighborhood(
             projection=projection,
             max_nodes=max_nodes,
             max_edges=max_edges,
+            resume_nodes_seen=resume_nodes,
+            resume_edges_seen=resume_edges,
         )
         assert isinstance(result, InspectNeighborhoodResult)
-        return result
+        token_out = None
+        if result.truncated and result.resumable:
+            token_out = _local_mint_continuation(
+                instance,
+                surface="neighborhood",
+                filters=continuation_filters,
+                cursor={
+                    "nodes_seen": result.cursor_nodes_seen,
+                    "edges_seen": result.cursor_edges_seen,
+                },
+            )
+        return result, token_out, instance.get_read_revision()
 
-    result = _dispatch_cli_instance(_remote_fetch, _local_fetch)
+    result, continuation_token, read_revision = _dispatch_cli_instance(_remote_fetch, _local_fetch)
     payload = _neighborhood_payload(result, projection=projection, profile=profile)
+    if not isinstance(result, contracts.InspectNeighborhoodResult):
+        # Local mode: mirror the contract's envelope keys exactly.
+        payload["read_revision"] = read_revision
+        payload["continuation_token"] = continuation_token
     if output_json:
         _emit_json(payload)
         return
@@ -1649,6 +1736,7 @@ def _inspect_neighborhood(
     click.echo(summary)
     if payload["truncated"]:
         click.echo(f"Truncated: {', '.join(payload['truncation_reasons'])}")
+        _echo_continuation_hint(continuation_token)
     nodes = payload["nodes"]
     for level in sorted({node["depth"] for node in nodes}):
         level_nodes = [node for node in nodes if node["depth"] == level]

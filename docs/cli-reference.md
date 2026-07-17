@@ -336,14 +336,22 @@ table output groups nodes by depth.
 | `--max-nodes` | no | `` | integer range | Node budget for the expanded read (default 100, hard cap 500). |
 | `--max-edges` | no | `` | integer range | Edge budget for the expanded read (default 200, hard cap 1000). |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
+| `--continue` | no | `` | text | Continuation token from a previous budget-truncated expanded read; repeat the same structural options (entity, depth, direction, filters, state). Stale after any state mutation — restart the read. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+- Expanded reads carry `read_revision` (the state freshness marker; receipts
+  prove computation, never freshness) and, when truncated on a budget, a
+  `continuation_token` — resume with `--continue TOKEN` and the same options.
+  The resumed pages are disjoint and their union is exactly the untruncated
+  result set. Depth-horizon truncation is not resumable (pass a larger
+  `--depth` instead). Table output prints the resume hint on truncation.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
+- Stale continuation token after a mutation, or a malformed token.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
 ## cruxible relationship
@@ -1821,6 +1829,7 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
 | `--offset` | no | `0` | integer | Rows to skip. |
 | `--state` | no | `` | choice | Read-visibility state: `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Omit to return every stored edge (the inspection default); `not-live` surfaces rejected/closed edges, `live` hides them. |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
+| `--continue` | no | `` | text | Continuation token from a previous truncated page; repeat the same filters. Bound to the instance, config, and `read_revision` — stale after any state mutation (restart the read); malformed tokens are rejected. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1854,6 +1863,7 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
 | `--offset` | no | `0` | integer | Rows to skip. |
 | `--state` | no | `` | choice | Read-visibility state by entity lifecycle: `live` (default — hides retired/superseded entities), `all`, or `not-live` (only the gated-out set). Review-only values resolve to `live` (entities have no review axis). |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
+| `--continue` | no | `` | text | Continuation token from a previous truncated page; repeat the same filters. Bound to the instance, config, and `read_revision` — stale after any state mutation (restart the read); malformed tokens are rejected. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1871,6 +1881,10 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
   `cruxible list entities --type WorkItem --where title~query --field status --json`.
 - Field projection reduces payload size after the caller has already selected
   an entity type; it is not topic search.
+- The `--json` envelope carries `read_revision` (state freshness marker;
+  receipts prove computation, never freshness) and `continuation_token`
+  (present iff truncated and resumable). Truncated table output prints the
+  resume hint; continue with `--continue TOKEN` and the same filters.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
@@ -2225,6 +2239,7 @@ cruxible query inline \
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--detail` | no | `summary` | choice | summary (default) is a bounded discovery card; full adds state/dedupe/example columns to the table and emits complete definitions with --json. |
+| `--continue` | no | `` | text | Continuation token from a previous truncated page (same `--detail`). Stale after any state mutation — restart the read. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -2327,6 +2342,9 @@ drift exits nonzero so the command can be used by hooks and CI. Omitting
 - Read-only. Without `--field`, returns full sampled entity records. With
   `--field`, trims each entity's `properties` to the requested fields while
   always keeping `entity_type` and `entity_id`.
+- The `--json` envelope reports the TRUE stored `total` for the type and sets
+  `truncated` whenever the sample did not cover it — a sample is an explicit,
+  never a silent, truncation. `read_revision` marks state freshness.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

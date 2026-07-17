@@ -294,13 +294,25 @@ class TestOutputSchema:
                     "relationship_state",
                     "param_hints",
                     "policy_summary",
+                    "read_revision",
                 },
             ),
             ("cruxible_feedback", {"feedback_id", "applied", "receipt_id"}),
             ("cruxible_feedback_from_query", {"feedback_id", "applied", "receipt_id"}),
             ("cruxible_outcome", {"outcome_id"}),
             ("cruxible_get_outcome_profile", {"found", "profile_key", "anchor_type", "profile"}),
-            ("cruxible_list", {"items", "total", "limit", "offset", "truncated"}),
+            (
+                "cruxible_list",
+                {
+                    "items",
+                    "total",
+                    "limit",
+                    "offset",
+                    "truncated",
+                    "read_revision",
+                    "continuation_token",
+                },
+            ),
             (
                 "cruxible_stats",
                 {
@@ -310,6 +322,7 @@ class TestOutputSchema:
                     "relationship_counts",
                     "status_counts",
                     "head_snapshot_id",
+                    "read_revision",
                 },
             ),
             (
@@ -338,7 +351,15 @@ class TestOutputSchema:
             ),
             (
                 "cruxible_sample",
-                {"items", "entity_type", "total", "limit", "offset", "truncated"},
+                {
+                    "items",
+                    "entity_type",
+                    "total",
+                    "limit",
+                    "offset",
+                    "truncated",
+                    "read_revision",
+                },
             ),
             (
                 "cruxible_inspect_entity_history",
@@ -350,6 +371,7 @@ class TestOutputSchema:
                     "limit",
                     "offset",
                     "truncated",
+                    "read_revision",
                     "legacy_entity_write_count",
                     "warnings",
                 },
@@ -517,12 +539,12 @@ class TestOutputSchema:
             ),
             (
                 "cruxible_list_snapshots",
-                {"items", "total", "limit", "offset", "truncated"},
+                {"items", "total", "limit", "offset", "truncated", "read_revision"},
             ),
             ("cruxible_clone_snapshot", {"instance_id", "snapshot", "admin_credential"}),
             (
                 "cruxible_get_entity",
-                {"found", "entity_type", "entity_id", "properties", "metadata"},
+                {"found", "entity_type", "entity_id", "properties", "metadata", "read_revision"},
             ),
             (
                 "cruxible_get_relationship",

@@ -86,6 +86,7 @@ from cruxible_core.service.types import (
     RelationshipLineageResult,
     StatsServiceResult,
     TraceListResult,
+    list_truncated,
 )
 from cruxible_core.temporal import utc_now
 
@@ -564,11 +565,25 @@ def service_sample(
     entity_type: str,
     limit: int = 5,
     fields: list[str] | None = None,
-) -> list[EntityInstance]:
-    """Sample entities of a given type."""
+) -> ListResult:
+    """Sample entities of a given type.
+
+    ``total`` is the TRUE stored count for the type (not the sampled count),
+    and ``truncated`` is set whenever the sample did not cover it — a sample
+    is a truncated read of the type, never a silent one.
+    """
     config = instance.load_config()
     graph = instance.load_graph()
-    return read_sample_entities(graph, entity_type, config=config, fields=fields, limit=limit)
+    items = read_sample_entities(graph, entity_type, config=config, fields=fields, limit=limit)
+    total = graph.entity_count(entity_type)
+    return ListResult(
+        items=list(items),
+        total=total,
+        limit=limit,
+        offset=0,
+        truncated=len(items) < total,
+        read_revision=instance.get_read_revision(),
+    )
 
 
 def service_stats(instance: InstanceProtocol) -> StatsServiceResult:
@@ -649,6 +664,8 @@ def service_inspect_entity(
     projection: list[str] | None = None,
     max_nodes: int | None = None,
     max_edges: int | None = None,
+    resume_nodes_seen: int = 0,
+    resume_edges_seen: int = 0,
 ) -> InspectEntityResult | InspectNeighborhoodResult:
     """Look up an entity and its neighborhood.
 
@@ -685,6 +702,8 @@ def service_inspect_entity(
             limit=limit,
             max_nodes=max_nodes,
             max_edges=max_edges,
+            resume_nodes_seen=resume_nodes_seen,
+            resume_edges_seen=resume_edges_seen,
         )
         return InspectNeighborhoodResult(
             found=neighborhood.found,
@@ -718,6 +737,9 @@ def service_inspect_entity(
             ),
             nodes_returned=neighborhood.nodes_returned,
             edges_returned=neighborhood.edges_returned,
+            resumable=neighborhood.resumable,
+            cursor_nodes_seen=neighborhood.cursor_nodes_seen,
+            cursor_edges_seen=neighborhood.cursor_edges_seen,
         )
     result = read_inspect_entity(
         graph,
@@ -828,7 +850,7 @@ def service_get_entity_change_history(
         total=total,
         limit=limit,
         offset=offset,
-        truncated=offset + len(page) < total,
+        truncated=list_truncated(total=total, offset=offset, returned=len(page)),
         legacy_entity_write_count=legacy_count,
         warnings=warnings,
     )
@@ -1154,6 +1176,13 @@ def service_list(
         limit=limit,
         offset=offset,
     )
+    # The full standard envelope is owned here so API/CLI/MCP surfaces stop
+    # re-deriving truncation. Invariant: total > 0 with a short/empty page
+    # always reports truncated=True.
+    result.limit = limit
+    result.offset = offset
+    result.truncated = list_truncated(total=result.total, offset=offset, returned=len(result.items))
+    result.read_revision = instance.get_read_revision()
     return result
 
 

@@ -147,9 +147,12 @@ def test_sample_entities_projects_requested_fields(
         fields=["name"],
     )
 
-    assert len(result) == 1
-    assert result[0].entity_id == "BP-1001"
-    assert result[0].properties == {"name": "Ceramic Brake Pads"}
+    assert len(result.items) == 1
+    assert result.items[0].entity_id == "BP-1001"
+    assert result.items[0].properties == {"name": "Ceramic Brake Pads"}
+    # Sample envelope: total is the TRUE stored count, truncated is explicit.
+    assert result.total >= 1
+    assert result.truncated == (len(result.items) < result.total)
 
 
 def test_inline_collection_query_persists_receipt_and_not_config(

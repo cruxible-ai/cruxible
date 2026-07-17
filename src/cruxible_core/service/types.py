@@ -348,6 +348,12 @@ class InspectNeighborhoodResult:
     truncation_reasons: list[NeighborhoodTruncationReason] = field(default_factory=list)
     nodes_returned: int = 0
     edges_returned: int = 0
+    # Continuation support: cumulative budget totals consumed so far (the
+    # deterministic-replay cursor) and whether a truncated read can be resumed
+    # with a continuation token (budget truncation yes, pure depth-horizon no).
+    resumable: bool = False
+    cursor_nodes_seen: int = 0
+    cursor_edges_seen: int = 0
 
 
 @dataclass
@@ -706,10 +712,33 @@ class InitResult:
     base_kit_id: str | None = None
 
 
+def list_truncated(*, total: int, offset: int, returned: int) -> bool:
+    """Canonical truncation flag for the standard list envelope.
+
+    True when items matching the read were left out AFTER this page, and also
+    when the page is empty while matches exist (offset beyond the end) — no
+    response may report ``total > 0`` with empty items and ``truncated=False``;
+    silent truncation is a correctness bug for agent consumers.
+    """
+    return offset + returned < total or (total > 0 and returned == 0)
+
+
 @dataclass
 class ListResult:
+    """Service-level list result carrying the full standard envelope.
+
+    The envelope (limit/offset/truncated/read_revision) is computed HERE, at
+    the service boundary, so API/CLI/MCP surfaces consume it instead of each
+    re-deriving truncation. ``read_revision`` marks state freshness at read
+    time; receipts prove computation, never freshness.
+    """
+
     items: list[Any]
     total: int
+    limit: int | None = None
+    offset: int = 0
+    truncated: bool = False
+    read_revision: int | None = None
 
 
 @dataclass
