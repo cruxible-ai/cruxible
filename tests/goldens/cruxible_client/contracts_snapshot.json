@@ -16344,6 +16344,165 @@
         "properties"
       ]
     },
+    "QueryGraphEdgeItem": {
+      "fields": {
+        "edge_key": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "edge_key",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Edge Key"
+          }
+        },
+        "from_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_id",
+          "required": true,
+          "schema": {
+            "title": "From Id",
+            "type": "string"
+          }
+        },
+        "from_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_type",
+          "required": true,
+          "schema": {
+            "title": "From Type",
+            "type": "string"
+          }
+        },
+        "metadata": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "metadata",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "properties",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          }
+        },
+        "relationship_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "relationship_type",
+          "required": true,
+          "schema": {
+            "title": "Relationship Type",
+            "type": "string"
+          }
+        },
+        "to_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_id",
+          "required": true,
+          "schema": {
+            "title": "To Id",
+            "type": "string"
+          }
+        },
+        "to_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_type",
+          "required": true,
+          "schema": {
+            "title": "To Type",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "One PHYSICAL relationship card in the shared graph-layout `edges` array.\n\nExactly the serialized edge payload minus the per-occurrence traversal\n`alias`: aliases are reference-level metadata (path step refs, include\nitem refs), so one physical edge is always one card even when visited\nunder several step aliases.",
+        "properties": {
+          "edge_key": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Edge Key"
+          },
+          "from_id": {
+            "title": "From Id",
+            "type": "string"
+          },
+          "from_type": {
+            "title": "From Type",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          },
+          "relationship_type": {
+            "title": "Relationship Type",
+            "type": "string"
+          },
+          "to_id": {
+            "title": "To Id",
+            "type": "string"
+          },
+          "to_type": {
+            "title": "To Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relationship_type",
+          "from_type",
+          "from_id",
+          "to_type",
+          "to_id"
+        ],
+        "title": "QueryGraphEdgeItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "from_id",
+        "from_type",
+        "relationship_type",
+        "to_id",
+        "to_type"
+      ]
+    },
     "QueryGraphEntityRef": {
       "fields": {
         "result": {
@@ -16378,6 +16537,26 @@
     },
     "QueryGraphIncludeItemRef": {
       "fields": {
+        "alias": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "alias",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Alias"
+          }
+        },
         "edge": {
           "has_default": false,
           "has_default_factory": false,
@@ -16411,8 +16590,20 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "One include item as references into the shared nodes/edges arrays.",
+        "description": "One include item as references into the shared nodes/edges arrays.\n\n`alias` is the per-occurrence traversal alias of the referenced edge —\naliases live on references, never on the shared `edges` cards.",
         "properties": {
+          "alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Alias"
+          },
           "edge": {
             "title": "Edge",
             "type": "integer"
@@ -16542,8 +16733,20 @@
         "$defs": {
           "QueryGraphIncludeItemRef": {
             "additionalProperties": false,
-            "description": "One include item as references into the shared nodes/edges arrays.",
+            "description": "One include item as references into the shared nodes/edges arrays.\n\n`alias` is the per-occurrence traversal alias of the referenced edge —\naliases live on references, never on the shared `edges` cards.",
             "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
               "edge": {
                 "title": "Edge",
                 "type": "integer"
@@ -16675,8 +16878,20 @@
         "$defs": {
           "QueryGraphIncludeItemRef": {
             "additionalProperties": false,
-            "description": "One include item as references into the shared nodes/edges arrays.",
+            "description": "One include item as references into the shared nodes/edges arrays.\n\n`alias` is the per-occurrence traversal alias of the referenced edge —\naliases live on references, never on the shared `edges` cards.",
             "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
               "edge": {
                 "title": "Edge",
                 "type": "integer"
@@ -16790,6 +17005,70 @@
         "result"
       ]
     },
+    "QueryGraphPathStepRef": {
+      "fields": {
+        "alias": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "alias",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Alias"
+          }
+        },
+        "edge": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "edge",
+          "required": true,
+          "schema": {
+            "title": "Edge",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One traversal step of a path: an edge reference plus its step alias.\n\nReconstructing the rows-layout segment for a step is exactly\n`{**edges[edge], \"alias\": alias}`.",
+        "properties": {
+          "alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Alias"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "edge"
+        ],
+        "title": "QueryGraphPathStepRef",
+        "type": "object"
+      },
+      "required_fields": [
+        "edge"
+      ]
+    },
     "QueryGraphProjectedRef": {
       "fields": {
         "source": {
@@ -16849,8 +17128,20 @@
           },
           "QueryGraphIncludeItemRef": {
             "additionalProperties": false,
-            "description": "One include item as references into the shared nodes/edges arrays.",
+            "description": "One include item as references into the shared nodes/edges arrays.\n\n`alias` is the per-occurrence traversal alias of the referenced edge —\naliases live on references, never on the shared `edges` cards.",
             "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
               "edge": {
                 "title": "Edge",
                 "type": "integer"
@@ -17128,8 +17419,20 @@
         "$defs": {
           "QueryGraphIncludeItemRef": {
             "additionalProperties": false,
-            "description": "One include item as references into the shared nodes/edges arrays.",
+            "description": "One include item as references into the shared nodes/edges arrays.\n\n`alias` is the per-occurrence traversal alias of the referenced edge —\naliases live on references, never on the shared `edges` cards.",
             "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
               "edge": {
                 "title": "Edge",
                 "type": "integer"
@@ -17287,7 +17590,7 @@
           "required": false,
           "schema": {
             "items": {
-              "$ref": "#/$defs/QueryPathSegmentItem"
+              "$ref": "#/$defs/QueryGraphEdgeItem"
             },
             "title": "Edges",
             "type": "array"
@@ -17446,7 +17749,7 @@
           "schema": {
             "items": {
               "items": {
-                "type": "integer"
+                "$ref": "#/$defs/QueryGraphPathStepRef"
               },
               "type": "array"
             },
@@ -17707,6 +18010,62 @@
             "title": "QueryEntityItem",
             "type": "object"
           },
+          "QueryGraphEdgeItem": {
+            "description": "One PHYSICAL relationship card in the shared graph-layout `edges` array.\n\nExactly the serialized edge payload minus the per-occurrence traversal\n`alias`: aliases are reference-level metadata (path step refs, include\nitem refs), so one physical edge is always one card even when visited\nunder several step aliases.",
+            "properties": {
+              "edge_key": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Edge Key"
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship_type": {
+                "title": "Relationship Type",
+                "type": "string"
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relationship_type",
+              "from_type",
+              "from_id",
+              "to_type",
+              "to_id"
+            ],
+            "title": "QueryGraphEdgeItem",
+            "type": "object"
+          },
           "QueryGraphEntityRef": {
             "additionalProperties": false,
             "description": "Entity-shaped result row as a node reference.",
@@ -17724,8 +18083,20 @@
           },
           "QueryGraphIncludeItemRef": {
             "additionalProperties": false,
-            "description": "One include item as references into the shared nodes/edges arrays.",
+            "description": "One include item as references into the shared nodes/edges arrays.\n\n`alias` is the per-occurrence traversal alias of the referenced edge —\naliases live on references, never on the shared `edges` cards.",
             "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
               "edge": {
                 "title": "Edge",
                 "type": "integer"
@@ -17832,6 +18203,33 @@
               "result"
             ],
             "title": "QueryGraphPathRef",
+            "type": "object"
+          },
+          "QueryGraphPathStepRef": {
+            "additionalProperties": false,
+            "description": "One traversal step of a path: an edge reference plus its step alias.\n\nReconstructing the rows-layout segment for a step is exactly\n`{**edges[edge], \"alias\": alias}`.",
+            "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
+              "edge": {
+                "title": "Edge",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "edge"
+            ],
+            "title": "QueryGraphPathStepRef",
             "type": "object"
           },
           "QueryGraphProjectedRef": {
@@ -17964,77 +18362,9 @@
             ],
             "title": "QueryParamHints",
             "type": "object"
-          },
-          "QueryPathSegmentItem": {
-            "description": "One relationship segment in a path-shaped query row.",
-            "properties": {
-              "alias": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Alias"
-              },
-              "edge_key": {
-                "anyOf": [
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Edge Key"
-              },
-              "from_id": {
-                "title": "From Id",
-                "type": "string"
-              },
-              "from_type": {
-                "title": "From Type",
-                "type": "string"
-              },
-              "metadata": {
-                "additionalProperties": true,
-                "title": "Metadata",
-                "type": "object"
-              },
-              "properties": {
-                "additionalProperties": true,
-                "title": "Properties",
-                "type": "object"
-              },
-              "relationship_type": {
-                "title": "Relationship Type",
-                "type": "string"
-              },
-              "to_id": {
-                "title": "To Id",
-                "type": "string"
-              },
-              "to_type": {
-                "title": "To Type",
-                "type": "string"
-              }
-            },
-            "required": [
-              "relationship_type",
-              "from_type",
-              "from_id",
-              "to_type",
-              "to_id"
-            ],
-            "title": "QueryPathSegmentItem",
-            "type": "object"
           }
         },
-        "description": "Normalized graph transport for query output (`layout=\"graph\"`).\n\nCarries the same information as the rows layout of\n:class:`QueryToolResult`: `nodes` holds each unique entity once,\n`edges` each unique relationship once (stable edge identity =\nrelationship type + endpoints + `edge_key`, plus the traversal-step\n`alias` where one is attached), `results` preserves today's row order\nas index references, and `paths` holds edge-index sequences for\npath-shaped results so `dedupe=path` semantics stay distinct. Envelope,\ntruncation, policy-summary, and receipt fields are verbatim\n:class:`QueryToolResult` passthrough — normalization happens strictly\nafter filtering, ordering, and pagination.",
+        "description": "Normalized graph transport for query output (`layout=\"graph\"`).\n\nCarries the same information as the rows layout of\n:class:`QueryToolResult`: `nodes` holds each unique entity once,\n`edges` each unique PHYSICAL relationship once (edge identity =\nrelationship type + endpoints + `edge_key`; traversal-step aliases are\ncarried per occurrence on path step refs and include item refs, never\non the card), `results` preserves today's row order as index\nreferences, and `paths` holds step-ref sequences (edge index + alias)\nfor path-shaped results so `dedupe=path` semantics stay distinct.\nEnvelope, truncation, policy-summary, and receipt fields are verbatim\n:class:`QueryToolResult` passthrough — normalization happens strictly\nafter filtering, ordering, and pagination.",
         "properties": {
           "dedupe": {
             "default": "path",
@@ -18048,7 +18378,7 @@
           },
           "edges": {
             "items": {
-              "$ref": "#/$defs/QueryPathSegmentItem"
+              "$ref": "#/$defs/QueryGraphEdgeItem"
             },
             "title": "Edges",
             "type": "array"
@@ -18131,7 +18461,7 @@
           "paths": {
             "items": {
               "items": {
-                "type": "integer"
+                "$ref": "#/$defs/QueryGraphPathStepRef"
               },
               "type": "array"
             },

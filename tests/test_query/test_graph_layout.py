@@ -37,6 +37,11 @@ def _node_key(entity: dict[str, Any]) -> tuple[Any, Any]:
     return (entity.get("entity_type"), entity.get("entity_id"))
 
 
+def _segment_from_ref(ref: dict[str, Any], edges: list[dict[str, Any]]) -> dict[str, Any]:
+    """Rebuild a rows-layout edge payload from a physical card plus a ref alias."""
+    return {**edges[ref["edge"]], "alias": ref["alias"]}
+
+
 def _reconstruct_includes(
     include_refs: dict[str, Any],
     nodes: list[dict[str, Any]],
@@ -52,7 +57,7 @@ def _reconstruct_includes(
             "truncated": include["truncated"],
             "items": [
                 {
-                    "edge": edges[item["edge"]],
+                    "edge": _segment_from_ref(item, edges),
                     "source": nodes[item["source"]],
                     "target": nodes[item["target"]],
                 }
@@ -77,7 +82,7 @@ def _reconstruct_base_row(ref: dict[str, Any], sections: dict[str, Any]) -> dict
         return row
     if "entry" in ref:
         (path_index,) = ref["paths"]
-        path_edges = [edges[i] for i in sections["paths"][path_index]]
+        path_edges = [_segment_from_ref(step, edges) for step in sections["paths"][path_index]]
         # Walk the path from the entry: each segment connects the current node
         # to its other endpoint — this recovers the per-row `entities` array
         # that the graph layout deliberately does not materialize.
@@ -190,6 +195,22 @@ def config() -> CoreConfig:
                         "many": True,
                     }
                 },
+            ),
+            # Same physical edge under two step aliases: hop2 walks fits
+            # edges in reverse (fitted_parts) and hop3 walks them forward,
+            # so each P-DUAL fits edge is visited at hop2 in one path and
+            # at hop3 in the other.
+            "diamond_vehicle_loop": NamedQuerySchema(
+                mode="traversal",
+                entry_point="Part",
+                traversal=[
+                    TraversalStep(relationship="fits", direction="outgoing", alias="hop1"),
+                    TraversalStep(relationship="fitted_parts", direction="outgoing", alias="hop2"),
+                    TraversalStep(relationship="fits", direction="outgoing", alias="hop3"),
+                ],
+                returns="list[Vehicle]",
+                result_shape="path",
+                dedupe="path",
             ),
             "parts_paths": NamedQuerySchema(
                 mode="traversal",
@@ -351,6 +372,33 @@ class TestLosslessness:
         assert all("values" in ref for ref in sections["results"])
         assert all(ref["source"] is not None for ref in sections["results"])
 
+    @pytest.mark.parametrize("profile", ["standard", "compact"])
+    def test_same_edge_under_two_aliases_is_one_card(self, config, diamond_graph, profile) -> None:
+        """Physical edge identity: one card, per-occurrence aliases on the refs."""
+        result = execute_query(
+            config, diamond_graph, "diamond_vehicle_loop", {"part_number": "P-A"}
+        )
+        assert result.total_results == 2, "fixture must retain both three-hop paths"
+        sections = _assert_lossless(result, profile)
+        # Cards never carry an alias key.
+        assert all("alias" not in edge for edge in sections["edges"])
+        # Four physical edges despite six traversal-step occurrences.
+        assert len(sections["edges"]) == 4
+        # Each P-DUAL fits edge is ONE card referenced under BOTH aliases.
+        for vehicle in ("V-1", "V-2"):
+            (card_index,) = [
+                index
+                for index, edge in enumerate(sections["edges"])
+                if edge["from_id"] == "P-DUAL" and edge["to_id"] == vehicle
+            ]
+            aliases = sorted(
+                step["alias"]
+                for path in sections["paths"]
+                for step in path
+                if step["edge"] == card_index
+            )
+            assert aliases == ["hop2", "hop3"]
+
     def test_row_order_is_preserved(self, config, diamond_graph) -> None:
         result = execute_query(
             config, diamond_graph, "diamond_back_to_part", {"part_number": "P-A"}
@@ -437,7 +485,7 @@ class TestProfileComposition:
         assert standard_edge["metadata"]["assertion"]["review"]["status"] == "pending"
 
     def test_graph_cards_are_exactly_the_profiled_row_payloads(self, config, diamond_graph) -> None:
-        """Nodes/edges under graph layout are the row payloads, not a reshaping."""
+        """Node cards ARE the row payloads; edge cards are them minus `alias`."""
         result = execute_query(
             config, diamond_graph, "diamond_back_to_part", {"part_number": "P-A"}
         )
@@ -447,8 +495,14 @@ class TestProfileComposition:
         entry_index = sections["results"][0]["entry"]
         assert sections["nodes"][entry_index] is first_row["entry"]
         first_path_index = sections["results"][0]["paths"][0]
-        first_edge_index = sections["paths"][first_path_index][0]
-        assert sections["edges"][first_edge_index] is first_row["path"][0]
+        first_step = sections["paths"][first_path_index][0]
+        source_segment = first_row["path"][0]
+        # The per-occurrence alias moves to the step reference; the card is
+        # the physical remainder of the same payload, not a reshaping.
+        assert first_step["alias"] == source_segment["alias"]
+        assert sections["edges"][first_step["edge"]] == {
+            key: value for key, value in source_segment.items() if key != "alias"
+        }
 
 
 # ---------------------------------------------------------------------------

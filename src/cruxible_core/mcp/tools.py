@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import TypeAdapter
 
 from cruxible_client import contracts
 from cruxible_core import __version__
@@ -193,16 +194,19 @@ def register_tools(server: FastMCP) -> list[str]:
         or `full` when you need provenance or actor context.
 
         `layout='graph'` replaces per-row `items` with the normalized graph
-        transport: `nodes`/`edges` carry each unique entity and relationship
-        once, `results` preserves row order as index references, and `paths`
-        holds edge-index sequences for path-shaped results. Same information
+        transport: `nodes`/`edges` carry each unique entity and physical
+        relationship once, `results` preserves row order as index
+        references, and `paths` holds step-ref sequences (edge index plus
+        traversal-step alias) for path-shaped results. Same information
         without per-row duplication — prefer it for multi-row traversal
         reads where you need the relational context.
         """
         # Returned as a plain dict: the result is a UNION of the rows and
         # graph contract models, and FastMCP wraps union-annotated returns
         # in a {"result": ...} envelope that would break the legacy
-        # top-level payload shape for existing MCP consumers.
+        # top-level payload shape for existing MCP consumers. The real
+        # rows|graph union schema is still advertised — see
+        # _publish_union_output_schemas.
         return handlers.handle_query(
             instance_id,
             query_name,
@@ -245,7 +249,9 @@ def register_tools(server: FastMCP) -> list[str]:
         # Returned as a plain dict: the result is a UNION of the rows and
         # graph contract models, and FastMCP wraps union-annotated returns
         # in a {"result": ...} envelope that would break the legacy
-        # top-level payload shape for existing MCP consumers.
+        # top-level payload shape for existing MCP consumers. The real
+        # rows|graph union schema is still advertised — see
+        # _publish_union_output_schemas.
         return handlers.handle_query_inline(
             instance_id,
             definition,
@@ -274,6 +280,8 @@ def register_tools(server: FastMCP) -> list[str]:
         Returns a dict rather than the QueryListResult | QueryListDetailResult
         union because FastMCP nests union returns under a `result` key, which
         would break the flat list-envelope shape shared by every list tool.
+        The real union schema is still advertised via
+        `_publish_union_output_schemas`.
         """
         result = handlers.handle_list_queries(
             instance_id,
@@ -708,7 +716,8 @@ def register_tools(server: FastMCP) -> list[str]:
         # Returned as a plain dict: the result is a UNION of the legacy and
         # expanded contract models, and FastMCP wraps union-annotated returns
         # in a {"result": ...} envelope that would break the legacy top-level
-        # payload shape for existing MCP consumers.
+        # payload shape for existing MCP consumers. The real union schema is
+        # still advertised — see _publish_union_output_schemas.
         return handlers.handle_inspect_entity(
             instance_id,
             entity_type,
@@ -1395,4 +1404,45 @@ def register_tools(server: FastMCP) -> list[str]:
             edge_key,
         )
 
+    _publish_union_output_schemas(server)
+
     return registered
+
+
+# Tools that return plain dicts because their results are UNIONS of contract
+# models: FastMCP wraps union-annotated returns in a {"result": ...} envelope,
+# which would break the legacy top-level payload shape for existing MCP
+# consumers. The dict return keeps the wire shape, and the tool's published
+# outputSchema is overridden below with the real anyOf union of the contract
+# models it emits.
+_UNION_OUTPUT_TOOLS: dict[str, Any] = {
+    "cruxible_query": contracts.QueryToolResult | contracts.QueryGraphToolResult,
+    "cruxible_query_inline": contracts.QueryToolResult | contracts.QueryGraphToolResult,
+    "cruxible_list_queries": contracts.QueryListResult | contracts.QueryListDetailResult,
+    "cruxible_inspect_entity": (
+        contracts.InspectEntityResult | contracts.InspectNeighborhoodResult
+    ),
+}
+
+
+def _publish_union_output_schemas(server: FastMCP) -> None:
+    """Publish real union outputSchemas for the dict-returning union tools.
+
+    FastMCP derives outputSchema from the return annotation, so a
+    ``dict[str, Any]`` return advertises an unrestricted object. FastMCP
+    exposes no hook to attach a custom schema to a dict-returning tool
+    (``server.tool()`` only takes ``structured_output``), so the derived
+    schema is overridden on the registered tool's metadata after
+    registration. Only the ADVERTISED schema changes: the permissive dict
+    output model stays in place, so runtime structured/unstructured payloads
+    remain byte-identical to the handler's model dump (the legacy top-level
+    rows shape) instead of being re-validated through a union model.
+    """
+    for tool_name, union in _UNION_OUTPUT_TOOLS.items():
+        tool = server._tool_manager.get_tool(tool_name)
+        if tool is None:  # pragma: no cover - registration bug guard
+            raise RuntimeError(f"union output tool {tool_name!r} is not registered")
+        tool.fn_metadata.output_schema = TypeAdapter(union).json_schema()
+        # Tool.output_schema is a cached_property over fn_metadata; drop any
+        # cached value so list_tools publishes the override.
+        tool.__dict__.pop("output_schema", None)

@@ -103,7 +103,8 @@ profile_option = click.option(
 # Transport layout for query output. ``rows`` (default) is today's per-row
 # item layout, bit-for-bit; ``graph`` normalizes the already-filtered,
 # already-profiled rows into nodes/edges serialized once each, with results
-# as ordered references and paths as edge-index sequences. Applied at
+# as ordered references and paths as step-ref (edge index + alias)
+# sequences. Applied at
 # JSON-emit time through the shared normalizer
 # (cruxible_core.query.graph_layout) in BOTH local and server mode, so the
 # two modes cannot drift. Orthogonal to --profile (detail level) and the

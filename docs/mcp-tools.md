@@ -339,7 +339,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `relationship_state` | no | string | null | Read-visibility state: one of `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. |
 | `decision_record_id` | no | string | null |  |
 | `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
-| `layout` | no | string | Transport layout: `rows` (default, per-row items) or `graph` (normalized transport: `nodes`/`edges` carry each unique entity and relationship once, `results` preserves row order as index references, `paths` holds edge-index sequences for path-shaped results). |
+| `layout` | no | string | Transport layout: `rows` (default, per-row items) or `graph` (normalized transport: `nodes`/`edges` carry each unique entity and relationship once, `results` preserves row order as index references, `paths` holds step-ref sequences (edge index + traversal-step alias) for path-shaped results). |
 
 **Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary` (rows layout). With `layout='graph'` the `items` field is replaced by `layout`, `nodes`, `edges`, `results`, and `paths`; every other field is unchanged.
 
@@ -367,7 +367,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `relationship_state` | no | string | null | Read-visibility state: one of `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. |
 | `decision_record_id` | no | string | null |  |
 | `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
-| `layout` | no | string | Transport layout: `rows` (default, per-row items) or `graph` (normalized transport: `nodes`/`edges` carry each unique entity and relationship once, `results` preserves row order as index references, `paths` holds edge-index sequences for path-shaped results). |
+| `layout` | no | string | Transport layout: `rows` (default, per-row items) or `graph` (normalized transport: `nodes`/`edges` carry each unique entity and relationship once, `results` preserves row order as index references, `paths` holds step-ref sequences (edge index + traversal-step alias) for path-shaped results). |
 
 **Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary` (rows layout). With `layout='graph'` the `items` field is replaced by `layout`, `nodes`, `edges`, `results`, and `paths`; every other field is unchanged.
 

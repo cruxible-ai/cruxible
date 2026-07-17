@@ -10,22 +10,35 @@ the bounded-neighborhood inspect contract. Operating on the serialized dicts
   payload the rows layout would have carried (governance markers included);
 * the CLI local and remote emit paths normalize the identical dicts, so key
   order and trimming cannot drift between modes;
-* losslessness is structural — cards are the row payloads themselves, deduped,
-  never re-serialized through a second shaping pass.
+* losslessness is structural — node cards are the row payloads themselves and
+  edge cards are the row payloads minus their per-occurrence ``alias`` key,
+  deduped, never re-serialized through a second shaping pass.
 
 Identity rules:
 
 * node identity = ``(entity_type, entity_id)``; first occurrence wins and rows
   within one result set serialize the same entity identically.
-* edge identity = physical relationship identity (``relationship_type`` +
-  endpoints + ``edge_key``, ``None``-safe) plus the traversal-step ``alias``
-  where one is attached. In practice one physical edge carries one alias; a
-  physical edge referenced under two different step aliases yields two cards so
-  path reconstruction stays exact.
-* path identity = its edge-index sequence; identical sequences dedupe to one
-  ``paths[]`` entry. ``dedupe=path`` rows with distinct paths therefore keep
-  distinct path entries and distinct ``results[]`` entries — multiple valid
-  paths to one result are never collapsed.
+* edge identity = PHYSICAL relationship identity only (``relationship_type`` +
+  endpoints + ``edge_key``, ``None``-safe). The traversal-step ``alias`` is
+  per-occurrence metadata, not identity: a physical edge visited under two
+  different step aliases is ONE ``edges[]`` card. Cards therefore never carry
+  an ``alias`` key — the alias lives on the REFERENCES:
+
+  - each ``paths[]`` entry is a list of step refs ``{"edge": <index>,
+    "alias": <alias-or-null>}`` (the alias the traversal attached to that
+    occurrence);
+  - each include item ref is ``{"edge": <index>, "alias": <alias-or-null>,
+    "source": <index>, "target": <index>}``.
+
+  Relationship-shaped result refs stay bare ``edge`` indexes: relationship
+  rows carry no alias in the rows layout, so there is nothing to restore.
+  Reconstruction of a rows-layout segment is exactly ``{**edges[ref["edge"]],
+  "alias": ref["alias"]}``.
+* path identity = its step-ref sequence (edge index + alias per step);
+  identical sequences dedupe to one ``paths[]`` entry. ``dedupe=path`` rows
+  with distinct paths therefore keep distinct path entries and distinct
+  ``results[]`` entries — multiple valid paths to one result are never
+  collapsed.
 
 The per-row ``entities`` array of path rows is NOT materialized: it is the
 visited-entity walk, recoverable from ``entry`` plus the path's edge sequence
@@ -43,7 +56,8 @@ from __future__ import annotations
 from typing import Any
 
 # Canonical serialized-edge keys, in contract order (RelationshipInstance
-# field order plus the optional trailing ``alias``).
+# field order). Deliberately excludes ``alias``: cards are physical, aliases
+# live on the references.
 _EDGE_PAYLOAD_KEYS: tuple[str, ...] = (
     "relationship_type",
     "from_type",
@@ -53,7 +67,6 @@ _EDGE_PAYLOAD_KEYS: tuple[str, ...] = (
     "edge_key",
     "properties",
     "metadata",
-    "alias",
 )
 
 
@@ -63,10 +76,10 @@ class _GraphBuilder:
     def __init__(self) -> None:
         self.nodes: list[dict[str, Any]] = []
         self.edges: list[dict[str, Any]] = []
-        self.paths: list[list[int]] = []
+        self.paths: list[list[dict[str, Any]]] = []
         self._node_index: dict[tuple[Any, Any], int] = {}
         self._edge_index: dict[tuple[Any, ...], int] = {}
-        self._path_index: dict[tuple[int, ...], int] = {}
+        self._path_index: dict[tuple[tuple[int, str | None], ...], int] = {}
 
     def add_node(self, entity: dict[str, Any]) -> int:
         key = (entity.get("entity_type"), entity.get("entity_id"))
@@ -78,6 +91,7 @@ class _GraphBuilder:
         return index
 
     def add_edge(self, edge: dict[str, Any]) -> int:
+        """Register one PHYSICAL edge card, stripping any per-occurrence alias."""
         edge_key = edge.get("edge_key")
         key = (
             edge.get("relationship_type"),
@@ -87,21 +101,22 @@ class _GraphBuilder:
             edge.get("to_id"),
             edge_key is None,
             edge_key if edge_key is not None else -1,
-            edge.get("alias"),
         )
         index = self._edge_index.get(key)
         if index is None:
             index = len(self.edges)
             self._edge_index[key] = index
+            if "alias" in edge:
+                edge = {field: value for field, value in edge.items() if field != "alias"}
             self.edges.append(edge)
         return index
 
-    def add_path(self, edge_indexes: tuple[int, ...]) -> int:
-        index = self._path_index.get(edge_indexes)
+    def add_path(self, steps: tuple[tuple[int, str | None], ...]) -> int:
+        index = self._path_index.get(steps)
         if index is None:
             index = len(self.paths)
-            self._path_index[edge_indexes] = index
-            self.paths.append(list(edge_indexes))
+            self._path_index[steps] = index
+            self.paths.append([{"edge": edge, "alias": alias} for edge, alias in steps])
         return index
 
 
@@ -123,10 +138,22 @@ def _include_refs(
 
     Include envelope fields pass through verbatim; only ``items`` payloads are
     replaced by references. Include neighbors and edges dedupe into the shared
-    top-level arrays like every other card.
+    top-level arrays like every other card; the per-occurrence edge ``alias``
+    is carried on the item ref, never on the shared card.
     """
     refs: dict[str, dict[str, Any]] = {}
     for alias, include in (includes or {}).items():
+        items: list[dict[str, Any]] = []
+        for entry in include.get("items") or []:
+            edge = entry.get("edge") or {}
+            items.append(
+                {
+                    "edge": builder.add_edge(edge),
+                    "alias": edge.get("alias"),
+                    "source": builder.add_node(entry.get("source") or {}),
+                    "target": builder.add_node(entry.get("target") or {}),
+                }
+            )
         refs[alias] = {
             "alias": include.get("alias", alias),
             "many": include.get("many", False),
@@ -134,14 +161,7 @@ def _include_refs(
             "count": include.get("count", 0),
             "limit": include.get("limit"),
             "truncated": include.get("truncated", False),
-            "items": [
-                {
-                    "edge": builder.add_edge(entry.get("edge") or {}),
-                    "source": builder.add_node(entry.get("source") or {}),
-                    "target": builder.add_node(entry.get("target") or {}),
-                }
-                for entry in include.get("items") or []
-            ],
+            "items": items,
         }
     return refs
 
@@ -167,11 +187,13 @@ def _base_result_ref(item: dict[str, Any], builder: _GraphBuilder) -> dict[str, 
         for entity in item.get("entities") or []:
             builder.add_node(entity)
         result_index = builder.add_node(item["result"])
-        edge_indexes = tuple(builder.add_edge(segment) for segment in item.get("path") or [])
+        steps = tuple(
+            (builder.add_edge(segment), segment.get("alias")) for segment in item.get("path") or []
+        )
         return {
             "entry": entry_index,
             "result": result_index,
-            "paths": [builder.add_path(edge_indexes)],
+            "paths": [builder.add_path(steps)],
             "includes": _include_refs(item.get("includes"), builder),
         }
     return {"result": builder.add_node(item)}

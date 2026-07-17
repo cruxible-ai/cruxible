@@ -1650,9 +1650,7 @@ def _query_tool_result(
         sections = normalize_query_items(items)
         return contracts.QueryGraphToolResult(
             nodes=[contracts.QueryEntityItem.model_validate(node) for node in sections["nodes"]],
-            edges=[
-                contracts.QueryPathSegmentItem.model_validate(edge) for edge in sections["edges"]
-            ],
+            edges=[contracts.QueryGraphEdgeItem.model_validate(edge) for edge in sections["edges"]],
             results=cast(
                 list[contracts.QueryGraphResultRef],
                 sections["results"],

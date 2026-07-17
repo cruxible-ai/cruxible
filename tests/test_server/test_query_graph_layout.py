@@ -180,9 +180,7 @@ class TestGraphLayout:
         self, app_client: TestClient, seeded_instance: str
     ) -> None:
         body = {"definition": INLINE_PATH_DEFINITION, "params": {"part_number": "BP-1"}}
-        rows = app_client.post(
-            f"/api/v1/{seeded_instance}/queries/run-inline", json=body
-        ).json()
+        rows = app_client.post(f"/api/v1/{seeded_instance}/queries/run-inline", json=body).json()
         graph = app_client.post(
             f"/api/v1/{seeded_instance}/queries/run-inline",
             json={**body, "layout": "graph"},
@@ -206,11 +204,14 @@ class TestGraphLayout:
             {"entry": 0, "result": 1, "paths": [0], "includes": {}},
             {"entry": 0, "result": 2, "paths": [1], "includes": {}},
         ]
-        assert graph["paths"] == [[0], [1]]
+        assert graph["paths"] == [
+            [{"edge": 0, "alias": "fit"}],
+            [{"edge": 1, "alias": "fit"}],
+        ]
+        # Edge cards are physical: the step alias lives on the path refs.
+        assert all("alias" not in edge for edge in graph["edges"])
 
-    def test_named_query_graph_layout(
-        self, app_client: TestClient, seeded_instance: str
-    ) -> None:
+    def test_named_query_graph_layout(self, app_client: TestClient, seeded_instance: str) -> None:
         body = {
             "query_name": "vehicles_for_part",
             "params": {"part_number": "BP-1"},
@@ -235,9 +236,7 @@ class TestGraphLayout:
             "params": {"part_number": "BP-1"},
             "limit": 1,
         }
-        rows = app_client.post(
-            f"/api/v1/{seeded_instance}/queries/run-inline", json=body
-        ).json()
+        rows = app_client.post(f"/api/v1/{seeded_instance}/queries/run-inline", json=body).json()
         graph = app_client.post(
             f"/api/v1/{seeded_instance}/queries/run-inline",
             json={**body, "layout": "graph"},
@@ -263,9 +262,7 @@ class TestGraphLayout:
             "profile": "compact",
             "layout": "graph",
         }
-        graph = app_client.post(
-            f"/api/v1/{seeded_instance}/queries/run-inline", json=body
-        ).json()
+        graph = app_client.post(f"/api/v1/{seeded_instance}/queries/run-inline", json=body).json()
         assert graph["layout"] == "graph"
         # Compact node cards are bounded identity cards.
         part = next(node for node in graph["nodes"] if node["entity_id"] == "BP-1")

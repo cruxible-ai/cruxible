@@ -295,11 +295,10 @@ def test_query_graph_layout_sends_param_and_parses_graph_model():
                         "edge_key": None,
                         "properties": {"verified": True},
                         "metadata": {},
-                        "alias": "fit",
                     }
                 ],
                 "results": [{"entry": 0, "result": 1, "paths": [0], "includes": {}}],
-                "paths": [[0]],
+                "paths": [[{"edge": 0, "alias": "fit"}]],
                 "receipt_id": "RCP-1",
                 "receipt": None,
                 "total": 1,
@@ -323,7 +322,7 @@ def test_query_graph_layout_sends_param_and_parses_graph_model():
     ref = result.results[0]
     assert isinstance(ref, contracts.QueryGraphPathRef)
     assert (ref.entry, ref.result, ref.paths) == (0, 1, [0])
-    assert result.paths == [[0]]
+    assert result.paths == [[contracts.QueryGraphPathStepRef(edge=0, alias="fit")]]
 
 
 def test_query_inline_graph_layout_sends_param_and_parses_graph_model():

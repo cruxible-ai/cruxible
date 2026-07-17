@@ -544,17 +544,13 @@ class TestOutputSchema:
 
     @pytest.mark.parametrize(
         "tool_name",
-        # cruxible_inspect_entity, cruxible_query, and cruxible_query_inline
-        # return dicts because their results are UNIONS of contract models
-        # (legacy single-hop vs expanded neighborhood; rows vs graph layout);
-        # a union annotation would make FastMCP wrap the payload in a
-        # {"result": ...} envelope and break the legacy top-level shape.
+        # Genuinely open payloads (receipt documents and instance schema
+        # dumps) stay unrestricted dicts. The union-returning dict tools
+        # (query/query_inline/list_queries/inspect_entity) are NOT here:
+        # they publish real anyOf union schemas — see the tests below.
         [
             "cruxible_receipt",
             "cruxible_schema",
-            "cruxible_inspect_entity",
-            "cruxible_query",
-            "cruxible_query_inline",
         ],
     )
     def test_dict_output_schema(self, server, tool_name):
@@ -562,6 +558,59 @@ class TestOutputSchema:
         output = schemas[tool_name].outputSchema
         assert output["type"] == "object"
         assert output.get("additionalProperties") is True
+
+    # The four tools below return plain dicts at runtime (FastMCP would wrap
+    # a union-annotated return in a {"result": ...} envelope and break the
+    # legacy top-level shape) but ADVERTISE the real union of their contract
+    # models as an anyOf outputSchema.
+
+    def _union_variants(self, output):
+        """Resolve the anyOf $refs of a published union schema into $defs."""
+        defs = output["$defs"]
+        return [defs[variant["$ref"].rsplit("/", 1)[-1]] for variant in output["anyOf"]]
+
+    @pytest.mark.parametrize("tool_name", ["cruxible_query", "cruxible_query_inline"])
+    def test_query_output_schema_documents_both_layouts(self, server, tool_name):
+        schemas = _get_tool_schemas(server)
+        output = schemas[tool_name].outputSchema
+        variants = self._union_variants(output)
+        assert len(variants) == 2
+        rows = next(v for v in variants if "items" in v["properties"])
+        graph = next(v for v in variants if "nodes" in v["properties"])
+        assert {"items", "receipt_id", "receipt", "total", "steps_executed"} <= set(
+            rows["required"]
+        )
+        assert {"receipt_id", "receipt", "total", "steps_executed"} <= set(graph["required"])
+        assert {"layout", "nodes", "edges", "results", "paths"} <= set(graph["properties"])
+        # Edge cards are physical: the traversal-step alias lives on the
+        # path/include references, never on the shared edges[] cards.
+        defs = output["$defs"]
+        assert "alias" not in defs["QueryGraphEdgeItem"]["properties"]
+        assert "alias" in defs["QueryGraphPathStepRef"]["properties"]
+        assert "alias" in defs["QueryGraphIncludeItemRef"]["properties"]
+
+    def test_list_queries_output_schema_documents_both_details(self, server):
+        schemas = _get_tool_schemas(server)
+        output = schemas["cruxible_list_queries"].outputSchema
+        variants = self._union_variants(output)
+        assert len(variants) == 2
+        for variant in variants:
+            assert {"items", "total"} <= set(variant["properties"])
+        defs = output["$defs"]
+        assert "QueryDefinitionSummary" in defs
+        assert "NamedQueryInfoResult" in defs
+
+    def test_inspect_entity_output_schema_documents_both_shapes(self, server):
+        schemas = _get_tool_schemas(server)
+        output = schemas["cruxible_inspect_entity"].outputSchema
+        variants = self._union_variants(output)
+        assert len(variants) == 2
+        legacy = next(v for v in variants if "neighbors" in v["properties"])
+        neighborhood = next(v for v in variants if "nodes" in v["properties"])
+        assert {"found", "entity_type", "entity_id"} <= set(legacy["required"])
+        assert {"depth", "state", "edges", "truncated", "continuation_token"} <= set(
+            neighborhood["properties"]
+        )
 
 
 class TestErrorPropagation:

@@ -778,12 +778,49 @@ class QueryToolResult(BaseModel):
     read_revision: int | None = None
 
 
-class QueryGraphIncludeItemRef(BaseModel):
-    """One include item as references into the shared nodes/edges arrays."""
+class QueryGraphEdgeItem(BaseModel):
+    """One PHYSICAL relationship card in the shared graph-layout `edges` array.
+
+    Exactly the serialized edge payload minus the per-occurrence traversal
+    `alias`: aliases are reference-level metadata (path step refs, include
+    item refs), so one physical edge is always one card even when visited
+    under several step aliases.
+    """
+
+    relationship_type: str
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    edge_key: int | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class QueryGraphPathStepRef(BaseModel):
+    """One traversal step of a path: an edge reference plus its step alias.
+
+    Reconstructing the rows-layout segment for a step is exactly
+    `{**edges[edge], "alias": alias}`.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     edge: int
+    alias: str | None = None
+
+
+class QueryGraphIncludeItemRef(BaseModel):
+    """One include item as references into the shared nodes/edges arrays.
+
+    `alias` is the per-occurrence traversal alias of the referenced edge —
+    aliases live on references, never on the shared `edges` cards.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    edge: int
+    alias: str | None = None
     source: int
     target: int
 
@@ -860,21 +897,22 @@ class QueryGraphToolResult(BaseModel):
 
     Carries the same information as the rows layout of
     :class:`QueryToolResult`: `nodes` holds each unique entity once,
-    `edges` each unique relationship once (stable edge identity =
-    relationship type + endpoints + `edge_key`, plus the traversal-step
-    `alias` where one is attached), `results` preserves today's row order
-    as index references, and `paths` holds edge-index sequences for
-    path-shaped results so `dedupe=path` semantics stay distinct. Envelope,
-    truncation, policy-summary, and receipt fields are verbatim
+    `edges` each unique PHYSICAL relationship once (edge identity =
+    relationship type + endpoints + `edge_key`; traversal-step aliases are
+    carried per occurrence on path step refs and include item refs, never
+    on the card), `results` preserves today's row order as index
+    references, and `paths` holds step-ref sequences (edge index + alias)
+    for path-shaped results so `dedupe=path` semantics stay distinct.
+    Envelope, truncation, policy-summary, and receipt fields are verbatim
     :class:`QueryToolResult` passthrough — normalization happens strictly
     after filtering, ordering, and pagination.
     """
 
     layout: Literal["graph"] = "graph"
     nodes: list[QueryEntityItem] = Field(default_factory=list)
-    edges: list[QueryPathSegmentItem] = Field(default_factory=list)
+    edges: list[QueryGraphEdgeItem] = Field(default_factory=list)
     results: list[QueryGraphResultRef] = Field(default_factory=list)
-    paths: list[list[int]] = Field(default_factory=list)
+    paths: list[list[QueryGraphPathStepRef]] = Field(default_factory=list)
     receipt_id: str | None
     receipt: dict[str, Any] | None
     total: int
