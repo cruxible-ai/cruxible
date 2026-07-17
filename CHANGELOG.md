@@ -7,6 +7,21 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## 0.2.5 — 2026-07-16
+
+### Fixed
+
+- **Tabular bundle loading tolerates optional columns**: JSON/JSONL
+  reference bundles with columns that are null for the first hundred
+  rows no longer crash canonical workflow ingest; schema inference now
+  scans all rows.
+
+### Changed
+
+- MCP server instructions now document relationship truth-state
+  semantics (live / accepted / pending / reviewable) so agents receive
+  the review model without reading docs.
+
 ## 0.2.4 — 2026-07-16
 
 Config composition lands: instances materialize from chains of config

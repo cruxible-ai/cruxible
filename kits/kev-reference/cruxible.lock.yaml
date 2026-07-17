@@ -1,7 +1,7 @@
 version: '1'
 config_digest: sha256:3fd0892affb2434b1bac326e4b370af8e50e17ee66e5fa6c6188bc186b3b43b8
-lock_digest: sha256:14648de7bf91c71e120c02eb88d7252a141d08256389e489badee805d7dba9ce
-generated_at: 2026-07-11 16:40:47.008974+00:00
+lock_digest: sha256:79b5391a48f4de34e48e195dd6bc3cdfc797fd8ff9acc076a7f379fe8ec44e37
+generated_at: 2026-07-17 00:15:53.443312+00:00
 artifacts:
   public_kev_bundle:
     kind: directory
@@ -12,7 +12,7 @@ providers:
   parse_public_kev_bundle:
     version: 1.0.0
     ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
-    provider_entrypoint_digest: sha256:2a49eac8dc36efc4d96fdb089f9fbd09c41f7eafcc3458ec7d6fbc40337a6419
+    provider_entrypoint_digest: sha256:e4939b3dcba620e8e12827c733910d1e7e70977936036ceb99a325cba0660c43
     runtime: python
     deterministic: true
     side_effects: false

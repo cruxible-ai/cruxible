@@ -1,6 +1,6 @@
 schema_version: cruxible.kit.v1
 kit_id: agent-operation
-version: 0.2.4
+version: 0.2.5
 role: base
 # config.yaml is the compact authoring source AND the single source of truth; the loader
 # expands it to the explicit CoreConfig on load (no committed expanded artifact).
