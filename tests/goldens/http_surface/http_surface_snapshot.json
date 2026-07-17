@@ -127,10 +127,10 @@
     "GET": "QueryListResult | QueryListDetailResult"
   },
   "/api/v1/{instance_id}/queries/run": {
-    "POST": "QueryToolResult"
+    "POST": "QueryToolResult | QueryGraphToolResult"
   },
   "/api/v1/{instance_id}/queries/run-inline": {
-    "POST": "QueryToolResult"
+    "POST": "QueryToolResult | QueryGraphToolResult"
   },
   "/api/v1/{instance_id}/queries/{query_name}": {
     "GET": "NamedQueryInfoResult"

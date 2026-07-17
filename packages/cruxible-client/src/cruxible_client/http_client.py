@@ -341,7 +341,16 @@ class CruxibleClient:
         relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
         profile: contracts.ReadProfile | None = None,
-    ) -> contracts.QueryToolResult:
+        layout: contracts.QueryLayout | None = None,
+    ) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
+        """Run a named query.
+
+        ``layout="graph"`` opts into the normalized
+        :class:`~cruxible_client.contracts.QueryGraphToolResult` transport
+        (each entity/relationship serialized once, rows become references) —
+        mirroring the server-side opt-in exactly. Omitting ``layout`` keeps
+        today's row-layout :class:`~cruxible_client.contracts.QueryToolResult`.
+        """
         payload: dict[str, Any] = {
             "query_name": query_name,
             "params": params,
@@ -352,10 +361,14 @@ class CruxibleClient:
         }
         if profile is not None:
             payload["profile"] = profile
+        if layout is not None:
+            payload["layout"] = layout
         response = self._client.post(
             f"/api/v1/{instance_id}/queries/run",
             json=payload,
         )
+        if layout == "graph":
+            return self._parse_model(response, contracts.QueryGraphToolResult)
         return self._parse_model(response, contracts.QueryToolResult)
 
     def view(
@@ -398,7 +411,14 @@ class CruxibleClient:
         relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
         profile: contracts.ReadProfile | None = None,
-    ) -> contracts.QueryToolResult:
+        layout: contracts.QueryLayout | None = None,
+    ) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
+        """Run a bounded inline query definition.
+
+        ``layout="graph"`` opts into the normalized
+        :class:`~cruxible_client.contracts.QueryGraphToolResult` transport,
+        exactly as for :meth:`query`.
+        """
         payload: dict[str, Any] = {
             "definition": definition.model_dump(mode="json", exclude_none=True),
             "params": params,
@@ -408,10 +428,14 @@ class CruxibleClient:
         }
         if profile is not None:
             payload["profile"] = profile
+        if layout is not None:
+            payload["layout"] = layout
         response = self._client.post(
             f"/api/v1/{instance_id}/queries/run-inline",
             json=payload,
         )
+        if layout == "graph":
+            return self._parse_model(response, contracts.QueryGraphToolResult)
         return self._parse_model(response, contracts.QueryToolResult)
 
     def create_decision_record(

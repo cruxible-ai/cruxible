@@ -157,6 +157,12 @@
         "none"
       ]
     },
+    "QueryLayout": {
+      "values": [
+        "rows",
+        "graph"
+      ]
+    },
     "QueryListDetail": {
       "values": [
         "summary",
@@ -16336,6 +16342,1946 @@
         "entity_type",
         "metadata",
         "properties"
+      ]
+    },
+    "QueryGraphEntityRef": {
+      "fields": {
+        "result": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "result",
+          "required": true,
+          "schema": {
+            "title": "Result",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Entity-shaped result row as a node reference.",
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "QueryGraphEntityRef",
+        "type": "object"
+      },
+      "required_fields": [
+        "result"
+      ]
+    },
+    "QueryGraphIncludeItemRef": {
+      "fields": {
+        "edge": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "edge",
+          "required": true,
+          "schema": {
+            "title": "Edge",
+            "type": "integer"
+          }
+        },
+        "source": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source",
+          "required": true,
+          "schema": {
+            "title": "Source",
+            "type": "integer"
+          }
+        },
+        "target": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target",
+          "required": true,
+          "schema": {
+            "title": "Target",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One include item as references into the shared nodes/edges arrays.",
+        "properties": {
+          "edge": {
+            "title": "Edge",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "integer"
+          },
+          "target": {
+            "title": "Target",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "edge",
+          "source",
+          "target"
+        ],
+        "title": "QueryGraphIncludeItemRef",
+        "type": "object"
+      },
+      "required_fields": [
+        "edge",
+        "source",
+        "target"
+      ]
+    },
+    "QueryGraphIncludeResult": {
+      "fields": {
+        "alias": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "alias",
+          "required": true,
+          "schema": {
+            "title": "Alias",
+            "type": "string"
+          }
+        },
+        "count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "exists": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "exists",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Exists",
+            "type": "boolean"
+          }
+        },
+        "items": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "items",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/QueryGraphIncludeItemRef"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "many": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "many",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Many",
+            "type": "boolean"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryGraphIncludeItemRef": {
+            "additionalProperties": false,
+            "description": "One include item as references into the shared nodes/edges arrays.",
+            "properties": {
+              "edge": {
+                "title": "Edge",
+                "type": "integer"
+              },
+              "source": {
+                "title": "Source",
+                "type": "integer"
+              },
+              "target": {
+                "title": "Target",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "edge",
+              "source",
+              "target"
+            ],
+            "title": "QueryGraphIncludeItemRef",
+            "type": "object"
+          }
+        },
+        "description": "Include side-context for one result under graph layout.\n\nEnvelope fields (`many`/`exists`/`count`/`limit`/`truncated`) are verbatim\nrow-layout passthrough; `items` becomes node/edge references.",
+        "properties": {
+          "alias": {
+            "title": "Alias",
+            "type": "string"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "exists": {
+            "default": false,
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/$defs/QueryGraphIncludeItemRef"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "many": {
+            "default": false,
+            "title": "Many",
+            "type": "boolean"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "alias"
+        ],
+        "title": "QueryGraphIncludeResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "alias"
+      ]
+    },
+    "QueryGraphPathRef": {
+      "fields": {
+        "entry": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entry",
+          "required": true,
+          "schema": {
+            "title": "Entry",
+            "type": "integer"
+          }
+        },
+        "includes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "includes",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "$ref": "#/$defs/QueryGraphIncludeResult"
+            },
+            "title": "Includes",
+            "type": "object"
+          }
+        },
+        "paths": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "paths",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Paths",
+            "type": "array"
+          }
+        },
+        "result": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "result",
+          "required": true,
+          "schema": {
+            "title": "Result",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryGraphIncludeItemRef": {
+            "additionalProperties": false,
+            "description": "One include item as references into the shared nodes/edges arrays.",
+            "properties": {
+              "edge": {
+                "title": "Edge",
+                "type": "integer"
+              },
+              "source": {
+                "title": "Source",
+                "type": "integer"
+              },
+              "target": {
+                "title": "Target",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "edge",
+              "source",
+              "target"
+            ],
+            "title": "QueryGraphIncludeItemRef",
+            "type": "object"
+          },
+          "QueryGraphIncludeResult": {
+            "description": "Include side-context for one result under graph layout.\n\nEnvelope fields (`many`/`exists`/`count`/`limit`/`truncated`) are verbatim\nrow-layout passthrough; `items` becomes node/edge references.",
+            "properties": {
+              "alias": {
+                "title": "Alias",
+                "type": "string"
+              },
+              "count": {
+                "default": 0,
+                "title": "Count",
+                "type": "integer"
+              },
+              "exists": {
+                "default": false,
+                "title": "Exists",
+                "type": "boolean"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/QueryGraphIncludeItemRef"
+                },
+                "title": "Items",
+                "type": "array"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "many": {
+                "default": false,
+                "title": "Many",
+                "type": "boolean"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "alias"
+            ],
+            "title": "QueryGraphIncludeResult",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Path-shaped result row as node references plus path-index references.\n\nThe per-row `entities` array of the rows layout is not materialized: the\nvisited-entity sequence is recoverable by walking `paths[path]` from\n`entry` (each segment connects the current node to its other endpoint).",
+        "properties": {
+          "entry": {
+            "title": "Entry",
+            "type": "integer"
+          },
+          "includes": {
+            "additionalProperties": {
+              "$ref": "#/$defs/QueryGraphIncludeResult"
+            },
+            "title": "Includes",
+            "type": "object"
+          },
+          "paths": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "result": {
+            "title": "Result",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entry",
+          "result"
+        ],
+        "title": "QueryGraphPathRef",
+        "type": "object"
+      },
+      "required_fields": [
+        "entry",
+        "result"
+      ]
+    },
+    "QueryGraphProjectedRef": {
+      "fields": {
+        "source": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/QueryGraphEntityRef"
+              },
+              {
+                "$ref": "#/$defs/QueryGraphPathRef"
+              },
+              {
+                "$ref": "#/$defs/QueryGraphRelationshipRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source"
+          }
+        },
+        "values": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "values",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Values",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryGraphEntityRef": {
+            "additionalProperties": false,
+            "description": "Entity-shaped result row as a node reference.",
+            "properties": {
+              "result": {
+                "title": "Result",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "title": "QueryGraphEntityRef",
+            "type": "object"
+          },
+          "QueryGraphIncludeItemRef": {
+            "additionalProperties": false,
+            "description": "One include item as references into the shared nodes/edges arrays.",
+            "properties": {
+              "edge": {
+                "title": "Edge",
+                "type": "integer"
+              },
+              "source": {
+                "title": "Source",
+                "type": "integer"
+              },
+              "target": {
+                "title": "Target",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "edge",
+              "source",
+              "target"
+            ],
+            "title": "QueryGraphIncludeItemRef",
+            "type": "object"
+          },
+          "QueryGraphIncludeResult": {
+            "description": "Include side-context for one result under graph layout.\n\nEnvelope fields (`many`/`exists`/`count`/`limit`/`truncated`) are verbatim\nrow-layout passthrough; `items` becomes node/edge references.",
+            "properties": {
+              "alias": {
+                "title": "Alias",
+                "type": "string"
+              },
+              "count": {
+                "default": 0,
+                "title": "Count",
+                "type": "integer"
+              },
+              "exists": {
+                "default": false,
+                "title": "Exists",
+                "type": "boolean"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/QueryGraphIncludeItemRef"
+                },
+                "title": "Items",
+                "type": "array"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "many": {
+                "default": false,
+                "title": "Many",
+                "type": "boolean"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "alias"
+            ],
+            "title": "QueryGraphIncludeResult",
+            "type": "object"
+          },
+          "QueryGraphPathRef": {
+            "additionalProperties": false,
+            "description": "Path-shaped result row as node references plus path-index references.\n\nThe per-row `entities` array of the rows layout is not materialized: the\nvisited-entity sequence is recoverable by walking `paths[path]` from\n`entry` (each segment connects the current node to its other endpoint).",
+            "properties": {
+              "entry": {
+                "title": "Entry",
+                "type": "integer"
+              },
+              "includes": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryGraphIncludeResult"
+                },
+                "title": "Includes",
+                "type": "object"
+              },
+              "paths": {
+                "items": {
+                  "type": "integer"
+                },
+                "title": "Paths",
+                "type": "array"
+              },
+              "result": {
+                "title": "Result",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "entry",
+              "result"
+            ],
+            "title": "QueryGraphPathRef",
+            "type": "object"
+          },
+          "QueryGraphRelationshipRef": {
+            "additionalProperties": false,
+            "description": "Relationship-shaped result row as an edge reference with endpoints.",
+            "properties": {
+              "edge": {
+                "title": "Edge",
+                "type": "integer"
+              },
+              "entry": {
+                "title": "Entry",
+                "type": "integer"
+              },
+              "from_entity": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From Entity"
+              },
+              "includes": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryGraphIncludeResult"
+                },
+                "title": "Includes",
+                "type": "object"
+              },
+              "to_entity": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To Entity"
+              }
+            },
+            "required": [
+              "entry",
+              "edge"
+            ],
+            "title": "QueryGraphRelationshipRef",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Projected result row: selected values plus optional source-row references.",
+        "properties": {
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/QueryGraphEntityRef"
+              },
+              {
+                "$ref": "#/$defs/QueryGraphPathRef"
+              },
+              {
+                "$ref": "#/$defs/QueryGraphRelationshipRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source"
+          },
+          "values": {
+            "additionalProperties": true,
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "values"
+        ],
+        "title": "QueryGraphProjectedRef",
+        "type": "object"
+      },
+      "required_fields": [
+        "values"
+      ]
+    },
+    "QueryGraphRelationshipRef": {
+      "fields": {
+        "edge": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "edge",
+          "required": true,
+          "schema": {
+            "title": "Edge",
+            "type": "integer"
+          }
+        },
+        "entry": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entry",
+          "required": true,
+          "schema": {
+            "title": "Entry",
+            "type": "integer"
+          }
+        },
+        "from_entity": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "from_entity",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "From Entity"
+          }
+        },
+        "includes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "includes",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "$ref": "#/$defs/QueryGraphIncludeResult"
+            },
+            "title": "Includes",
+            "type": "object"
+          }
+        },
+        "to_entity": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "to_entity",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "To Entity"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryGraphIncludeItemRef": {
+            "additionalProperties": false,
+            "description": "One include item as references into the shared nodes/edges arrays.",
+            "properties": {
+              "edge": {
+                "title": "Edge",
+                "type": "integer"
+              },
+              "source": {
+                "title": "Source",
+                "type": "integer"
+              },
+              "target": {
+                "title": "Target",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "edge",
+              "source",
+              "target"
+            ],
+            "title": "QueryGraphIncludeItemRef",
+            "type": "object"
+          },
+          "QueryGraphIncludeResult": {
+            "description": "Include side-context for one result under graph layout.\n\nEnvelope fields (`many`/`exists`/`count`/`limit`/`truncated`) are verbatim\nrow-layout passthrough; `items` becomes node/edge references.",
+            "properties": {
+              "alias": {
+                "title": "Alias",
+                "type": "string"
+              },
+              "count": {
+                "default": 0,
+                "title": "Count",
+                "type": "integer"
+              },
+              "exists": {
+                "default": false,
+                "title": "Exists",
+                "type": "boolean"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/QueryGraphIncludeItemRef"
+                },
+                "title": "Items",
+                "type": "array"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "many": {
+                "default": false,
+                "title": "Many",
+                "type": "boolean"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "alias"
+            ],
+            "title": "QueryGraphIncludeResult",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Relationship-shaped result row as an edge reference with endpoints.",
+        "properties": {
+          "edge": {
+            "title": "Edge",
+            "type": "integer"
+          },
+          "entry": {
+            "title": "Entry",
+            "type": "integer"
+          },
+          "from_entity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "From Entity"
+          },
+          "includes": {
+            "additionalProperties": {
+              "$ref": "#/$defs/QueryGraphIncludeResult"
+            },
+            "title": "Includes",
+            "type": "object"
+          },
+          "to_entity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "To Entity"
+          }
+        },
+        "required": [
+          "entry",
+          "edge"
+        ],
+        "title": "QueryGraphRelationshipRef",
+        "type": "object"
+      },
+      "required_fields": [
+        "edge",
+        "entry"
+      ]
+    },
+    "QueryGraphToolResult": {
+      "fields": {
+        "dedupe": {
+          "default": "path",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "dedupe",
+          "required": false,
+          "schema": {
+            "default": "path",
+            "enum": [
+              "entity",
+              "path",
+              "none"
+            ],
+            "title": "Dedupe",
+            "type": "string"
+          }
+        },
+        "edges": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "edges",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/QueryPathSegmentItem"
+            },
+            "title": "Edges",
+            "type": "array"
+          }
+        },
+        "layout": {
+          "default": "graph",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "layout",
+          "required": false,
+          "schema": {
+            "const": "graph",
+            "default": "graph",
+            "title": "Layout",
+            "type": "string"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "limit_truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit_truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Limit Truncated",
+            "type": "boolean"
+          }
+        },
+        "max_paths": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "max_paths",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Paths"
+          }
+        },
+        "max_paths_per_result": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "max_paths_per_result",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Paths Per Result"
+          }
+        },
+        "nodes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "nodes",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/QueryEntityItem"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "param_hints": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "param_hints",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/QueryParamHints"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "path_truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "path_truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Path Truncated",
+            "type": "boolean"
+          }
+        },
+        "paths": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "paths",
+          "required": false,
+          "schema": {
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "title": "Paths",
+            "type": "array"
+          }
+        },
+        "policy_summary": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "policy_summary",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Policy Summary",
+            "type": "object"
+          }
+        },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
+        "receipt": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "receipt",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt"
+          }
+        },
+        "receipt_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Id"
+          }
+        },
+        "relationship_state": {
+          "default": "live",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "relationship_state",
+          "required": false,
+          "schema": {
+            "default": "live",
+            "enum": [
+              "live",
+              "accepted",
+              "all",
+              "not-live",
+              "pending",
+              "reviewable"
+            ],
+            "title": "Relationship State",
+            "type": "string"
+          }
+        },
+        "result_shape": {
+          "default": "path",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "result_shape",
+          "required": false,
+          "schema": {
+            "default": "path",
+            "enum": [
+              "entity",
+              "path",
+              "relationship"
+            ],
+            "title": "Result Shape",
+            "type": "string"
+          }
+        },
+        "results": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "results",
+          "required": false,
+          "schema": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/QueryGraphEntityRef"
+                },
+                {
+                  "$ref": "#/$defs/QueryGraphPathRef"
+                },
+                {
+                  "$ref": "#/$defs/QueryGraphRelationshipRef"
+                },
+                {
+                  "$ref": "#/$defs/QueryGraphProjectedRef"
+                }
+              ]
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "retained_path_count": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "retained_path_count",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retained Path Count"
+          }
+        },
+        "steps_executed": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "steps_executed",
+          "required": true,
+          "schema": {
+            "title": "Steps Executed",
+            "type": "integer"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "total_path_count": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "total_path_count",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Total Path Count"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "truncation_reasons": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "truncation_reasons",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Truncation Reasons",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryEntityItem": {
+            "description": "Entity-shaped row returned by entity result queries.",
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id",
+              "properties",
+              "metadata"
+            ],
+            "title": "QueryEntityItem",
+            "type": "object"
+          },
+          "QueryGraphEntityRef": {
+            "additionalProperties": false,
+            "description": "Entity-shaped result row as a node reference.",
+            "properties": {
+              "result": {
+                "title": "Result",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "title": "QueryGraphEntityRef",
+            "type": "object"
+          },
+          "QueryGraphIncludeItemRef": {
+            "additionalProperties": false,
+            "description": "One include item as references into the shared nodes/edges arrays.",
+            "properties": {
+              "edge": {
+                "title": "Edge",
+                "type": "integer"
+              },
+              "source": {
+                "title": "Source",
+                "type": "integer"
+              },
+              "target": {
+                "title": "Target",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "edge",
+              "source",
+              "target"
+            ],
+            "title": "QueryGraphIncludeItemRef",
+            "type": "object"
+          },
+          "QueryGraphIncludeResult": {
+            "description": "Include side-context for one result under graph layout.\n\nEnvelope fields (`many`/`exists`/`count`/`limit`/`truncated`) are verbatim\nrow-layout passthrough; `items` becomes node/edge references.",
+            "properties": {
+              "alias": {
+                "title": "Alias",
+                "type": "string"
+              },
+              "count": {
+                "default": 0,
+                "title": "Count",
+                "type": "integer"
+              },
+              "exists": {
+                "default": false,
+                "title": "Exists",
+                "type": "boolean"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/QueryGraphIncludeItemRef"
+                },
+                "title": "Items",
+                "type": "array"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "many": {
+                "default": false,
+                "title": "Many",
+                "type": "boolean"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "alias"
+            ],
+            "title": "QueryGraphIncludeResult",
+            "type": "object"
+          },
+          "QueryGraphPathRef": {
+            "additionalProperties": false,
+            "description": "Path-shaped result row as node references plus path-index references.\n\nThe per-row `entities` array of the rows layout is not materialized: the\nvisited-entity sequence is recoverable by walking `paths[path]` from\n`entry` (each segment connects the current node to its other endpoint).",
+            "properties": {
+              "entry": {
+                "title": "Entry",
+                "type": "integer"
+              },
+              "includes": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryGraphIncludeResult"
+                },
+                "title": "Includes",
+                "type": "object"
+              },
+              "paths": {
+                "items": {
+                  "type": "integer"
+                },
+                "title": "Paths",
+                "type": "array"
+              },
+              "result": {
+                "title": "Result",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "entry",
+              "result"
+            ],
+            "title": "QueryGraphPathRef",
+            "type": "object"
+          },
+          "QueryGraphProjectedRef": {
+            "additionalProperties": false,
+            "description": "Projected result row: selected values plus optional source-row references.",
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryGraphEntityRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryGraphPathRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryGraphRelationshipRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source"
+              },
+              "values": {
+                "additionalProperties": true,
+                "title": "Values",
+                "type": "object"
+              }
+            },
+            "required": [
+              "values"
+            ],
+            "title": "QueryGraphProjectedRef",
+            "type": "object"
+          },
+          "QueryGraphRelationshipRef": {
+            "additionalProperties": false,
+            "description": "Relationship-shaped result row as an edge reference with endpoints.",
+            "properties": {
+              "edge": {
+                "title": "Edge",
+                "type": "integer"
+              },
+              "entry": {
+                "title": "Entry",
+                "type": "integer"
+              },
+              "from_entity": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From Entity"
+              },
+              "includes": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryGraphIncludeResult"
+                },
+                "title": "Includes",
+                "type": "object"
+              },
+              "to_entity": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To Entity"
+              }
+            },
+            "required": [
+              "entry",
+              "edge"
+            ],
+            "title": "QueryGraphRelationshipRef",
+            "type": "object"
+          },
+          "QueryParamHints": {
+            "properties": {
+              "entry_point": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Entry Point"
+              },
+              "example_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Example Ids",
+                "type": "array"
+              },
+              "primary_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Primary Key"
+              },
+              "required_params": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Required Params",
+                "type": "array"
+              }
+            },
+            "required": [
+              "entry_point"
+            ],
+            "title": "QueryParamHints",
+            "type": "object"
+          },
+          "QueryPathSegmentItem": {
+            "description": "One relationship segment in a path-shaped query row.",
+            "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
+              "edge_key": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Edge Key"
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship_type": {
+                "title": "Relationship Type",
+                "type": "string"
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relationship_type",
+              "from_type",
+              "from_id",
+              "to_type",
+              "to_id"
+            ],
+            "title": "QueryPathSegmentItem",
+            "type": "object"
+          }
+        },
+        "description": "Normalized graph transport for query output (`layout=\"graph\"`).\n\nCarries the same information as the rows layout of\n:class:`QueryToolResult`: `nodes` holds each unique entity once,\n`edges` each unique relationship once (stable edge identity =\nrelationship type + endpoints + `edge_key`, plus the traversal-step\n`alias` where one is attached), `results` preserves today's row order\nas index references, and `paths` holds edge-index sequences for\npath-shaped results so `dedupe=path` semantics stay distinct. Envelope,\ntruncation, policy-summary, and receipt fields are verbatim\n:class:`QueryToolResult` passthrough — normalization happens strictly\nafter filtering, ordering, and pagination.",
+        "properties": {
+          "dedupe": {
+            "default": "path",
+            "enum": [
+              "entity",
+              "path",
+              "none"
+            ],
+            "title": "Dedupe",
+            "type": "string"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/$defs/QueryPathSegmentItem"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "layout": {
+            "const": "graph",
+            "default": "graph",
+            "title": "Layout",
+            "type": "string"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "limit_truncated": {
+            "default": false,
+            "title": "Limit Truncated",
+            "type": "boolean"
+          },
+          "max_paths": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Paths"
+          },
+          "max_paths_per_result": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Paths Per Result"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/$defs/QueryEntityItem"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "param_hints": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/QueryParamHints"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "path_truncated": {
+            "default": false,
+            "title": "Path Truncated",
+            "type": "boolean"
+          },
+          "paths": {
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "policy_summary": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Policy Summary",
+            "type": "object"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Id"
+          },
+          "relationship_state": {
+            "default": "live",
+            "enum": [
+              "live",
+              "accepted",
+              "all",
+              "not-live",
+              "pending",
+              "reviewable"
+            ],
+            "title": "Relationship State",
+            "type": "string"
+          },
+          "result_shape": {
+            "default": "path",
+            "enum": [
+              "entity",
+              "path",
+              "relationship"
+            ],
+            "title": "Result Shape",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/QueryGraphEntityRef"
+                },
+                {
+                  "$ref": "#/$defs/QueryGraphPathRef"
+                },
+                {
+                  "$ref": "#/$defs/QueryGraphRelationshipRef"
+                },
+                {
+                  "$ref": "#/$defs/QueryGraphProjectedRef"
+                }
+              ]
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "retained_path_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retained Path Count"
+          },
+          "steps_executed": {
+            "title": "Steps Executed",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "total_path_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Total Path Count"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "truncation_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Truncation Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "receipt",
+          "total",
+          "steps_executed"
+        ],
+        "title": "QueryGraphToolResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "receipt",
+        "receipt_id",
+        "steps_executed",
+        "total"
       ]
     },
     "QueryIncludeItem": {

@@ -3882,3 +3882,232 @@ class TestReadProfiles:
         table = _chdir_run(runner, populated_instance.root, cli_args)
         assert table.exit_code == 0, table.output
         assert "1 edge(s) hidden by state=live; pass --state all to see them" in table.output
+
+
+class TestQueryGraphLayout:
+    """CLI --layout option: rows stays the default, graph normalizes items."""
+
+    def test_query_run_default_has_no_graph_keys(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "query",
+                "run",
+                "parts_for_vehicle",
+                "--param",
+                "vehicle_id=V-2024-CIVIC-EX",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert "items" in payload
+        assert {"layout", "nodes", "edges", "results", "paths"}.isdisjoint(payload)
+
+    def test_query_run_graph_layout_json(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        rows = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "query",
+                "run",
+                "parts_for_vehicle",
+                "--param",
+                "vehicle_id=V-2024-CIVIC-EX",
+                "--json",
+            ],
+        )
+        graph = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "query",
+                "run",
+                "parts_for_vehicle",
+                "--param",
+                "vehicle_id=V-2024-CIVIC-EX",
+                "--layout",
+                "graph",
+                "--json",
+            ],
+        )
+        assert graph.exit_code == 0, graph.output
+        rows_payload = json.loads(rows.output)
+        graph_payload = json.loads(graph.output)
+        assert graph_payload["layout"] == "graph"
+        assert "items" not in graph_payload
+        # The envelope is verbatim rows-layout passthrough.
+        for key in (
+            "total",
+            "limit",
+            "truncated",
+            "steps_executed",
+            "result_shape",
+            "dedupe",
+            "relationship_state",
+            "policy_summary",
+        ):
+            assert graph_payload[key] == rows_payload[key], key
+        # The shared entry vehicle serializes once; two result rows reference it.
+        vehicle_nodes = [
+            node for node in graph_payload["nodes"] if node["entity_id"] == "V-2024-CIVIC-EX"
+        ]
+        assert len(vehicle_nodes) == 1
+        assert len(graph_payload["results"]) == rows_payload["total"] == 2
+        assert len(graph_payload["paths"]) == 2
+
+    def test_query_run_graph_layout_local_and_remote_json_parity(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Local and server-mode graph layout emit identical JSON, key order included.
+
+        The remote path is driven through a stub client returning the REAL
+        `api.query` rows contract result for the same instance and parameters;
+        both modes then route the identical serialized rows through the shared
+        normalizer (cruxible_core.query.graph_layout), so the graph payloads
+        cannot drift.
+        """
+        from cruxible_core.runtime import api
+        from cruxible_core.runtime.instance_manager import get_manager
+
+        cli_args = [
+            "query",
+            "run",
+            "parts_for_vehicle",
+            "--param",
+            "vehicle_id=V-2024-CIVIC-EX",
+            "--profile",
+            "compact",
+            "--layout",
+            "graph",
+            "--json",
+        ]
+        local = _chdir_run(runner, populated_instance.root, cli_args)
+        assert local.exit_code == 0, local.output
+        local_payload = json.loads(local.output)
+
+        get_manager().clear()
+        try:
+            remote_result = api.query(
+                str(populated_instance.root),
+                "parts_for_vehicle",
+                {"vehicle_id": "V-2024-CIVIC-EX"},
+            )
+        finally:
+            get_manager().clear()
+
+        class StubClient:
+            def query(
+                self,
+                _instance_id,
+                _query_name,
+                _params,
+                *,
+                limit=None,
+                offset=0,
+                relationship_state=None,
+                decision_record_id=None,
+                profile=None,
+                layout=None,
+            ):
+                return remote_result
+
+        monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+        monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+        remote = runner.invoke(
+            cli,
+            ["--server-url", "http://server", "--instance-id", "inst_x", *cli_args],
+        )
+        assert remote.exit_code == 0, remote.output
+        remote_payload = json.loads(remote.output)
+
+        # receipt_id varies per execution; everything else must match exactly.
+        local_payload["receipt_id"] = "<varies>"
+        remote_payload["receipt_id"] = "<varies>"
+        assert local_payload == remote_payload
+        # Ordered-key parity for the envelope and every node/edge card.
+        assert list(local_payload) == list(remote_payload)
+        for local_node, remote_node in zip(
+            local_payload["nodes"], remote_payload["nodes"], strict=True
+        ):
+            assert list(local_node) == list(remote_node)
+        for local_edge, remote_edge in zip(
+            local_payload["edges"], remote_payload["edges"], strict=True
+        ):
+            assert list(local_edge) == list(remote_edge)
+        # Graph sections lead the payload; the envelope tail is unchanged.
+        assert list(local_payload)[:5] == ["layout", "nodes", "edges", "results", "paths"]
+
+    def test_query_run_graph_layout_table_output(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "query",
+                "run",
+                "parts_for_vehicle",
+                "--param",
+                "vehicle_id=V-2024-CIVIC-EX",
+                "--layout",
+                "graph",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Nodes" in result.output
+        assert "Edges" in result.output
+        assert "Graph layout:" in result.output
+        assert "Receipt: RCP-" in result.output
+
+    def test_query_inline_graph_layout_json(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        definition = json.dumps(
+            {
+                "name": "parts_paths",
+                "mode": "traversal",
+                "entry_point": "Vehicle",
+                "traversal": [{"relationship": "fits", "direction": "incoming"}],
+                "returns": "list[Part]",
+                "result_shape": "path",
+                "dedupe": "path",
+            }
+        )
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "query",
+                "inline",
+                "--definition-json",
+                definition,
+                "--param",
+                "vehicle_id=V-2024-CIVIC-EX",
+                "--layout",
+                "graph",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["layout"] == "graph"
+        assert len(payload["results"]) == payload["total"]
+        assert len([n for n in payload["nodes"] if n["entity_id"] == "V-2024-CIVIC-EX"]) == 1

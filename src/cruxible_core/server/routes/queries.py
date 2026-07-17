@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Query, Request
 
@@ -50,8 +50,14 @@ def _parse_where_filter(where: str | None) -> dict[str, dict[str, Any]] | None:
     return parsed
 
 
-@router.post("/{instance_id}/queries/run", response_model=contracts.QueryToolResult)
-async def query(instance_id: str, req: QueryRequest) -> contracts.QueryToolResult:
+@router.post(
+    "/{instance_id}/queries/run",
+    response_model=contracts.QueryToolResult | contracts.QueryGraphToolResult,
+)
+async def query(
+    instance_id: str,
+    req: QueryRequest,
+) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return api.query(
         instance_id=resolved_instance_id,
@@ -63,6 +69,7 @@ async def query(instance_id: str, req: QueryRequest) -> contracts.QueryToolResul
         decision_record_id=req.decision_record_id,
         surface="http",
         profile=req.profile,
+        layout=req.layout,
     )
 
 
@@ -90,22 +97,29 @@ async def view(
         for key, value in request.query_params.items()
         if key not in VIEW_RESERVED_QUERY_KEYS
     }
-    return api.query(
-        instance_id=resolved_instance_id,
-        query_name=query_name,
-        params=params,
-        limit=limit,
-        offset=offset,
-        relationship_state=relationship_state,
-        surface="http",
+    # The view shim is a rows-only read-model surface; layout stays "rows".
+    return cast(
+        contracts.QueryToolResult,
+        api.query(
+            instance_id=resolved_instance_id,
+            query_name=query_name,
+            params=params,
+            limit=limit,
+            offset=offset,
+            relationship_state=relationship_state,
+            surface="http",
+        ),
     )
 
 
-@router.post("/{instance_id}/queries/run-inline", response_model=contracts.QueryToolResult)
+@router.post(
+    "/{instance_id}/queries/run-inline",
+    response_model=contracts.QueryToolResult | contracts.QueryGraphToolResult,
+)
 async def query_inline(
     instance_id: str,
     req: InlineQueryRequest,
-) -> contracts.QueryToolResult:
+) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return api.query_inline(
         instance_id=resolved_instance_id,
@@ -116,6 +130,7 @@ async def query_inline(
         decision_record_id=req.decision_record_id,
         surface="http",
         profile=req.profile,
+        layout=req.layout,
     )
 
 

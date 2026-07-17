@@ -63,6 +63,7 @@ from cruxible_core.cli.commands._common import (
     continuation_option,
     decision_record_option,
     json_option,
+    layout_option,
     profile_option,
     state_option,
     ws_option,
@@ -70,6 +71,7 @@ from cruxible_core.cli.commands._common import (
 from cruxible_core.cli.formatting import (
     entities_table,
     entity_change_history_table,
+    graph_nodes_table,
     inspect_neighbors_table,
     neighborhood_edges_table,
     neighborhood_nodes_table,
@@ -91,6 +93,7 @@ from cruxible_core.graph.types import (
     RelationshipInstance,
     RelationshipMetadata,
 )
+from cruxible_core.query.graph_layout import normalize_query_items
 from cruxible_core.query.profiles import (
     ReadProfile,
     inspect_neighbor_payload,
@@ -183,6 +186,33 @@ def _print_structured_query_rows(rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
     click.echo(yaml.safe_dump({"results": rows}, sort_keys=False).rstrip())
+
+
+def _query_graph_sections(
+    payload_rows: list[dict[str, Any]],
+    profile: ReadProfile,
+) -> dict[str, Any]:
+    """Profile then normalize serialized query rows into graph-layout sections.
+
+    The local and remote emit paths both call this on the identical serialized
+    row dicts (post-filter, post-paginate), so graph output cannot drift
+    between modes.
+    """
+    return normalize_query_items(profile_query_items(payload_rows, profile))
+
+
+def _print_graph_query_sections(sections: dict[str, Any]) -> None:
+    """Render the graph-layout nodes/edges tables plus a reference summary."""
+    if sections["nodes"]:
+        console.print(graph_nodes_table(sections["nodes"]))
+    if sections["edges"]:
+        console.print(neighborhood_edges_table(sections["edges"]))
+    click.echo(
+        f"Graph layout: {len(sections['nodes'])} node(s), "
+        f"{len(sections['edges'])} edge(s), "
+        f"{len(sections['results'])} result reference(s), "
+        f"{len(sections['paths'])} path(s)."
+    )
 
 
 CanonicalViewName = Literal["ontology", "workflows", "queries", "governance", "overview"]
@@ -325,12 +355,22 @@ def _emit_query_command_result(
     count_only: bool,
     output_json: bool,
     profile: ReadProfile = "standard",
+    layout: str = "rows",
     capture_source: str | None = None,
     ws_capture: bool = False,
 ) -> None:
     projected_results, entity_results, structured_results = _split_query_result_items(result)
 
     total = result.total
+    graph_sections: dict[str, Any] | None = None
+    if layout == "graph" and not count_only:
+        # Graph layout normalizes the full serialized rows for EVERY result
+        # shape (the entity-table shortcut below would drop metadata), after
+        # the same display-limit window the rows layout shows.
+        payload_rows = _query_result_item_payloads(list(result.items))
+        if limit is not None:
+            payload_rows = payload_rows[:limit]
+        graph_sections = _query_graph_sections(payload_rows, profile)
     if output_json:
         items = (
             []
@@ -347,8 +387,11 @@ def _emit_query_command_result(
         # trimmed. `standard` passes items through untouched.
         items = profile_query_items(items, profile)
         param_hints = result.param_hints
+        head: dict[str, Any] = (
+            {"items": items} if graph_sections is None else {"layout": "graph", **graph_sections}
+        )
         payload = {
-            "items": items,
+            **head,
             "total": total,
             "limit": result.limit,
             "truncated": result.truncated,
@@ -386,6 +429,13 @@ def _emit_query_command_result(
     click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
     if count_only:
         _print_query_param_hints(result.param_hints)
+    elif graph_sections is not None:
+        _print_graph_query_sections(graph_sections)
+        if limit is not None and result.truncated:
+            click.echo(
+                f"Showing {len(graph_sections['results'])} of {total} results "
+                "(use --limit to adjust)."
+            )
     elif limit is not None and result.truncated:
         if result.result_shape == "entity" and not projected_results:
             console.print(entities_table(entity_results, query_name))
@@ -415,6 +465,7 @@ def _run_query_command(
     output_json: bool,
     decision_record_id: str | None,
     profile: ReadProfile = "standard",
+    layout: str = "rows",
     ws_capture: bool = False,
 ) -> None:
     params = _parse_params(param)
@@ -463,6 +514,7 @@ def _run_query_command(
             count_only=count_only,
             output_json=output_json,
             profile=profile,
+            layout=layout,
             capture_source="query run",
             ws_capture=ws_capture,
         )
@@ -494,6 +546,11 @@ def _run_query_command(
     ]
     structured_results = _query_rows_payload(results)
     total = local_result.total
+    graph_sections = (
+        _query_graph_sections(structured_results, profile)
+        if layout == "graph" and not count_only
+        else None
+    )
     if output_json:
         if count_only:
             items = []
@@ -517,8 +574,11 @@ def _run_query_command(
                 ]
         else:
             items = profile_query_items(structured_results, profile)
+        head: dict[str, Any] = (
+            {"items": items} if graph_sections is None else {"layout": "graph", **graph_sections}
+        )
         payload = {
-            "items": items,
+            **head,
             "total": total,
             "limit": local_result.limit,
             "truncated": local_result.truncated,
@@ -558,6 +618,10 @@ def _run_query_command(
                 example_ids=local_result.param_hints.example_ids,
             )
         _print_query_param_hints(hints)
+    elif graph_sections is not None:
+        _print_graph_query_sections(graph_sections)
+        if limit is not None and local_result.truncated:
+            click.echo(f"Showing {len(results)} of {total} results (use --limit to adjust).")
     elif limit is not None and local_result.truncated:
         if local_result.result_shape == "entity" and not projected_results:
             console.print(entities_table(entity_results, query_name))
@@ -675,6 +739,7 @@ def query(ctx: click.Context) -> None:
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
 @state_option
 @profile_option
+@layout_option
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
 @decision_record_option
 @ws_option
@@ -686,6 +751,7 @@ def query_run(
     limit: int | None,
     state: str | None,
     profile: str,
+    layout: str,
     count_only: bool,
     decision_record_id: str | None,
     ws_capture: bool,
@@ -701,6 +767,7 @@ def query_run(
         output_json=output_json,
         decision_record_id=decision_record_id,
         profile=cast(ReadProfile, profile),
+        layout=layout,
         ws_capture=ws_capture,
     )
 
@@ -720,6 +787,7 @@ def query_run(
 @click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
 @state_option
+@layout_option
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
 @decision_record_option
 @json_option
@@ -730,6 +798,7 @@ def query_inline_cmd(
     param: tuple[str, ...],
     limit: int | None,
     state: str | None,
+    layout: str,
     count_only: bool,
     decision_record_id: str | None,
     output_json: bool,
@@ -775,6 +844,7 @@ def query_inline_cmd(
         limit=limit,
         count_only=count_only,
         output_json=output_json,
+        layout=layout,
     )
 
 

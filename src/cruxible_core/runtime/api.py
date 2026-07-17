@@ -42,6 +42,7 @@ from cruxible_core.query.continuation import (
     mint_continuation_token,
     validate_continuation_token,
 )
+from cruxible_core.query.graph_layout import normalize_query_items
 from cruxible_core.query.profiles import (
     neighborhood_edge_payload,
     neighborhood_node_payload,
@@ -1562,7 +1563,8 @@ def query(
     decision_record_id: str | None = None,
     surface: str = "local",
     profile: contracts.ReadProfile = "standard",
-) -> contracts.QueryToolResult:
+    layout: contracts.QueryLayout = "rows",
+) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
     """Execute a named query."""
     check_permission("cruxible_query", instance_id=instance_id)
     instance = get_manager().get(instance_id)
@@ -1582,6 +1584,7 @@ def query(
         result,
         include_receipt=include_receipt,
         profile=profile,
+        layout=layout,
         read_revision=instance.get_read_revision(),
     )
 
@@ -1596,7 +1599,8 @@ def query_inline(
     decision_record_id: str | None = None,
     surface: str = "local",
     profile: contracts.ReadProfile = "standard",
-) -> contracts.QueryToolResult:
+    layout: contracts.QueryLayout = "rows",
+) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
     """Execute a bounded inline query definition without persisting it to config."""
     check_permission("cruxible_query_inline", instance_id=instance_id)
     instance = get_manager().get(instance_id)
@@ -1619,6 +1623,7 @@ def query_inline(
         result,
         include_receipt=include_receipt,
         profile=profile,
+        layout=layout,
         read_revision=instance.get_read_revision(),
     )
 
@@ -1628,16 +1633,67 @@ def _query_tool_result(
     *,
     include_receipt: bool,
     profile: contracts.ReadProfile = "standard",
+    layout: contracts.QueryLayout = "rows",
     read_revision: int | None = None,
-) -> contracts.QueryToolResult:
-    return contracts.QueryToolResult(
-        items=cast(
-            list[contracts.QueryItem],
-            [
-                dump_query_row(row, include_source=True, mode="json", profile=profile)
-                for row in result.items
+) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
+    items = [
+        dump_query_row(row, include_source=True, mode="json", profile=profile)
+        for row in result.items
+    ]
+    if layout == "graph":
+        # Normalize the ALREADY-BUILT row payloads (post-filter, post-paginate,
+        # post-profile); every envelope field below is verbatim rows-layout
+        # passthrough. Returned as a separate contract model (not additive
+        # optional fields on QueryToolResult) so the rows layout stays
+        # bit-for-bit — nullable graph fields would otherwise appear in every
+        # rows response.
+        sections = normalize_query_items(items)
+        return contracts.QueryGraphToolResult(
+            nodes=[contracts.QueryEntityItem.model_validate(node) for node in sections["nodes"]],
+            edges=[
+                contracts.QueryPathSegmentItem.model_validate(edge) for edge in sections["edges"]
             ],
-        ),
+            results=cast(
+                list[contracts.QueryGraphResultRef],
+                sections["results"],
+            ),
+            paths=sections["paths"],
+            receipt_id=result.receipt_id,
+            receipt=(
+                result.receipt.model_dump(mode="json")
+                if result.receipt and include_receipt
+                else None
+            ),
+            total=result.total,
+            limit=result.limit,
+            offset=result.offset,
+            truncated=result.truncated,
+            limit_truncated=result.limit_truncated,
+            path_truncated=result.path_truncated,
+            truncation_reasons=result.truncation_reasons,
+            max_paths=result.max_paths,
+            max_paths_per_result=result.max_paths_per_result,
+            total_path_count=result.total_path_count,
+            retained_path_count=result.retained_path_count,
+            steps_executed=result.steps_executed,
+            result_shape=result.result_shape,
+            dedupe=result.dedupe,
+            relationship_state=result.relationship_state,
+            policy_summary=result.policy_summary,
+            param_hints=(
+                contracts.QueryParamHints(
+                    entry_point=result.param_hints.entry_point,
+                    required_params=result.param_hints.required_params,
+                    primary_key=result.param_hints.primary_key,
+                    example_ids=result.param_hints.example_ids,
+                )
+                if result.param_hints is not None
+                else None
+            ),
+            read_revision=read_revision,
+        )
+    return contracts.QueryToolResult(
+        items=cast(list[contracts.QueryItem], items),
         receipt_id=result.receipt_id,
         receipt=(
             result.receipt.model_dump(mode="json") if result.receipt and include_receipt else None

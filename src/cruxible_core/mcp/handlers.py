@@ -395,7 +395,8 @@ def handle_query(
     relationship_state: contracts.QueryVisibilityState | None = None,
     decision_record_id: str | None = None,
     profile: contracts.ReadProfile | None = None,
-) -> contracts.QueryToolResult:
+    layout: contracts.QueryLayout = "rows",
+) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
     """Execute a named query."""
     resolved_profile = resolve_mcp_read_profile(profile)
     return _dispatch_remote_or_local(
@@ -409,6 +410,7 @@ def handle_query(
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
             profile=resolved_profile,
+            layout=layout,
         ),
         lambda: api.query(
             instance_id,
@@ -420,6 +422,7 @@ def handle_query(
             decision_record_id=decision_record_id,
             surface="mcp",
             profile=resolved_profile,
+            layout=layout,
         ),
     )
 
@@ -432,7 +435,8 @@ def handle_query_inline(
     relationship_state: contracts.QueryVisibilityState | None = None,
     decision_record_id: str | None = None,
     profile: contracts.ReadProfile | None = None,
-) -> contracts.QueryToolResult:
+    layout: contracts.QueryLayout = "rows",
+) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
     """Execute a bounded inline query definition without persisting it to config."""
     resolved_profile = resolve_mcp_read_profile(profile)
     return _dispatch_remote_or_local(
@@ -444,6 +448,9 @@ def handle_query_inline(
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
             profile=resolved_profile,
+            # Sent only when opting into graph so rows-layout requests stay
+            # unchanged for older servers (and older client stubs).
+            **({"layout": layout} if layout == "graph" else {}),
         ),
         lambda: api.query_inline(
             instance_id,
@@ -454,6 +461,7 @@ def handle_query_inline(
             decision_record_id=decision_record_id,
             surface="mcp",
             profile=resolved_profile,
+            layout=layout,
         ),
     )
 
@@ -469,7 +477,11 @@ def _client_query(
     relationship_state: contracts.QueryVisibilityState | None,
     decision_record_id: str | None,
     profile: contracts.ReadProfile | None = None,
-) -> contracts.QueryToolResult:
+    layout: contracts.QueryLayout = "rows",
+) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
+    # `layout` is only passed when it opts into graph so rows-layout requests
+    # stay unchanged for older servers (and older client stubs).
+    layout_kwargs: dict[str, Any] = {"layout": layout} if layout == "graph" else {}
     if relationship_state is None and decision_record_id is None:
         return client.query(
             instance_id,
@@ -478,6 +490,7 @@ def _client_query(
             limit=limit,
             offset=offset,
             profile=profile,
+            **layout_kwargs,
         )
     if relationship_state is None:
         return client.query(
@@ -488,6 +501,7 @@ def _client_query(
             offset=offset,
             decision_record_id=decision_record_id,
             profile=profile,
+            **layout_kwargs,
         )
     if decision_record_id is None:
         return client.query(
@@ -498,6 +512,7 @@ def _client_query(
             offset=offset,
             relationship_state=relationship_state,
             profile=profile,
+            **layout_kwargs,
         )
     return client.query(
         instance_id,
@@ -508,6 +523,7 @@ def _client_query(
         relationship_state=relationship_state,
         decision_record_id=decision_record_id,
         profile=profile,
+        **layout_kwargs,
     )
 
 

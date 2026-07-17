@@ -240,6 +240,28 @@ def neighborhood_nodes_table(nodes: list[dict[str, Any]], depth: int) -> Table:
     return table
 
 
+def graph_nodes_table(nodes: list[dict[str, Any]]) -> Table:
+    """Build a Rich table for the deduplicated nodes of a graph-layout query.
+
+    Same node card columns as the bounded-neighborhood read, minus the BFS
+    depth (query results are not depth-layered); node index is the reference
+    used by the graph layout's `results`/`paths` sections.
+    """
+    table = Table(title="Nodes")
+    table.add_column("#", justify="right")
+    table.add_column("Entity", style="cyan")
+    table.add_column("Lifecycle")
+    table.add_column("Properties")
+
+    for index, node in enumerate(nodes):
+        label = f"{node.get('entity_type', '')}:{node.get('entity_id', '')}"
+        lifecycle = (node.get("metadata") or {}).get("lifecycle") or {}
+        props = ", ".join(f"{k}={v}" for k, v in (node.get("properties") or {}).items())
+        table.add_row(str(index), label, str(lifecycle.get("status", "live")), props)
+
+    return table
+
+
 def neighborhood_edges_table(edges: list[dict[str, Any]]) -> Table:
     """Build a Rich table for the edges of a bounded neighborhood read.
 

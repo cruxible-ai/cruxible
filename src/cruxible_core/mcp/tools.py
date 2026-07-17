@@ -170,7 +170,8 @@ def register_tools(server: FastMCP) -> list[str]:
         relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
         profile: contracts.ReadProfile | None = None,
-    ) -> contracts.QueryToolResult:
+        layout: contracts.QueryLayout = "rows",
+    ) -> dict[str, Any]:
         """Run a named query and return results plus a receipt.
 
         `params` must include the primary-key field of the query's
@@ -190,7 +191,18 @@ def register_tools(server: FastMCP) -> list[str]:
         `profile` shapes item payloads: `compact` (default here) returns
         bounded identity cards with governance markers; pass `standard`
         or `full` when you need provenance or actor context.
+
+        `layout='graph'` replaces per-row `items` with the normalized graph
+        transport: `nodes`/`edges` carry each unique entity and relationship
+        once, `results` preserves row order as index references, and `paths`
+        holds edge-index sequences for path-shaped results. Same information
+        without per-row duplication — prefer it for multi-row traversal
+        reads where you need the relational context.
         """
+        # Returned as a plain dict: the result is a UNION of the rows and
+        # graph contract models, and FastMCP wraps union-annotated returns
+        # in a {"result": ...} envelope that would break the legacy
+        # top-level payload shape for existing MCP consumers.
         return handlers.handle_query(
             instance_id,
             query_name,
@@ -200,7 +212,8 @@ def register_tools(server: FastMCP) -> list[str]:
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
             profile=profile,
-        )
+            layout=layout,
+        ).model_dump(mode="json")
 
     @_tool
     def cruxible_query_inline(
@@ -211,7 +224,8 @@ def register_tools(server: FastMCP) -> list[str]:
         relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
         profile: contracts.ReadProfile | None = None,
-    ) -> contracts.QueryToolResult:
+        layout: contracts.QueryLayout = "rows",
+    ) -> dict[str, Any]:
         """Run a bounded inline graph query for read-only agent exploration.
 
         Inline query definitions use the same JSON shape as configured named
@@ -222,7 +236,16 @@ def register_tools(server: FastMCP) -> list[str]:
         `profile` shapes item payloads: `compact` (default here) returns
         bounded identity cards with governance markers; pass `standard`
         or `full` when you need provenance or actor context.
+
+        `layout='graph'` replaces per-row `items` with the normalized graph
+        transport (`nodes`/`edges` once each, `results` as ordered index
+        references, `paths` for path-shaped results), exactly as for
+        `cruxible_query`.
         """
+        # Returned as a plain dict: the result is a UNION of the rows and
+        # graph contract models, and FastMCP wraps union-annotated returns
+        # in a {"result": ...} envelope that would break the legacy
+        # top-level payload shape for existing MCP consumers.
         return handlers.handle_query_inline(
             instance_id,
             definition,
@@ -231,7 +254,8 @@ def register_tools(server: FastMCP) -> list[str]:
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
             profile=profile,
-        )
+            layout=layout,
+        ).model_dump(mode="json")
 
     @_tool
     def cruxible_list_queries(

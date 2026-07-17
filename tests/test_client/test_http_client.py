@@ -258,6 +258,106 @@ def test_query_sends_offset_in_payload():
 
     assert captured["payload"]["offset"] == 10
     assert captured["payload"]["limit"] == 10
+    # `layout` is opt-in: omitted from the payload unless requested.
+    assert "layout" not in captured["payload"]
+
+
+def test_query_graph_layout_sends_param_and_parses_graph_model():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "layout": "graph",
+                "nodes": [
+                    {
+                        "entity_type": "Vehicle",
+                        "entity_id": "V-1",
+                        "properties": {"make": "Honda"},
+                        "metadata": {},
+                    },
+                    {
+                        "entity_type": "Part",
+                        "entity_id": "P-1",
+                        "properties": {"name": "Pads"},
+                        "metadata": {},
+                    },
+                ],
+                "edges": [
+                    {
+                        "relationship_type": "fits",
+                        "from_type": "Part",
+                        "from_id": "P-1",
+                        "to_type": "Vehicle",
+                        "to_id": "V-1",
+                        "edge_key": None,
+                        "properties": {"verified": True},
+                        "metadata": {},
+                        "alias": "fit",
+                    }
+                ],
+                "results": [{"entry": 0, "result": 1, "paths": [0], "includes": {}}],
+                "paths": [[0]],
+                "receipt_id": "RCP-1",
+                "receipt": None,
+                "total": 1,
+                "limit": None,
+                "offset": 0,
+                "truncated": False,
+                "steps_executed": 1,
+                "result_shape": "path",
+                "dedupe": "path",
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.query("inst_123", "parts_for_vehicle", {"vehicle_id": "V-1"}, layout="graph")
+
+    assert captured["payload"]["layout"] == "graph"
+    assert isinstance(result, contracts.QueryGraphToolResult)
+    assert result.layout == "graph"
+    assert [node.entity_id for node in result.nodes] == ["V-1", "P-1"]
+    assert result.edges[0].edge_key is None
+    ref = result.results[0]
+    assert isinstance(ref, contracts.QueryGraphPathRef)
+    assert (ref.entry, ref.result, ref.paths) == (0, 1, [0])
+    assert result.paths == [[0]]
+
+
+def test_query_inline_graph_layout_sends_param_and_parses_graph_model():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "layout": "graph",
+                "nodes": [],
+                "edges": [],
+                "results": [],
+                "paths": [],
+                "receipt_id": None,
+                "receipt": None,
+                "total": 0,
+                "steps_executed": 0,
+            },
+        )
+
+    client = _build_client(handler)
+    definition = contracts.InlineQueryDefinition(
+        name="q",
+        mode="collection",
+        returns="Part",
+        result_shape="entity",
+    )
+    result = client.query_inline("inst_123", definition, layout="graph")
+
+    assert captured["payload"]["layout"] == "graph"
+    assert isinstance(result, contracts.QueryGraphToolResult)
+    assert result.results == []
 
 
 def test_batch_direct_write_uses_expected_route_and_payload():

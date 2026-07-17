@@ -90,6 +90,7 @@ class QueryRequest(BaseModel):
     relationship_state: contracts.QueryVisibilityState | None = None
     decision_record_id: str | None = None
     profile: contracts.ReadProfile = "standard"
+    layout: contracts.QueryLayout = "rows"
 
 
 class InlineQueryRequest(BaseModel):
@@ -99,6 +100,7 @@ class InlineQueryRequest(BaseModel):
     relationship_state: contracts.QueryVisibilityState | None = None
     decision_record_id: str | None = None
     profile: contracts.ReadProfile = "standard"
+    layout: contracts.QueryLayout = "rows"
 
 
 class AddEntitiesRequest(BaseModel):

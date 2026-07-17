@@ -19,6 +19,12 @@ QueryVisibilityState = Literal["live", "accepted", "all", "not-live", "pending",
 # governance markers (lifecycle / review status) but drops actor_context and
 # provenance blobs, `full` is reserved as a superset of standard (today equal).
 ReadProfile = Literal["compact", "standard", "full"]
+# Transport representation for query output: `rows` is the unchanged per-row
+# layout (default), `graph` is the normalized nodes/edges representation where
+# each unique entity and relationship is serialized once and rows become
+# ordered references. Orthogonal to `result_shape` (the semantic unit) and
+# `profile` (the detail level).
+QueryLayout = Literal["rows", "graph"]
 QueryMode = Literal["collection", "traversal"]
 QueryResultShape = Literal["entity", "path", "relationship"]
 QueryDedupe = Literal["entity", "path", "none"]
@@ -748,6 +754,127 @@ QueryItem: TypeAlias = QueryBaseItem | QueryProjectedItem
 
 class QueryToolResult(BaseModel):
     items: list[QueryItem]
+    receipt_id: str | None
+    receipt: dict[str, Any] | None
+    total: int
+    limit: int | None = None
+    offset: int = 0
+    truncated: bool = False
+    limit_truncated: bool = False
+    path_truncated: bool = False
+    truncation_reasons: list[str] = Field(default_factory=list)
+    max_paths: int | None = None
+    max_paths_per_result: int | None = None
+    total_path_count: int | None = None
+    retained_path_count: int | None = None
+    steps_executed: int
+    result_shape: Literal["entity", "path", "relationship"] = "path"
+    dedupe: Literal["entity", "path", "none"] = "path"
+    relationship_state: QueryVisibilityState = "live"
+    param_hints: "QueryParamHints | None" = None
+    policy_summary: dict[str, int] = Field(default_factory=dict)
+    # Monotonic state revision at read time; receipts prove computation,
+    # never freshness — compare read_revision to detect staleness.
+    read_revision: int | None = None
+
+
+class QueryGraphIncludeItemRef(BaseModel):
+    """One include item as references into the shared nodes/edges arrays."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    edge: int
+    source: int
+    target: int
+
+
+class QueryGraphIncludeResult(BaseModel):
+    """Include side-context for one result under graph layout.
+
+    Envelope fields (`many`/`exists`/`count`/`limit`/`truncated`) are verbatim
+    row-layout passthrough; `items` becomes node/edge references.
+    """
+
+    alias: str
+    many: bool = False
+    exists: bool = False
+    count: int = 0
+    limit: int | None = None
+    truncated: bool = False
+    items: list[QueryGraphIncludeItemRef] = Field(default_factory=list)
+
+
+class QueryGraphEntityRef(BaseModel):
+    """Entity-shaped result row as a node reference."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    result: int
+
+
+class QueryGraphPathRef(BaseModel):
+    """Path-shaped result row as node references plus path-index references.
+
+    The per-row `entities` array of the rows layout is not materialized: the
+    visited-entity sequence is recoverable by walking `paths[path]` from
+    `entry` (each segment connects the current node to its other endpoint).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entry: int
+    result: int
+    paths: list[int] = Field(default_factory=list)
+    includes: dict[str, QueryGraphIncludeResult] = Field(default_factory=dict)
+
+
+class QueryGraphRelationshipRef(BaseModel):
+    """Relationship-shaped result row as an edge reference with endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entry: int
+    edge: int
+    from_entity: int | None = None
+    to_entity: int | None = None
+    includes: dict[str, QueryGraphIncludeResult] = Field(default_factory=dict)
+
+
+QueryGraphBaseRef: TypeAlias = QueryGraphEntityRef | QueryGraphPathRef | QueryGraphRelationshipRef
+
+
+class QueryGraphProjectedRef(BaseModel):
+    """Projected result row: selected values plus optional source-row references."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    values: dict[str, Any]
+    source: QueryGraphBaseRef | None = None
+
+
+QueryGraphResultRef: TypeAlias = QueryGraphBaseRef | QueryGraphProjectedRef
+
+
+class QueryGraphToolResult(BaseModel):
+    """Normalized graph transport for query output (`layout="graph"`).
+
+    Carries the same information as the rows layout of
+    :class:`QueryToolResult`: `nodes` holds each unique entity once,
+    `edges` each unique relationship once (stable edge identity =
+    relationship type + endpoints + `edge_key`, plus the traversal-step
+    `alias` where one is attached), `results` preserves today's row order
+    as index references, and `paths` holds edge-index sequences for
+    path-shaped results so `dedupe=path` semantics stay distinct. Envelope,
+    truncation, policy-summary, and receipt fields are verbatim
+    :class:`QueryToolResult` passthrough — normalization happens strictly
+    after filtering, ordering, and pagination.
+    """
+
+    layout: Literal["graph"] = "graph"
+    nodes: list[QueryEntityItem] = Field(default_factory=list)
+    edges: list[QueryPathSegmentItem] = Field(default_factory=list)
+    results: list[QueryGraphResultRef] = Field(default_factory=list)
+    paths: list[list[int]] = Field(default_factory=list)
     receipt_id: str | None
     receipt: dict[str, Any] | None
     total: int

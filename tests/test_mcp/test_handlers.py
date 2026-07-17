@@ -480,6 +480,66 @@ def test_query_and_receipt_work_locally_for_seeded_dev_instance(
     assert receipt["query_name"] == "parts_for_vehicle"
 
 
+def test_query_graph_layout_returns_normalized_sections(
+    server,
+    dev_graph_instance_id: str,
+) -> None:
+    """layout='graph' replaces items with nodes/edges/results; rows unchanged."""
+    args = {
+        "instance_id": dev_graph_instance_id,
+        "query_name": "parts_for_vehicle",
+        "params": {"vehicle_id": "V-2024-CIVIC-EX"},
+    }
+    rows = call_tool(server, "cruxible_query", args)
+    graph = call_tool(server, "cruxible_query", {**args, "layout": "graph"})
+
+    # Rows layout stays the legacy top-level shape with no graph keys.
+    assert "items" in rows
+    assert {"layout", "nodes", "edges", "results", "paths"}.isdisjoint(rows)
+
+    assert graph["layout"] == "graph"
+    assert "items" not in graph
+    assert graph["total"] == rows["total"] == 2
+    assert graph["result_shape"] == rows["result_shape"]
+    assert graph["receipt_id"].startswith("RCP-")
+    assert len(graph["results"]) == rows["total"]
+    node_ids = {node["entity_id"] for node in graph["nodes"]}
+    assert "V-2024-CIVIC-EX" in node_ids
+
+
+def test_query_inline_graph_layout_dedupes_entry_node(
+    server,
+    dev_graph_instance_id: str,
+) -> None:
+    graph = call_tool(
+        server,
+        "cruxible_query_inline",
+        {
+            "instance_id": dev_graph_instance_id,
+            "definition": {
+                "name": "parts_paths",
+                "mode": "traversal",
+                "entry_point": "Vehicle",
+                "traversal": [{"relationship": "fits", "direction": "incoming"}],
+                "returns": "list[Part]",
+                "result_shape": "path",
+                "dedupe": "path",
+            },
+            "params": {"vehicle_id": "V-2024-CIVIC-EX"},
+            "layout": "graph",
+        },
+    )
+    assert graph["layout"] == "graph"
+    assert graph["total"] == len(graph["results"])
+    entry_index_set = {ref["entry"] for ref in graph["results"]}
+    entry_nodes = [node for node in graph["nodes"] if node["entity_id"] == "V-2024-CIVIC-EX"]
+    # The shared entry node serializes once and every result references it.
+    assert len(entry_nodes) == 1
+    assert len(entry_index_set) == 1
+    assert graph["nodes"][next(iter(entry_index_set))]["entity_id"] == "V-2024-CIVIC-EX"
+    assert len(graph["paths"]) == len(graph["results"])
+
+
 def test_trace_tools_work_locally_for_dev_instance(
     server,
     dev_graph_instance_id: str,

@@ -49,6 +49,7 @@ HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
 ENVELOPE_EXEMPT_MODELS = {
     "BatchDirectWritePayload",  # write-side input payload
     "QueryIncludeResult",  # nested side-context list inside a query row
+    "QueryGraphIncludeResult",  # the same side-context list under graph layout
 }
 
 

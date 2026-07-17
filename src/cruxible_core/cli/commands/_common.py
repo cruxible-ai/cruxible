@@ -100,6 +100,27 @@ profile_option = click.option(
     ),
 )
 
+# Transport layout for query output. ``rows`` (default) is today's per-row
+# item layout, bit-for-bit; ``graph`` normalizes the already-filtered,
+# already-profiled rows into nodes/edges serialized once each, with results
+# as ordered references and paths as edge-index sequences. Applied at
+# JSON-emit time through the shared normalizer
+# (cruxible_core.query.graph_layout) in BOTH local and server mode, so the
+# two modes cannot drift. Orthogonal to --profile (detail level) and the
+# query's result_shape (semantic unit).
+layout_option = click.option(
+    "--layout",
+    "layout",
+    type=click.Choice(["rows", "graph"]),
+    default="rows",
+    show_default=True,
+    help=(
+        "Query output layout: rows (per-row items) or graph (normalized "
+        "nodes/edges with results as ordered references; each entity and "
+        "relationship serialized once)."
+    ),
+)
+
 # Unified read-visibility selector. Gates entities by lifecycle and edges by
 # review+lifecycle through the same engine filter, so a single flag controls
 # every read surface. ``live`` is the implicit default (None => server/service

@@ -2169,6 +2169,7 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
 | `--count` | no | `False` | boolean | Show only summary metadata. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
+| `--layout` | no | `rows` | choice | Query output layout: `rows` (per-row items) or `graph` (normalized nodes/edges with results as ordered references; each entity and relationship serialized once). |
 | `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
@@ -2195,6 +2196,7 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
 | `--param` | no | `Sentinel.UNSET` | text | Query parameter as KEY=VALUE. |
 | `--limit` | no | `` | integer range | Max results to display. |
 | `--state` | no | `` | choice | Read-visibility state: `live` (default), `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. Overriding the inline definition's configured state requires `allow_relationship_state_override: true`. |
+| `--layout` | no | `rows` | choice | Query output layout: `rows` (per-row items) or `graph` (normalized nodes/edges with results as ordered references; each entity and relationship serialized once). |
 | `--count` | no | `False` | boolean | Show only summary metadata. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--json` | no | `False` | boolean | Output as JSON. |

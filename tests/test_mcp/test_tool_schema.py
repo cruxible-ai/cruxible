@@ -271,32 +271,6 @@ class TestOutputSchema:
                     "warnings",
                 },
             ),
-            (
-                "cruxible_query",
-                {
-                    "items",
-                    "receipt_id",
-                    "receipt",
-                    "total",
-                    "limit",
-                    "offset",
-                    "truncated",
-                    "limit_truncated",
-                    "path_truncated",
-                    "truncation_reasons",
-                    "max_paths",
-                    "max_paths_per_result",
-                    "total_path_count",
-                    "retained_path_count",
-                    "steps_executed",
-                    "result_shape",
-                    "dedupe",
-                    "relationship_state",
-                    "param_hints",
-                    "policy_summary",
-                    "read_revision",
-                },
-            ),
             ("cruxible_feedback", {"feedback_id", "applied", "receipt_id"}),
             ("cruxible_feedback_from_query", {"feedback_id", "applied", "receipt_id"}),
             ("cruxible_outcome", {"outcome_id"}),
@@ -570,11 +544,18 @@ class TestOutputSchema:
 
     @pytest.mark.parametrize(
         "tool_name",
-        # cruxible_inspect_entity returns a dict because its result is a UNION
-        # of the legacy single-hop and expanded neighborhood contract models;
+        # cruxible_inspect_entity, cruxible_query, and cruxible_query_inline
+        # return dicts because their results are UNIONS of contract models
+        # (legacy single-hop vs expanded neighborhood; rows vs graph layout);
         # a union annotation would make FastMCP wrap the payload in a
         # {"result": ...} envelope and break the legacy top-level shape.
-        ["cruxible_receipt", "cruxible_schema", "cruxible_inspect_entity"],
+        [
+            "cruxible_receipt",
+            "cruxible_schema",
+            "cruxible_inspect_entity",
+            "cruxible_query",
+            "cruxible_query_inline",
+        ],
     )
     def test_dict_output_schema(self, server, tool_name):
         schemas = _get_tool_schemas(server)

@@ -63,14 +63,19 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "when the entry point is Vehicle and its primary key is vehicle_id; "
         "cruxible_schema shows entity primary keys. Items default to the compact "
         "output profile; ask for profile='standard' or 'full' when you need "
-        "provenance or actor context."
+        "provenance or actor context. Pass layout='graph' for multi-row "
+        "traversal reads: it returns each entity and relationship once as "
+        "nodes/edges with results as ordered references, instead of "
+        "duplicating them per row."
     ),
     "cruxible_query_inline": (
         "Use when you need a one-off bounded graph query without adding it to the "
         "config. Inline definitions use the configured named-query JSON shape plus "
         "a required name; promote repeated or workflow-critical queries into config. "
         "Items default to the compact output profile; ask for profile='standard' "
-        "or 'full' when you need provenance or actor context."
+        "or 'full' when you need provenance or actor context. Pass "
+        "layout='graph' to receive deduplicated nodes/edges with results as "
+        "ordered references instead of per-row items."
     ),
     "cruxible_list_queries": (
         "Use when you need to discover the named queries available in the active "
