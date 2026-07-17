@@ -69,7 +69,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "a required name; promote repeated or workflow-critical queries into config."
     ),
     "cruxible_list_queries": (
-        "Use when you need to discover the named queries available in the active config."
+        "Use when you need to discover the named queries available in the active "
+        "config. Returns bounded summaries (name, entry point, required params); "
+        "call cruxible_describe_query for one query's full definition. Pass "
+        "detail='full' only when you truly need every definition expanded."
     ),
     "cruxible_describe_query": (
         "Use when you need the purpose, parameters, and result shape for one named query."

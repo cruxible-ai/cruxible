@@ -73,6 +73,8 @@ from cruxible_core.service.mutations import (
     service_batch_direct_write,
 )
 from cruxible_core.service.queries import (
+    query_definition_full_payload,
+    query_definition_summary_payload,
     service_describe_query,
     service_get_entity,
     service_get_entity_change_history,
@@ -383,6 +385,8 @@ __all__ = [
     "service_init",
     "service_init_governed_upload",
     "service_list",
+    "query_definition_full_payload",
+    "query_definition_summary_payload",
     "service_list_queries",
     "service_list_traces",
     "service_describe_query",

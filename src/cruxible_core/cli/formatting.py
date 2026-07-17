@@ -242,23 +242,57 @@ def stats_table(
 
 
 def query_definitions_table(queries: list[dict[str, Any]]) -> Table:
-    """Build a Rich table for named-query discovery surfaces."""
+    """Build a Rich table for named-query discovery summaries."""
     table = Table(title="Named Queries", expand=True)
     table.add_column("Name", style="cyan", overflow="fold", min_width=18)
+    table.add_column("Mode", overflow="fold")
     table.add_column("Entry", overflow="fold")
     table.add_column("Params", overflow="fold")
     table.add_column("Returns", overflow="fold")
-    table.add_column("State", overflow="fold")
     table.add_column("Description", overflow="fold", ratio=2)
 
     for query in queries:
         params = ", ".join(query.get("required_params", []))
         table.add_row(
             str(query.get("name", "")),
+            str(query.get("mode", "")),
+            str(query.get("entry_point", "")),
+            params,
+            str(query.get("returns", "")),
+            str(query.get("description") or ""),
+        )
+    return table
+
+
+def query_definitions_detail_table(queries: list[dict[str, Any]]) -> Table:
+    """Build a Rich table for full named-query definitions (query list --detail full).
+
+    Extends the summary table with full-only columns: relationship-state
+    visibility, dedupe, and example IDs.
+    """
+    table = Table(title="Named Queries (full)", expand=True)
+    table.add_column("Name", style="cyan", overflow="fold", min_width=18)
+    table.add_column("Mode", overflow="fold")
+    table.add_column("Entry", overflow="fold")
+    table.add_column("Params", overflow="fold")
+    table.add_column("Returns", overflow="fold")
+    table.add_column("State", overflow="fold")
+    table.add_column("Dedupe", overflow="fold")
+    table.add_column("Examples", overflow="fold")
+    table.add_column("Description", overflow="fold", ratio=2)
+
+    for query in queries:
+        params = ", ".join(query.get("required_params", []))
+        examples = ", ".join(query.get("example_ids", []))
+        table.add_row(
+            str(query.get("name", "")),
+            str(query.get("mode", "")),
             str(query.get("entry_point", "")),
             params,
             str(query.get("returns", "")),
             str(query.get("relationship_state", "live")),
+            str(query.get("dedupe", "path")),
+            examples,
             str(query.get("description") or ""),
         )
     return table

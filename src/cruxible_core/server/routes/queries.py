@@ -205,14 +205,24 @@ async def schema(instance_id: str) -> dict[str, Any]:
     return api.schema(resolve_server_instance_id(instance_id))
 
 
-@router.get("/{instance_id}/queries", response_model=contracts.QueryListResult)
+# The response model is a union rather than a single envelope: `detail=summary`
+# (default) returns bounded QueryDefinitionSummary items, `detail=full` returns
+# complete NamedQueryInfoResult items in the same envelope. A union keeps both
+# shapes in the OpenAPI schema and lets the client parse each branch as a
+# distinct typed model instead of widening one envelope with optional fields.
+@router.get(
+    "/{instance_id}/queries",
+    response_model=contracts.QueryListResult | contracts.QueryListDetailResult,
+)
 async def list_queries(
     instance_id: str,
+    detail: contracts.QueryListDetail = Query(default="summary"),
     limit: int | None = Query(default=None, ge=1),
     offset: int = Query(default=0, ge=0),
-) -> contracts.QueryListResult:
+) -> contracts.QueryListResult | contracts.QueryListDetailResult:
     return api.list_queries(
         resolve_server_instance_id(instance_id),
+        detail=detail,
         limit=limit,
         offset=offset,
     )

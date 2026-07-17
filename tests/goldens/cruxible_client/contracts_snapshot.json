@@ -150,6 +150,12 @@
         "none"
       ]
     },
+    "QueryListDetail": {
+      "values": [
+        "summary",
+        "full"
+      ]
+    },
     "QueryMode": {
       "values": [
         "collection",
@@ -15017,6 +15023,205 @@
         "support_count"
       ]
     },
+    "QueryDefinitionSummary": {
+      "fields": {
+        "allow_relationship_state_override": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "allow_relationship_state_override",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Allow Relationship State Override",
+            "type": "boolean"
+          }
+        },
+        "description": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "description",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          }
+        },
+        "entry_point": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entry_point",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Point"
+          }
+        },
+        "mode": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "mode",
+          "required": true,
+          "schema": {
+            "enum": [
+              "collection",
+              "traversal"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "name",
+          "required": true,
+          "schema": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required_params": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "required_params",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Params",
+            "type": "array"
+          }
+        },
+        "result_shape": {
+          "default": "path",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "result_shape",
+          "required": false,
+          "schema": {
+            "default": "path",
+            "enum": [
+              "entity",
+              "path",
+              "relationship"
+            ],
+            "title": "Result Shape",
+            "type": "string"
+          }
+        },
+        "returns": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "returns",
+          "required": true,
+          "schema": {
+            "title": "Returns",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Bounded discovery card for one named query.\n\nExactly the fields needed to pick a query and invoke it; no select,\norder_by, include, or budget internals — describe_query is the\ncanonical full-definition read.",
+        "properties": {
+          "allow_relationship_state_override": {
+            "default": false,
+            "title": "Allow Relationship State Override",
+            "type": "boolean"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "entry_point": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Point"
+          },
+          "mode": {
+            "enum": [
+              "collection",
+              "traversal"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required_params": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Params",
+            "type": "array"
+          },
+          "result_shape": {
+            "default": "path",
+            "enum": [
+              "entity",
+              "path",
+              "relationship"
+            ],
+            "title": "Result Shape",
+            "type": "string"
+          },
+          "returns": {
+            "title": "Returns",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "mode",
+          "entry_point",
+          "returns"
+        ],
+        "title": "QueryDefinitionSummary",
+        "type": "object"
+      },
+      "required_fields": [
+        "entry_point",
+        "mode",
+        "name",
+        "returns"
+      ]
+    },
     "QueryEntityItem": {
       "fields": {
         "entity_id": {
@@ -15535,7 +15740,7 @@
         "alias"
       ]
     },
-    "QueryListResult": {
+    "QueryListDetailResult": {
       "fields": {
         "items": {
           "has_default": false,
@@ -15782,6 +15987,200 @@
           "items": {
             "items": {
               "$ref": "#/$defs/NamedQueryInfoResult"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total"
+        ],
+        "title": "QueryListDetailResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "total"
+      ]
+    },
+    "QueryListResult": {
+      "fields": {
+        "items": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "items",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/QueryDefinitionSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryDefinitionSummary": {
+            "description": "Bounded discovery card for one named query.\n\nExactly the fields needed to pick a query and invoke it; no select,\norder_by, include, or budget internals — describe_query is the\ncanonical full-definition read.",
+            "properties": {
+              "allow_relationship_state_override": {
+                "default": false,
+                "title": "Allow Relationship State Override",
+                "type": "boolean"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "entry_point": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Entry Point"
+              },
+              "mode": {
+                "enum": [
+                  "collection",
+                  "traversal"
+                ],
+                "title": "Mode",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "required_params": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Required Params",
+                "type": "array"
+              },
+              "result_shape": {
+                "default": "path",
+                "enum": [
+                  "entity",
+                  "path",
+                  "relationship"
+                ],
+                "title": "Result Shape",
+                "type": "string"
+              },
+              "returns": {
+                "title": "Returns",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "mode",
+              "entry_point",
+              "returns"
+            ],
+            "title": "QueryDefinitionSummary",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/QueryDefinitionSummary"
             },
             "title": "Items",
             "type": "array"

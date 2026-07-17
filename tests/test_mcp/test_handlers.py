@@ -685,6 +685,39 @@ def test_query_limit_validation_raises(dev_graph_instance_id: str) -> None:
         )
 
 
+def test_list_queries_tool_defaults_to_bounded_summaries(
+    server,
+    dev_graph_instance_id: str,
+) -> None:
+    listed = call_tool(
+        server,
+        "cruxible_list_queries",
+        {"instance_id": dev_graph_instance_id},
+    )
+
+    item = next(item for item in listed["items"] if item["name"] == "parts_for_vehicle")
+    assert set(item) == {
+        "name",
+        "description",
+        "mode",
+        "entry_point",
+        "returns",
+        "result_shape",
+        "required_params",
+        "allow_relationship_state_override",
+    }
+    assert item["required_params"] == ["vehicle_id"]
+
+    full = call_tool(
+        server,
+        "cruxible_list_queries",
+        {"instance_id": dev_graph_instance_id, "detail": "full"},
+    )
+    full_item = next(item for item in full["items"] if item["name"] == "parts_for_vehicle")
+    for key in ("select", "order_by", "include", "dedupe", "example_ids"):
+        assert key in full_item
+
+
 def test_list_tool_pages_with_offset(
     server,
     dev_graph_instance_id: str,

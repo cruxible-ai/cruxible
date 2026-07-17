@@ -378,13 +378,14 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need to discover the named queries available in the active config.
+**Purpose:** Use when you need to discover the named queries available in the active config. Returns bounded summaries (name, entry point, required params); call cruxible_describe_query for one query's full definition. Pass detail='full' only when you truly need every definition expanded.
 
 **Arguments:**
 
 | Name | Required | Type | Description |
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
+| `detail` | no | string | `summary` (default) returns bounded discovery cards; `full` returns complete definitions. |
 | `limit` | no | integer |  |
 | `offset` | no | integer |  |
 

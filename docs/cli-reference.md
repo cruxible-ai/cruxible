@@ -2099,7 +2099,7 @@ v1's only kind is `git-pre-push`, and it evaluates merge commits only: squash me
 
 - `cruxible query describe` - Describe one named query with required params and example IDs.
 - `cruxible query inline` - Execute a bounded inline query definition for exploration.
-- `cruxible query list` - List named queries with entry points and required params.
+- `cruxible query list` - List named queries as bounded summaries.
 - `cruxible query run` - Execute a named query and display results plus the receipt.
 
 **Output And Side Effects:**
@@ -2198,12 +2198,13 @@ cruxible query inline \
 
 **Usage:** `cruxible query list [OPTIONS]`
 
-**Purpose:** List named queries with entry points and required params.
+**Purpose:** List named queries as bounded summaries (name, mode, entry point, returns, required params). Use `cruxible query describe --query NAME` for one query's full definition.
 
 **Options And Arguments:**
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
+| `--detail` | no | `summary` | choice | summary (default) is a bounded discovery card; full adds state/dedupe/example columns to the table and emits complete definitions with --json. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**

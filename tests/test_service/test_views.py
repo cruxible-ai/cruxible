@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
+
+from cruxible_client import contracts
 from cruxible_core.canonical_views import (
     build_ontology_view,
     build_overview_view,
@@ -15,6 +18,9 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.loader import load_config_from_string
 from cruxible_core.config.schema import NamedQuerySchema, TraversalStep
 from cruxible_core.service import (
+    QueryDefinitionServiceResult,
+    query_definition_full_payload,
+    query_definition_summary_payload,
     service_describe_query,
     service_explain_receipt,
     service_export_edges,
@@ -231,6 +237,48 @@ def test_entryless_named_query_metadata_surfaces(
     assert listed.example_ids == []
     assert inspected_query["mode"] == "collection"
     assert inspected_query["entry_point"] is None
+
+
+def test_query_definition_payload_field_enumerations_stay_canonical(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """The shared builders and the service result expose ONE ordered field set.
+
+    Guards the serializer collapse: the full payload is derived mechanically
+    from ``QueryDefinitionServiceResult`` and must track its fields exactly,
+    and the wire contracts must declare the same fields in the same order.
+    """
+    definition = service_describe_query(populated_instance, "parts_for_vehicle")
+
+    full_payload = query_definition_full_payload(definition)
+    service_field_names = [field.name for field in fields(QueryDefinitionServiceResult)]
+    assert list(full_payload) == service_field_names
+    assert list(full_payload) == list(contracts.NamedQueryInfoResult.model_fields)
+
+    summary_payload = query_definition_summary_payload(definition)
+    assert list(summary_payload) == list(contracts.QueryDefinitionSummary.model_fields)
+
+
+def test_service_list_queries_can_skip_example_id_computation(
+    populated_instance: CruxibleInstance,
+) -> None:
+    with_examples = next(
+        query
+        for query in service_list_queries(populated_instance)
+        if query.name == "parts_for_vehicle"
+    )
+    without_examples = next(
+        query
+        for query in service_list_queries(populated_instance, include_examples=False)
+        if query.name == "parts_for_vehicle"
+    )
+
+    assert with_examples.example_ids
+    assert without_examples.example_ids == []
+    # Everything a summary exposes is unaffected by skipping example IDs.
+    assert query_definition_summary_payload(without_examples) == query_definition_summary_payload(
+        with_examples
+    )
 
 
 def test_service_explain_receipt_renders_markdown(

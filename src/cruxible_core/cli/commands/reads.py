@@ -64,6 +64,7 @@ from cruxible_core.cli.formatting import (
     entities_table,
     entity_change_history_table,
     inspect_neighbors_table,
+    query_definitions_detail_table,
     query_definitions_table,
     relationship_table,
     schema_table,
@@ -83,6 +84,8 @@ from cruxible_core.graph.types import (
 from cruxible_core.query.types import ProjectedQueryRow, dump_query_row
 from cruxible_core.service import (
     InspectEntityResult,
+    query_definition_full_payload,
+    query_definition_summary_payload,
     service_analyze_feedback,
     service_analyze_outcomes,
     service_describe_query,
@@ -113,32 +116,6 @@ _EVALUATE_CATEGORY_CHOICES = (
     "unreviewed_co_member",
     "quality_check_failed",
 )
-
-
-def _query_definition_payload(query: Any) -> dict[str, Any]:
-    return {
-        "name": query.name,
-        "mode": query.mode,
-        "entry_point": query.entry_point,
-        "required_params": list(query.required_params),
-        "returns": query.returns,
-        "result_shape": getattr(query, "result_shape", "path"),
-        "dedupe": getattr(query, "dedupe", "path"),
-        "relationship_state": getattr(query, "relationship_state", "live"),
-        "allow_relationship_state_override": getattr(
-            query,
-            "allow_relationship_state_override",
-            False,
-        ),
-        "select": getattr(query, "select", None),
-        "order_by": list(getattr(query, "order_by", [])),
-        "include": dict(getattr(query, "include", {})),
-        "limit": getattr(query, "limit", None),
-        "max_paths": getattr(query, "max_paths", None),
-        "max_paths_per_result": getattr(query, "max_paths_per_result", None),
-        "description": query.description,
-        "example_ids": list(query.example_ids),
-    }
 
 
 def _query_rows_payload(rows: list[Any]) -> list[dict[str, Any]]:
@@ -559,19 +536,24 @@ def _run_query_command(
         click.echo(f"Receipt: {local_result.receipt_id}")
 
 
-def _query_list_envelope() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _query_list_envelope(
+    *,
+    detail: contracts.QueryListDetail = "summary",
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Return (normalized item payloads, list-envelope metadata) for query list.
 
-    Server mode carries the envelope on the QueryListResult contract; local mode
-    returns the full unpaginated list, so the envelope is synthesized to match
-    the contract/server/MCP shape (limit/offset/truncated).
+    Server mode carries the envelope on the list contract; local mode returns
+    the full unpaginated list, so the envelope is synthesized to match the
+    contract/server/MCP shape (limit/offset/truncated). Both modes serialize
+    items through the shared service builders / contract models, so local and
+    remote JSON payloads are identical.
     """
     result = _dispatch_cli_instance(
-        lambda client, instance_id: client.list_queries(instance_id),
-        service_list_queries,
+        lambda client, instance_id: client.list_queries(instance_id, detail=detail),
+        lambda instance: service_list_queries(instance, include_examples=detail == "full"),
     )
-    if isinstance(result, contracts.QueryListResult):
-        queries: list[Any] = list(result.items)
+    if isinstance(result, contracts.QueryListResult | contracts.QueryListDetailResult):
+        payload = [item.model_dump(mode="json") for item in result.items]
         envelope = {
             "total": result.total,
             "limit": result.limit,
@@ -581,25 +563,30 @@ def _query_list_envelope() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     else:
         # Local mode returns the full, unpaginated list: nothing is truncated.
         queries = cast(list[Any], result)
+        builder = (
+            query_definition_full_payload if detail == "full" else query_definition_summary_payload
+        )
+        payload = [builder(query) for query in queries]
         envelope = {
             "total": len(queries),
             "limit": None,
             "offset": 0,
             "truncated": False,
         }
-    payload = [_query_definition_payload(query) for query in queries]
     return payload, envelope
 
 
-def _query_list_payload() -> list[dict[str, Any]]:
-    payload, _ = _query_list_envelope()
-    return payload
-
-
-def _emit_query_list(*, output_json: bool) -> None:
-    payload, envelope = _query_list_envelope()
+def _emit_query_list(
+    *,
+    output_json: bool,
+    detail: contracts.QueryListDetail = "summary",
+) -> None:
+    payload, envelope = _query_list_envelope(detail=detail)
     if output_json:
         _emit_json({"items": payload, **envelope})
+        return
+    if detail == "full":
+        console.print(query_definitions_detail_table(payload))
         return
     console.print(query_definitions_table(payload))
 
@@ -717,11 +704,28 @@ def query_inline_cmd(
 
 
 @query.command("list")
+@click.option(
+    "--detail",
+    type=click.Choice(["summary", "full"]),
+    default="summary",
+    help=(
+        "summary (default) is a bounded discovery card; full adds state/dedupe/example "
+        "columns to the table and emits complete definitions with --json."
+    ),
+)
 @json_option
 @handle_errors
-def query_list_cmd(output_json: bool) -> None:
-    """List named queries with entry points and required params."""
-    _emit_query_list(output_json=output_json)
+def query_list_cmd(detail: str, output_json: bool) -> None:
+    """List named queries as bounded summaries.
+
+    Shows name, mode, entry point, returns, and required params per query.
+    Use `cruxible query describe --query NAME` for one query's full
+    definition, or `--detail full` to expand every definition.
+    """
+    _emit_query_list(
+        output_json=output_json,
+        detail=cast(contracts.QueryListDetail, detail),
+    )
 
 
 @query.command("describe")
@@ -734,7 +738,10 @@ def query_describe_cmd(query_name: str, output_json: bool) -> None:
         lambda client, instance_id: client.describe_query(instance_id, query_name),
         lambda instance: service_describe_query(instance, query_name),
     )
-    payload = _query_definition_payload(cast(Any, result))
+    if isinstance(result, contracts.NamedQueryInfoResult):
+        payload = result.model_dump(mode="json")
+    else:
+        payload = query_definition_full_payload(result)
     if output_json:
         _emit_json(payload)
         return

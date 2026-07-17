@@ -224,11 +224,23 @@ def register_tools(server: FastMCP) -> list[str]:
     @_tool
     def cruxible_list_queries(
         instance_id: str,
+        detail: contracts.QueryListDetail = "summary",
         limit: int | None = None,
         offset: int = 0,
-    ) -> contracts.QueryListResult:
-        """List named queries with their entry points, required params, and example IDs."""
-        return handlers.handle_list_queries(instance_id, limit=limit, offset=offset)
+    ) -> dict[str, Any]:
+        """List named queries as bounded summaries; `detail='full'` expands every definition.
+
+        Returns a dict rather than the QueryListResult | QueryListDetailResult
+        union because FastMCP nests union returns under a `result` key, which
+        would break the flat list-envelope shape shared by every list tool.
+        """
+        result = handlers.handle_list_queries(
+            instance_id,
+            detail=detail,
+            limit=limit,
+            offset=offset,
+        )
+        return result.model_dump(mode="json")
 
     @_tool
     def cruxible_describe_query(

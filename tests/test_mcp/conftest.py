@@ -300,8 +300,15 @@ class GovernedLocalClient:
             reason=reason,
         )
 
-    def list_queries(self, instance_id: str, *, limit: int | None = None, offset: int = 0):
-        return api.list_queries(instance_id, limit=limit, offset=offset)
+    def list_queries(
+        self,
+        instance_id: str,
+        *,
+        detail: contracts.QueryListDetail = "summary",
+        limit: int | None = None,
+        offset: int = 0,
+    ):
+        return api.list_queries(instance_id, detail=detail, limit=limit, offset=offset)
 
     def describe_query(self, instance_id: str, query_name: str):
         return api.describe_query(instance_id, query_name)

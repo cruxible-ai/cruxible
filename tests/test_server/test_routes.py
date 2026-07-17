@@ -1082,6 +1082,48 @@ def test_query_discovery_routes_return_expected_shapes(
     assert described_payload["required_params"] == ["vehicle_id"]
 
 
+def test_query_list_default_returns_bounded_summaries(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+
+    listed = app_client.get(f"/api/v1/{instance_id}/queries")
+    assert listed.status_code == 200
+    item = next(item for item in listed.json()["items"] if item["name"] == "parts_for_vehicle")
+    assert set(item) == {
+        "name",
+        "description",
+        "mode",
+        "entry_point",
+        "returns",
+        "result_shape",
+        "required_params",
+        "allow_relationship_state_override",
+    }
+    assert item["required_params"] == ["vehicle_id"]
+    assert item["entry_point"] == "Vehicle"
+
+
+def test_query_list_detail_full_matches_describe(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+
+    listed = app_client.get(
+        f"/api/v1/{instance_id}/queries",
+        params={"detail": "full"},
+    )
+    assert listed.status_code == 200
+    item = next(item for item in listed.json()["items"] if item["name"] == "parts_for_vehicle")
+    for key in ("select", "order_by", "include", "dedupe", "example_ids"):
+        assert key in item
+
+    described = app_client.get(f"/api/v1/{instance_id}/queries/parts_for_vehicle")
+    assert item == described.json()
+
+
 def test_trace_routes_return_trace_payloads(
     app_client: TestClient,
     server_project: Path,

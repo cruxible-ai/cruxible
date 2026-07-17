@@ -884,16 +884,19 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
+        detail: contracts.QueryListDetail = "summary",
         limit: int | None = None,
         offset: int = 0,
-    ) -> contracts.QueryListResult:
-        params: dict[str, int] = {"offset": offset}
+    ) -> contracts.QueryListResult | contracts.QueryListDetailResult:
+        params: dict[str, int | str] = {"detail": detail, "offset": offset}
         if limit is not None:
             params["limit"] = limit
         response = self._client.get(
             f"/api/v1/{instance_id}/queries",
             params=params,
         )
+        if detail == "full":
+            return self._parse_model(response, contracts.QueryListDetailResult)
         return self._parse_model(response, contracts.QueryListResult)
 
     def describe_query(

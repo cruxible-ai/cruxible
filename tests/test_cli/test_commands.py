@@ -11,6 +11,7 @@ import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
+from cruxible_client import contracts
 from cruxible_core.cli.formatting import groups_table, query_definitions_table
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
@@ -242,6 +243,156 @@ class TestQuery:
         assert payload["limit"] is None
         assert payload["offset"] == 0
         assert payload["truncated"] is False
+
+    def test_query_list_json_local_mode_emits_summary_contract_shape(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        # Local mode serializes via the shared service builders; the ordered
+        # key comparison against the contract model pins byte-level parity
+        # with remote mode, whose items are model_dump() of the same contract.
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "list", "--json"],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        summary_fields = list(contracts.QueryDefinitionSummary.model_fields)
+        for item in payload["items"]:
+            assert list(item) == summary_fields
+        parameterized = next(
+            item for item in payload["items"] if item["name"] == "parts_for_vehicle"
+        )
+        assert parameterized["required_params"] == ["vehicle_id"]
+
+    def test_query_list_json_detail_full_restores_full_payload(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "list", "--detail", "full", "--json"],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        full_fields = list(contracts.NamedQueryInfoResult.model_fields)
+        for item in payload["items"]:
+            assert list(item) == full_fields
+
+    def test_query_list_local_and_remote_json_payloads_match(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Local CLI JSON equals the HTTP payload for the same instance.
+
+        Serves the same instance root through the real FastAPI app and
+        compares complete payloads (items + envelope) for both detail modes,
+        including per-item key ORDER, so the local builders cannot drift from
+        the remote serialization chain.
+        """
+        from fastapi.testclient import TestClient
+
+        from cruxible_core.runtime.instance_manager import get_manager
+        from cruxible_core.server.app import create_app
+
+        local_summary = json.loads(
+            _chdir_run(runner, populated_instance.root, ["query", "list", "--json"]).output
+        )
+        local_full = json.loads(
+            _chdir_run(
+                runner,
+                populated_instance.root,
+                ["query", "list", "--detail", "full", "--json"],
+            ).output
+        )
+
+        monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+        get_manager().clear()
+        try:
+            with TestClient(create_app()) as app_client:
+                init = app_client.post(
+                    "/api/v1/instances",
+                    json={
+                        "root_dir": str(populated_instance.root),
+                        "config_yaml": (populated_instance.root / "config.yaml").read_text(),
+                    },
+                )
+                assert init.status_code == 200
+                instance_id = init.json()["instance_id"]
+                # Mirror the entry-point entities of populated_instance so the
+                # full definitions (example_ids) are equivalent on both sides.
+                seeded = app_client.post(
+                    f"/api/v1/{instance_id}/entities",
+                    json={
+                        "entities": [
+                            {
+                                "entity_type": "Vehicle",
+                                "entity_id": "V-2024-CIVIC-EX",
+                                "properties": {"vehicle_id": "V-2024-CIVIC-EX", "year": 2024},
+                            },
+                            {
+                                "entity_type": "Vehicle",
+                                "entity_id": "V-2024-ACCORD-SPORT",
+                                "properties": {"vehicle_id": "V-2024-ACCORD-SPORT", "year": 2024},
+                            },
+                            {
+                                "entity_type": "Part",
+                                "entity_id": "BP-1001",
+                                "properties": {"part_number": "BP-1001"},
+                            },
+                            {
+                                "entity_type": "Part",
+                                "entity_id": "BP-1002",
+                                "properties": {"part_number": "BP-1002"},
+                            },
+                        ]
+                    },
+                )
+                assert seeded.status_code == 200
+                remote_summary = app_client.get(f"/api/v1/{instance_id}/queries").json()
+                remote_full = app_client.get(
+                    f"/api/v1/{instance_id}/queries",
+                    params={"detail": "full"},
+                ).json()
+        finally:
+            get_manager().clear()
+
+        assert local_summary == remote_summary
+        assert local_full == remote_full
+        for local, remote in zip(local_full["items"], remote_full["items"], strict=True):
+            assert list(local) == list(remote)
+        for local, remote in zip(local_summary["items"], remote_summary["items"], strict=True):
+            assert list(local) == list(remote)
+
+    def test_query_list_table_detail_full_shows_full_only_columns(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        summary = _chdir_run(runner, populated_instance.root, ["query", "list"])
+        full = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "list", "--detail", "full"],
+        )
+
+        assert summary.exit_code == 0
+        assert full.exit_code == 0
+        # Full-only columns (relationship-state visibility) appear only with
+        # --detail full; the default table stays a bounded summary.
+        assert "State" in full.output
+        assert "live" in full.output
+        assert "State" not in summary.output
+        assert "live" not in summary.output
 
     def test_query_parts_for_vehicle(
         self,

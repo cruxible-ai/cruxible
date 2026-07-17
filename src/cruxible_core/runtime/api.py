@@ -42,6 +42,8 @@ from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.service import (
     AnalyzeFeedbackResult,
     AnalyzeOutcomesResult,
+    query_definition_full_payload,
+    query_definition_summary_payload,
     resolve_contained_source_path,
     service_abandon_decision_record,
     service_add_constraint,
@@ -2035,41 +2037,40 @@ def schema(instance_id: str) -> dict[str, Any]:
 def list_queries(
     instance_id: str,
     *,
+    detail: contracts.QueryListDetail = "summary",
     limit: int | None = None,
     offset: int = 0,
-) -> contracts.QueryListResult:
-    """List named-query definitions for an instance, ordered by name."""
+) -> contracts.QueryListResult | contracts.QueryListDetailResult:
+    """List named-query definitions for an instance, ordered by name.
+
+    Default `detail="summary"` returns bounded discovery cards; `detail="full"`
+    returns complete definitions (byte-identical items to describe_query).
+    """
     check_permission("cruxible_list_queries", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    queries = service_list_queries(instance)
+    # Summaries never expose example IDs, so skip that per-query entity scan.
+    queries = service_list_queries(instance, include_examples=detail == "full")
     total = len(queries)
     end = None if limit is None else offset + limit
     page = queries[offset:end]
+    envelope: dict[str, Any] = {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "truncated": offset + len(page) < total,
+    }
+    if detail == "full":
+        return contracts.QueryListDetailResult(
+            **envelope,
+            items=[
+                contracts.NamedQueryInfoResult(**query_definition_full_payload(query))
+                for query in page
+            ],
+        )
     return contracts.QueryListResult(
-        total=total,
-        limit=limit,
-        offset=offset,
-        truncated=offset + len(page) < total,
+        **envelope,
         items=[
-            contracts.NamedQueryInfoResult(
-                name=query.name,
-                mode=query.mode,
-                entry_point=query.entry_point,
-                required_params=query.required_params,
-                returns=query.returns,
-                result_shape=query.result_shape,
-                dedupe=query.dedupe,
-                relationship_state=query.relationship_state,
-                allow_relationship_state_override=query.allow_relationship_state_override,
-                select=query.select,
-                order_by=query.order_by,
-                include=query.include,
-                limit=query.limit,
-                max_paths=query.max_paths,
-                max_paths_per_result=query.max_paths_per_result,
-                description=query.description,
-                example_ids=query.example_ids,
-            )
+            contracts.QueryDefinitionSummary(**query_definition_summary_payload(query))
             for query in page
         ],
     )
@@ -2083,25 +2084,7 @@ def describe_query(
     check_permission("cruxible_describe_query", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     query = service_describe_query(instance, query_name)
-    return contracts.NamedQueryInfoResult(
-        name=query.name,
-        mode=query.mode,
-        entry_point=query.entry_point,
-        required_params=query.required_params,
-        returns=query.returns,
-        result_shape=query.result_shape,
-        dedupe=query.dedupe,
-        relationship_state=query.relationship_state,
-        allow_relationship_state_override=query.allow_relationship_state_override,
-        select=query.select,
-        order_by=query.order_by,
-        include=query.include,
-        limit=query.limit,
-        max_paths=query.max_paths,
-        max_paths_per_result=query.max_paths_per_result,
-        description=query.description,
-        example_ids=query.example_ids,
-    )
+    return contracts.NamedQueryInfoResult(**query_definition_full_payload(query))
 
 
 def get_feedback_profile(

@@ -1100,7 +1100,32 @@ class NamedQueryInfoResult(BaseModel):
     example_ids: list[str] = Field(default_factory=list)
 
 
+QueryListDetail = Literal["summary", "full"]
+
+
+class QueryDefinitionSummary(BaseModel):
+    """Bounded discovery card for one named query.
+
+    Exactly the fields needed to pick a query and invoke it; no select,
+    order_by, include, or budget internals — describe_query is the
+    canonical full-definition read.
+    """
+
+    name: str
+    description: str | None = None
+    mode: Literal["collection", "traversal"]
+    entry_point: str | None
+    returns: str
+    result_shape: Literal["entity", "path", "relationship"] = "path"
+    required_params: list[str] = Field(default_factory=list)
+    allow_relationship_state_override: bool = False
+
+
 class QueryListResult(ListEnvelopeFields):
+    items: list[QueryDefinitionSummary] = Field(default_factory=list)
+
+
+class QueryListDetailResult(ListEnvelopeFields):
     items: list[NamedQueryInfoResult] = Field(default_factory=list)
 
 

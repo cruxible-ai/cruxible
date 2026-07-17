@@ -124,7 +124,7 @@
     "POST": "AnalyzeOutcomesResult"
   },
   "/api/v1/{instance_id}/queries": {
-    "GET": "QueryListResult"
+    "GET": "QueryListResult | QueryListDetailResult"
   },
   "/api/v1/{instance_id}/queries/run": {
     "POST": "QueryToolResult"

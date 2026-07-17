@@ -17,6 +17,17 @@ def generate_openapi_spec() -> dict[str, Any]:
     return create_app().openapi()
 
 
+def _response_model_name(schema: dict[str, Any]) -> str | None:
+    """Resolve a response schema to a model name, including union response models."""
+    ref = schema.get("$ref", "")
+    if ref:
+        return ref.rsplit("/", 1)[-1]
+    members = [_response_model_name(member) for member in schema.get("anyOf", [])]
+    if members and all(members):
+        return " | ".join(name for name in members if name)
+    return None
+
+
 def generate_http_surface_manifest() -> dict[str, Any]:
     """Build {path: {METHOD: response_model_title|None}} from the live app."""
     spec = generate_openapi_spec()
@@ -31,8 +42,7 @@ def generate_http_surface_manifest() -> dict[str, Any]:
                 .get("application/json", {})
                 .get("schema", {})
             )
-            ref = schema.get("$ref", "")
-            entry[method.upper()] = ref.rsplit("/", 1)[-1] if ref else None
+            entry[method.upper()] = _response_model_name(schema)
         manifest[path] = entry
     return manifest
 

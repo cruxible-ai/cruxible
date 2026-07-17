@@ -465,13 +465,14 @@ def _client_query(
 def handle_list_queries(
     instance_id: str,
     *,
+    detail: contracts.QueryListDetail = "summary",
     limit: int | None = None,
     offset: int = 0,
-) -> contracts.QueryListResult:
+) -> contracts.QueryListResult | contracts.QueryListDetailResult:
     """List named-query definitions for an instance."""
     return _dispatch_remote_or_local(
-        lambda client: client.list_queries(instance_id, limit=limit, offset=offset),
-        lambda: api.list_queries(instance_id, limit=limit, offset=offset),
+        lambda client: client.list_queries(instance_id, detail=detail, limit=limit, offset=offset),
+        lambda: api.list_queries(instance_id, detail=detail, limit=limit, offset=offset),
     )
 
 

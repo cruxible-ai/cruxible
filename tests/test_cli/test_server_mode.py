@@ -625,18 +625,18 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
     runner: CliRunner,
 ):
     class StubClient:
-        def list_queries(self, instance_id, *, limit=None, offset=0):
+        def list_queries(self, instance_id, *, detail="summary", limit=None, offset=0):
             assert instance_id == "inst_123"
+            assert detail == "summary"
             return contracts.QueryListResult(
                 items=[
-                    contracts.NamedQueryInfoResult(
+                    contracts.QueryDefinitionSummary(
                         name="parts_for_vehicle",
                         mode="traversal",
                         entry_point="Vehicle",
                         required_params=["vehicle_id"],
                         returns="Part",
                         description="Find compatible parts.",
-                        example_ids=["V-2024-CIVIC-EX"],
                     )
                 ],
                 total=1,
@@ -673,6 +673,8 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
     list_payload = json.loads(listed.output)
     assert list_payload["items"][0]["name"] == "parts_for_vehicle"
     assert list_payload["items"][0]["required_params"] == ["vehicle_id"]
+    # Remote items serialize the summary contract exactly (ordered), matching local mode.
+    assert list(list_payload["items"][0]) == list(contracts.QueryDefinitionSummary.model_fields)
 
     bare = runner.invoke(cli, ["query"])
     assert bare.exit_code == 0

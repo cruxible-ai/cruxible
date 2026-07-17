@@ -180,18 +180,18 @@ def test_init_handler_delegates_kit_to_client(monkeypatch: pytest.MonkeyPatch):
 
 def test_query_discovery_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
-        def list_queries(self, instance_id, *, limit=None, offset=0):
+        def list_queries(self, instance_id, *, detail="summary", limit=None, offset=0):
             assert instance_id == "inst_123"
+            assert detail == "summary"
             return contracts.QueryListResult(
                 items=[
-                    contracts.NamedQueryInfoResult(
+                    contracts.QueryDefinitionSummary(
                         name="parts_for_vehicle",
                         mode="traversal",
                         entry_point="Vehicle",
                         required_params=["vehicle_id"],
                         returns="Part",
                         description="Find compatible parts.",
-                        example_ids=["V-1"],
                     )
                 ],
                 total=1,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
 from typing import Any, Literal, cast
 
 import structlog
@@ -481,13 +481,61 @@ def service_schema(instance: InstanceProtocol) -> CoreConfig:
     return instance.load_config()
 
 
-def service_list_queries(instance: InstanceProtocol) -> list[QueryDefinitionServiceResult]:
-    """Return named-query definitions with the invocation details agents need."""
+def query_definition_summary_payload(
+    definition: QueryDefinitionServiceResult,
+) -> dict[str, Any]:
+    """Bounded discovery card for one named query.
+
+    The single summary serializer consumed by the runtime API, CLI local
+    mode, and MCP. Key order mirrors ``contracts.QueryDefinitionSummary`` so
+    local and remote JSON surfaces are byte-identical.
+    """
+    return {
+        "name": definition.name,
+        "description": definition.description,
+        "mode": definition.mode,
+        "entry_point": definition.entry_point,
+        "returns": definition.returns,
+        "result_shape": definition.result_shape,
+        "required_params": list(definition.required_params),
+        "allow_relationship_state_override": definition.allow_relationship_state_override,
+    }
+
+
+def query_definition_full_payload(
+    definition: QueryDefinitionServiceResult,
+) -> dict[str, Any]:
+    """Full named-query definition payload (describe_query / detail=full).
+
+    The single full serializer consumed by the runtime API, CLI local mode,
+    and MCP. Derived mechanically from ``QueryDefinitionServiceResult`` so the
+    field enumeration lives in exactly one place: ``asdict`` walks the dataclass
+    fields in declaration order, and ``contracts.NamedQueryInfoResult`` declares
+    the same fields in the same order (pinned by tests), so local and remote
+    JSON surfaces stay byte-identical and a new definition field is added in
+    one spot.
+    """
+    return asdict(definition)
+
+
+def service_list_queries(
+    instance: InstanceProtocol,
+    *,
+    include_examples: bool = True,
+) -> list[QueryDefinitionServiceResult]:
+    """Return named-query definitions with the invocation details agents need.
+
+    ``include_examples=False`` skips the per-query entity-ID scan behind
+    ``example_ids`` (leaving it empty); summary-only consumers use it because
+    the summary payload never exposes example IDs.
+    """
     config = instance.load_config()
     graph = instance.load_graph()
     definitions: list[QueryDefinitionServiceResult] = []
     for name in sorted(config.named_queries.keys()):
-        definitions.append(_query_definition(config, graph, name))
+        definitions.append(
+            _query_definition(config, graph, name, include_examples=include_examples)
+        )
     return definitions
 
 
@@ -1327,17 +1375,26 @@ def _query_param_hints(
     config: CoreConfig,
     graph: Any,
     query_name: str,
+    *,
+    include_examples: bool = True,
 ) -> QueryParamHints | None:
     query_schema = config.named_queries.get(query_name)
     if query_schema is None:
         return None
-    return _query_param_hints_for_schema(config, graph, query_schema)
+    return _query_param_hints_for_schema(
+        config,
+        graph,
+        query_schema,
+        include_examples=include_examples,
+    )
 
 
 def _query_param_hints_for_schema(
     config: CoreConfig,
     graph: Any,
     query_schema: NamedQuerySchema,
+    *,
+    include_examples: bool = True,
 ) -> QueryParamHints:
     if query_schema.entry_point is None:
         required_params = _infer_query_required_params(query_schema, primary_key=None)
@@ -1351,7 +1408,7 @@ def _query_param_hints_for_schema(
     primary_key = entity_schema.get_primary_key() if entity_schema is not None else None
     required_params = _infer_query_required_params(query_schema, primary_key=primary_key)
     example_ids: list[str] = []
-    if primary_key is not None:
+    if include_examples and primary_key is not None:
         example_ids = sorted(
             entity.entity_id for entity in graph.list_entities(query_schema.entry_point)
         )[:3]
@@ -1431,9 +1488,11 @@ def _query_definition(
     config: CoreConfig,
     graph: Any,
     query_name: str,
+    *,
+    include_examples: bool = True,
 ) -> QueryDefinitionServiceResult:
     query_schema = config.named_queries[query_name]
-    hints = _query_param_hints(config, graph, query_name)
+    hints = _query_param_hints(config, graph, query_name, include_examples=include_examples)
     return QueryDefinitionServiceResult(
         name=query_name,
         mode=query_schema.mode,

@@ -432,6 +432,50 @@ def test_paginated_client_methods_serialize_offset():
     assert captured["/api/v1/inst_123/resolutions"]["offset"] == "9"
 
 
+def test_list_queries_detail_branches_parse_typed_models():
+    summary_item = {
+        "name": "parts_for_vehicle",
+        "description": "Find compatible parts.",
+        "mode": "traversal",
+        "entry_point": "Vehicle",
+        "returns": "Part",
+        "result_shape": "path",
+        "required_params": ["vehicle_id"],
+        "allow_relationship_state_override": False,
+    }
+    full_item = {
+        **summary_item,
+        "dedupe": "path",
+        "relationship_state": "live",
+        "select": None,
+        "order_by": [],
+        "include": {},
+        "limit": None,
+        "max_paths": None,
+        "max_paths_per_result": None,
+        "example_ids": ["V-1"],
+    }
+    captured: dict[str, dict[str, str]] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        item = full_item if request.url.params.get("detail") == "full" else summary_item
+        return httpx.Response(200, json={"items": [item], "total": 1})
+
+    client = _build_client(handler)
+
+    summary = client.list_queries("inst_123")
+    assert captured["params"]["detail"] == "summary"
+    assert isinstance(summary, contracts.QueryListResult)
+    assert isinstance(summary.items[0], contracts.QueryDefinitionSummary)
+
+    full = client.list_queries("inst_123", detail="full")
+    assert captured["params"]["detail"] == "full"
+    assert isinstance(full, contracts.QueryListDetailResult)
+    assert isinstance(full.items[0], contracts.NamedQueryInfoResult)
+    assert full.items[0].example_ids == ["V-1"]
+
+
 def test_entity_list_and_sample_serialize_projection_fields():
     captured: dict[str, list[str]] = {}
 
