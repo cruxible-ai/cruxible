@@ -1,8 +1,12 @@
 """CLI ``ws`` group: manage the agent-local working set (opt-in prototype).
 
-Only this group and the capture hooks in the read commands ever touch the
-working-set files; no write path or other CLI command reads them. See
-:mod:`cruxible_core.cli.working_set` for the cache contract.
+Only this group and the capture hooks (CLI read commands and the MCP read
+tools) ever touch the working-set files; no write path or other CLI command
+reads them. See :mod:`cruxible_core.working_set` for the cache contract —
+including the tamper-honesty caveat (same-user processes CAN rewrite the
+cache; hygiene reduces accidents, not adversaries). Path resolution honors
+``CRUXIBLE_WORKING_SET_DIR`` (precedence: explicit env > the default
+``~/.cruxible/working-set``), so these verbs manage an MCP-rooted cache too.
 """
 
 from __future__ import annotations
@@ -20,21 +24,23 @@ from cruxible_core.cli.commands._common import (
 )
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.cli.working_set import (
-    local_instance_key,
-    normalize_edge_record,
-    normalize_entity_record,
-    read_records,
-    record_identity,
-    records_path,
-    server_instance_key,
-    working_set_dir,
-    write_records,
-)
 from cruxible_core.service import service_get_entity, service_inspect_entity
 from cruxible_core.service.types import InspectNeighborhoodResult
 from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import compute_lock_config_digest
+from cruxible_core.working_set import (
+    WorkingSetPathError,
+    local_instance_key,
+    normalize_edge_record,
+    normalize_entity_record,
+    read_records_detailed,
+    record_identity,
+    records_path,
+    refuse_symlink_write,
+    server_instance_key,
+    working_set_dir,
+    write_records,
+)
 
 # Edge budget used when re-fetching an owning entity's neighborhood during
 # refresh: the read-surface hard cap, so a refresh misses an edge only when
@@ -102,11 +108,15 @@ def _classify(
     """Split records into (fresh, stale, unknown) against the current state.
 
     ``fresh`` means the cached revision equals the current one AND the cached
-    config digest matches (a config reload does not bump ``read_revision``,
-    so old-schema records would otherwise verify fresh forever); any concrete
-    mismatch on either axis is ``stale``; a missing revision — or a missing
-    cached digest when the current digest is known — is ``unknown``
-    (unverifiable, re-fetched by refresh but never a verify failure).
+    config digest concretely matches the current one (a config reload does
+    not bump ``read_revision``, so old-schema records would otherwise verify
+    fresh forever); any concrete mismatch on either axis is ``stale``. A
+    record missing its revision or config digest — or an unresolvable
+    CURRENT config digest, which makes the config axis unverifiable — is
+    ``unknown``: honest freshness means a record is never reported fresh
+    unless both axes were actually compared. Unknown records are re-fetched
+    by refresh but never a verify failure. (Schema-invalid lines never reach
+    this function: the reader already skipped and counted them.)
     """
     fresh: list[dict[str, Any]] = []
     stale: list[dict[str, Any]] = []
@@ -118,11 +128,7 @@ def _classify(
             unknown.append(record)
         elif current_revision is None or revision != current_revision:
             stale.append(record)
-        elif current_config_digest is None:
-            # No current digest to compare against: the config axis is
-            # unverifiable everywhere, so fall back to revision-only.
-            fresh.append(record)
-        elif not isinstance(record_digest, str):
+        elif not isinstance(record_digest, str) or current_config_digest is None:
             unknown.append(record)
         elif record_digest == current_config_digest:
             fresh.append(record)
@@ -148,7 +154,11 @@ def ws_group() -> None:
     """Agent-local working set: opt-in, NON-AUTHORITATIVE read cache.
 
     Enable capture with CRUXIBLE_WORKING_SET=1 or per-command --ws on JSON
-    reads. Records are revision-stamped; verify before trusting them.
+    reads; MCP read tools capture when CRUXIBLE_WORKING_SET_DIR is set
+    (that variable also redirects the cache root these verbs use). Records
+    are revision-stamped; verify before trusting them. Cache files are
+    same-user-writable by design — hygiene reduces accidents, not
+    adversaries.
     """
 
 
@@ -169,7 +179,8 @@ def ws_status_cmd(output_json: bool) -> None:
 
     context = _ws_context()
     path = records_path(context.instance_key)
-    records = read_records(path)
+    read_result = read_records_detailed(path)
+    records = read_result.records
     current_revision = _current_read_revision(context)
 
     kind_counts: dict[str, int] = {}
@@ -195,6 +206,7 @@ def ws_status_cmd(output_json: bool) -> None:
         "exists": path.exists(),
         "file_size_bytes": path.stat().st_size if path.exists() else 0,
         "record_count": len(records),
+        "invalid_lines": read_result.invalid_lines,
         "kind_counts": kind_counts,
         "type_counts": type_counts,
         "current_read_revision": current_revision,
@@ -211,6 +223,8 @@ def ws_status_cmd(output_json: bool) -> None:
         return
     click.echo(f"File size: {payload['file_size_bytes']} bytes")
     click.echo(f"Records: {payload['record_count']}")
+    if read_result.invalid_lines:
+        click.echo(f"Invalid lines skipped: {read_result.invalid_lines}")
     for kind, count in sorted(kind_counts.items()):
         click.echo(f"  {kind}: {count}")
     if type_counts:
@@ -230,14 +244,19 @@ def ws_status_cmd(output_json: bool) -> None:
 def ws_verify_cmd(output_json: bool) -> None:
     """Verify cached records against the current instance read revision.
 
-    Reports fresh (revision matches), stale (revision differs), and unknown
-    (no revision recorded). Exit code 0 when nothing is stale, 1 otherwise.
+    Reports fresh (revision AND config digest match), stale (either differs),
+    unknown (no revision/digest recorded — never fresh), and invalid
+    (malformed lines skipped by the reader — never fresh). Exit contract:
+    0 when every record is fresh or unknown AND no lines are invalid; 1 when
+    anything is stale OR any invalid lines are present (a tampered/corrupt
+    cache must be loud in scripts). Unknown alone never fails.
     """
     import json as _json
 
     context = _ws_context()
     path = records_path(context.instance_key)
-    records = read_records(path)
+    read_result = read_records_detailed(path)
+    records = read_result.records
     current_revision = _current_read_revision(context)
     current_config_digest = _current_config_digest(context)
     fresh, stale, unknown = _classify(records, current_revision, current_config_digest)
@@ -253,6 +272,7 @@ def ws_verify_cmd(output_json: bool) -> None:
                     "fresh": len(fresh),
                     "stale": len(stale),
                     "unknown": len(unknown),
+                    "invalid": read_result.invalid_lines,
                     "stale_records": [_identity_label(record) for record in stale],
                 },
                 indent=2,
@@ -264,7 +284,7 @@ def ws_verify_cmd(output_json: bool) -> None:
         click.echo(f"Current read revision: {current_revision}")
         click.echo(
             f"Records: {len(records)} (fresh={len(fresh)} stale={len(stale)} "
-            f"unknown={len(unknown)})"
+            f"unknown={len(unknown)} invalid={read_result.invalid_lines})"
         )
         for record in stale:
             revision = record.get("read_revision")
@@ -277,7 +297,7 @@ def ws_verify_cmd(output_json: bool) -> None:
                 click.echo(f"  stale: {_identity_label(record)} (config changed)")
             else:
                 click.echo(f"  stale: {_identity_label(record)} (revision {revision})")
-    if stale:
+    if stale or read_result.invalid_lines:
         raise SystemExit(1)
 
 
@@ -494,7 +514,7 @@ def ws_refresh_cmd() -> None:
     """
     context = _ws_context()
     path = records_path(context.instance_key)
-    records = read_records(path)
+    records = read_records_detailed(path).records
     if not records:
         click.echo("No working-set records to refresh.")
         return
@@ -546,7 +566,10 @@ def ws_refresh_cmd() -> None:
             # None => dropped (target gone); the note was already recorded.
         else:
             rewritten.append(record)
-    write_records(path, rewritten)
+    try:
+        write_records(path, rewritten)
+    except WorkingSetPathError as exc:
+        raise click.UsageError(str(exc)) from exc
 
     click.echo(
         f"Refreshed {report.refreshed}, removed {report.removed}, "
@@ -564,6 +587,12 @@ def ws_clear_cmd() -> None:
     try:
         path = records_path(context.instance_key)
     except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    try:
+        # lstat discipline: a symlinked records file (or instance dir) could
+        # make the unlink-or-anything-later act outside the working set.
+        refuse_symlink_write(path)
+    except WorkingSetPathError as exc:
         raise click.UsageError(str(exc)) from exc
     root = working_set_dir().resolve()
     resolved = path.resolve()

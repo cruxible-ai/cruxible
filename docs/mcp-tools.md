@@ -29,6 +29,14 @@ Set `CRUXIBLE_MCP_TOOLS` or `CRUXIBLE_MCP_TOOL_ALLOWLIST` to a comma-separated l
 
 Tool descriptions are written for non-coding MCP clients. Each description starts with when to use the tool, uses kit-user vocabulary, and avoids implementation details that do not help with tool choice.
 
+## Working-Set Capture
+
+Set `CRUXIBLE_WORKING_SET_DIR` to a directory path to opt the MCP server into agent-local working-set capture: entity/edge-shaped results returned by the read tools (`cruxible_query`, `cruxible_query_inline`, `cruxible_get_entity`, `cruxible_inspect_entity`, `cruxible_list`, `cruxible_sample`, `cruxible_get_relationship`) are ALSO recorded as revision-stamped working-set records rooted at that directory — the same record format, dedupe, and credential-scoped instance keys as the CLI's `--ws` capture (see the `cruxible ws` section of `docs/cli-reference.md`). Capture happens in the MCP server process, which is a client co-located with the agent; the daemon stays blind to it, and tool results are never changed by it.
+
+When the variable is unset, capture is a hard no-op — zero behavior or performance change. Precedence for the cache root everywhere (including the `cruxible ws` verbs): explicit `CRUXIBLE_WORKING_SET_DIR` > the default `~/.cruxible/working-set`.
+
+The cache is NON-AUTHORITATIVE and its files are same-user-writable by design: any same-user process can rewrite records undetected. Directory/file permission hygiene (0700/0600) and symlink refusal reduce accidents, not adversaries; verify records with `cruxible ws verify` before trusting them.
+
 ## cruxible_version
 
 **Permission:** `READ_ONLY`

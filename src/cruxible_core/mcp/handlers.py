@@ -18,6 +18,7 @@ from cruxible_core.config.composer import compose_config_sequence, resolve_confi
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.provenance import compose_file_with_source_manifest
 from cruxible_core.errors import ConfigError
+from cruxible_core.mcp import working_set as _working_set_capture
 from cruxible_core.runtime import api
 from cruxible_core.runtime.instance_manager import (
     InstanceManager,
@@ -84,6 +85,19 @@ def _dispatch_remote_or_local(
             f"Local mutation disabled for {operation_name or 'this operation'}; configure a server."
         )
     return local_call()
+
+
+def _captured_read(result: ResultT, *, tool: str, instance_id: str) -> ResultT:
+    """Working-set capture hook at the read-handler dispatch seam.
+
+    Sits AFTER :func:`_dispatch_remote_or_local` so both remote (HTTP client)
+    and local modes are covered. Hard no-op unless
+    ``CRUXIBLE_WORKING_SET_DIR`` opts in (see
+    :mod:`cruxible_core.mcp.working_set`); the result is returned unchanged
+    either way.
+    """
+    _working_set_capture.capture_tool_read(result, source_tool=tool, instance_id=instance_id)
+    return result
 
 
 # MCP is the agent surface: entity-shaped read tools default to the compact
@@ -399,7 +413,7 @@ def handle_query(
 ) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
     """Execute a named query."""
     resolved_profile = resolve_mcp_read_profile(profile)
-    return _dispatch_remote_or_local(
+    result = _dispatch_remote_or_local(
         lambda client: _client_query(
             client,
             instance_id=instance_id,
@@ -425,6 +439,7 @@ def handle_query(
             layout=layout,
         ),
     )
+    return _captured_read(result, tool="cruxible_query", instance_id=instance_id)
 
 
 def handle_query_inline(
@@ -439,7 +454,7 @@ def handle_query_inline(
 ) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
     """Execute a bounded inline query definition without persisting it to config."""
     resolved_profile = resolve_mcp_read_profile(profile)
-    return _dispatch_remote_or_local(
+    result = _dispatch_remote_or_local(
         lambda client: client.query_inline(
             instance_id,
             definition,
@@ -464,6 +479,7 @@ def handle_query_inline(
             layout=layout,
         ),
     )
+    return _captured_read(result, tool="cruxible_query_inline", instance_id=instance_id)
 
 
 def _client_query(
@@ -1060,7 +1076,7 @@ def handle_list(
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
     resolved_profile = resolve_mcp_read_profile(profile)
-    return _dispatch_remote_or_local(
+    result = _dispatch_remote_or_local(
         lambda client: client.list(
             instance_id,
             resource_type=resource_type,
@@ -1096,6 +1112,7 @@ def handle_list(
             continuation=continuation,
         ),
     )
+    return _captured_read(result, tool="cruxible_list", instance_id=instance_id)
 
 
 def handle_evaluate(
@@ -1175,7 +1192,7 @@ def handle_sample(
 ) -> contracts.SampleResult:
     """Sample entities of a given type."""
     resolved_profile = resolve_mcp_read_profile(profile)
-    return _dispatch_remote_or_local(
+    result = _dispatch_remote_or_local(
         lambda client: client.sample(
             instance_id,
             entity_type,
@@ -1191,6 +1208,7 @@ def handle_sample(
             profile=resolved_profile,
         ),
     )
+    return _captured_read(result, tool="cruxible_sample", instance_id=instance_id)
 
 
 def handle_inspect_entity(
@@ -1213,7 +1231,7 @@ def handle_inspect_entity(
 ) -> contracts.InspectEntityResult | contracts.InspectNeighborhoodResult:
     """Inspect one entity and its bounded neighborhood."""
     resolved_profile = resolve_mcp_read_profile(profile)
-    return _dispatch_remote_or_local(
+    result = _dispatch_remote_or_local(
         lambda client: client.inspect_entity(
             instance_id,
             entity_type,
@@ -1249,6 +1267,7 @@ def handle_inspect_entity(
             continuation=continuation,
         ),
     )
+    return _captured_read(result, tool="cruxible_inspect_entity", instance_id=instance_id)
 
 
 def handle_inspect_entity_history(
@@ -1479,7 +1498,7 @@ def handle_get_entity(
 ) -> contracts.GetEntityResult:
     """Look up a specific entity by type and ID."""
     resolved_profile = resolve_mcp_read_profile(profile)
-    return _dispatch_remote_or_local(
+    result = _dispatch_remote_or_local(
         lambda client: client.get_entity(
             instance_id,
             entity_type,
@@ -1488,6 +1507,7 @@ def handle_get_entity(
         ),
         lambda: api.get_entity(instance_id, entity_type, entity_id, profile=resolved_profile),
     )
+    return _captured_read(result, tool="cruxible_get_entity", instance_id=instance_id)
 
 
 def handle_get_relationship(
@@ -1500,7 +1520,7 @@ def handle_get_relationship(
     edge_key: int | None = None,
 ) -> contracts.GetRelationshipResult:
     """Look up a specific relationship by its endpoints and type."""
-    return _dispatch_remote_or_local(
+    result = _dispatch_remote_or_local(
         lambda client: client.get_relationship(
             instance_id,
             from_type=from_type,
@@ -1520,6 +1540,7 @@ def handle_get_relationship(
             edge_key=edge_key,
         ),
     )
+    return _captured_read(result, tool="cruxible_get_relationship", instance_id=instance_id)
 
 
 def handle_relationship_lineage(

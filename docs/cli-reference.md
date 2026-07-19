@@ -3052,11 +3052,17 @@ An opt-in prototype (promotion is gated on the RuneBench pilot). When enabled
 `relationship get`, `list entities`, `list edges`, `sample`) — every entity
 or edge those reads return is ALSO appended, normalized through the compact
 profile serializer, to
-`~/.cruxible/working-set/<instance-key>/records.jsonl`. In authenticated
+`<working-set root>/<instance-key>/records.jsonl`. The root defaults to
+`~/.cruxible/working-set` and can be redirected with
+`CRUXIBLE_WORKING_SET_DIR` (precedence: explicit env > default home
+dir). That same variable opts the co-located MCP server's read tools into
+capture (see the Working-Set Capture section of `docs/mcp-tools.md`), and
+every `cruxible ws` verb resolves paths through it — so this group manages
+an MCP-rooted cache too. In authenticated
 server mode the instance key is credential-scoped —
 `<instance-id>-cred-<scope>`, where the scope is a salted hash of the bearer
 credential (random salt persisted once at
-`~/.cruxible/working-set/.scope-salt`, mode 0600; no token material is ever
+`<working-set root>/.scope-salt`, mode 0600; no token material is ever
 written) — so different credentials on the same host never share records.
 Tokenless server mode uses the bare instance id; local mode uses a hash of
 the resolved instance root (per-OS-user via `~`). Re-finding something then
@@ -3073,9 +3079,25 @@ Cache contract:
   `source_cmd`.
 - Appends dedupe by identity: newest `read_revision` wins, ties go to the
   latest `as_of`.
+- The reader validates every line against the record shape: corrupt or
+  wrong-shaped lines are skipped with a stderr warning and counted
+  (`invalid_lines` in `ws status`, `invalid` in `ws verify`) — never a
+  crash, and never classified as fresh.
 - The cache is NEVER read by any write path or any other CLI command; capture
   and this command group are the only code that touches it. Capture never
   changes the read's stdout — it is a pure side effect.
+
+File hygiene and tamper honesty:
+- Working-set directories are created mode 0700 and records files mode
+  0600; appends, rewrites, and `ws clear` refuse symlinked records files or
+  instance directories (`lstat`/`O_NOFOLLOW` discipline), so a planted
+  symlink cannot redirect a write outside the working set.
+- The cache files are SAME-USER-WRITABLE BY DESIGN: any process running as
+  the same OS user can rewrite records undetected. The hygiene above
+  reduces accidents and cross-user exposure — it is NOT a defense against a
+  same-user adversary. Tamper-evidence would require a daemon-signed record
+  mechanism (a possible future addition, deliberately not implemented).
+  Treat records as hints to re-verify (`cruxible ws verify`), never proof.
 
 **Subcommands:**
 
@@ -3118,10 +3140,12 @@ Cache contract:
 
 **Output And Side Effects:**
 - Read-only. Reports the instance key, records file path and size, record
-  counts by kind and by entity/relationship type, and the current instance
-  read revision versus the newest/oldest cached revisions.
+  counts by kind and by entity/relationship type, the count of invalid lines
+  skipped by the validating reader (`invalid_lines`), and the current
+  instance read revision versus the newest/oldest cached revisions.
 - Fetches the current read revision (stats endpoint in server mode, the local
-  instance otherwise); corrupt cache lines are skipped with a stderr warning.
+  instance otherwise); corrupt or wrong-shaped cache lines are skipped with a
+  stderr warning and counted, never a crash.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
@@ -3141,12 +3165,17 @@ Cache contract:
 
 **Output And Side Effects:**
 - Read-only. Classifies every cached record: `fresh` (cached `read_revision`
-  equals the current instance revision AND the cached `config_digest` matches
-  the active config), `stale` (any other concrete revision, or a config-digest
-  mismatch — reported as "config changed"), `unknown` (no revision or no
-  config digest recorded).
-- Script-friendly exit code: `0` when nothing is stale, `1` when any record
-  is stale (unknown records alone do not fail verification).
+  equals the current instance revision AND the cached `config_digest`
+  concretely matches the active config), `stale` (any other concrete
+  revision, or a config-digest mismatch — reported as "config changed"),
+  `unknown` (no revision or no config digest recorded, or the CURRENT config
+  digest is unresolvable — honest freshness: a record is never fresh unless
+  both axes were actually compared). Malformed/wrong-shaped lines are
+  reported separately as `invalid` — skipped by the reader, never fresh.
+- Script-friendly exit contract: `0` when every record is fresh or unknown
+  AND no lines are invalid; `1` when any record is stale OR any invalid
+  lines are present — a tampered/corrupt cache must be loud in scripts.
+  Unknown records alone never fail verification.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
@@ -3180,8 +3209,9 @@ Cache contract:
 
 **Output And Side Effects:**
 - Deletes only the current context's `records.jsonl`; refuses any path that
-  resolves outside `~/.cruxible/working-set/` (hostile instance keys are
-  rejected before any filesystem access).
+  resolves outside the working-set root (hostile instance keys are rejected
+  before any filesystem access) and refuses symlinked records files or
+  instance directories outright.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

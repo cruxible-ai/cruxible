@@ -36,6 +36,7 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("CRUXIBLE_WORKING_SET", raising=False)
+    monkeypatch.delenv("CRUXIBLE_WORKING_SET_DIR", raising=False)
     return home
 
 
@@ -796,8 +797,9 @@ class TestCorruption:
         payload = json.loads(json_text[json_text.index("{") :])
         assert payload["record_count"] == good_count
 
+        # Invalid lines make verify loud: exit 1 even with nothing stale.
         verify = _chdir_run(runner, root, ["ws", "verify"])
-        assert verify.exit_code == 0
+        assert verify.exit_code == 1
 
         # A further capture still works and keeps the valid records.
         assert (
@@ -810,6 +812,488 @@ class TestCorruption:
         )
         records = read_records(path)
         assert len(records) == good_count + 1
+
+
+class TestHygiene:
+    def test_capture_creates_private_dirs_and_files(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        isolated_home: Path,
+    ) -> None:
+        root = populated_instance.get_root_path()
+        capture = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
+        assert capture.exit_code == 0
+        ws_root = isolated_home / ".cruxible" / "working-set"
+        records = _ws_file(populated_instance)
+        assert (ws_root.stat().st_mode & 0o777) == 0o700
+        assert (records.parent.stat().st_mode & 0o777) == 0o700
+        assert (records.stat().st_mode & 0o777) == 0o600
+
+    def test_rewrite_keeps_records_file_private(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        root = populated_instance.get_root_path()
+        capture = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
+        assert capture.exit_code == 0
+        # Refresh rewrites atomically (temp file + rename): mode must survive.
+        assert _chdir_run(runner, root, ["ws", "refresh"]).exit_code == 0
+        assert (_ws_file(populated_instance).stat().st_mode & 0o777) == 0o600
+
+    def test_preexisting_lax_modes_are_tightened_on_next_capture(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        """Idempotent hygiene: a cache created with lax modes (e.g. by an older
+        build or a manual copy) is tightened the next time capture touches it,
+        not only at creation."""
+        import os as _os
+
+        root = populated_instance.get_root_path()
+        records = _ws_file(populated_instance)
+        records.parent.mkdir(parents=True)
+        _os.chmod(records.parent, 0o755)
+        records.write_text(HEADER_LINE + "\n")
+        _os.chmod(records, 0o644)
+
+        capture = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
+        assert capture.exit_code == 0
+        assert (records.parent.stat().st_mode & 0o777) == 0o700
+        assert (records.stat().st_mode & 0o777) == 0o600
+        # And the capture actually appended through the tightened file.
+        assert read_records(records)
+
+
+class TestSymlinkProtection:
+    def _capture_once(self, runner: CliRunner, root: Path) -> None:
+        capture = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
+        assert capture.exit_code == 0
+
+    def test_capture_refuses_symlinked_records_file(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        isolated_home: Path,
+    ) -> None:
+        root = populated_instance.get_root_path()
+        self._capture_once(runner, root)
+        path = _ws_file(populated_instance)
+        target = isolated_home / "victim.jsonl"
+        target.write_text("untouched\n")
+        path.unlink()
+        path.symlink_to(target)
+
+        # The read itself succeeds; capture refuses with a stderr warning.
+        result = _chdir_run(
+            runner, root, ["entity", "get", "--type", "Part", "--id", "BP-1001", "--ws", "--json"]
+        )
+        assert result.exit_code == 0
+        assert "symlink" in result.output
+        assert target.read_text() == "untouched\n"
+
+    def test_capture_refuses_symlinked_instance_dir(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        isolated_home: Path,
+    ) -> None:
+        root = populated_instance.get_root_path()
+        outside = isolated_home / "outside-dir"
+        outside.mkdir()
+        ws_dir = _ws_file(populated_instance).parent
+        ws_dir.parent.mkdir(parents=True, exist_ok=True)
+        ws_dir.symlink_to(outside, target_is_directory=True)
+
+        result = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
+        assert result.exit_code == 0
+        assert "symlink" in result.output
+        assert list(outside.iterdir()) == []
+
+    def test_ws_clear_refuses_symlinked_records_file(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        isolated_home: Path,
+    ) -> None:
+        root = populated_instance.get_root_path()
+        self._capture_once(runner, root)
+        path = _ws_file(populated_instance)
+        target = isolated_home / "victim.jsonl"
+        target.write_text("untouched\n")
+        path.unlink()
+        path.symlink_to(target)
+
+        refused = _chdir_run(runner, root, ["ws", "clear"])
+        assert refused.exit_code != 0
+        assert "symlink" in refused.output
+        assert path.is_symlink()  # nothing was unlinked
+        assert target.read_text() == "untouched\n"
+
+
+class TestRecordValidation:
+    def test_wrong_shaped_lines_are_skipped_counted_and_never_fresh(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        root = populated_instance.get_root_path()
+        assert (
+            _chdir_run(
+                runner,
+                root,
+                ["entity", "get", "--type", "Part", "--id", "BP-1001", "--ws", "--json"],
+            ).exit_code
+            == 0
+        )
+        path = _ws_file(populated_instance)
+        current_revision = populated_instance.get_read_revision()
+        wrong_shaped = [
+            {"kind": "bogus", "entity_type": "Part", "entity_id": "X", "props": {}},
+            # Would be "fresh" by revision but has a non-string identity field.
+            {
+                "kind": "entity",
+                "entity_type": "Part",
+                "entity_id": 5,
+                "props": {},
+                "read_revision": current_revision,
+            },
+            {"kind": "entity", "entity_type": "Part", "entity_id": "P-L", "props": []},
+            {
+                "kind": "edge",
+                "relationship_type": "fits",
+                "from_type": "Part",
+                "from_id": "A",
+                "to_type": "Vehicle",
+                "to_id": "B",
+                "edge_key": "zero",
+                "props": {},
+            },
+        ]
+        with path.open("a") as handle:
+            for record in wrong_shaped:
+                handle.write(json.dumps(record) + "\n")
+            handle.write("{not json\n")
+
+        status = _chdir_run(runner, root, ["ws", "status", "--json"])
+        assert status.exit_code == 0
+        assert "Warning: skipping" in status.output
+        json_text = "\n".join(
+            line for line in status.output.splitlines() if not line.startswith("Warning:")
+        )
+        payload = json.loads(json_text[json_text.index("{") :])
+        assert payload["record_count"] == 1
+        assert payload["invalid_lines"] == 5
+
+        verify = _chdir_run(runner, root, ["ws", "verify", "--json"])
+        # Invalid lines are loud: exit 1 even though nothing is stale.
+        assert verify.exit_code == 1
+        json_text = "\n".join(
+            line for line in verify.output.splitlines() if not line.startswith("Warning:")
+        )
+        payload = json.loads(json_text[json_text.index("{") :])
+        # The invalid lines are counted — and never classified fresh.
+        assert payload["invalid"] == 5
+        assert payload["fresh"] == 1
+        assert payload["total"] == 1
+        assert payload["stale"] == 0
+
+    def test_validate_record_reasons(self) -> None:
+        from cruxible_core.working_set import validate_record
+
+        assert (
+            validate_record({"kind": "entity", "entity_type": "T", "entity_id": "I", "props": {}})
+            is None
+        )
+        assert validate_record("nope") == "not a JSON object"
+        assert validate_record({"kind": "widget"}) == "unknown kind 'widget'"
+        assert (
+            validate_record({"kind": "entity", "entity_type": "T", "entity_id": "", "props": {}})
+            == "missing or non-string identity field 'entity_id'"
+        )
+        assert (
+            validate_record(
+                {
+                    "kind": "entity",
+                    "entity_type": "T",
+                    "entity_id": "I",
+                    "props": {},
+                    "read_revision": True,
+                }
+            )
+            == "read_revision must be an integer or null"
+        )
+        assert (
+            validate_record(
+                {
+                    "kind": "entity",
+                    "entity_type": "T",
+                    "entity_id": "I",
+                    "props": {},
+                    "config_digest": 7,
+                }
+            )
+            == "config_digest must be a string or null"
+        )
+
+
+class TestHonestFreshness:
+    def test_unresolvable_current_digest_is_unknown_not_fresh(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When the CURRENT config digest cannot be resolved, the config axis
+        is unverifiable — records must be unknown, never quietly fresh."""
+        from cruxible_core.cli.commands import working_set as ws_commands
+
+        root = populated_instance.get_root_path()
+        assert (
+            _chdir_run(
+                runner,
+                root,
+                ["entity", "get", "--type", "Part", "--id", "BP-1001", "--ws", "--json"],
+            ).exit_code
+            == 0
+        )
+        monkeypatch.setattr(ws_commands, "_current_config_digest", lambda context: None)
+        verify = _chdir_run(runner, root, ["ws", "verify", "--json"])
+        assert verify.exit_code == 0  # unknown alone never fails verification
+        payload = json.loads(verify.output)
+        assert payload["fresh"] == 0
+        assert payload["unknown"] == 1
+        assert payload["stale"] == 0
+
+
+class TestEnvDirResolution:
+    def test_env_dir_overrides_default_root_for_capture_and_ws_verbs(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        isolated_home: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        root = populated_instance.get_root_path()
+        env_root = tmp_path / "mcp-ws-root"
+        monkeypatch.setenv("CRUXIBLE_WORKING_SET_DIR", str(env_root))
+
+        # Capture and every ws verb resolve through the env-configured root.
+        capture = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
+        assert capture.exit_code == 0
+        expected = env_root / local_instance_key(root) / "records.jsonl"
+        assert expected.exists()
+        assert not (isolated_home / ".cruxible" / "working-set").exists()
+
+        path_result = _chdir_run(runner, root, ["ws", "path"])
+        assert path_result.output.strip() == str(expected)
+        status = _chdir_run(runner, root, ["ws", "status", "--json"])
+        assert status.exit_code == 0
+        assert json.loads(status.output)["record_count"] == 2
+
+        # Precedence: explicit env > default home dir.
+        monkeypatch.delenv("CRUXIBLE_WORKING_SET_DIR")
+        default_path = _chdir_run(runner, root, ["ws", "path"])
+        assert default_path.output.strip() == str(
+            isolated_home / ".cruxible" / "working-set" / local_instance_key(root) / "records.jsonl"
+        )
+
+
+class _WorkingSetTouched(AssertionError):
+    """Marker: a mutation path touched the working-set cache."""
+
+
+class _StubWriteClient:
+    """Server-mode stub covering every client call the write commands make."""
+
+    def get_entity(self, instance_id, entity_type, entity_id, profile=None):
+        from cruxible_client import contracts
+
+        # BP-1001 "exists" (entity update passes); BP-9000 does not (add passes).
+        return contracts.GetEntityResult(
+            found=entity_id == "BP-1001",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            properties={},
+            metadata={},
+        )
+
+    def get_relationship(self, instance_id, **kwargs):
+        from cruxible_client import contracts
+
+        return contracts.GetRelationshipResult(
+            found=False,
+            from_type=kwargs["from_type"],
+            from_id=kwargs["from_id"],
+            relationship_type=kwargs["relationship_type"],
+            to_type=kwargs["to_type"],
+            to_id=kwargs["to_id"],
+        )
+
+    def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+        from cruxible_client import contracts
+
+        return contracts.BatchDirectWriteResult(
+            dry_run=dry_run,
+            valid=True,
+            entities_added=len(payload.entities),
+            relationships_added=len(payload.relationships),
+            receipt_id="RCPT-WRITE",
+        )
+
+    def workflow_apply(self, instance_id, **kwargs):
+        from cruxible_client import contracts
+
+        return contracts.WorkflowApplyResult(
+            workflow=kwargs["workflow_name"],
+            output={},
+            receipt_id="RCPT-APPLY",
+        )
+
+    def propose_workflow(self, instance_id, **kwargs):
+        from cruxible_client import contracts
+
+        return contracts.WorkflowProposeResult(
+            workflow=kwargs["workflow_name"],
+            output={},
+            receipt_id="RCPT-PROPOSE",
+            group_status="no_candidates",
+            review_priority="normal",
+        )
+
+
+class TestMutationBoundary:
+    def test_write_paths_never_touch_the_working_set(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Structural insurance for the write-only invariant: every reader and
+        writer of the cache is replaced with a bomb, then representative write
+        commands run to a SUCCESSFUL completion (server mode, stub client) —
+        proving the full write code path never imports or reads the cache."""
+        import cruxible_core.cli.working_set as cli_ws
+        import cruxible_core.working_set as core_ws
+
+        def _bomb(*args: object, **kwargs: object) -> None:
+            raise _WorkingSetTouched("write path touched the working-set cache")
+
+        for module in (core_ws, cli_ws):
+            for name in (
+                "read_records",
+                "read_records_detailed",
+                "iter_record_lines",
+                "append_records",
+                "write_records",
+                "capture_read_payload",
+            ):
+                monkeypatch.setattr(module, name, _bomb)
+        monkeypatch.setattr(cli_ws, "capture_json_read", _bomb)
+        monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+        monkeypatch.setattr(
+            "cruxible_core.cli.commands._common._get_client", lambda: _StubWriteClient()
+        )
+
+        payload_file = tmp_path / "batch.json"
+        payload_file.write_text(
+            json.dumps(
+                {
+                    "entities": [
+                        {
+                            "entity_type": "Part",
+                            "entity_id": "BP-9001",
+                            "properties": {"part_number": "BP-9001", "name": "Pad"},
+                        }
+                    ],
+                    "relationships": [],
+                }
+            )
+        )
+        server = ["--server-url", "http://server", "--instance-id", "inst_x"]
+        write_commands = [
+            [
+                "entity",
+                "add",
+                "Part",
+                "BP-9000",
+                "--set",
+                "part_number=BP-9000",
+                "--set",
+                "name=New Part",
+                "--set",
+                "category=brakes",
+            ],
+            ["entity", "update", "Part", "BP-1001", "--set", "name=Renamed"],
+            [
+                "relationship",
+                "add",
+                "replaces",
+                "Part",
+                "BP-1001",
+                "Part",
+                "BP-1002",
+                "--set",
+                "direction=downgrade",
+            ],
+            ["batch-direct-write", "--payload-file", str(payload_file)],
+            ["apply", "--workflow", "wf", "--apply-digest", "sha256:abc", "--json"],
+            ["propose", "--workflow", "wf"],
+        ]
+        root = populated_instance.get_root_path()
+        for args in write_commands:
+            result = _chdir_run(runner, root, [*server, *args])
+            assert not isinstance(result.exception, _WorkingSetTouched), args
+            assert "_WorkingSetTouched" not in result.output, args
+            assert result.exit_code == 0, (args, result.output)
+
+
+class TestArchiveExclusion:
+    def test_instance_backup_never_includes_working_set(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """The cache lives outside the instance state dir by construction; pin
+        that the backup artifact stays working-set-free even when the cache is
+        deliberately rooted INSIDE the instance root via the env override."""
+        import zipfile
+
+        from cruxible_core.service.snapshots import service_backup_instance
+
+        root = populated_instance.get_root_path()
+        monkeypatch.setenv("CRUXIBLE_WORKING_SET_DIR", str(root / "ws-cache"))
+        capture = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
+        assert capture.exit_code == 0
+        assert (root / "ws-cache").exists()
+
+        artifact = tmp_path / "backup.zip"
+        service_backup_instance(
+            populated_instance,
+            instance_id="inst-backup-test",
+            artifact_path=artifact,
+        )
+        with zipfile.ZipFile(artifact) as archive:
+            members = archive.namelist()
+        assert members  # a real archive was produced
+        for member in members:
+            assert "working-set" not in member
+            assert "ws-cache" not in member
+            assert "records.jsonl" not in member
+        # The archive is an explicit allowlist of instance state artifacts.
+        assert set(members) <= {
+            "manifest.json",
+            "state.db",
+            "config.yaml",
+            "instance.json",
+            "workflow.lock",
+        }
 
 
 class TestStatusAndPath:
