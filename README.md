@@ -21,8 +21,9 @@
   <a href="https://cruxible.ai/skills">skills</a>
 </p>
 
-**Cruxible is ontology-backed state for AI agents, with enforcement
-built in.**
+**Cruxible is a governed state engine for AI agents.** It turns a YAML
+ontology into a typed knowledge graph with write rules enforced outside
+the model.
 
 Declare the model and its rules:
 
@@ -51,28 +52,29 @@ named_queries:
         direction: outgoing
 ```
 
-Agents write; the rules run, not the prompt:
+Agents write; the rules run, not the prompt. The refused write, the
+review that admits the judgment, and the receipted answer:
 
-```console
-$ cruxible relationship add incident_impacts_supplier \
-    Incident INC-TW-RAIL-2026-07 Supplier S-CN-DG-HARNESS
-Error: DirectWriteRefusedError: Direct write to relationship
-'incident_impacts_supplier' is refused (write_policy=proposal_only).
-Use 'group propose' to stage a governed proposal. (receipt: RCP-…)
+```diff
+  $ cruxible relationship add incident_impacts_supplier \
+      Incident INC-TW-RAIL-2026-07 Supplier S-CN-DG-HARNESS
+- Error: DirectWriteRefusedError: Direct write to relationship
+- 'incident_impacts_supplier' is refused (write_policy=proposal_only).
+- Use 'group propose' to stage a governed proposal. (receipt: RCP-…)
+
+  $ cruxible propose --workflow propose_incident_impacts_supplier
+  $ cruxible group resolve --group <GRP-id> --action approve \
+      --rationale "Confirmed against supplier geography"
+
+  $ cruxible query run incident_impacted_suppliers \
+      --param incident_id=INC-TW-RAIL-2026-07 --json
++ { "items": [ { "entity_type": "Supplier", "entity_id": "S-CN-DG-HARNESS" } ],
++   "receipt_id": "RCP-2f61a90c84d3" }
 ```
 
-Judgment goes through review, and every computed query answer carries its
-receipt:
-
-```console
-$ cruxible propose --workflow propose_incident_impacts_supplier
-$ cruxible group resolve --group <GRP-id> --action approve \
-    --rationale "Confirmed against supplier geography"
-$ cruxible query run incident_impacted_suppliers \
-    --param incident_id=INC-TW-RAIL-2026-07 --json
-{ "items": [ { "entity_type": "Supplier", "entity_id": "S-CN-DG-HARNESS" } ],
-  "receipt_id": "RCP-2f61a90c84d3" }
-```
+This repository gates its own releases with Cruxible: a push to main is
+refused until state pins an approved review
+([how](#the-rules-run)).
 
 > `pip install cruxible` — the
 > [Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md)
@@ -95,7 +97,9 @@ without an ontology team or a rewrite.
 ## Capabilities
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_architecture.svg" alt="Cruxible architecture: source systems are pinned as artifacts, workflows propose row-matched claims into domain state, the agent operation layer reviews and mints them, and reads come back as deterministic queries with receipts" width="740">
+  <a href="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_architecture.svg">
+    <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_architecture.svg" alt="Cruxible architecture: source systems are pinned as artifacts, workflows propose row-matched claims into domain state, the agent operation layer reviews and mints them, and reads come back as deterministic queries with receipts" width="1000">
+  </a>
 </p>
 
 <details>
@@ -308,6 +312,13 @@ Cruxible uses [Pydantic](https://docs.pydantic.dev/) for validation,
 [Polars](https://pola.rs/) for data operations, [SQLite](https://sqlite.org/)
 for local durable state, [FastAPI](https://fastapi.tiangolo.com/) for the daemon,
 and [FastMCP](https://github.com/jlowin/fastmcp) for MCP tools.
+
+## Contributing
+
+Contributions welcome — see
+[CONTRIBUTING.md](https://github.com/cruxible-ai/cruxible/blob/main/CONTRIBUTING.md).
+If governed agent state is a problem you're working on, star the repo or
+open an issue with your use case.
 
 ## License
 
