@@ -7,6 +7,50 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## 0.2.6 — 2026-07-18
+
+### Added
+
+- **Compact query catalog**: `query list` returns bounded summaries
+  (name, mode, entry point, required params, result shape) instead of
+  full definitions; `detail=full` preserves the previous payload and
+  `query describe` stays the canonical detailed read.
+- **Read output profiles**: a shared `compact`/`standard`/`full`
+  serializer across query rows, inspect, get, sample, and list.
+  `standard` is byte-identical to 0.2.5 and remains the HTTP default;
+  MCP read tools default to compact identity cards that always preserve
+  lifecycle and review markers (`CRUXIBLE_MCP_READ_PROFILE` overrides).
+- **Bounded neighborhood inspection**: `entity inspect` gains multi-hop
+  expansion with depth, direction, relationship/target-type filters,
+  relationship-state visibility, property projection, and node/edge
+  budgets with explicit truncation reasons. Expanded reads default to
+  `state=all` per the inspection contract, and `edges_hidden_by_state`
+  reports edges an explicit state filter suppressed.
+- **Read revision and continuation**: a monotonic `read_revision`
+  advances with every state-mutating commit (audit writes excluded) and
+  rides every read envelope; list, catalog, and neighborhood reads
+  accept opaque continuation tokens that fail with a typed 409 when
+  state has moved; receipts pagination uses a keyset cursor. Silent
+  truncation is gone: `sample` reports true totals, and empty pages
+  with matches report `truncated`.
+- **Graph layout for query output**: `layout=graph` returns each unique
+  entity and relationship once with ordered result references and a
+  compact path index; rows layout is unchanged and remains the default.
+- **Agent-local working set (opt-in prototype)**: `--ws` or
+  `CRUXIBLE_WORKING_SET=1` captures compact records of everything a
+  JSON read returned into a grepable, credential-scoped JSONL cache;
+  `cruxible ws path|status|verify|refresh|clear` manage it, `verify`
+  checks freshness against the live revision and config digest, and the
+  cache is never read by any write path. MCP capture is available via
+  `CRUXIBLE_WORKING_SET_DIR` for co-located deployments.
+
+### Changed
+
+- Cold-start agent read cost on the in-repo read benchmark drops 86%
+  end to end (methodology and raw results in `benchmarks/read_anchor/`).
+- README restructured around a show-first fold; the full governed-domain
+  walkthrough moved to `docs/deep-dive.md`.
+
 ## 0.2.5 — 2026-07-16
 
 ### Fixed
