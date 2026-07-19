@@ -77,11 +77,15 @@ Concurrency limits (honest edition)
 Safety rails
     The cache is NEVER read by any write path or by any CLI command other
     than the capture hooks and the ``cruxible ws`` group. Working-set
-    directories are created mode 0700 and records files mode 0600 — and both
-    are idempotently re-tightened on every write touch, so pre-existing
-    lax-mode caches heal on next use; writes
-    refuse to follow symlinks (``lstat``/``O_NOFOLLOW`` on the records file
-    and its parent). The reader validates every line against the record
+    directories (the configured root AND each instance directory) are
+    created mode 0700 and records files mode 0600 — and all of them are
+    idempotently re-tightened on every write touch, so pre-existing
+    lax-mode caches heal on next use; ancestors above the configured root
+    are never chmod'd. Every verb — capture, verify, refresh, clear —
+    validates the FULL path chain (root, instance dir, records file, and
+    the scope-salt file where applicable) with ``lstat``/``O_NOFOLLOW``
+    discipline BEFORE its first read, stat, write, or unlink: a symlink at
+    any level is refused outright. The reader validates every line against the record
     shape: corrupt or wrong-shaped lines are skipped with a warning on
     stderr and counted, never a crash — and never classified as fresh.
     Deletion (``ws clear``) refuses to touch anything outside the
@@ -163,12 +167,17 @@ _SCOPE_SALT_FILENAME = ".scope-salt"
 
 
 def _credential_scope_salt() -> bytes:
-    """Load (or create, 0600) the random per-root credential-scope salt."""
+    """Load (or create, 0600) the random per-root credential-scope salt.
+
+    Validates the root + salt-file symlink chain BEFORE the existence check
+    and read — a symlinked root must not leak or source salt material.
+    """
     salt_path = working_set_dir() / _SCOPE_SALT_FILENAME
+    refuse_symlinks(salt_path)
     if salt_path.exists():
         return salt_path.read_bytes()
     salt = os.urandom(32)
-    _ensure_private_dir(salt_path.parent)
+    _prepare_write_dirs(salt_path)
     fd = os.open(salt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
         os.write(fd, salt)
@@ -214,62 +223,80 @@ def records_path(instance_key: str) -> Path:
 # ---- directory/file hygiene and symlink refusal ----
 
 
-def _ensure_private_dir(path: Path) -> None:
-    """``mkdir -p`` that forces mode 0700 on every directory level it creates.
+def _working_set_levels(path: Path) -> tuple[Path, ...]:
+    """Every filesystem level from the configured working-set root down to *path*.
 
-    Existing directories are left untouched (the user may deliberately manage
-    their modes); ``mkdir``'s mode argument alone is subject to the umask, so
-    each newly created level is chmod'd explicitly.
+    For a records path this is ``(root, instance dir, records file)``; for the
+    scope-salt file ``(root, salt file)``. A *path* outside the configured
+    root (never produced by this module's own path builders; possible only
+    for a caller-supplied path) degrades to ``(parent, path)`` — the levels
+    that can still be checked without touching unrelated ancestors.
     """
-    missing: list[Path] = []
-    current = path
-    while not current.exists():
-        missing.append(current)
-        parent = current.parent
-        if parent == current:  # filesystem root
-            break
-        current = parent
-    path.mkdir(parents=True, exist_ok=True)
-    for created in missing:
+    root = working_set_dir()
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return (path.parent, path)
+    levels = [root]
+    current = root
+    for part in relative.parts:
+        current = current / part
+        levels.append(current)
+    return tuple(levels)
+
+
+def refuse_symlinks(path: Path) -> None:
+    """Refuse symlinks at EVERY level from the working-set root down to *path*.
+
+    The single shared path-validation gate: ``lstat`` discipline on the
+    configured root, the instance directory, and the records file (and the
+    scope-salt file where applicable), run BEFORE any read/stat/write/unlink
+    on any verb. It guards reads too — a symlinked root or instance
+    directory would redirect even a ``ws verify`` file read outside the
+    working set. Raises :class:`WorkingSetPathError`; capture hooks
+    downgrade it to a stderr warning (the read result itself is never
+    affected), ``ws`` verbs surface it as a usage error.
+    """
+    for level in _working_set_levels(path):
+        if level.is_symlink():
+            raise WorkingSetPathError(
+                f"working-set path level is a symlink; refusing to touch: {level}"
+            )
+
+
+def secure_records_path(instance_key: str) -> Path:
+    """Validated records path for *instance_key*: the shared verb entry point.
+
+    Validates the key shape (:func:`records_path`) and then runs the full
+    symlink-chain refusal (:func:`refuse_symlinks`) so every consumer —
+    capture, ``ws status``/``verify``/``refresh``/``clear`` — validates the
+    identical chain before its first filesystem access.
+    """
+    path = records_path(instance_key)
+    refuse_symlinks(path)
+    return path
+
+
+def _prepare_write_dirs(path: Path) -> None:
+    """Create missing directories and tighten the working-set-owned levels.
+
+    Idempotent on every write touch: the configured root and the instance
+    directory are chmod'd 0700 (best-effort) even when they already existed,
+    so pre-existing lax-mode caches heal on next use. Ancestors ABOVE the
+    configured root are created when missing (default modes) but never
+    chmod'd — a user-supplied env root's parents are not ours to manage.
+    Callers must run :func:`refuse_symlinks` first.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    levels = _working_set_levels(path)
+    root = working_set_dir()
+    if levels and levels[0] != root:
+        return  # outside the configured root: nothing here is ours to chmod
+    for directory in levels[:-1]:  # every level but the file itself
         try:
-            os.chmod(created, 0o700)
+            os.chmod(directory, 0o700)
         except OSError:  # pragma: no cover - best-effort hygiene
             pass
-
-
-def _tighten_leaf_dir_mode(directory: Path) -> None:
-    """Best-effort idempotent tightening of the leaf working-set dir to 0700.
-
-    Applied on every write touch (not only creation) so pre-existing
-    lax-mode caches get tightened the next time they are used; the records
-    file itself is tightened to 0600 via ``fchmod`` on the open descriptor
-    (append) or the 0600 temp file that replaces it (rewrite).
-    """
-    try:
-        os.chmod(directory, 0o700)
-    except OSError:  # pragma: no cover - best-effort hygiene
-        pass
-
-
-def refuse_symlink_write(path: Path) -> None:
-    """Refuse to write through a symlinked records file or instance directory.
-
-    ``lstat`` discipline: a ``records.jsonl`` (or its parent directory inside
-    the working-set root) that has been replaced by a symlink could redirect
-    an append/rewrite outside the working set — refuse instead. Raises
-    :class:`WorkingSetPathError`; capture hooks downgrade it to a stderr
-    warning (the read itself is never affected), ``ws`` verbs surface it as
-    a usage error.
-    """
-    parent = path.parent
-    if parent.is_symlink():
-        raise WorkingSetPathError(
-            f"working-set instance directory is a symlink; refusing to write: {parent}"
-        )
-    if path.is_symlink():
-        raise WorkingSetPathError(
-            f"working-set records file is a symlink; refusing to write: {path}"
-        )
 
 
 # ---- record normalization (compact profile serializer, never a new shape) ----
@@ -483,13 +510,13 @@ def _dedupe(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
 def write_records(path: Path, records: list[dict[str, Any]]) -> None:
     """Atomically rewrite the records file (header line first).
 
-    Refuses symlinked targets (:func:`refuse_symlink_write`); the temp file
-    is created 0600 so the renamed result keeps private permissions, and the
-    leaf directory is idempotently tightened to 0700 on every touch.
+    Refuses a symlink at any chain level (:func:`refuse_symlinks`) BEFORE
+    creating or touching anything; the temp file is created 0600 so the
+    renamed result keeps private permissions, and the root + instance
+    directories are idempotently tightened to 0700 on every touch.
     """
-    _ensure_private_dir(path.parent)
-    _tighten_leaf_dir_mode(path.parent)
-    refuse_symlink_write(path)
+    refuse_symlinks(path)
+    _prepare_write_dirs(path)
     lines = [HEADER_LINE]
     lines.extend(json.dumps(record, default=str) for record in records)
     temp_path = path.parent / f".{path.name}.tmp.{os.getpid()}"
@@ -507,13 +534,13 @@ def append_records(path: Path, new_records: list[dict[str, Any]]) -> None:
 
     Fast path (new identities only): one ``O_APPEND`` write of whole lines.
     Any superseded existing line — or a file past ``COMPACT_THRESHOLD_BYTES``
-    — triggers an atomic dedupe-compaction rewrite instead. Symlinked
-    records files or instance directories are refused
-    (:func:`refuse_symlink_write` + ``O_NOFOLLOW``).
+    — triggers an atomic dedupe-compaction rewrite instead. A symlink at any
+    chain level (root, instance dir, records file) is refused BEFORE the
+    internal read (:func:`refuse_symlinks` + ``O_NOFOLLOW``).
     """
     if not new_records:
         return
-    refuse_symlink_write(path)
+    refuse_symlinks(path)
     fresh, _ = _dedupe(new_records)
     existing, had_duplicates = _dedupe(read_records(path))
     by_identity = {record_identity(record): index for index, record in enumerate(existing)}
@@ -539,8 +566,7 @@ def append_records(path: Path, new_records: list[dict[str, Any]]) -> None:
         return
     if not appended:
         return
-    _ensure_private_dir(path.parent)
-    _tighten_leaf_dir_mode(path.parent)
+    _prepare_write_dirs(path)
     chunk = "".join(json.dumps(record, default=str) + "\n" for record in appended)
     if not file_exists:
         chunk = HEADER_LINE + "\n" + chunk
@@ -765,7 +791,8 @@ __all__ = [
     "record_identity",
     "record_wins",
     "records_path",
-    "refuse_symlink_write",
+    "refuse_symlinks",
+    "secure_records_path",
     "server_instance_key",
     "validate_record",
     "working_set_dir",

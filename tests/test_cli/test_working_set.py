@@ -846,91 +846,173 @@ class TestHygiene:
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
+        isolated_home: Path,
     ) -> None:
         """Idempotent hygiene: a cache created with lax modes (e.g. by an older
-        build or a manual copy) is tightened the next time capture touches it,
-        not only at creation."""
+        build or a manual copy) — including a lax working-set ROOT — is
+        tightened the next time a write touches it, not only at creation."""
         import os as _os
 
         root = populated_instance.get_root_path()
         records = _ws_file(populated_instance)
+        ws_root = isolated_home / ".cruxible" / "working-set"
         records.parent.mkdir(parents=True)
+        _os.chmod(ws_root, 0o755)
         _os.chmod(records.parent, 0o755)
         records.write_text(HEADER_LINE + "\n")
         _os.chmod(records, 0o644)
 
         capture = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
         assert capture.exit_code == 0
+        assert (ws_root.stat().st_mode & 0o777) == 0o700
         assert (records.parent.stat().st_mode & 0o777) == 0o700
         assert (records.stat().st_mode & 0o777) == 0o600
         # And the capture actually appended through the tightened file.
         assert read_records(records)
 
+    def test_env_root_parents_are_never_chmodded(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Tightening stops at the configured root: a user-supplied env root's
+        PARENT directories are not ours to manage."""
+        import os as _os
 
-class TestSymlinkProtection:
-    def _capture_once(self, runner: CliRunner, root: Path) -> None:
+        root = populated_instance.get_root_path()
+        parent = tmp_path / "user-owned-parent"
+        parent.mkdir()
+        _os.chmod(parent, 0o755)
+        env_root = parent / "ws-root"
+        _os.chmod(env_root.parent, 0o755)
+        monkeypatch.setenv("CRUXIBLE_WORKING_SET_DIR", str(env_root))
+
         capture = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
         assert capture.exit_code == 0
+        assert (parent.stat().st_mode & 0o777) == 0o755  # untouched
+        assert (env_root.stat().st_mode & 0o777) == 0o700  # root itself healed
 
-    def test_capture_refuses_symlinked_records_file(
-        self,
-        runner: CliRunner,
-        populated_instance: CruxibleInstance,
-        isolated_home: Path,
-    ) -> None:
-        root = populated_instance.get_root_path()
-        self._capture_once(runner, root)
-        path = _ws_file(populated_instance)
-        target = isolated_home / "victim.jsonl"
-        target.write_text("untouched\n")
-        path.unlink()
-        path.symlink_to(target)
 
-        # The read itself succeeds; capture refuses with a stderr warning.
-        result = _chdir_run(
-            runner, root, ["entity", "get", "--type", "Part", "--id", "BP-1001", "--ws", "--json"]
+_SYMLINK_LEVELS = ("root", "instance-dir", "records-file")
+
+
+class TestSymlinkProtection:
+    """Full level x verb refusal matrix.
+
+    Levels: the configured working-set ROOT, the instance DIRECTORY, and the
+    records FILE — each replaced by a symlink whose target is pre-populated
+    with a plausible cache, so a follow-through would have real data to read,
+    rewrite, or delete. Verbs: capture (the read itself succeeds; capture
+    refuses with a stderr warning) and ws verify / refresh / clear (usage
+    error, exit non-zero). The full matrix is exercised because each verb has
+    a DIFFERENT first filesystem touch (append, read, rewrite, unlink) and
+    each level is refused at a different chain position — a representative
+    pair would leave e.g. the root-level read path unpinned (the exact hole
+    this matrix regression-tests).
+    """
+
+    def _plant_symlink(
+        self, level: str, instance: CruxibleInstance, home: Path
+    ) -> tuple[Path, str]:
+        """Replace *level* with a symlink; return (target records file, content)."""
+        key = local_instance_key(instance.get_root_path())
+        ws_root = home / ".cruxible" / "working-set"
+        outside = home / "outside"
+        content = (
+            HEADER_LINE
+            + "\n"
+            + json.dumps(
+                {"kind": "entity", "entity_type": "Part", "entity_id": "BP-X", "props": {}}
+            )
+            + "\n"
         )
-        assert result.exit_code == 0
-        assert "symlink" in result.output
-        assert target.read_text() == "untouched\n"
-
-    def test_capture_refuses_symlinked_instance_dir(
-        self,
-        runner: CliRunner,
-        populated_instance: CruxibleInstance,
-        isolated_home: Path,
-    ) -> None:
-        root = populated_instance.get_root_path()
-        outside = isolated_home / "outside-dir"
+        if level == "root":
+            (outside / key).mkdir(parents=True)
+            target = outside / key / "records.jsonl"
+            target.write_text(content)
+            ws_root.parent.mkdir(parents=True, exist_ok=True)
+            ws_root.symlink_to(outside, target_is_directory=True)
+            return target, content
+        if level == "instance-dir":
+            outside.mkdir()
+            target = outside / "records.jsonl"
+            target.write_text(content)
+            ws_root.mkdir(parents=True)
+            (ws_root / key).symlink_to(outside, target_is_directory=True)
+            return target, content
+        assert level == "records-file"
         outside.mkdir()
-        ws_dir = _ws_file(populated_instance).parent
-        ws_dir.parent.mkdir(parents=True, exist_ok=True)
-        ws_dir.symlink_to(outside, target_is_directory=True)
+        target = outside / "records.jsonl"
+        target.write_text(content)
+        (ws_root / key).mkdir(parents=True)
+        (ws_root / key / "records.jsonl").symlink_to(target)
+        return target, content
 
-        result = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
-        assert result.exit_code == 0
-        assert "symlink" in result.output
-        assert list(outside.iterdir()) == []
-
-    def test_ws_clear_refuses_symlinked_records_file(
+    @pytest.mark.parametrize("level", _SYMLINK_LEVELS)
+    def test_capture_refuses_symlinked_level(
         self,
+        level: str,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
         isolated_home: Path,
     ) -> None:
-        root = populated_instance.get_root_path()
-        self._capture_once(runner, root)
-        path = _ws_file(populated_instance)
-        target = isolated_home / "victim.jsonl"
-        target.write_text("untouched\n")
-        path.unlink()
-        path.symlink_to(target)
+        target, content = self._plant_symlink(level, populated_instance, isolated_home)
+        result = _chdir_run(
+            runner,
+            populated_instance.get_root_path(),
+            ["sample", "--type", "Part", "--ws", "--json"],
+        )
+        assert result.exit_code == 0  # the read itself is never affected
+        assert "symlink" in result.output
+        assert target.read_text() == content  # nothing written through
 
-        refused = _chdir_run(runner, root, ["ws", "clear"])
-        assert refused.exit_code != 0
-        assert "symlink" in refused.output
-        assert path.is_symlink()  # nothing was unlinked
-        assert target.read_text() == "untouched\n"
+    @pytest.mark.parametrize("level", _SYMLINK_LEVELS)
+    @pytest.mark.parametrize("verb", ("verify", "refresh", "clear"))
+    def test_ws_verbs_refuse_symlinked_level(
+        self,
+        level: str,
+        verb: str,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        isolated_home: Path,
+    ) -> None:
+        target, content = self._plant_symlink(level, populated_instance, isolated_home)
+        result = _chdir_run(runner, populated_instance.get_root_path(), ["ws", verb])
+        assert result.exit_code != 0
+        assert "symlink" in result.output
+        # Validation precedes reading: no classification/refresh/clear output.
+        assert "fresh=" not in result.output
+        assert "Refreshed" not in result.output
+        assert "Cleared" not in result.output
+        assert target.read_text() == content  # never read-through-then-write, never unlinked
+
+    def test_symlinked_env_root_is_refused(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        isolated_home: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The Codex repro: CRUXIBLE_WORKING_SET_DIR pointing at a symlink must
+        not be followed by capture or any ws verb."""
+        real_root = tmp_path / "real-root"
+        real_root.mkdir()
+        env_root = tmp_path / "symlinked-root"
+        env_root.symlink_to(real_root, target_is_directory=True)
+        monkeypatch.setenv("CRUXIBLE_WORKING_SET_DIR", str(env_root))
+
+        root = populated_instance.get_root_path()
+        capture = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
+        assert capture.exit_code == 0
+        assert "symlink" in capture.output
+        assert list(real_root.iterdir()) == []  # nothing written through the root
+
+        verify = _chdir_run(runner, root, ["ws", "verify"])
+        assert verify.exit_code != 0
+        assert "symlink" in verify.output
 
 
 class TestRecordValidation:
@@ -1287,6 +1369,10 @@ class TestArchiveExclusion:
             assert "ws-cache" not in member
             assert "records.jsonl" not in member
         # The archive is an explicit allowlist of instance state artifacts.
+        # This allowlist is ALSO the chokepoint for instance transfer:
+        # service_relocate_instance is implemented strictly as
+        # service_backup_instance -> service_restore_instance, so any member
+        # this pin excludes can never ride along a transfer either.
         assert set(members) <= {
             "manifest.json",
             "state.db",
@@ -1294,6 +1380,106 @@ class TestArchiveExclusion:
             "instance.json",
             "workflow.lock",
         }
+
+    def _plant_cache_in_root(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> Path:
+        """Root a live working-set cache INSIDE the instance root (worst case)."""
+        root = populated_instance.get_root_path()
+        monkeypatch.setenv("CRUXIBLE_WORKING_SET_DIR", str(root / "ws-cache"))
+        capture = _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
+        assert capture.exit_code == 0
+        assert (root / "ws-cache").exists()
+        return root
+
+    def test_snapshot_artifacts_never_include_working_set(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Snapshot producer pin: _write_snapshot builds an explicit artifact
+        dict (graph.json / config.yaml / optional lock / snapshot.json) — never
+        a directory sweep of the instance root."""
+        from cruxible_core.service.snapshots import service_create_snapshot
+
+        self._plant_cache_in_root(runner, populated_instance, monkeypatch)
+        snapshot = service_create_snapshot(populated_instance, label="ws-pin").snapshot
+        artifact_names = set(populated_instance._read_snapshot_artifacts(snapshot.snapshot_id))
+        assert artifact_names  # a real snapshot was produced
+        assert artifact_names <= {
+            "snapshot.json",
+            "graph.json",
+            "config.yaml",
+            "cruxible.lock.yaml",
+        }
+
+    def test_state_publish_bundle_never_includes_working_set(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """State-publication producer pin: build_release_bundle is the single
+        artifact-assembly chokepoint for service_publish_state (the transport
+        only ships the bundle directory verbatim), and it copies an explicit
+        name list from the snapshot export plus manifest.json."""
+        from cruxible_core.service.snapshots import service_create_snapshot
+        from cruxible_core.service.state import build_release_bundle
+
+        self._plant_cache_in_root(runner, populated_instance, monkeypatch)
+        snapshot = service_create_snapshot(populated_instance, label="release").snapshot
+        bundle_dir = build_release_bundle(
+            instance=populated_instance,
+            snapshot_id=snapshot.snapshot_id,
+            state_id="ws-pin-state",
+            release_id="r1",
+            compatibility="data_only",
+            parent_release_id=None,
+        )
+        members = {member.name for member in bundle_dir.iterdir()}
+        assert "manifest.json" in members  # a real bundle was produced
+        assert members <= {
+            "manifest.json",
+            "snapshot.json",
+            "graph.json",
+            "config.yaml",
+            "cruxible.lock.yaml",
+        }
+
+    def test_instance_relocate_never_carries_working_set(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        """Instance-transfer smoke: relocate rides the backup artifact
+        (backup -> restore), so the backup allowlist is its structural
+        chokepoint — and the relocated tree really is working-set-free even
+        with the cache rooted inside the SOURCE instance root."""
+        from cruxible_core.service.snapshots import service_relocate_instance
+
+        self._plant_cache_in_root(runner, populated_instance, monkeypatch)
+        # A sibling of the instance root (relocate refuses nested targets).
+        target = tmp_path_factory.mktemp("relocate-target") / "relocated"
+        service_relocate_instance(
+            populated_instance,
+            instance_id="inst-relocate-test",
+            to_dir=target,
+            instance_mode="dev",
+        )
+        transferred = {
+            str(item.relative_to(target)) for item in target.rglob("*") if item.is_file()
+        }
+        assert transferred  # a real instance landed
+        for member in transferred:
+            assert "working-set" not in member
+            assert "ws-cache" not in member
+            assert "records.jsonl" not in member
 
 
 class TestStatusAndPath:

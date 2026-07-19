@@ -3088,10 +3088,19 @@ Cache contract:
   changes the read's stdout — it is a pure side effect.
 
 File hygiene and tamper honesty:
-- Working-set directories are created mode 0700 and records files mode
-  0600; appends, rewrites, and `ws clear` refuse symlinked records files or
-  instance directories (`lstat`/`O_NOFOLLOW` discipline), so a planted
-  symlink cannot redirect a write outside the working set.
+- Working-set directories (the configured root AND each instance directory)
+  are created mode 0700 and records files mode 0600, and all of them are
+  idempotently re-tightened on every write touch, so pre-existing lax-mode
+  caches heal on next use; ancestors above the configured root are never
+  chmodded.
+- Every verb — capture and `ws status`/`verify`/`refresh`/`clear` —
+  validates the full path chain (configured root, instance directory,
+  records file, and the scope-salt file where applicable) with
+  `lstat`/`O_NOFOLLOW` discipline BEFORE its first read, stat, write, or
+  unlink: a symlink at ANY level, including a symlinked
+  `CRUXIBLE_WORKING_SET_DIR` root, is refused outright — capture with a
+  stderr warning (the read itself is unaffected), the `ws` verbs with a
+  usage error.
 - The cache files are SAME-USER-WRITABLE BY DESIGN: any process running as
   the same OS user can rewrite records undetected. The hygiene above
   reduces accidents and cross-user exposure — it is NOT a defense against a
@@ -3210,8 +3219,8 @@ File hygiene and tamper honesty:
 **Output And Side Effects:**
 - Deletes only the current context's `records.jsonl`; refuses any path that
   resolves outside the working-set root (hostile instance keys are rejected
-  before any filesystem access) and refuses symlinked records files or
-  instance directories outright.
+  before any filesystem access) and refuses a symlink at any path-chain
+  level (configured root, instance directory, records file) outright.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

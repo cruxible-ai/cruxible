@@ -12,6 +12,7 @@ cache; hygiene reduces accidents, not adversaries). Path resolution honors
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import click
@@ -36,7 +37,7 @@ from cruxible_core.working_set import (
     read_records_detailed,
     record_identity,
     records_path,
-    refuse_symlink_write,
+    secure_records_path,
     server_instance_key,
     working_set_dir,
     write_records,
@@ -73,6 +74,22 @@ def _ws_context() -> _WsContext:
         instance_key=local_instance_key(instance.get_root_path()),
         instance=instance,
     )
+
+
+def _ws_paths() -> tuple[_WsContext, Path]:
+    """Resolve the verb context AND its fully validated records path.
+
+    Every filesystem-touching ``ws`` verb goes through this ONE helper before
+    its first read/stat/write/unlink: :func:`secure_records_path` refuses a
+    symlink at any chain level (root, instance dir, records file — and the
+    scope-salt file, checked inside the server-mode key derivation).
+    Validation failures surface as usage errors.
+    """
+    try:
+        context = _ws_context()
+        return context, secure_records_path(context.instance_key)
+    except (ValueError, WorkingSetPathError) as exc:
+        raise click.UsageError(str(exc)) from exc
 
 
 def _current_read_revision(context: _WsContext) -> int | None:
@@ -177,8 +194,7 @@ def ws_status_cmd(output_json: bool) -> None:
     """Show record counts, file size, and cached-vs-current revision spread."""
     import json as _json
 
-    context = _ws_context()
-    path = records_path(context.instance_key)
+    context, path = _ws_paths()
     read_result = read_records_detailed(path)
     records = read_result.records
     current_revision = _current_read_revision(context)
@@ -253,8 +269,7 @@ def ws_verify_cmd(output_json: bool) -> None:
     """
     import json as _json
 
-    context = _ws_context()
-    path = records_path(context.instance_key)
+    context, path = _ws_paths()
     read_result = read_records_detailed(path)
     records = read_result.records
     current_revision = _current_read_revision(context)
@@ -512,8 +527,7 @@ def ws_refresh_cmd() -> None:
     owning entity's bounded neighborhood inspect. Records whose target is
     gone are dropped with a note. The file is rewritten atomically.
     """
-    context = _ws_context()
-    path = records_path(context.instance_key)
+    context, path = _ws_paths()
     records = read_records_detailed(path).records
     if not records:
         click.echo("No working-set records to refresh.")
@@ -583,17 +597,9 @@ def ws_refresh_cmd() -> None:
 @handle_errors
 def ws_clear_cmd() -> None:
     """Delete the current context's records file (working-set dir only)."""
-    context = _ws_context()
-    try:
-        path = records_path(context.instance_key)
-    except ValueError as exc:
-        raise click.UsageError(str(exc)) from exc
-    try:
-        # lstat discipline: a symlinked records file (or instance dir) could
-        # make the unlink-or-anything-later act outside the working set.
-        refuse_symlink_write(path)
-    except WorkingSetPathError as exc:
-        raise click.UsageError(str(exc)) from exc
+    # _ws_paths refuses a symlink at ANY chain level (root, instance dir,
+    # records file) before the containment check and unlink below.
+    _context, path = _ws_paths()
     root = working_set_dir().resolve()
     resolved = path.resolve()
     if not resolved.is_relative_to(root):
