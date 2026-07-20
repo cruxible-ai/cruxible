@@ -910,8 +910,8 @@ class ConstraintSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-GATE_KINDS = frozenset({"git-pre-push"})
-"""Source-adapter kinds a gate may declare. v1's only member is git-pre-push.
+GATE_KINDS = frozenset({"generic", "git-pre-push"})
+"""Source-adapter kinds a gate may declare.
 
 The kind names the SOURCE of candidate values (which adapter derives them),
 never the evaluation: evaluation is always the declared condition against
@@ -961,12 +961,13 @@ class GateSchema(BaseModel):
     exclusively.
 
     A gate is kind-based: ``kind`` names the source adapter that derives
-    candidate values (v1: ``git-pre-push`` reads git's pre-push protocol and
-    yields merged-in parent SHAs). A candidate is satisfied when at least one
-    entity of ``entity_type`` carries the candidate in ``match_property`` AND
-    matches the declared ``condition``. Core knows no ontology — the
-    declaration supplies it; domain knowledge lives in the condition
-    (declarative), never in the adapter (plumbing).
+    candidate values (``generic`` accepts caller-supplied values;
+    ``git-pre-push`` reads git's pre-push protocol and yields merged-in parent
+    SHAs). A candidate is satisfied when at least one entity of ``entity_type``
+    carries the candidate in ``match_property`` AND matches the declared
+    ``condition``. Core knows no ontology — the declaration supplies it;
+    domain knowledge lives in the condition (declarative), never in the
+    adapter (plumbing).
     """
 
     kind: str
@@ -1005,6 +1006,9 @@ class GateSchema(BaseModel):
                 "gates of kind git-pre-push require an adapter config "
                 "(adapter: {branch_pattern: refs/heads/main})"
             )
+            raise ValueError(msg)
+        if self.kind == "generic" and self.adapter is not None:
+            msg = "gates of kind generic do not accept an adapter config"
             raise ValueError(msg)
         return self
 

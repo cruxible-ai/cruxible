@@ -5,11 +5,12 @@ act only if state agrees (outbound). Gates are outbound exclusively.
 
 Gates are named, kind-based config declarations (see the ``gates:`` config
 element). A gate's ``kind`` names the source adapter that derives candidate
-values (v1: ``git-pre-push``); a candidate is satisfied when at least one
-entity of the declared type carries it in the declared match property and
-matches the declared condition. The verb evaluates the declaration; it never
-hardcodes ontology, and generality comes from source-adapter kinds plus
-declarative conditions — not from CLI flags.
+values (``generic`` accepts caller-supplied values; ``git-pre-push`` derives
+them from git); a candidate is satisfied when at least one entity of the
+declared type carries it in the declared match property and matches the
+declared condition. The verb evaluates the declaration; it never hardcodes
+ontology, and generality comes from source-adapter kinds plus declarative
+conditions.
 
 ``gate check`` exit codes are a machine contract:
   0  every candidate satisfied
@@ -119,8 +120,9 @@ def _read_stdin() -> str:
     """Read the invocation's stdin for a source adapter, failing closed at a TTY."""
     if sys.stdin.isatty():
         raise GateCheckError(
-            "stdin is a terminal; gate check derives candidates from its "
-            "kind's input stream (run from the hook, or pipe protocol lines)"
+            "stdin is a terminal; gate check requires piped input for this "
+            "kind (run from the hook, pipe input lines, or use a supported "
+            "candidate argument)"
         )
     return sys.stdin.read()
 
@@ -159,6 +161,15 @@ def gate_list(output_json: bool) -> None:
 @gate_group.command("check")
 @click.argument("name")
 @click.option(
+    "--candidate",
+    "candidate_values",
+    multiple=True,
+    help=(
+        "Candidate value for a generic gate. Repeatable; when supplied, "
+        "stdin is not read. Refused for other gate kinds."
+    ),
+)
+@click.option(
     "--value",
     "values",
     multiple=True,
@@ -167,10 +178,14 @@ def gate_list(output_json: bool) -> None:
         "Diagnostic/test-only override: evaluate these candidate values "
         "directly, bypassing the gate's declared source adapter. Repeatable. "
         "Not a general primitive — real invocations let the gate's kind "
-        "derive candidates."
+        "source candidates."
     ),
 )
-def gate_check(name: str, values: tuple[str, ...]) -> None:
+def gate_check(
+    name: str,
+    candidate_values: tuple[str, ...],
+    values: tuple[str, ...],
+) -> None:
     """Evaluate gate NAME: is every candidate value pinned by satisfying state?
 
     Resolves the named declaration, invokes its declared kind's source
@@ -187,18 +202,29 @@ def gate_check(name: str, values: tuple[str, ...]) -> None:
          adapter failure, server unreachable, auth failure, malformed
          input, git failure)
 
-    v1's only kind is git-pre-push, and it evaluates merge commits only:
-    squash merges mint new SHAs no review pins, and fast-forward pushes
-    record no merge commit.
+    The generic kind reads one candidate per stdin line or accepts repeatable
+    --candidate values. The git-pre-push kind evaluates merge commits only:
+    squash merges mint new SHAs no review pins, and fast-forward pushes record
+    no merge commit.
     """
     try:
         gate = _resolve_gate(name)
         if values:
             # Hidden diagnostic override; see --value help text.
+            if candidate_values:
+                raise GateCheckError("--candidate and diagnostic --value cannot be combined")
             candidates = [Candidate(value=value) for value in values]
         else:
+            if candidate_values and gate.kind != "generic":
+                raise GateCheckError(
+                    f"--candidate is supported only for gates of kind generic; "
+                    f"gate '{name}' is {gate.kind}"
+                )
             adapter = adapter_for(gate)
-            context = GateInvocationContext(read_stdin=_read_stdin)
+            context = GateInvocationContext(
+                read_stdin=_read_stdin,
+                explicit_values=candidate_values,
+            )
             candidates = adapter.candidates(gate, context)
             if not candidates:
                 click.echo(

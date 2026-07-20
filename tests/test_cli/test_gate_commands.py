@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -44,6 +45,12 @@ gates:
     match_property: change_head
     condition: {status: approved}
     adapter: {branch_pattern: refs/heads/main}
+  action-review:
+    description: Irreversible actions need an approved review pinning the action ID.
+    kind: generic
+    entity_type: ReviewRequest
+    match_property: change_head
+    condition: {status: approved}
 """
 
 APPROVED_SHA = "a" * 40
@@ -95,7 +102,7 @@ def _chdir_run(
     runner: CliRunner,
     directory: Path,
     args: list[str],
-    stdin: str | None = None,
+    stdin: str | bytes | io.BufferedIOBase | None = None,
 ) -> Result:
     original = os.getcwd()
     try:
@@ -114,6 +121,10 @@ class TestGateList:
         assert (
             "merge-review [git-pre-push]: ReviewRequest.change_head where "
             "status=approved (branch_pattern refs/heads/main)" in result.output
+        )
+        assert (
+            "action-review [generic]: ReviewRequest.change_head where status=approved"
+            in result.output
         )
 
     def test_list_json_shape(self, runner: CliRunner, gated_instance: CruxibleInstance) -> None:
@@ -213,10 +224,96 @@ class TestGateCheckValueOverride:
         )
         assert result.exit_code == 0
 
-    def test_value_option_is_hidden(self, runner: CliRunner) -> None:
+    def test_candidate_option_is_public_and_value_option_is_hidden(
+        self, runner: CliRunner
+    ) -> None:
         result = runner.invoke(cli, ["gate", "check", "--help"])
         assert result.exit_code == 0
+        assert "--candidate" in result.output
         assert "--value" not in result.output
+
+
+class TestGateCheckGeneric:
+    def test_stdin_candidates_satisfied_with_blank_lines_ignored(
+        self, runner: CliRunner, gated_instance: CruxibleInstance
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            gated_instance.root,
+            ["gate", "check", "action-review"],
+            stdin=f"\n  {APPROVED_SHA}  \n\n",
+        )
+        assert result.exit_code == 0
+        assert f"action-review {APPROVED_SHA} satisfied" in result.output
+
+    def test_unsatisfied_stdin_candidate_refused(
+        self, runner: CliRunner, gated_instance: CruxibleInstance
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            gated_instance.root,
+            ["gate", "check", "action-review"],
+            stdin=f"{APPROVED_SHA}\n{REQUESTED_SHA}\n",
+        )
+        assert result.exit_code == 1
+        assert f"action-review {APPROVED_SHA} satisfied" in result.output
+        assert f"action-review {REQUESTED_SHA} unsatisfied" in result.output
+        assert "REFUSED" in result.stderr
+
+    def test_candidate_arguments_are_supported_and_bypass_stdin(
+        self, runner: CliRunner, gated_instance: CruxibleInstance
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            gated_instance.root,
+            ["gate", "check", "action-review", "--candidate", APPROVED_SHA],
+            stdin="ignored input\n",
+        )
+        assert result.exit_code == 0
+        assert f"action-review {APPROVED_SHA} satisfied" in result.output
+
+    @pytest.mark.parametrize("stdin", ["", "\n  \n"])
+    def test_empty_candidate_set_fails_closed(
+        self,
+        runner: CliRunner,
+        gated_instance: CruxibleInstance,
+        stdin: str,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            gated_instance.root,
+            ["gate", "check", "action-review"],
+            stdin=stdin,
+        )
+        assert result.exit_code == 2
+        assert "generic gate received no candidate values" in result.stderr
+
+    def test_tty_stdin_fails_closed(
+        self, runner: CliRunner, gated_instance: CruxibleInstance
+    ) -> None:
+        class TTYInput(io.BytesIO):
+            def isatty(self) -> bool:
+                return True
+
+        result = _chdir_run(
+            runner,
+            gated_instance.root,
+            ["gate", "check", "action-review"],
+            stdin=TTYInput(),
+        )
+        assert result.exit_code == 2
+        assert "stdin is a terminal" in result.stderr
+
+    def test_candidate_arguments_are_refused_for_git_kind(
+        self, runner: CliRunner, gated_instance: CruxibleInstance
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            gated_instance.root,
+            ["gate", "check", "merge-review", "--candidate", APPROVED_SHA],
+        )
+        assert result.exit_code == 2
+        assert "supported only for gates of kind generic" in result.stderr
 
 
 class TestGateCheckFailClosed:

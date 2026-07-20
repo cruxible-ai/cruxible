@@ -1,9 +1,8 @@
 """Gate source adapters: derive candidate values for a declared gate's kind.
 
 INTERNAL SEAM — not a public SDK. Nothing here is exported from any package
-``__init__`` or ``__all__``; the interface stays private until a second
-adapter kind proves the shape (see wi-shared-condition-grammar). Promotion to
-a public extension point is a deliberate later step, not a rewrite.
+``__init__`` or ``__all__``. Promotion to a public extension point is a
+deliberate later step, not a rewrite.
 
 The seam contract:
 
@@ -16,13 +15,15 @@ The seam contract:
   the CLI verb.
 - An empty candidate list means "this invocation has nothing in scope"
   (e.g. no merge commits target the gated branch) and is a legitimate pass.
+  Sources that require at least one candidate, such as ``generic``, raise
+  instead of returning an empty list.
 - Every failure raises ``GateCheckError`` so the caller fails closed
   (exit 2): bad or empty protocol input, git errors, malformed values.
   An adapter must never silence evaluation by swallowing an error.
 
 Adding a source (ci-status, webhook, ...) = add an adapter class here, map
 its kind in ``_ADAPTERS``, and add the kind to ``GATE_KINDS`` in the config
-schema. No core or CLI change.
+schema.
 """
 
 from __future__ import annotations
@@ -59,11 +60,13 @@ class Candidate:
 class GateInvocationContext:
     """How an adapter reaches the invocation's inputs.
 
-    ``read_stdin`` is lazy so adapters that never consume stdin (future
-    kinds) do not block on it.
+    ``read_stdin`` is lazy so adapters using explicit values do not block on
+    stdin. ``explicit_values`` carries kind-supported CLI candidate arguments,
+    not the diagnostic override (which bypasses adapters entirely).
     """
 
     read_stdin: Callable[[], str]
+    explicit_values: tuple[str, ...] = ()
 
 
 class GateSourceAdapter(Protocol):
@@ -95,6 +98,23 @@ def _git_lines(args: list[str]) -> list[str]:
         detail = (exc.stderr or "").strip() or f"exit code {exc.returncode}"
         raise GateCheckError(f"git {' '.join(args)} failed: {detail}") from exc
     return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+class GenericAdapter:
+    """Caller-supplied candidates from arguments or newline-delimited stdin."""
+
+    kind = "generic"
+
+    def candidates(self, gate: GateSchema, context: GateInvocationContext) -> list[Candidate]:
+        del gate  # The generic source has no kind-specific config.
+        raw_values = context.explicit_values or tuple(context.read_stdin().splitlines())
+        candidates = [Candidate(value=value.strip()) for value in raw_values if value.strip()]
+        if not candidates:
+            raise GateCheckError(
+                "generic gate received no candidate values; pass --candidate VALUE "
+                "(repeatable) or pipe one candidate per line"
+            )
+        return candidates
 
 
 class GitPrePushAdapter:
@@ -177,6 +197,7 @@ class GitPrePushAdapter:
 
 
 _ADAPTERS: dict[str, GateSourceAdapter] = {
+    GenericAdapter.kind: GenericAdapter(),
     GitPrePushAdapter.kind: GitPrePushAdapter(),
 }
 

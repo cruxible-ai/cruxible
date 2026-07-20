@@ -37,6 +37,13 @@ VALID_GATE: dict[str, Any] = {
     "adapter": {"branch_pattern": "refs/heads/main"},
 }
 
+VALID_GENERIC_GATE: dict[str, Any] = {
+    "kind": "generic",
+    "entity_type": "ReviewRequest",
+    "match_property": "change_head",
+    "condition": {"status": "approved"},
+}
+
 
 def _config_with_gate(gate: dict[str, Any]) -> CoreConfig:
     return CoreConfig.model_validate({**BASE_CONFIG, "gates": {"merge-review": gate}})
@@ -52,6 +59,13 @@ class TestGateSchema:
         assert gate.condition == {"status": "approved"}
         assert gate.adapter is not None
         assert gate.adapter.branch_pattern == "refs/heads/main"
+        assert validate_config(config) == []
+
+    def test_valid_generic_gate_parses_and_lints_clean(self) -> None:
+        config = _config_with_gate(VALID_GENERIC_GATE)
+        gate = config.gates["merge-review"]
+        assert gate.kind == "generic"
+        assert gate.adapter is None
         assert validate_config(config) == []
 
     def test_unknown_gate_key_refused(self) -> None:
@@ -118,6 +132,14 @@ class TestGateSchema:
         with pytest.raises(ValidationError, match="remote"):
             _config_with_gate(gate)
 
+    def test_generic_gate_with_adapter_config_refused(self) -> None:
+        gate = {
+            **VALID_GENERIC_GATE,
+            "adapter": {"branch_pattern": "refs/heads/main"},
+        }
+        with pytest.raises(ValidationError, match="do not accept an adapter"):
+            _config_with_gate(gate)
+
 
 class TestGateLint:
     def test_unknown_kind_refused(self) -> None:
@@ -127,8 +149,8 @@ class TestGateLint:
         with pytest.raises(ConfigError, match="unknown kind 'ci-status'"):
             validate_config(config)
 
-    def test_kind_enum_is_v1(self) -> None:
-        assert GATE_KINDS == {"git-pre-push"}
+    def test_kind_enum(self) -> None:
+        assert GATE_KINDS == {"generic", "git-pre-push"}
 
     def test_undeclared_entity_type_refused(self) -> None:
         config = _config_with_gate({**VALID_GATE, "entity_type": "PullRequest"})

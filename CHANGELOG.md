@@ -7,6 +7,14 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+### Added
+
+- **Generic gate candidates**: gates of kind `generic` accept arbitrary
+  caller-supplied candidate values from newline-delimited stdin or repeatable
+  public `--candidate` arguments, enabling state-backed pre-action checks
+  outside git. Empty input and terminal stdin fail closed; the hidden
+  cross-kind `--value` diagnostic override is unchanged.
+
 ## 0.2.6 — 2026-07-18
 
 ### Added

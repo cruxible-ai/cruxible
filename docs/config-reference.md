@@ -897,7 +897,7 @@ RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property
 
 Named repo gate declarations evaluated by [`cruxible gate check`](cli-reference.md#cruxible-gate-check). Doctrine: a **guard** blocks a write INTO state (inbound — see `mutation_guards`); a **gate** lets the world act only if state agrees (outbound). Gates are outbound exclusively.
 
-A gate is **kind-based**: `kind` names the source adapter that derives candidate values (v1's only kind is `git-pre-push`, which reads git's pre-push hook protocol and yields every merged-in parent of each pushed merge commit). A candidate is **satisfied** when at least one entity of `entity_type` carries the candidate in `match_property` AND matches the declared `condition`. Core knows no ontology — the declaration supplies it, so kit evolution updates the declaration while the verb and hook line never change. Generality comes from source-adapter kinds plus declarative conditions: a new candidate source is a new kind, and domain knowledge lives in the condition, never in an adapter.
+A gate is **kind-based**: `kind` names the source adapter that supplies candidate values. `generic` accepts caller-supplied values from newline-delimited stdin or repeatable `--candidate` arguments. `git-pre-push` reads git's pre-push hook protocol and yields every merged-in parent of each pushed merge commit. A candidate is **satisfied** when at least one entity of `entity_type` carries the candidate in `match_property` AND matches the declared `condition`. Core knows no ontology — the declaration supplies it, so kit evolution updates the declaration while the verb and invocation never hardcode domain knowledge.
 
 ```yaml
 gates:
@@ -910,15 +910,44 @@ gates:
     adapter: {branch_pattern: refs/heads/main}
 ```
 
+For a non-git pre-action check, declare a `generic` gate without an `adapter`:
+
+```yaml
+gates:
+  irreversible-action-approved:
+    description: An external verdict must approve each action before execution.
+    kind: generic
+    entity_type: ActionVerdict
+    match_property: action_id
+    condition: {status: approved}
+```
+
+An external process can then emit one candidate value per line (blank lines are ignored; surrounding whitespace is trimmed):
+
+```bash
+external-verdict candidates --format lines \
+  | cruxible gate check irreversible-action-approved
+```
+
+For direct invocation, pass the same values as repeatable arguments:
+
+```bash
+cruxible gate check irreversible-action-approved \
+  --candidate "$ACTION_ID" \
+  --candidate "$SECOND_ACTION_ID"
+```
+
+`--candidate` is supported only by `generic` gates and replaces stdin when present. An empty or blank-only generic input cannot establish a verdict and fails closed with exit 2.
+
 ### GateSchema
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `kind` | string | **yes** | — | Source adapter that derives candidate values. v1's only kind is `git-pre-push`; lint rejects unknown kinds |
+| `kind` | string | **yes** | — | Source adapter that supplies candidate values. Supported kinds: `generic`, `git-pre-push`; lint rejects unknown kinds |
 | `entity_type` | string | **yes** | — | Entity type to consult; must be declared in `entity_types` |
 | `match_property` | string | **yes** | — | Property a candidate value is matched against (for `git-pre-push`, the pinned commit SHA); must exist on `entity_type` |
 | `condition` | dict | **yes** | — | Property=value pairs meaning *satisfied* (ANDed); each property must exist on `entity_type`, may not include `match_property`, and at least one pair is required. The key `query` is reserved for a future named-query condition variant |
-| `adapter` | dict | for `git-pre-push` | `null` | Kind-specific adapter config. `git-pre-push` requires `branch_pattern`: a glob over remote ref names (e.g. `refs/heads/main`, `refs/heads/release-*`) selecting which pushed refs are gated. Branch scoping belongs to the source, not the gate |
+| `adapter` | dict | for `git-pre-push` | `null` | Kind-specific adapter config. `git-pre-push` requires `branch_pattern`: a glob over remote ref names (e.g. `refs/heads/main`, `refs/heads/release-*`) selecting which pushed refs are gated. `generic` does not accept adapter config |
 | `description` | string | no | `null` | Human-readable description |
 
 Unknown keys are refused, and config lint rejects unknown kinds and undeclared entity types or properties. In overlay composition, an overlay may add new gates but cannot redefine an upstream gate.
