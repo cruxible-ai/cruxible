@@ -653,23 +653,21 @@ class TestBatchDirectWriteFreezeEnforcement:
         instance = _instance(tmp_path)
         _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-1"})
 
-        result = service_batch_direct_write(
-            instance,
-            BatchDirectWriteInput(
-                entities=[
-                    EntityWriteInput(
-                        entity_type="Review",
-                        entity_id="rev-1",
-                        properties={"head": "sha-2"},
-                    )
-                ],
-            ),
-            dry_run=True,
-        )
-        assert not result.valid
-        assert any(
-            "review_head_frozen_while_approved" in error for error in result.validation_errors
-        )
+        with pytest.raises(DataValidationError, match="review_head_frozen_while_approved"):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        EntityWriteInput(
+                            entity_type="Review",
+                            entity_id="rev-1",
+                            properties={"head": "sha-2"},
+                        )
+                    ],
+                ),
+                dry_run=True,
+            )
+
         assert _review_property(instance, "head") == "sha-1"
 
 

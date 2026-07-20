@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import patch
@@ -97,6 +98,47 @@ def _batch_payload() -> BatchDirectWriteInput:
             )
         },
     )
+
+
+def _receipt_count(instance: CruxibleInstance) -> int:
+    store = instance.get_receipt_store()
+    try:
+        return store.count_receipts()
+    finally:
+        store.close()
+
+
+def _assert_batch_validation_error_parity(
+    instance: CruxibleInstance,
+    payload: BatchDirectWriteInput,
+    *,
+    expected_error: str,
+) -> None:
+    def graph_state() -> dict[str, object]:
+        state = instance.load_graph().to_dict()
+        for key in ("nodes", "edges"):
+            state[key] = sorted(
+                state[key],
+                key=lambda item: json.dumps(item, sort_keys=True, default=str),
+            )
+        return state
+
+    before = graph_state()
+    receipt_count = _receipt_count(instance)
+
+    with pytest.raises(DataValidationError) as dry_run_exc:
+        service_batch_direct_write(instance, payload, dry_run=True)
+    assert graph_state() == before
+    assert _receipt_count(instance) == receipt_count
+
+    with pytest.raises(DataValidationError) as apply_exc:
+        service_batch_direct_write(instance, payload)
+    assert graph_state() == before
+
+    assert type(dry_run_exc.value) is type(apply_exc.value) is DataValidationError
+    assert dry_run_exc.value.summary == apply_exc.value.summary
+    assert dry_run_exc.value.errors == apply_exc.value.errors
+    assert expected_error in str(dry_run_exc.value)
 
 
 def _parts_for_vehicle_inline_query() -> dict[str, object]:
@@ -961,50 +1003,46 @@ class TestEntityMutationGuards:
     ) -> None:
         instance = _actor_guarded_instance(tmp_path)
 
-        result = service_batch_direct_write(
-            instance,
-            BatchDirectWriteInput(
-                entities=[
-                    EntityWriteInput(
-                        entity_type="Review",
-                        entity_id="rev-approved",
-                        properties={"review_id": "rev-approved", "status": "approved"},
-                    )
-                ]
-            ),
-            dry_run=True,
-            actor_context=_actor_context("codex-core"),
-        )
+        with pytest.raises(
+            DataValidationError,
+            match="review_approval_requires_authorized_actor",
+        ):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        EntityWriteInput(
+                            entity_type="Review",
+                            entity_id="rev-approved",
+                            properties={"review_id": "rev-approved", "status": "approved"},
+                        )
+                    ]
+                ),
+                dry_run=True,
+                actor_context=_actor_context("codex-core"),
+            )
 
-        assert result.valid is False
-        assert any(
-            "review_approval_requires_authorized_actor" in error
-            for error in result.validation_errors
-        )
         assert instance.load_graph().get_entity("Review", "rev-approved") is None
 
     def test_batch_dry_run_reports_guard_failure_without_mutating(self, tmp_path: Path) -> None:
         instance = _guarded_instance(tmp_path)
         _seed_work_item(instance)
 
-        result = service_batch_direct_write(
-            instance,
-            BatchDirectWriteInput(
-                entities=[
-                    EntityWriteInput(
-                        entity_type="WorkItem",
-                        entity_id="wi-guarded",
-                        properties={"status": "closed"},
-                    )
-                ],
-            ),
-            dry_run=True,
-        )
+        with pytest.raises(DataValidationError, match="work_item_closed_requires_review"):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        EntityWriteInput(
+                            entity_type="WorkItem",
+                            entity_id="wi-guarded",
+                            properties={"status": "closed"},
+                        )
+                    ],
+                ),
+                dry_run=True,
+            )
 
-        assert result.valid is False
-        assert any(
-            "work_item_closed_requires_review" in error for error in result.validation_errors
-        )
         entity = instance.load_graph().get_entity("WorkItem", "wi-guarded")
         assert entity is not None
         assert entity.properties["status"] == "planned"
@@ -2128,11 +2166,105 @@ class TestReviewVerdictRequiresRationaleNoteGuard:
 
 
 class TestBatchDirectWrite:
+    def test_entity_add_unexpected_properties_rejected_with_validation_parity(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        payload = BatchDirectWriteInput(
+            entities=[
+                EntityWriteInput(
+                    entity_type="Vehicle",
+                    entity_id="V-PARITY",
+                    properties={
+                        "vehicle_id": "V-PARITY",
+                        "year": 2026,
+                        "make": "Honda",
+                        "model": "Pilot",
+                        "context": "unexpected",
+                        "decision": "unexpected",
+                    },
+                )
+            ]
+        )
+
+        _assert_batch_validation_error_parity(
+            initialized_instance,
+            payload,
+            expected_error="unexpected property 'context'; unexpected property 'decision'",
+        )
+
+    def test_entity_update_unexpected_properties_rejected_with_validation_parity(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        payload = BatchDirectWriteInput(
+            entities=[
+                EntityWriteInput(
+                    entity_type="Vehicle",
+                    entity_id="V-2024-CIVIC-EX",
+                    properties={"context": "unexpected", "decision": "unexpected"},
+                )
+            ]
+        )
+
+        _assert_batch_validation_error_parity(
+            populated_instance,
+            payload,
+            expected_error="unexpected property 'context'; unexpected property 'decision'",
+        )
+
+    def test_relationship_add_unexpected_properties_rejected_with_validation_parity(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        payload = BatchDirectWriteInput(
+            relationships=[
+                BatchRelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-ACCORD-SPORT",
+                    properties={"context": "unexpected", "decision": "unexpected"},
+                )
+            ]
+        )
+
+        _assert_batch_validation_error_parity(
+            populated_instance,
+            payload,
+            expected_error="unexpected property 'context'; unexpected property 'decision'",
+        )
+
+    def test_relationship_update_unexpected_properties_rejected_with_validation_parity(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        payload = BatchDirectWriteInput(
+            relationships=[
+                BatchRelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-CIVIC-EX",
+                    properties={"context": "unexpected", "decision": "unexpected"},
+                )
+            ]
+        )
+
+        _assert_batch_validation_error_parity(
+            populated_instance,
+            payload,
+            expected_error="unexpected property 'context'; unexpected property 'decision'",
+        )
+
     def test_dry_run_validates_same_payload_relationship_without_mutating(
         self,
         initialized_instance: CruxibleInstance,
     ) -> None:
         payload = _batch_payload()
+        receipt_count = _receipt_count(initialized_instance)
 
         result = service_batch_direct_write(initialized_instance, payload, dry_run=True)
 
@@ -2154,6 +2286,66 @@ class TestBatchDirectWrite:
             )
             is None
         )
+        assert _receipt_count(initialized_instance) == receipt_count
+
+        applied = service_batch_direct_write(initialized_instance, payload)
+        assert applied.valid is True
+        assert applied.dry_run is False
+        assert initialized_instance.load_graph().get_entity("Vehicle", "V-BATCH") is not None
+
+    def test_valid_entity_and_relationship_updates_pass_both_without_dry_run_mutation(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        payload = BatchDirectWriteInput(
+            entities=[
+                EntityWriteInput(
+                    entity_type="Vehicle",
+                    entity_id="V-2024-CIVIC-EX",
+                    properties={"year": 2025},
+                )
+            ],
+            relationships=[
+                BatchRelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-CIVIC-EX",
+                    properties={"verified": False},
+                )
+            ],
+        )
+        before = populated_instance.load_graph().to_dict()
+        receipt_count = _receipt_count(populated_instance)
+
+        dry_run = service_batch_direct_write(populated_instance, payload, dry_run=True)
+
+        assert dry_run.valid is True
+        assert dry_run.entities_updated == 1
+        assert dry_run.relationships_updated == 1
+        assert dry_run.receipt_id is None
+        assert populated_instance.load_graph().to_dict() == before
+        assert _receipt_count(populated_instance) == receipt_count
+
+        applied = service_batch_direct_write(populated_instance, payload)
+
+        assert applied.valid is True
+        assert applied.entities_updated == 1
+        assert applied.relationships_updated == 1
+        graph = populated_instance.load_graph()
+        entity = graph.get_entity("Vehicle", "V-2024-CIVIC-EX")
+        relationship = graph.get_relationship(
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC-EX",
+            "fits",
+        )
+        assert entity is not None
+        assert entity.properties["year"] == 2025
+        assert relationship is not None
+        assert relationship.properties["verified"] is False
 
     def test_apply_writes_batch_and_compact_receipt_summary(
         self,
@@ -2349,12 +2541,11 @@ class TestBatchDirectWrite:
             ],
         )
 
-        dry_run = service_batch_direct_write(initialized_instance, payload, dry_run=True)
-        assert dry_run.valid is False
-        assert "shared_evidence key 'missing' not found" in dry_run.validation_errors[0]
-
-        with pytest.raises(DataValidationError, match="Batch direct write validation failed"):
-            service_batch_direct_write(initialized_instance, payload)
+        _assert_batch_validation_error_parity(
+            initialized_instance,
+            payload,
+            expected_error="shared_evidence key 'missing' not found",
+        )
 
         graph = initialized_instance.load_graph()
         assert graph.get_entity("Vehicle", "V-BATCH") is None
@@ -3181,25 +3372,24 @@ class TestAddRelationships:
     ) -> None:
         instance = _evidence_guard_instance(tmp_path)
         _seed_guarded_fitment_endpoints(instance)
-        result = service_batch_direct_write(
-            instance,
-            BatchDirectWriteInput(
-                relationships=[
-                    BatchRelationshipWriteInput(
-                        from_type="Part",
-                        from_id="BP-1002",
-                        relationship_type="fits",
-                        to_type="Vehicle",
-                        to_id="V-ACCORD",
-                        evidence_rationale="Looks right from context.",
-                    )
-                ],
-            ),
-            dry_run=True,
-        )
+        with pytest.raises(DataValidationError, match="fits_requires_source_evidence"):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    relationships=[
+                        BatchRelationshipWriteInput(
+                            from_type="Part",
+                            from_id="BP-1002",
+                            relationship_type="fits",
+                            to_type="Vehicle",
+                            to_id="V-ACCORD",
+                            evidence_rationale="Looks right from context.",
+                        )
+                    ],
+                ),
+                dry_run=True,
+            )
 
-        assert result.valid is False
-        assert any("fits_requires_source_evidence" in error for error in result.validation_errors)
         rel = instance.load_graph().get_relationship(
             "Part",
             "BP-1002",

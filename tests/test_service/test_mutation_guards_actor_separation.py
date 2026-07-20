@@ -301,26 +301,25 @@ class TestDistinctFromCreationActor:
         instance = _instance(tmp_path)
         _create_pending_review(instance, _actor("alice"))
 
-        result = service_batch_direct_write(
-            instance,
-            BatchDirectWriteInput(
-                entities=[
-                    EntityWriteInput(
-                        entity_type="Review",
-                        entity_id="rev-1",
-                        properties={"status": "approved"},
-                    )
-                ]
-            ),
-            dry_run=True,
-            actor_context=_actor("alice"),
-        )
+        with pytest.raises(
+            DataValidationError,
+            match="review_approval_requires_distinct_authorized_actor",
+        ):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        EntityWriteInput(
+                            entity_type="Review",
+                            entity_id="rev-1",
+                            properties={"status": "approved"},
+                        )
+                    ]
+                ),
+                dry_run=True,
+                actor_context=_actor("alice"),
+            )
 
-        assert result.valid is False
-        assert any(
-            "review_approval_requires_distinct_authorized_actor" in error
-            for error in result.validation_errors
-        )
         _assert_still_pending(instance)
 
 

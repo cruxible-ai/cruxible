@@ -771,6 +771,12 @@ def _prepare_batch_direct_write(
     )
     _record_group_interaction_validation(builder, interactions)
 
+    if errors:
+        raise DataValidationError(
+            f"Batch direct write validation failed with {len(errors)} error(s)",
+            errors=errors,
+        )
+
     return _PreparedBatchDirectWrite(
         graph=graph,
         entities=validated_entities,
@@ -857,13 +863,6 @@ def service_batch_direct_write(
             builder=builder,
             group_store=ctx.uow.groups if ctx.uow is not None else None,
         )
-        if prepared.validation_errors:
-            raise DataValidationError(
-                f"Batch direct write validation failed with "
-                f"{len(prepared.validation_errors)} error(s)",
-                errors=prepared.validation_errors,
-            )
-
         touched_entities = []
         for entity_item in prepared.entities:
             persisted_entity = prepared.graph.get_entity(
