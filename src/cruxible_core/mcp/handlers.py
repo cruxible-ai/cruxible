@@ -7,6 +7,7 @@ configured. In local mode, they forward to the shared runtime API.
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -30,6 +31,9 @@ from cruxible_core.server.config import get_runtime_bearer_token, resolve_server
 
 _client_cache: CruxibleClient | None = None
 _client_cache_key: tuple[str | None, str | None, str | None] | None = None
+# Tool calls run on worker threads in server mode, so cache construction
+# and teardown must be serialized; RLock because _get_client resets inline.
+_client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
 
 
@@ -41,10 +45,11 @@ def get_manager() -> InstanceManager:
 def reset_client_cache() -> None:
     """Clear cached client state. Used by tests."""
     global _client_cache, _client_cache_key
-    if _client_cache is not None:
-        _client_cache.close()
-    _client_cache = None
-    _client_cache_key = None
+    with _client_cache_lock:
+        if _client_cache is not None:
+            _client_cache.close()
+        _client_cache = None
+        _client_cache_key = None
 
 
 def _get_client() -> CruxibleClient | None:
@@ -58,15 +63,16 @@ def _get_client() -> CruxibleClient | None:
 
     token = get_runtime_bearer_token()
     cache_key = (settings.server_url, settings.server_socket, token)
-    if _client_cache is None or _client_cache_key != cache_key:
-        reset_client_cache()
-        _client_cache = CruxibleClient(
-            base_url=settings.server_url,
-            socket_path=settings.server_socket,
-            token=token,
-        )
-        _client_cache_key = cache_key
-    return _client_cache
+    with _client_cache_lock:
+        if _client_cache is None or _client_cache_key != cache_key:
+            reset_client_cache()
+            _client_cache = CruxibleClient(
+                base_url=settings.server_url,
+                socket_path=settings.server_socket,
+                token=token,
+            )
+            _client_cache_key = cache_key
+        return _client_cache
 
 
 def _dispatch_remote_or_local(

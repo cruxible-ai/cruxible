@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
 
 import structlog
 from mcp.server.fastmcp import FastMCP
+from mcp.types import Tool as MCPTool
 
 from cruxible_core import __version__
 from cruxible_core.mcp.curation import (
@@ -167,11 +167,26 @@ def _registered_tool_names(server: FastMCP) -> set[str]:
 
 def _install_list_tools_filter(server: FastMCP, advertised: set[str]) -> None:
     """Filter MCP tools/list without removing registered tool handlers."""
-    original_list_tools = server.list_tools
+    manager = getattr(server, "_tool_manager")
+    # Materialize the immutable advertised catalog during server creation so
+    # tools/list only returns local metadata and never initializes call paths.
+    catalog = [
+        MCPTool(
+            name=tool.name,
+            title=tool.title,
+            description=tool.description,
+            inputSchema=tool.parameters,
+            outputSchema=tool.output_schema,
+            annotations=tool.annotations,
+            icons=tool.icons,
+            _meta=tool.meta,
+        )
+        for tool in manager.list_tools()
+        if tool.name in advertised
+    ]
 
-    async def list_curated_tools() -> list[Any]:
-        tools = await original_list_tools()
-        return [tool for tool in tools if tool.name in advertised]
+    async def list_curated_tools() -> list[MCPTool]:
+        return list(catalog)
 
     server.list_tools = list_curated_tools  # type: ignore[method-assign]
     # FastMCP registers the low-level ListToolsRequest handler during __init__.
@@ -183,13 +198,13 @@ def _install_list_tools_filter(server: FastMCP, advertised: set[str]) -> None:
 
 def create_server() -> FastMCP:
     """Create and configure the cruxible-core MCP server."""
-    resolve_server_settings()
+    settings = resolve_server_settings()
     mode = init_permissions()
     server = FastMCP(
         name=f"cruxible v{__version__}",
         instructions="",
     )
-    registered = register_tools(server)
+    registered = register_tools(server, offload_sync_calls=settings.enabled)
     validate_tool_permissions(registered)
     curation = resolve_tool_curation()
     advertised = advertised_tool_names(

@@ -6,6 +6,8 @@ Exceptions propagate to FastMCP, which wraps them as ToolError.
 
 from __future__ import annotations
 
+import asyncio
+from functools import wraps
 from typing import Any, Callable
 
 from mcp.server.fastmcp import FastMCP
@@ -17,8 +19,12 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.tool_prompts import tool_description
 
 
-def register_tools(server: FastMCP) -> list[str]:
+def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list[str]:
     """Register all cruxible tools on the FastMCP server.
+
+    Args:
+        server: FastMCP server receiving the registrations.
+        offload_sync_calls: Run synchronous handlers outside the protocol event loop.
 
     Returns:
         List of registered tool names (for permission validation).
@@ -27,7 +33,17 @@ def register_tools(server: FastMCP) -> list[str]:
 
     def _tool(fn: Callable[..., Any]) -> Callable[..., Any]:
         """Register a tool on the server and track its name."""
-        server.tool(description=tool_description(fn.__name__))(fn)
+        registered_fn = fn
+        if offload_sync_calls:
+
+            @wraps(fn)
+            async def run_in_worker(*args: Any, **kwargs: Any) -> Any:
+                # FastMCP invokes synchronous functions on its protocol event
+                # loop; daemon HTTP waits must not starve tools/list.
+                return await asyncio.to_thread(fn, *args, **kwargs)
+
+            registered_fn = run_in_worker
+        server.tool(description=tool_description(fn.__name__))(registered_fn)
         registered.append(fn.__name__)
         return fn
 
@@ -1442,7 +1458,9 @@ def _publish_union_output_schemas(server: FastMCP) -> None:
         tool = server._tool_manager.get_tool(tool_name)
         if tool is None:  # pragma: no cover - registration bug guard
             raise RuntimeError(f"union output tool {tool_name!r} is not registered")
-        tool.fn_metadata.output_schema = TypeAdapter(union).json_schema()
+        output_schema = TypeAdapter(union).json_schema()
+        output_schema["type"] = "object"
+        tool.fn_metadata.output_schema = output_schema
         # Tool.output_schema is a cached_property over fn_metadata; drop any
         # cached value so list_tools publishes the override.
         tool.__dict__.pop("output_schema", None)

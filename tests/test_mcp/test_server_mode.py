@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
@@ -14,6 +18,29 @@ def test_create_server_fails_when_server_required_without_endpoint(monkeypatch: 
     monkeypatch.setenv("CRUXIBLE_REQUIRE_SERVER", "true")
     with pytest.raises(ConfigError):
         create_server()
+
+
+def test_unreachable_daemon_does_not_block_tool_listing(monkeypatch: pytest.MonkeyPatch):
+    server_url = "http://192.0.2.1"
+    monkeypatch.setenv("CRUXIBLE_SERVER_URL", server_url)
+    monkeypatch.setenv("NO_PROXY", "192.0.2.1")
+    for proxy_var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy"):
+        monkeypatch.delenv(proxy_var, raising=False)
+    handlers.reset_client_cache()
+
+    async def exercise_server() -> None:
+        server = create_server()
+        call = asyncio.create_task(server.call_tool("cruxible_server_info", {}))
+        started_at = time.monotonic()
+        await asyncio.sleep(0)
+        tools = await asyncio.wait_for(server.list_tools(), timeout=0.25)
+        assert time.monotonic() - started_at < 0.5
+        assert tools
+
+        with pytest.raises(ToolError, match="could not reach Cruxible server"):
+            await asyncio.wait_for(call, timeout=6.0)
+
+    asyncio.run(exercise_server())
 
 
 def test_server_mode_client_uses_bearer_token_env(monkeypatch: pytest.MonkeyPatch):

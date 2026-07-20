@@ -256,6 +256,12 @@ class TestInputSchema:
 class TestOutputSchema:
     """Verify typed returns produce outputSchema with expected keys."""
 
+    def test_every_advertised_output_schema_is_object_rooted(self, server):
+        schemas = _get_tool_schemas(server)
+        for tool_name, tool in schemas.items():
+            if tool.outputSchema is not None:
+                assert tool.outputSchema.get("type") == "object", tool_name
+
     @pytest.mark.parametrize(
         "tool_name,expected_keys",
         [
