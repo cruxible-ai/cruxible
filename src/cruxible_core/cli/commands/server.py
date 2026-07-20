@@ -30,6 +30,7 @@ from cruxible_core.cli.commands._common import (
     _root_ctx_obj,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.runtime.permissions import PERMISSION_MODE_NAMES
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
     is_server_auth_enabled,
@@ -155,6 +156,15 @@ def server_group() -> None:
     help="Listen on this Unix socket path instead of host/port (default: CRUXIBLE_SERVER_SOCKET).",
 )
 @click.option(
+    "--capability-ceiling",
+    type=click.Choice(PERMISSION_MODE_NAMES, case_sensitive=False),
+    default=None,
+    help=(
+        "Immutable daemon capability ceiling (default: CRUXIBLE_MODE or admin). "
+        "Bearer credentials cannot exceed it."
+    ),
+)
+@click.option(
     "--bootstrap-secret-file",
     default=None,
     type=click.Path(dir_okay=False),
@@ -166,6 +176,7 @@ def server_start_cmd(
     port: int | None,
     state_dir: str | None,
     socket_path: str | None,
+    capability_ceiling: str | None,
     bootstrap_secret_file: str | None,
 ) -> None:
     """Launch the Cruxible daemon in the foreground.
@@ -173,9 +184,11 @@ def server_start_cmd(
     This becomes the long-running daemon process; it is NOT a client of an
     existing one, so it takes no `--server-url`. Flags override the matching
     environment variables (`CRUXIBLE_HOST`, `CRUXIBLE_PORT`,
-    `CRUXIBLE_SERVER_STATE_DIR`, `CRUXIBLE_SERVER_SOCKET`); unset flags fall back
-    to the env value or the built-in default. Use a durable `--state-dir` (e.g.
-    `~/.cruxible/server`), not a volatile temp path. Stop with Ctrl-C.
+    `CRUXIBLE_SERVER_STATE_DIR`, `CRUXIBLE_SERVER_SOCKET`, `CRUXIBLE_MODE`);
+    unset flags fall back to the env value or the built-in default. The
+    capability ceiling is fixed for the daemon process lifetime. Use a durable
+    `--state-dir` (e.g. `~/.cruxible/server`), not a volatile temp path. Stop
+    with Ctrl-C.
     """
     _prepare_generated_bootstrap_secret(bootstrap_secret_file)
     # Imported lazily so `cruxible server start --help` (and the rest of the CLI)
@@ -183,7 +196,13 @@ def server_start_cmd(
     # extra is only required when actually launching.
     from cruxible_core.server.app import run_server
 
-    run_server(host=host, port=port, state_dir=state_dir, socket_path=socket_path)
+    run_server(
+        host=host,
+        port=port,
+        state_dir=state_dir,
+        socket_path=socket_path,
+        capability_ceiling=capability_ceiling,
+    )
 
 
 @server_group.command("status")

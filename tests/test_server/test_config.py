@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_core.errors import ConfigError
+from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.server import app as server_app
 from cruxible_core.server.config import (
@@ -29,6 +30,30 @@ from tests.test_cli.conftest import CAR_PARTS_YAML
 
 def test_default_localhost_without_auth_is_valid() -> None:
     validate_server_startup_settings({})
+
+
+def test_run_server_refuses_invalid_capability_ceiling_before_uvicorn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    called = False
+
+    def capture_run(*_args: object, **_kwargs: object) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_MODE", "superuser")
+    monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=capture_run))
+    reset_permissions()
+
+    try:
+        with pytest.raises(ConfigError, match="Invalid CRUXIBLE_MODE='superuser'"):
+            server_app.run_server()
+    finally:
+        reset_permissions()
+
+    assert called is False
 
 
 def test_loopback_ipv6_without_auth_is_valid() -> None:

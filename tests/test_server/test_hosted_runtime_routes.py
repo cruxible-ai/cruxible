@@ -1583,7 +1583,7 @@ def test_admin_runtime_credential_can_manage_scoped_lifecycle(
     assert response.json()["instance_id"] == instance_id
 
 
-def test_runtime_credential_permission_scope_overrides_global_mode(
+def test_runtime_credential_permission_scope_cannot_exceed_process_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     server_project: Path,
@@ -1606,8 +1606,13 @@ def test_runtime_credential_permission_scope_overrides_global_mode(
         headers=headers,
     )
 
-    assert response.status_code == 200
-    assert response.json()["entities_added"] == 1
+    assert response.status_code == 403
+    assert response.json()["context"] == {
+        "tool_name": "cruxible_add_entity",
+        "current_mode": "READ_ONLY",
+        "required_mode": "GOVERNED_WRITE",
+        "ceiling_mode": "READ_ONLY",
+    }
 
 
 def test_runtime_bootstrap_claim_returns_admin_token_once(

@@ -113,6 +113,8 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["tool_name"] = exc.tool_name
         context["current_mode"] = exc.current_mode
         context["required_mode"] = exc.required_mode
+        if exc.ceiling_mode is not None:
+            context["ceiling_mode"] = exc.ceiling_mode
     if isinstance(exc, DirectWriteRefusedError):
         context["kind"] = exc.kind
         context["type_name"] = exc.type_name

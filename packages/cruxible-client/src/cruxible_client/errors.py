@@ -250,10 +250,25 @@ class InstanceScopeError(CoreError):
 
 
 class PermissionDeniedError(CoreError):
-    def __init__(self, tool_name: str, current_mode: str, required_mode: str):
+    def __init__(
+        self,
+        tool_name: str,
+        current_mode: str,
+        required_mode: str,
+        *,
+        ceiling_mode: str | None = None,
+    ):
         self.tool_name = tool_name
         self.current_mode = current_mode
         self.required_mode = required_mode
+        self.ceiling_mode = ceiling_mode
+        if ceiling_mode is not None:
+            super().__init__(
+                f"Operation '{tool_name}' requires {required_mode} mode, but the daemon "
+                f"capability ceiling is {ceiling_mode} mode "
+                f"(effective request mode: {current_mode})"
+            )
+            return
         super().__init__(
             f"Tool '{tool_name}' requires {required_mode} mode, "
             f"but server is running in {current_mode} mode"
@@ -351,6 +366,7 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             context.get("tool_name", "unknown"),
             context.get("current_mode", "unknown"),
             context.get("required_mode", "unknown"),
+            ceiling_mode=context.get("ceiling_mode"),
         )
     elif body.error_type == "DirectWriteRefusedError":
         exc = DirectWriteRefusedError(

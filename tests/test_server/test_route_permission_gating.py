@@ -17,9 +17,8 @@ Strategy (static, mirrors the MCP set-equality intent):
 4. A route is "gated" if any reachable facade or local helper performs a
    permission check.
 5. Classify routes as mutating vs read-only and assert every mutating route is
-   gated. A handful of routes are gated by a *different* mechanism (the
-   auth-middleware one-time bootstrap-secret gate); they are listed explicitly so
-   adding a new ungated route can never silently land in that bucket.
+   gated. Authentication gates may add restrictions, but no mutation is exempt
+   from the permission system and its process ceiling.
 """
 
 from __future__ import annotations
@@ -32,17 +31,6 @@ from cruxible_core.server.app import create_app
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ROUTES_DIR = _REPO_ROOT / "src/cruxible_core/server/routes"
 _RUNTIME_API_PATH = _REPO_ROOT / "src/cruxible_core/runtime/api.py"
-
-# Routes that are NOT gated by an in-handler check_permission but ARE
-# access-controlled by the auth middleware's one-time bootstrap-secret gate
-# (see server/auth.py). Listed explicitly and by (method, path) so a brand-new
-# ungated route cannot quietly inherit this exemption.
-_BOOTSTRAP_GATED_ROUTES: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("POST", "/api/v1/runtime/instances"),
-        ("POST", "/api/v1/{instance_id}/runtime/bootstrap/claim"),
-    }
-)
 
 # POST routes that are read-only despite using POST (request body carries query
 # inputs, not a mutation). They still go through check_permission at a READ_ONLY
@@ -125,6 +113,8 @@ def _route_is_gated(
     module_handlers: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
 ) -> bool:
     """Whether *handler* reaches a check_permission via an api facade or local helper."""
+    if handler.name in local_gated_fns:
+        return True
     api_targets, local_calls = _called_names(handler)
     if api_targets & api_gated_fns:
         return True
@@ -209,8 +199,7 @@ def test_every_api_route_resolves_to_a_handler_module() -> None:
 def test_every_mutating_http_route_passes_through_check_permission() -> None:
     """Each mutating HTTP route must reach a check_permission'd facade.
 
-    A future route that mutates state without a permission gate (and is not an
-    explicitly documented bootstrap-gated route) fails here.
+    A future route that mutates state without a permission gate fails here.
     """
     api_gated_fns, module_local_gated, module_handlers = _load_gating_index()
 
@@ -219,8 +208,6 @@ def test_every_mutating_http_route_passes_through_check_permission() -> None:
         if path in _INFRA_PATHS:
             continue
         if not _is_mutating(method, path):
-            continue
-        if (method, path) in _BOOTSTRAP_GATED_ROUTES:
             continue
         module_name = _endpoint_module(endpoint_name, module_handlers)
         assert module_name is not None, f"{method} {path}: handler module not found"
@@ -236,19 +223,8 @@ def test_every_mutating_http_route_passes_through_check_permission() -> None:
 
     assert ungated == [], (
         "Mutating HTTP routes that do not reach a check_permission'd facade "
-        f"(add the permission check, or document it as bootstrap-gated): {ungated}"
+        f"(add the permission check): {ungated}"
     )
-
-
-def test_bootstrap_gated_routes_still_exist() -> None:
-    """The documented bootstrap-gated exemptions must correspond to real routes.
-
-    Prevents the exemption set from rotting into a silent always-pass escape
-    hatch after a route is renamed or removed.
-    """
-    live = {(method, path) for method, path, _ in _enumerate_api_routes()}
-    stale = {route for route in _BOOTSTRAP_GATED_ROUTES if route not in live}
-    assert stale == set(), f"Bootstrap-gated exemptions no longer match a live route: {stale}"
 
 
 def test_read_only_post_classification_matches_live_routes() -> None:

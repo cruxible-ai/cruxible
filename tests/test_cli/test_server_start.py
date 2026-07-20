@@ -49,6 +49,8 @@ def test_start_help_prints_and_exits_without_serving(
     # CliRunner invokes the root group as "cli"; the path after it is what matters.
     assert "server start [OPTIONS]" in result.output
     assert "Launch the Cruxible daemon" in result.output
+    assert "--capability-ceiling" in result.output
+    assert "CRUXIBLE_MODE" in result.output
 
 
 def test_start_passes_flags_to_run_server(
@@ -75,6 +77,8 @@ def test_start_passes_flags_to_run_server(
             "8137",
             "--state-dir",
             "/var/lib/cruxible/server",
+            "--capability-ceiling",
+            "governed_write",
         ],
     )
 
@@ -84,6 +88,7 @@ def test_start_passes_flags_to_run_server(
         "port": 8137,
         "state_dir": "/var/lib/cruxible/server",
         "socket_path": None,
+        "capability_ceiling": "governed_write",
     }
 
 
@@ -100,4 +105,32 @@ def test_start_defaults_are_none_so_env_wins(
     result = runner.invoke(cli, ["server", "start"])
 
     assert result.exit_code == 0, result.output
-    assert captured == {"host": None, "port": None, "state_dir": None, "socket_path": None}
+    assert captured == {
+        "host": None,
+        "port": None,
+        "state_dir": None,
+        "socket_path": None,
+        "capability_ceiling": None,
+    }
+
+
+def test_start_rejects_unknown_capability_ceiling_before_serving(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    monkeypatch.setattr(
+        "cruxible_core.server.app.run_server",
+        lambda **_kwargs: pytest.fail("invalid ceiling must not reach run_server"),
+    )
+
+    result = runner.invoke(
+        cli,
+        ["server", "start", "--capability-ceiling", "superuser"],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid value for '--capability-ceiling'" in result.output
+    assert "read_only" in result.output
+    assert "governed_write" in result.output
+    assert "graph_write" in result.output
+    assert "admin" in result.output

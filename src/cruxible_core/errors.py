@@ -385,12 +385,27 @@ class InstanceScopeError(CoreError):
 
 
 class PermissionDeniedError(CoreError):
-    """MCP tool call denied due to insufficient permission mode."""
+    """Operation denied due to insufficient effective permission mode."""
 
-    def __init__(self, tool_name: str, current_mode: str, required_mode: str):
+    def __init__(
+        self,
+        tool_name: str,
+        current_mode: str,
+        required_mode: str,
+        *,
+        ceiling_mode: str | None = None,
+    ):
         self.tool_name = tool_name
         self.current_mode = current_mode
         self.required_mode = required_mode
+        self.ceiling_mode = ceiling_mode
+        if ceiling_mode is not None:
+            super().__init__(
+                f"Operation '{tool_name}' requires {required_mode} mode, but the daemon "
+                f"capability ceiling is {ceiling_mode} mode "
+                f"(effective request mode: {current_mode})"
+            )
+            return
         super().__init__(
             f"Tool '{tool_name}' requires {required_mode} mode, "
             f"but server is running in {current_mode} mode"

@@ -6,7 +6,7 @@ import contextvars
 import hmac
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from fastapi import Request
@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from cruxible_core.runtime.permissions import (
     PermissionMode,
+    clamp_to_capability_ceiling,
     request_instance_scope,
     request_permission_scope,
 )
@@ -330,13 +331,22 @@ async def token_auth_middleware(
     ):
         return _unauthorized_request_response(request)
 
+    effective_mode: PermissionMode | None = None
+    if resolved_context is not None and resolved_context.effective_permission_mode is not None:
+        relayed_mode = _relayed_effective_permission_mode(request, resolved_context)
+        if relayed_mode is None:
+            return _unauthorized_request_response(request)
+        effective_mode = clamp_to_capability_ceiling(relayed_mode)
+        resolved_context = replace(
+            resolved_context,
+            effective_permission_mode=effective_mode,
+        )
+
     with _auth_context_scope(resolved_context, request):
-        if resolved_context is not None and resolved_context.effective_permission_mode is not None:
-            relayed_mode = _relayed_effective_permission_mode(request, resolved_context)
-            if relayed_mode is None:
-                return _unauthorized_request_response(request)
+        if effective_mode is not None:
+            assert resolved_context is not None
             with (
-                request_permission_scope(relayed_mode),
+                request_permission_scope(effective_mode),
                 request_instance_scope(resolved_context.instance_scope),
             ):
                 return await _call_next_with_request_log(

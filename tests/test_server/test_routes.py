@@ -267,7 +267,7 @@ def _seed_car_parts_state(client: TestClient, instance_id: str) -> None:
 def test_health_endpoint_returns_ok(app_client: TestClient):
     response = app_client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "capability_ceiling": "admin"}
 
 
 def test_request_validation_errors_use_error_response_envelope(app_client: TestClient):

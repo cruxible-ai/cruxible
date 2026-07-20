@@ -1,7 +1,9 @@
 """Runtime permission modes for Cruxible operations.
 
 Controls which operations a runtime session can invoke, enforced via the
-``CRUXIBLE_MODE`` environment variable. Four cumulative tiers:
+``CRUXIBLE_MODE`` environment variable. In a daemon process the initialized
+mode is also an immutable capability ceiling: request credentials may narrow it
+but can never raise it. Four cumulative tiers:
 
 - ``READ_ONLY``: query, inspect, validate, and plan workflows
 - ``GOVERNED_WRITE``: execute governed operator actions such as feedback,
@@ -71,6 +73,8 @@ _MODE_NAMES: dict[str, PermissionMode] = {
     "graph_write": PermissionMode.GRAPH_WRITE,
     "admin": PermissionMode.ADMIN,
 }
+
+PERMISSION_MODE_NAMES: tuple[str, ...] = tuple(_MODE_NAMES)
 
 # ---------------------------------------------------------------------------
 # Tool → minimum permission tier
@@ -185,7 +189,7 @@ PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
 _cached_mode: PermissionMode | None = None
 _cached_allowed_roots: list[Path] | None | bool = False  # False = not yet parsed
 
-# Per-request override (for cloud / multi-tenant use)
+# Per-request narrowing (for authenticated/cloud multi-tenant use)
 _request_mode: contextvars.ContextVar[PermissionMode | None] = contextvars.ContextVar(
     "cruxible_permission_mode", default=None
 )
@@ -232,7 +236,12 @@ def validate_allowed_roots() -> list[Path] | None:
 
 
 def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
-    """Read ``CRUXIBLE_MODE`` env var and cache the result.
+    """Read ``CRUXIBLE_MODE`` once and cache the process capability ceiling.
+
+    The first call fixes the ceiling for the process lifetime. Repeating the
+    call with the same resolved mode is harmless; attempting to change it
+    fails closed. ``reset_permissions`` exists only for isolated tests that
+    model fresh processes.
 
     Args:
         mode: Override for testing. If provided, skips env var lookup.
@@ -246,7 +255,7 @@ def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
     global _cached_mode, _cached_allowed_roots
 
     if mode is not None:
-        _cached_mode = mode
+        resolved_mode = mode
     else:
         raw = os.environ.get("CRUXIBLE_MODE")
         if raw is None:
@@ -267,15 +276,26 @@ def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
             # CRUXIBLE_MODE explicitly can opt in via CRUXIBLE_DEFAULT_READ_ONLY;
             # it defaults off so the local-UX default remains ADMIN.
             if _default_read_only_opt_in():
-                _cached_mode = PermissionMode.READ_ONLY
+                resolved_mode = PermissionMode.READ_ONLY
             else:
-                _cached_mode = PermissionMode.ADMIN
+                resolved_mode = PermissionMode.ADMIN
         else:
             resolved = _MODE_NAMES.get(raw.lower())
             if resolved is None:
                 valid = ", ".join(sorted(_MODE_NAMES))
                 raise ConfigError(f"Invalid CRUXIBLE_MODE='{raw}'. Valid values: {valid}")
-            _cached_mode = resolved
+            resolved_mode = resolved
+
+    if _cached_mode is not None:
+        if resolved_mode != _cached_mode:
+            raise ConfigError(
+                "CRUXIBLE_MODE is immutable after permission initialization "
+                f"(initialized={_cached_mode.name.lower()}, "
+                f"requested={resolved_mode.name.lower()})"
+            )
+        return _cached_mode
+
+    _cached_mode = resolved_mode
 
     # Parse allowed roots (fail-fast on bad config)
     _cached_allowed_roots = validate_allowed_roots()
@@ -283,22 +303,31 @@ def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
     return _cached_mode
 
 
-def get_current_mode() -> PermissionMode:
-    """Return the active permission mode.
-
-    Checks (in order):
-    1. Request-scoped contextvar (set via :func:`request_permission_scope`)
-    2. Module-level cached mode (from env var / :func:`init_permissions`)
-    """
-    request = _request_mode.get()
-    if request is not None:
-        return request
-
+def get_capability_ceiling() -> PermissionMode:
+    """Return the immutable process capability ceiling."""
     global _cached_mode
     if _cached_mode is None:
         init_permissions()
     assert _cached_mode is not None
     return _cached_mode
+
+
+def clamp_to_capability_ceiling(mode: PermissionMode) -> PermissionMode:
+    """Intersect a requested permission tier with the process ceiling."""
+    return min(mode, get_capability_ceiling())
+
+
+def get_current_mode() -> PermissionMode:
+    """Return the active permission mode clamped to the process ceiling.
+
+    Anonymous/local calls receive exactly the initialized process mode. A
+    request-scoped credential or relayed mode can only narrow that mode.
+    """
+    ceiling = get_capability_ceiling()
+    request = _request_mode.get()
+    if request is not None:
+        return clamp_to_capability_ceiling(request)
+    return ceiling
 
 
 def reset_permissions() -> None:
@@ -312,9 +341,10 @@ def reset_permissions() -> None:
 
 @contextmanager
 def request_permission_scope(mode: PermissionMode) -> Iterator[None]:
-    """Temporarily override the permission mode for the current context.
+    """Temporarily narrow the permission mode for the current context.
 
-    Uses token-based reset so nested scopes restore correctly.
+    ``get_current_mode`` clamps this value to the process ceiling. Uses
+    token-based reset so nested scopes restore correctly.
     """
     token = _request_mode.set(mode)
     try:
@@ -371,6 +401,7 @@ def check_permission(
         PermissionDeniedError: If the current mode is insufficient.
     """
     current = get_current_mode()
+    ceiling = get_capability_ceiling()
     if tool_name not in PERMISSION_REQUIREMENTS:
         raise ConfigError(f"Tool '{tool_name}' has no entry in permission requirements")
     effective = (
@@ -378,14 +409,21 @@ def check_permission(
     )
 
     if current < effective:
+        ceiling_mode = ceiling.name if ceiling < effective else None
         _log.warning(
             "permission_denied",
             tool=tool_name,
             mode=current.name,
             required=effective.name,
+            capability_ceiling=ceiling.name,
             instance_id=instance_id,
         )
-        raise PermissionDeniedError(tool_name, current.name, effective.name)
+        raise PermissionDeniedError(
+            tool_name,
+            current.name,
+            effective.name,
+            ceiling_mode=ceiling_mode,
+        )
 
     credential_scope = _request_instance_scope.get()
     if (

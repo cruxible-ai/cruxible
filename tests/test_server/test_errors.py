@@ -61,6 +61,21 @@ from cruxible_core.server.errors import (
             },
         ),
         (
+            PermissionDeniedError(
+                "cruxible_apply_workflow",
+                "GOVERNED_WRITE",
+                "GRAPH_WRITE",
+                ceiling_mode="GOVERNED_WRITE",
+            ),
+            client_errors.PermissionDeniedError,
+            {
+                "tool_name": "cruxible_apply_workflow",
+                "current_mode": "GOVERNED_WRITE",
+                "required_mode": "GRAPH_WRITE",
+                "ceiling_mode": "GOVERNED_WRITE",
+            },
+        ),
+        (
             EntityTypeNotFoundError("Vehicle", known_entity_types=["Part", "Vehicle"]),
             client_errors.EntityTypeNotFoundError,
             {"entity_type": "Vehicle", "known_entity_types": ["Part", "Vehicle"]},
@@ -149,6 +164,25 @@ def test_request_validation_envelope_decodes_with_field_errors():
     assert type(restored) is client_errors.DataValidationError
     assert restored.errors == ["query.offset: Input should be a valid integer"]
     assert "query.offset" in str(restored)
+
+
+def test_capability_ceiling_denial_round_trip_preserves_loud_message() -> None:
+    error = PermissionDeniedError(
+        "cruxible_apply_workflow",
+        "GOVERNED_WRITE",
+        "GRAPH_WRITE",
+        ceiling_mode="GOVERNED_WRITE",
+    )
+
+    status, body = error_to_response(error)
+    restored = client_errors.response_to_error(status, body)
+
+    assert status == 403
+    assert type(restored) is client_errors.PermissionDeniedError
+    assert str(restored) == str(error)
+    assert "cruxible_apply_workflow" in str(restored)
+    assert "GRAPH_WRITE" in str(restored)
+    assert "capability ceiling is GOVERNED_WRITE" in str(restored)
 
 
 def test_unknown_error_type_falls_back_to_core_error():

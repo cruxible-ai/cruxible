@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from cruxible_client import contracts
 from cruxible_core.runtime import api
 from cruxible_core.runtime.instance_manager import get_manager
+from cruxible_core.runtime.permissions import check_permission
 from cruxible_core.server.auth_managed_entities import materialize_auth_managed_entities
 from cruxible_core.server.config import get_runtime_bootstrap_secret
 from cruxible_core.server.credentials import get_runtime_credential_store
@@ -65,6 +66,7 @@ async def claim_runtime_bootstrap(
 ) -> contracts.RuntimeCredentialBootstrapResult:
     """Exchange a one-time bootstrap secret for the initial ADMIN runtime token."""
     resolved_instance_id = resolve_server_instance_id(instance_id)
+    check_permission("cruxible_runtime_credentials", instance_id=resolved_instance_id)
     store = get_runtime_credential_store()
     prepared = store.prepare_bootstrap_credential(
         instance_id=resolved_instance_id,

@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from cruxible_core import __version__
 from cruxible_core.errors import CoreError
 from cruxible_core.runtime.instance import CruxibleInstance, enforce_config_integrity
-from cruxible_core.runtime.permissions import init_permissions
+from cruxible_core.runtime.permissions import get_capability_ceiling, init_permissions
 from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.config import (
     is_server_auth_enabled,
@@ -151,7 +151,10 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {
+            "status": "ok",
+            "capability_ceiling": get_capability_ceiling().name.lower(),
+        }
 
     @app.get("/version")
     async def version() -> dict[str, str]:
@@ -183,17 +186,19 @@ def run_server(
     port: int | None = None,
     state_dir: str | None = None,
     socket_path: str | None = None,
+    capability_ceiling: str | None = None,
 ) -> None:
     """Launch the Cruxible daemon over UDS or host/port transport.
 
     This is the single daemon-launch path, invoked by ``cruxible server start``.
     Explicit arguments override the corresponding environment variables
     (``CRUXIBLE_HOST`` / ``CRUXIBLE_PORT`` / ``CRUXIBLE_SERVER_STATE_DIR`` /
-    ``CRUXIBLE_SERVER_SOCKET``); when an argument is ``None`` the env default is
-    used. Overrides are applied to ``os.environ`` before any config is resolved
-    so the registry, credential store, and startup validation all observe the
-    same effective settings, and so an in-place re-exec (``cruxible server
-    restart``) reproduces them via ``sys.argv``.
+    ``CRUXIBLE_SERVER_SOCKET`` / ``CRUXIBLE_MODE``); when an argument is ``None``
+    the env default is used. Overrides are applied to ``os.environ`` before any
+    config is resolved so the registry, credential store, permission ceiling,
+    and startup validation all observe the same effective settings, and so an
+    in-place re-exec (``cruxible server restart``) reproduces them via
+    ``sys.argv``.
     """
     if host is not None:
         os.environ["CRUXIBLE_HOST"] = host
@@ -203,6 +208,13 @@ def run_server(
         os.environ["CRUXIBLE_SERVER_STATE_DIR"] = state_dir
     if socket_path is not None:
         os.environ["CRUXIBLE_SERVER_SOCKET"] = socket_path
+    if capability_ceiling is not None:
+        os.environ["CRUXIBLE_MODE"] = capability_ceiling
+
+    # Resolve and freeze the process ceiling before registry/config access or
+    # uvicorn startup. Unknown names and attempts to reinitialize this process
+    # at a different tier therefore fail closed before the daemon serves.
+    init_permissions()
 
     credential_store = get_runtime_credential_store()
     registry = get_registry()
@@ -232,7 +244,6 @@ def run_server(
     import uvicorn
 
     configure_request_logging()
-    init_permissions()
     app = create_app()
 
     resolved_socket = os.environ.get("CRUXIBLE_SERVER_SOCKET")

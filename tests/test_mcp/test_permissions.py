@@ -509,6 +509,13 @@ class TestContextVarIsolation:
             assert get_current_mode() == PermissionMode.READ_ONLY
         assert get_current_mode() == PermissionMode.ADMIN
 
+    def test_contextvar_cannot_raise_process_ceiling(self, monkeypatch):
+        """A request credential narrows CRUXIBLE_MODE but cannot raise it."""
+        monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+        reset_permissions()
+        with request_permission_scope(PermissionMode.ADMIN):
+            assert get_current_mode() == PermissionMode.GOVERNED_WRITE
+
     def test_check_permission_uses_contextvar(self):
         """Within READ_ONLY scope, read tool passes, write tool raises."""
         init_permissions(PermissionMode.ADMIN)

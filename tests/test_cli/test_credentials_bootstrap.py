@@ -412,4 +412,10 @@ def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
     assert f"Wrote bootstrap secret file: {secret_file} (0600)" in result.output
     assert "cruxible init --kit <ref> --bootstrap" in result.output
     assert "credential claim-bootstrap --secret-file" in result.output
-    assert captured == {"host": None, "port": None, "state_dir": None, "socket_path": None}
+    assert captured == {
+        "host": None,
+        "port": None,
+        "state_dir": None,
+        "socket_path": None,
+        "capability_ceiling": None,
+    }
