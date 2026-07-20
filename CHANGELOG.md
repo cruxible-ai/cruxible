@@ -7,13 +7,42 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## 0.2.7 — 2026-07-20
+
 ### Added
 
+- **Scoped daemon capability ceiling**: `cruxible server start
+  --capability-ceiling <tier>` (or `CRUXIBLE_MODE`) fixes an immutable
+  per-process permission ceiling using the existing tier hierarchy.
+  Anonymous auth-off requests receive exactly the ceiling; bearer and
+  relayed tiers are clamped to `min(token tier, ceiling)`, so a
+  discovered admin token cannot exceed a lower ceiling. Config reload
+  and in-place restart cannot alter it; refusals are typed (operation,
+  required tier, ceiling) and identical across HTTP, CLI-against-daemon,
+  and MCP; `/health` discloses the ceiling. Defaults unchanged when
+  unset. Built for single-container agent deployments where the daemon
+  boundary, not client curation, must carry enforcement.
 - **Generic gate candidates**: gates of kind `generic` accept arbitrary
   caller-supplied candidate values from newline-delimited stdin or repeatable
   public `--candidate` arguments, enabling state-backed pre-action checks
   outside git. Empty input and terminal stdin fail closed; the hidden
   cross-kind `--value` diagnostic override is unchanged.
+
+### Fixed
+
+- **MCP union output schemas are object-rooted**: the four union-returning
+  tools (`query`, `query_inline`, `list_queries`, `inspect_entity`) now
+  publish `type: object` at the schema root alongside `anyOf`. Non-conformant
+  roots made some MCP clients drop every tool on the server.
+- **MCP tools/list no longer blocks on daemon reachability**: the advertised
+  catalog is frozen from static metadata at server creation and server-mode
+  tool calls run on worker threads, so listing answers immediately even when
+  the daemon is down; individual calls fail per-tool with a clean error.
+- **Dry-run validation parity**: invalid direct writes now raise the same
+  `DataValidationError` in dry-run as in apply (previously dry-run buried
+  validation errors in a success envelope with exit 0), across entity,
+  relationship, and batch surfaces. Dry-run still mutates nothing and mints
+  no receipt.
 
 ## 0.2.6 — 2026-07-18
 

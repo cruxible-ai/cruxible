@@ -1,6 +1,6 @@
 schema_version: cruxible.kit.v1
 kit_id: project-domain
-version: 0.2.6
+version: 0.2.7
 role: overlay
 target_state: agent-operation
 entry_config: config.yaml
