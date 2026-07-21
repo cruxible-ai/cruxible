@@ -417,7 +417,7 @@ def test_standalone_kit_authoring_walkthrough_via_cli(
         ),
         "run build_local_state",
     )
-    run_payload = json.loads(run.output)
+    run_payload = json.loads(run.stdout)
     assert run_payload["canonical"] is True
     assert run_payload["apply_digest"], "run produced no apply_digest"
     assert preview_file.exists(), "--save-preview did not write the preview file"
@@ -435,7 +435,7 @@ def test_standalone_kit_authoring_walkthrough_via_cli(
         ),
         "apply preview",
     )
-    apply_payload = json.loads(applied.output)
+    apply_payload = json.loads(applied.stdout)
     assert apply_payload["committed_snapshot_id"], "apply committed no snapshot"
 
     # ── Step 6: `query run asset_owner --param asset_id=ASSET-1` → rows + receipt ──
@@ -451,7 +451,7 @@ def test_standalone_kit_authoring_walkthrough_via_cli(
         ),
         "query asset_owner",
     )
-    query_payload = json.loads(queried.output)
+    query_payload = json.loads(queried.stdout)
     assert query_payload["receipt_id"], "query returned no receipt to inspect"
     items = query_payload["items"]
     assert items, "asset_owner query for ASSET-1 returned no owner"
