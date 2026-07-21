@@ -47,6 +47,7 @@ from cruxible_core.service.feedback import (
     service_outcome,
     service_resolve_feedback_query_target,
 )
+from cruxible_core.service.gates import service_evaluate_gate
 from cruxible_core.service.groups import (
     derive_review_priority,
     service_get_group,
@@ -147,6 +148,8 @@ from cruxible_core.service.types import (
     FeedbackGroupSummary,
     FeedbackItemInput,
     FeedbackServiceResult,
+    GateCandidateOutcome,
+    GateEvaluationResult,
     GetGroupResult,
     GroupMemberInput,
     GroupMemberReviewResult,
@@ -241,6 +244,8 @@ __all__ = [
     "FeedbackGroupSummary",
     "FeedbackItemInput",
     "FeedbackServiceResult",
+    "GateCandidateOutcome",
+    "GateEvaluationResult",
     "CloneSnapshotResult",
     "ConfigStatusResult",
     "CanonicalViewResult",
@@ -372,6 +377,8 @@ __all__ = [
     "service_propose_group_inputs",
     "service_resolve_group",
     "service_update_trust_status",
+    # Gates
+    "service_evaluate_gate",
     # Mutations
     "service_batch_direct_write",
     "service_add_entity_inputs",

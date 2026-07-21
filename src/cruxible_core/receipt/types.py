@@ -20,6 +20,7 @@ from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 OperationType = Literal[
     "query",
+    "gate_evaluation",
     "workflow",
     "add_entity",
     "add_relationship",
@@ -39,6 +40,7 @@ WorkflowReceiptMode = WorkflowResultMode
 
 NodeType = Literal[
     "query",
+    "gate_evaluation",
     "workflow",
     "entity_lookup",
     "edge_traversal",

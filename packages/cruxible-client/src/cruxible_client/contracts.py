@@ -38,6 +38,7 @@ FindingCategory = Literal[
     "quality_check_failed",
 ]
 ReceiptExplanationFormat = Literal["json", "markdown", "mermaid"]
+GateEvaluationVerdict = Literal["satisfied", "unsatisfied", "error"]
 
 # ── Constrained input types ───────────────────────────────────────────
 
@@ -1045,6 +1046,24 @@ class ListResult(ListEnvelopeFields):
     # bound to this instance/config/read_revision/filter set. Replay after a
     # mutation raises a typed 409 StaleContinuationError — restart the read.
     continuation_token: str | None = None
+
+
+class GateCandidateOutcome(BaseModel):
+    candidate: str
+    satisfied: bool
+    satisfying_entity_ids: list[str] = Field(default_factory=list)
+
+
+class GateEvaluationResult(BaseModel):
+    gate_name: str
+    kind: str | None = None
+    candidates: list[str] = Field(default_factory=list)
+    candidate_outcomes: list[GateCandidateOutcome] = Field(default_factory=list)
+    verdict: GateEvaluationVerdict
+    reason: str | None = None
+    instance_id: str
+    read_revision: int
+    receipt_id: str
 
 
 class TraceListResult(ListEnvelopeFields):

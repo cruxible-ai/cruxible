@@ -899,6 +899,12 @@ Named repo gate declarations evaluated by [`cruxible gate check`](cli-reference.
 
 A gate is **kind-based**: `kind` names the source adapter that supplies candidate values. `generic` accepts caller-supplied values from newline-delimited stdin or repeatable `--candidate` arguments. `git-pre-push` reads git's pre-push hook protocol and yields every merged-in parent of each pushed merge commit. A candidate is **satisfied** when at least one entity of `entity_type` carries the candidate in `match_property` AND matches the declared `condition`. Core knows no ontology — the declaration supplies it, so kit evolution updates the declaration while the verb and invocation never hardcode domain knowledge.
 
+Each check evaluates all derived candidates against one state revision and appends one
+`gate_evaluation` receipt. Its payload pins `instance_id`, `read_revision`, the full
+candidate list, each candidate's satisfying entity IDs (or an empty list), the aggregate
+`satisfied`/`unsatisfied` verdict, and an error reason for receipted refusals. Candidate
+sourcing remains client-side; daemon and local evaluation share the same service operation.
+
 ```yaml
 gates:
   merge-review:

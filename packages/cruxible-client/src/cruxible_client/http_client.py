@@ -785,6 +785,21 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ListResult)
 
+    def gate_check(
+        self,
+        instance_id: str,
+        gate_name: str,
+        candidates: builtins.list[str],
+        *,
+        error_reason: str | None = None,
+    ) -> contracts.GateEvaluationResult:
+        """Evaluate already-derived gate candidates and return the durable verdict."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/gates/{gate_name}/check",
+            json={"candidates": candidates, "error_reason": error_reason},
+        )
+        return self._parse_model(response, contracts.GateEvaluationResult)
+
     def evaluate(
         self,
         instance_id: str,

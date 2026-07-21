@@ -77,6 +77,13 @@
         "info"
       ]
     },
+    "GateEvaluationVerdict": {
+      "values": [
+        "satisfied",
+        "unsatisfied",
+        "error"
+      ]
+    },
     "GovernedActorType": {
       "values": [
         "human_user",
@@ -7985,6 +7992,307 @@
       "required_fields": [
         "applied",
         "feedback_id"
+      ]
+    },
+    "GateCandidateOutcome": {
+      "fields": {
+        "candidate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "candidate",
+          "required": true,
+          "schema": {
+            "title": "Candidate",
+            "type": "string"
+          }
+        },
+        "satisfied": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "satisfied",
+          "required": true,
+          "schema": {
+            "title": "Satisfied",
+            "type": "boolean"
+          }
+        },
+        "satisfying_entity_ids": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "satisfying_entity_ids",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Satisfying Entity Ids",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "candidate": {
+            "title": "Candidate",
+            "type": "string"
+          },
+          "satisfied": {
+            "title": "Satisfied",
+            "type": "boolean"
+          },
+          "satisfying_entity_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Satisfying Entity Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate",
+          "satisfied"
+        ],
+        "title": "GateCandidateOutcome",
+        "type": "object"
+      },
+      "required_fields": [
+        "candidate",
+        "satisfied"
+      ]
+    },
+    "GateEvaluationResult": {
+      "fields": {
+        "candidate_outcomes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "candidate_outcomes",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/GateCandidateOutcome"
+            },
+            "title": "Candidate Outcomes",
+            "type": "array"
+          }
+        },
+        "candidates": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "candidates",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          }
+        },
+        "gate_name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "gate_name",
+          "required": true,
+          "schema": {
+            "title": "Gate Name",
+            "type": "string"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          }
+        },
+        "read_revision": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": true,
+          "schema": {
+            "title": "Read Revision",
+            "type": "integer"
+          }
+        },
+        "reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          }
+        },
+        "receipt_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": true,
+          "schema": {
+            "title": "Receipt Id",
+            "type": "string"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "enum": [
+              "satisfied",
+              "unsatisfied",
+              "error"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "GateCandidateOutcome": {
+            "properties": {
+              "candidate": {
+                "title": "Candidate",
+                "type": "string"
+              },
+              "satisfied": {
+                "title": "Satisfied",
+                "type": "boolean"
+              },
+              "satisfying_entity_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Satisfying Entity Ids",
+                "type": "array"
+              }
+            },
+            "required": [
+              "candidate",
+              "satisfied"
+            ],
+            "title": "GateCandidateOutcome",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "candidate_outcomes": {
+            "items": {
+              "$ref": "#/$defs/GateCandidateOutcome"
+            },
+            "title": "Candidate Outcomes",
+            "type": "array"
+          },
+          "candidates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "gate_name": {
+            "title": "Gate Name",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          },
+          "read_revision": {
+            "title": "Read Revision",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "receipt_id": {
+            "title": "Receipt Id",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "satisfied",
+              "unsatisfied",
+              "error"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "gate_name",
+          "verdict",
+          "instance_id",
+          "read_revision",
+          "receipt_id"
+        ],
+        "title": "GateEvaluationResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "gate_name",
+        "instance_id",
+        "read_revision",
+        "receipt_id",
+        "verdict"
       ]
     },
     "GetEntityResult": {

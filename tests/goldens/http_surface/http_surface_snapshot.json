@@ -75,6 +75,9 @@
   "/api/v1/{instance_id}/feedback/profiles/{relationship_type}": {
     "GET": "FeedbackProfileResult"
   },
+  "/api/v1/{instance_id}/gates/{gate_name}/check": {
+    "POST": "GateEvaluationResult"
+  },
   "/api/v1/{instance_id}/group-status/{signature}": {
     "GET": "GroupBucketStatusToolResult"
   },

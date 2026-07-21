@@ -88,6 +88,7 @@ from cruxible_core.service import (
     service_dereference_source_evidence,
     service_describe_query,
     service_evaluate,
+    service_evaluate_gate,
     service_explain_receipt,
     service_feedback_batch_inputs,
     service_feedback_from_query_result,
@@ -2235,6 +2236,43 @@ def schema(instance_id: str) -> dict[str, Any]:
     instance = get_manager().get(instance_id)
     config = service_schema(instance)
     return schema_wire_payload(config)
+
+
+def gate_check(
+    instance_id: str,
+    gate_name: str,
+    candidates: list[str],
+    *,
+    error_reason: str | None = None,
+) -> contracts.GateEvaluationResult:
+    """Evaluate derived gate candidates and durably receipt the invocation."""
+    check_permission("cruxible_gate_check", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_evaluate_gate(
+        instance,
+        instance_id=instance_id,
+        gate_name=gate_name,
+        candidates=candidates,
+        error_reason=error_reason,
+    )
+    return contracts.GateEvaluationResult(
+        gate_name=result.gate_name,
+        kind=result.kind,
+        candidates=result.candidates,
+        candidate_outcomes=[
+            contracts.GateCandidateOutcome(
+                candidate=outcome.candidate,
+                satisfied=outcome.satisfied,
+                satisfying_entity_ids=outcome.satisfying_entity_ids,
+            )
+            for outcome in result.candidate_outcomes
+        ],
+        verdict=result.verdict,
+        reason=result.reason,
+        instance_id=result.instance_id,
+        read_revision=result.read_revision,
+        receipt_id=result.receipt_id,
+    )
 
 
 def list_queries(

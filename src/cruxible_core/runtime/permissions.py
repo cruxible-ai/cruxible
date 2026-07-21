@@ -165,6 +165,9 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
 # Internal runtime operations that are not registered MCP tools but still need
 # permission gates owned by this module.
 RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
+    # Gate checks are read-only state evaluations. They append an audit receipt
+    # but never mutate graph state or advance read_revision.
+    "cruxible_gate_check": PermissionMode.READ_ONLY,
     # Read-only state-health surface: exposed over HTTP (GET /state/health) and
     # the CLI (`cruxible state health`), but deliberately NOT an MCP tool.
     "cruxible_state_health": PermissionMode.READ_ONLY,

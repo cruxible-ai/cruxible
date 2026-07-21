@@ -112,6 +112,15 @@ def _chdir_run(
         os.chdir(original)
 
 
+def _gate_receipts(instance: CruxibleInstance):
+    store = instance.get_receipt_store()
+    try:
+        summaries = store.list_receipts(operation_type="gate_evaluation")
+        return [store.get_receipt(item["receipt_id"]) for item in summaries]
+    finally:
+        store.close()
+
+
 class TestGateList:
     def test_list_shows_declared_gate(
         self, runner: CliRunner, gated_instance: CruxibleInstance
@@ -157,6 +166,12 @@ class TestGateCheckValueOverride:
         )
         assert result.exit_code == 0
         assert f"merge-review {APPROVED_SHA} satisfied" in result.output
+
+        receipts = _gate_receipts(gated_instance)
+        assert len(receipts) == 1
+        assert receipts[0] is not None
+        assert receipts[0].parameters["instance_id"] == str(gated_instance.root.resolve())
+        assert receipts[0].parameters["verdict"] == "satisfied"
 
     def test_pinned_but_unapproved_value_unsatisfied(
         self, runner: CliRunner, gated_instance: CruxibleInstance
@@ -285,6 +300,11 @@ class TestGateCheckGeneric:
         )
         assert result.exit_code == 2
         assert "generic gate received no candidate values" in result.stderr
+        receipts = _gate_receipts(gated_instance)
+        assert len(receipts) == 1
+        assert receipts[0] is not None
+        assert receipts[0].parameters["verdict"] == "error"
+        assert "generic gate received no candidate values" in receipts[0].parameters["reason"]
 
     def test_tty_stdin_fails_closed(
         self, runner: CliRunner, gated_instance: CruxibleInstance
@@ -446,6 +466,11 @@ class TestGateCheckFailClosed:
         )
         assert result.exit_code == 2
         assert "malformed pre-push stdin" in result.stderr
+        receipts = _gate_receipts(gated_instance)
+        assert len(receipts) == 1
+        assert receipts[0] is not None
+        assert receipts[0].parameters["verdict"] == "error"
+        assert "malformed pre-push stdin" in receipts[0].parameters["reason"]
 
     def test_git_failure(self, runner: CliRunner, gated_instance: CruxibleInstance) -> None:
         # Instance root is not a git repository, so rev-list fails.
@@ -735,19 +760,18 @@ class TestGateCheckEvaluationHardening:
     ) -> None:
         # First candidate evaluates satisfied; the second query erroring must
         # collapse the whole check to exit 2, never a partial verdict exit.
-        from cruxible_client.errors import QueryExecutionError
-        from cruxible_core.cli.commands import gates as gates_module
+        from cruxible_core.service import gates as gates_service
 
-        real_service_list = gates_module.service_list
+        real_satisfying_entity_ids = gates_service._satisfying_entity_ids
         calls = {"count": 0}
 
-        def flaky_service_list(*args: object, **kwargs: object) -> object:
+        def flaky_satisfying_entity_ids(*args: object, **kwargs: object) -> list[str]:
             calls["count"] += 1
             if calls["count"] >= 2:
-                raise QueryExecutionError("state backend exploded")
-            return real_service_list(*args, **kwargs)
+                raise RuntimeError("state backend exploded")
+            return real_satisfying_entity_ids(*args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(gates_module, "service_list", flaky_service_list)
+        monkeypatch.setattr(gates_service, "_satisfying_entity_ids", flaky_satisfying_entity_ids)
         result = _chdir_run(
             runner,
             gated_instance.root,

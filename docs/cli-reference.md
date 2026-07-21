@@ -1342,7 +1342,8 @@ Gates are named, kind-based config declarations (the `gates:` config element). A
 - `cruxible gate list` - Show the active instance's declared gates.
 
 **Output And Side Effects:**
-- Read-only: gates read declarations from the instance config and query entities; nothing is written.
+- `gate list` is read-only. `gate check` never mutates graph state, but it appends one
+  durable gate-evaluation receipt (including refusals) to the instance audit store.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
@@ -1354,7 +1355,7 @@ Gates are named, kind-based config declarations (the `gates:` config element). A
 
 **Purpose:** Evaluate gate NAME: is every candidate value pinned by satisfying state?
 
-Resolves the named declaration from the active instance config, invokes its declared `kind`'s source adapter for candidate values, queries state for each candidate (entities of the declared type whose match property equals the candidate AND matching the declared condition), and prints one verdict line per candidate on stdout (`<gate> <value> satisfied|unsatisfied ...`). Errors go to stderr. The kind determines the supported input: a future source (CI status, webhook) remains a new gate kind against the same evaluation.
+Resolves the named declaration from the active instance config and invokes its declared `kind`'s source adapter for candidate values. The derived values are evaluated server-side as one operation against one state revision (entities of the declared type whose match property equals the candidate AND matching the declared condition), then one composite receipt records the gate, full candidate list, satisfying entity IDs, verdict, instance ID, and observed read revision. Refusals that occur while the daemon is reachable are receipted with `verdict=error` and a reason. The command prints one verdict line per candidate on stdout (`<gate> <value> satisfied|unsatisfied ...`); errors go to stderr. The kind determines the supported input: a future source (CI status, webhook) remains a new gate kind against the same evaluation.
 
 The `git-pre-push` kind reads git's pre-push stdin protocol (lines of `<local_ref> <local_sha> <remote_ref> <remote_sha>`); run it from the repository root, as git hooks do. Pushed refs are filtered to the adapter config's `branch_pattern`; every merged-in parent (`^2`..`^N`) of each merge commit in the pushed range is a candidate, so an octopus merge passes only when all merged tips are pinned. SHA tokens must be full 40-hex object names (or the all-zeros sentinel); anything else refuses with exit 2. A new remote branch (all-zeros remote SHA) evaluates merges not reachable from any remote-tracking ref; a ref deletion (all-zeros local SHA) is skipped.
 
@@ -1388,7 +1389,8 @@ exec cruxible gate check merge-review
 The `git-pre-push` kind evaluates merge commits only: squash merges mint new SHAs no review pins, and fast-forward pushes record no merge commit.
 
 **Output And Side Effects:**
-- Verdict lines on stdout; errors and notices on stderr. Read-only.
+- Verdict lines on stdout; errors and notices on stderr. Graph state is read-only;
+  one `gate_evaluation` receipt is appended to the audit store per invocation.
 
 **Common Errors:**
 - Unknown gate name, or no `gates:` element declared (exit 2).

@@ -23,12 +23,14 @@ conditions.
 from __future__ import annotations
 
 import sys
-from typing import Any
+from collections.abc import Sequence
+from typing import Protocol, cast
 
 import click
 import httpx
 from pydantic import ValidationError
 
+from cruxible_client.contracts import GateEvaluationResult as ClientGateEvaluationResult
 from cruxible_client.errors import CoreError as ClientCoreError
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.cli.commands._common import (
@@ -44,11 +46,19 @@ from cruxible_core.cli.commands._gate_adapters import (
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.config.schema import CoreConfig, GateSchema
-from cruxible_core.service import service_list, service_schema
+from cruxible_core.errors import CoreError as CoreServiceError
+from cruxible_core.service import (
+    GateEvaluationResult as ServiceGateEvaluationResult,
+)
+from cruxible_core.service import service_evaluate_gate, service_schema
 
 EXIT_SATISFIED = 0
 EXIT_UNSATISFIED = 1
 EXIT_CANNOT_EVALUATE = 2
+
+
+class _CandidateOutcome(Protocol):
+    satisfied: bool
 
 
 def _load_gates() -> dict[str, GateSchema]:
@@ -92,28 +102,43 @@ def _condition_label(gate: GateSchema) -> str:
     return " AND ".join(f"{prop}={value}" for prop, value in gate.condition.items())
 
 
-def _candidate_satisfied(gate: GateSchema, value: str) -> bool:
-    """Query state: does any live entity match the candidate AND the condition?"""
-    where: dict[str, dict[str, Any]] = {gate.match_property: {"eq": value}}
-    for prop, condition_value in gate.condition.items():
-        where[prop] = {"eq": condition_value}
-    result = _dispatch_cli_instance(
-        lambda client, instance_id: client.list(
+def _evaluate_gate(
+    name: str,
+    candidate_values: list[str],
+    *,
+    error_reason: str | None = None,
+) -> ClientGateEvaluationResult | ServiceGateEvaluationResult:
+    """Dispatch one composite evaluation to the daemon or symmetric local service."""
+    return _dispatch_cli_instance(
+        lambda client, instance_id: client.gate_check(
             instance_id,
-            resource_type="entities",
-            entity_type=gate.entity_type,
-            where=where,
-            limit=1,
+            name,
+            candidate_values,
+            error_reason=error_reason,
         ),
-        lambda instance: service_list(
+        lambda instance: service_evaluate_gate(
             instance,
-            "entities",
-            entity_type=gate.entity_type,
-            where=where,
-            limit=1,
+            instance_id=str(instance.get_root_path().resolve()),
+            gate_name=name,
+            candidates=candidate_values,
+            error_reason=error_reason,
         ),
     )
-    return result.total >= 1
+
+
+def _record_gate_refusal(name: str, candidates: list[Candidate], reason: str) -> None:
+    """Best-effort durable record of a caller-side exit-2 refusal."""
+    try:
+        _evaluate_gate(
+            name,
+            [candidate.value for candidate in candidates],
+            error_reason=reason,
+        )
+    except Exception:
+        # Preserve the established exit-2 message when the receipt daemon is
+        # unavailable or refuses the caller. There is nowhere else authoritative
+        # to persist the refusal in those cases.
+        return
 
 
 def _read_stdin() -> str:
@@ -207,6 +232,8 @@ def gate_check(
     squash merges mint new SHAs no review pins, and fast-forward pushes record
     no merge commit.
     """
+    candidates: list[Candidate] = []
+    receipt_minted = False
     try:
         gate = _resolve_gate(name)
         if values:
@@ -226,28 +253,50 @@ def gate_check(
                 explicit_values=candidate_values,
             )
             candidates = adapter.candidates(gate, context)
-            if not candidates:
-                click.echo(
-                    f"gate {name}: no candidates from {gate.kind} input; nothing to evaluate",
-                    err=True,
-                )
-                sys.exit(EXIT_SATISFIED)
 
+        evaluation = _evaluate_gate(name, [candidate.value for candidate in candidates])
+        receipt_minted = True
+        if not candidates:
+            if evaluation.verdict == "error":
+                raise GateCheckError(evaluation.reason or "gate evaluation failed")
+            click.echo(
+                f"gate {name}: no candidates from {gate.kind} input; nothing to evaluate",
+                err=True,
+            )
+            sys.exit(EXIT_SATISFIED)
+
+        outcomes = cast(Sequence[_CandidateOutcome], evaluation.candidate_outcomes)
+        if evaluation.verdict != "error" and len(outcomes) != len(candidates):
+            raise GateCheckError("gate evaluation returned the wrong number of candidate outcomes")
         unsatisfied = 0
-        for candidate in candidates:
-            satisfied = _candidate_satisfied(gate, candidate.value)
-            verdict = "satisfied" if satisfied else "unsatisfied"
+        for candidate, outcome in zip(candidates, outcomes):
+            verdict = "satisfied" if outcome.satisfied else "unsatisfied"
             suffix = f" ({candidate.context})" if candidate.context else ""
             click.echo(f"{name} {candidate.value} {verdict}{suffix}")
-            if not satisfied:
+            if not outcome.satisfied:
                 unsatisfied += 1
+        if evaluation.verdict == "error":
+            raise GateCheckError(evaluation.reason or "gate evaluation failed")
     except GateCheckError as exc:
+        if not receipt_minted:
+            _record_gate_refusal(name, candidates, str(exc))
         click.secho(f"gate check: cannot evaluate: {exc}", fg="red", err=True)
         sys.exit(EXIT_CANNOT_EVALUATE)
     except ServerUnreachableError as exc:
         click.secho(f"gate check: cannot evaluate: {exc}", fg="red", err=True)
         sys.exit(EXIT_CANNOT_EVALUATE)
+    except CoreServiceError as exc:
+        if not receipt_minted:
+            _record_gate_refusal(name, candidates, f"{exc.__class__.__name__}: {exc}")
+        click.secho(
+            f"gate check: cannot evaluate: {exc.__class__.__name__}: {exc}",
+            fg="red",
+            err=True,
+        )
+        sys.exit(EXIT_CANNOT_EVALUATE)
     except ClientCoreError as exc:
+        if not receipt_minted:
+            _record_gate_refusal(name, candidates, f"{exc.__class__.__name__}: {exc}")
         click.secho(
             f"gate check: cannot evaluate: {exc.__class__.__name__}: {exc}",
             fg="red",

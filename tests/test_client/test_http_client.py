@@ -234,6 +234,46 @@ def test_view_rejects_reserved_param_keys():
         client.view("inst_123", "review_queue", params={"limit": "10"})
 
 
+def test_gate_check_uses_expected_route_and_payload():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "gate_name": "merge-review",
+                "kind": "git-pre-push",
+                "candidates": ["abc"],
+                "candidate_outcomes": [],
+                "verdict": "error",
+                "reason": "malformed pre-push stdin",
+                "instance_id": "inst_123",
+                "read_revision": 7,
+                "receipt_id": "RCP-gate",
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.gate_check(
+        "inst_123",
+        "merge-review",
+        ["abc"],
+        error_reason="malformed pre-push stdin",
+    )
+
+    assert result.verdict == "error"
+    assert result.receipt_id == "RCP-gate"
+    assert captured == {
+        "path": "/api/v1/inst_123/gates/merge-review/check",
+        "payload": {
+            "candidates": ["abc"],
+            "error_reason": "malformed pre-push stdin",
+        },
+    }
+
+
 def test_query_sends_offset_in_payload():
     captured: dict[str, Any] = {}
 

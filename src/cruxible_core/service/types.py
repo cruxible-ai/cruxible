@@ -85,6 +85,29 @@ class DecisionEventListResult:
 
 
 NeighborDirection = Literal["incoming", "outgoing"]
+GateEvaluationVerdict = Literal["satisfied", "unsatisfied", "error"]
+
+
+@dataclass(frozen=True)
+class GateCandidateOutcome:
+    candidate: str
+    satisfied: bool
+    satisfying_entity_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class GateEvaluationResult:
+    gate_name: str
+    kind: str | None
+    candidates: list[str]
+    candidate_outcomes: list[GateCandidateOutcome]
+    verdict: GateEvaluationVerdict
+    reason: str | None
+    instance_id: str
+    read_revision: int
+    receipt_id: str
+    receipt: Receipt
+
 
 # ---------------------------------------------------------------------------
 # Result types

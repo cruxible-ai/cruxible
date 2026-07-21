@@ -103,6 +103,11 @@ class InlineQueryRequest(BaseModel):
     layout: contracts.QueryLayout = "rows"
 
 
+class GateCheckRequest(BaseModel):
+    candidates: list[str] = Field(default_factory=list)
+    error_reason: str | None = None
+
+
 class AddEntitiesRequest(BaseModel):
     entities: list[contracts.EntityInput]
     dry_run: bool = False
