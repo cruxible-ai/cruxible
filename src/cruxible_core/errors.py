@@ -37,21 +37,21 @@ errors (runtime data), making it easy to catch by category.
 
 from __future__ import annotations
 
-from cruxible_client.errors import CoreError as _ClientCoreError
-from cruxible_client.errors import (
-    InvalidContinuationError as _ClientInvalidContinuationError,
+from cruxible_client._error_base import (
+    CoreError,
 )
-from cruxible_client.errors import (
-    StaleContinuationError as _ClientStaleContinuationError,
+from cruxible_client._error_base import (
+    InvalidContinuationError as _InvalidContinuationError,
+)
+from cruxible_client._error_base import (
+    StaleContinuationError as _StaleContinuationError,
 )
 
-
-class CoreError(_ClientCoreError):
-    """Base exception for all Cruxible Core errors.
-
-    Inherits the client base so one `except cruxible_client.errors.CoreError`
-    catches local and remote failures alike — no parallel hierarchies.
-    """
+# The base is an identity alias, not a parallel subclass. Every reconstructed
+# client exception and every locally raised core exception therefore shares the
+# exact same catch surface in-process.
+InvalidContinuationError = _InvalidContinuationError
+StaleContinuationError = _StaleContinuationError
 
 
 # ---------------------------------------------------------------------------
@@ -341,24 +341,6 @@ class RuntimeCredentialNotFoundError(CoreError):
     def __init__(self, credential_id: str):
         self.credential_id = credential_id
         super().__init__(f"Runtime credential '{credential_id}' not found")
-
-
-class InvalidContinuationError(CoreError, _ClientInvalidContinuationError):
-    """Continuation token is malformed or bound to a different read (422).
-
-    Dual-inherits the client class so `except cruxible_client.errors.
-    InvalidContinuationError` catches local raises and HTTP reconstructions
-    alike; the app's CoreError handler serializes it across the wire.
-    """
-
-
-class StaleContinuationError(CoreError, _ClientStaleContinuationError):
-    """Continuation token minted at a different read_revision or config (409).
-
-    State moved between pages; the pagination window is no longer coherent
-    and the caller must restart the read. Same dual-inheritance rationale as
-    :class:`InvalidContinuationError`.
-    """
 
 
 class AuthenticationError(CoreError):

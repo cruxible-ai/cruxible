@@ -166,6 +166,19 @@ def test_request_validation_envelope_decodes_with_field_errors():
     assert "query.offset" in str(restored)
 
 
+def test_reconstructed_client_error_shares_core_error_identity() -> None:
+    restored = client_errors.response_to_error(
+        404,
+        client_errors.ErrorResponse(
+            error_type="QueryNotFoundError",
+            message="ignored",
+            context={"query_name": "missing_query"},
+        ),
+    )
+
+    assert isinstance(restored, CoreError)
+
+
 def test_capability_ceiling_denial_round_trip_preserves_loud_message() -> None:
     error = PermissionDeniedError(
         "cruxible_apply_workflow",

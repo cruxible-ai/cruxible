@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import click
 import yaml
@@ -79,11 +79,8 @@ from cruxible_core.cli.formatting import (
     query_definitions_table,
     relationship_table,
     schema_table,
-    stats_table,
 )
-from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.cli.working_set import capture_json_read
 from cruxible_core.config.schema import schema_wire_payload
 from cruxible_core.errors import CoreError
 from cruxible_core.errors import QueryNotFoundError as CoreQueryNotFoundError
@@ -105,31 +102,30 @@ from cruxible_core.query.profiles import (
     profile_query_items,
 )
 from cruxible_core.query.types import ProjectedQueryRow, dump_query_row
-from cruxible_core.service import (
-    InspectEntityResult,
-    InspectNeighborhoodResult,
-    query_definition_full_payload,
-    query_definition_summary_payload,
-    service_analyze_feedback,
-    service_analyze_outcomes,
-    service_describe_query,
-    service_evaluate,
-    service_explain_receipt,
-    service_get_entity,
-    service_get_entity_change_history,
-    service_get_relationship,
-    service_get_relationship_lineage,
-    service_get_trace,
-    service_inspect_entity,
-    service_inspect_view,
-    service_lint,
-    service_list_queries,
-    service_query_inline_surface,
-    service_query_surface,
-    service_sample,
-    service_schema,
-    service_stats,
-)
+
+if TYPE_CHECKING:
+    from cruxible_core.cli.instance import CruxibleInstance
+    from cruxible_core.service import InspectEntityResult, InspectNeighborhoodResult
+
+
+def _call_service(name: str, *args: Any, **kwargs: Any) -> Any:
+    """Resolve local-only service code only when the local branch executes."""
+    from cruxible_core import service
+
+    return getattr(service, name)(*args, **kwargs)
+
+
+def _load_local_instance() -> CruxibleInstance:
+    from cruxible_core.cli.instance import CruxibleInstance
+
+    return CruxibleInstance.load()
+
+
+def _capture_json_read(*args: Any, **kwargs: Any) -> None:
+    from cruxible_core.cli.working_set import capture_json_read
+
+    capture_json_read(*args, **kwargs)
+
 
 _EVALUATE_SEVERITY_CHOICES = ("error", "warning", "info")
 _EVALUATE_CATEGORY_CHOICES = (
@@ -225,7 +221,7 @@ def _load_inspect_view(
 ) -> dict[str, Any]:
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.inspect_view(instance_id, view, limit=limit),
-        lambda instance: service_inspect_view(instance, view, limit=limit),
+        lambda instance: _call_service("service_inspect_view", instance, view, limit=limit),
     )
     return result.payload
 
@@ -418,7 +414,7 @@ def _emit_query_command_result(
         }
         _emit_json(payload)
         if capture_source is not None:
-            capture_json_read(
+            _capture_json_read(
                 payload,
                 source_cmd=capture_source,
                 ws_flag=ws_capture,
@@ -521,10 +517,11 @@ def _run_query_command(
         return
 
     _common._guard_local_read_fallback()
-    instance = CruxibleInstance.load()
+    instance = _load_local_instance()
     response_limit = 1 if count_only and limit is None else limit
     try:
-        local_result = service_query_surface(
+        local_result = _call_service(
+            "service_query_surface",
             instance,
             query_name,
             params,
@@ -600,7 +597,7 @@ def _run_query_command(
             "policy_summary": local_result.policy_summary if local_result.policy_summary else None,
         }
         _emit_json(payload)
-        capture_json_read(
+        _capture_json_read(
             payload,
             source_cmd="query run",
             ws_flag=ws_capture,
@@ -669,7 +666,7 @@ def _query_list_envelope(
         )
         if token is not None:
             offset = token.cursor.get("offset", 0)
-        queries = service_list_queries(instance, include_examples=detail == "full")
+        queries = _call_service("service_list_queries", instance, include_examples=detail == "full")
         page = queries[offset:]
         # Local mode returns the full remainder: nothing left to truncate.
         envelope = {
@@ -700,9 +697,15 @@ def _query_list_envelope(
         }
     else:
         queries, envelope = result
-        builder = (
-            query_definition_full_payload if detail == "full" else query_definition_summary_payload
+        builder_name = (
+            "query_definition_full_payload"
+            if detail == "full"
+            else "query_definition_summary_payload"
         )
+
+        def builder(query: Any) -> dict[str, Any]:
+            return _call_service(builder_name, query)
+
         payload = [builder(query) for query in queries]
     return payload, envelope
 
@@ -829,8 +832,9 @@ def query_inline_cmd(
         )
     else:
         _common._guard_local_read_fallback()
-        instance = CruxibleInstance.load()
-        result = service_query_inline_surface(
+        instance = _load_local_instance()
+        result = _call_service(
+            "service_query_inline_surface",
             instance,
             definition.model_dump(mode="python", exclude_none=True),
             params,
@@ -883,12 +887,12 @@ def query_describe_cmd(query_name: str, output_json: bool) -> None:
     """Describe one named query with required params and example IDs."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.describe_query(instance_id, query_name),
-        lambda instance: service_describe_query(instance, query_name),
+        lambda instance: _call_service("service_describe_query", instance, query_name),
     )
     if isinstance(result, contracts.NamedQueryInfoResult):
         payload = result.model_dump(mode="json")
     else:
-        payload = query_definition_full_payload(result)
+        payload = _call_service("query_definition_full_payload", result)
     if output_json:
         _emit_json(payload)
         return
@@ -922,7 +926,8 @@ def explain(receipt_id: str, fmt: str) -> None:
             receipt_id,
             format=cast(contracts.ReceiptExplanationFormat, fmt),
         ),
-        lambda instance: service_explain_receipt(
+        lambda instance: _call_service(
+            "service_explain_receipt",
             instance,
             receipt_id,
             format=cast(contracts.ReceiptExplanationFormat, fmt),
@@ -941,48 +946,12 @@ def schema(output_json: bool) -> None:
     """Display the config schema for this instance."""
     payload = _dispatch_cli_instance(
         lambda client, instance_id: client.schema(instance_id),
-        lambda instance: schema_wire_payload(service_schema(instance)),
+        lambda instance: schema_wire_payload(_call_service("service_schema", instance)),
     )
     if output_json:
         _emit_json(payload)
         return
     console.print(schema_table(payload))
-
-
-@click.command("stats")
-@json_option
-@handle_errors
-def stats_cmd(output_json: bool) -> None:
-    """Display entity and relationship counts for this instance."""
-    result = _dispatch_cli_instance(
-        lambda client, instance_id: client.stats(instance_id),
-        service_stats,
-    )
-    entity_count = result.entity_count
-    edge_count = result.edge_count
-    entity_counts = result.entity_counts
-    relationship_counts = result.relationship_counts
-    status_counts = result.status_counts
-    head_snapshot_id = result.head_snapshot_id
-    read_revision = result.read_revision
-    if output_json:
-        _emit_json(
-            {
-                "entity_count": entity_count,
-                "edge_count": edge_count,
-                "entity_counts": entity_counts,
-                "relationship_counts": relationship_counts,
-                "status_counts": status_counts,
-                "head_snapshot_id": head_snapshot_id,
-                "read_revision": read_revision,
-            }
-        )
-        return
-    click.echo(f"Graph: {entity_count} entities, {edge_count} edges")
-    click.echo(f"Read revision: {read_revision}")
-    if head_snapshot_id:
-        click.echo(f"Head snapshot: {head_snapshot_id}")
-    console.print(stats_table(entity_counts, relationship_counts))
 
 
 @click.command()
@@ -1011,7 +980,8 @@ def sample(
             limit=limit,
             **field_kwargs,
         ),
-        lambda instance: service_sample(
+        lambda instance: _call_service(
+            "service_sample",
             instance,
             entity_type,
             limit=limit,
@@ -1032,7 +1002,7 @@ def sample(
             **_list_envelope(result, item_count=len(entities), limit=limit, offset=0),
         }
         _emit_json(payload)
-        capture_json_read(payload, source_cmd="sample", ws_flag=ws_capture)
+        _capture_json_read(payload, source_cmd="sample", ws_flag=ws_capture)
         return
     console.print(entities_table(entities, entity_type))
     total = result.total
@@ -1074,7 +1044,8 @@ def evaluate(
             severity_filter=severities,
             category_filter=categories,
         ),
-        lambda instance: service_evaluate(
+        lambda instance: _call_service(
+            "service_evaluate",
             instance,
             max_findings=limit,
             severity_filter=severities,
@@ -1162,7 +1133,8 @@ def lint_cmd(
             min_support=min_support,
             exclude_orphan_types=list(exclude_orphan_types) or None,
         ),
-        lambda instance: service_lint(
+        lambda instance: _call_service(
+            "service_lint",
             instance,
             max_findings=max_findings,
             analysis_limit=analysis_limit,
@@ -1636,7 +1608,7 @@ def inspect_entity_cmd(
     def _remote_fetch(
         client: CruxibleClient,
         instance_id: str,
-    ) -> tuple[InspectEntityResult, list[dict[str, Any]], int | None]:
+    ) -> tuple[contracts.InspectEntityResult, list[dict[str, Any]], int | None]:
         result = client.inspect_entity(
             instance_id,
             entity_type,
@@ -1646,21 +1618,15 @@ def inspect_entity_cmd(
             limit=limit,
         )
         assert isinstance(result, contracts.InspectEntityResult)
-        inspect_result = InspectEntityResult(
-            found=result.found,
-            entity_type=result.entity_type,
-            entity_id=result.entity_id,
-            properties=result.properties,
-            metadata=result.metadata,
-            neighbors=[],
-            total_neighbors=result.total_neighbors,
-        )
-        return inspect_result, _inspect_neighbor_rows(list(result.neighbors)), result.read_revision
+        return result, _inspect_neighbor_rows(list(result.neighbors)), result.read_revision
 
     def _local_fetch(
         instance: CruxibleInstance,
     ) -> tuple[InspectEntityResult, list[dict[str, Any]], int | None]:
-        inspect_result = service_inspect_entity(
+        from cruxible_core.service import InspectEntityResult
+
+        inspect_result = _call_service(
+            "service_inspect_entity",
             instance,
             entity_type,
             entity_id,
@@ -1693,7 +1659,7 @@ def inspect_entity_cmd(
             cast(ReadProfile, profile),
         )
         _emit_json(payload)
-        capture_json_read(
+        _capture_json_read(
             payload,
             source_cmd="entity inspect",
             ws_flag=ws_capture,
@@ -1778,6 +1744,8 @@ def _inspect_neighborhood(
     def _local_fetch(
         instance: CruxibleInstance,
     ) -> tuple[InspectNeighborhoodResult, str | None, int | None]:
+        from cruxible_core.service import InspectNeighborhoodResult
+
         resume_nodes = 0
         resume_edges = 0
         token = _local_accept_continuation(
@@ -1789,7 +1757,8 @@ def _inspect_neighborhood(
         if token is not None:
             resume_nodes = token.cursor.get("nodes_seen", 0)
             resume_edges = token.cursor.get("edges_seen", 0)
-        result = service_inspect_entity(
+        result = _call_service(
+            "service_inspect_entity",
             instance,
             entity_type,
             entity_id,
@@ -1827,7 +1796,7 @@ def _inspect_neighborhood(
         payload["continuation_token"] = continuation_token
     if output_json:
         _emit_json(payload)
-        capture_json_read(
+        _capture_json_read(
             payload,
             source_cmd="entity inspect",
             ws_flag=ws_capture,
@@ -1894,7 +1863,8 @@ def inspect_entity_history_cmd(
             limit=limit,
             offset=offset,
         ),
-        lambda instance: service_get_entity_change_history(
+        lambda instance: _call_service(
+            "service_get_entity_change_history",
             instance,
             entity_type,
             entity_id=entity_id,
@@ -1923,7 +1893,9 @@ def inspect_trace_cmd(trace_id: str, output_json: bool) -> None:
     """Inspect a provider execution trace by ID."""
     payload = _dispatch_cli_instance(
         lambda client, instance_id: client.get_trace(instance_id, trace_id),
-        lambda instance: service_get_trace(instance, trace_id).model_dump(mode="json"),
+        lambda instance: _call_service("service_get_trace", instance, trace_id).model_dump(
+            mode="json"
+        ),
     )
     if output_json:
         _emit_json(payload)
@@ -1960,7 +1932,8 @@ def inspect_relationship_lineage_cmd(
             to_id=to_id,
             edge_key=edge_key,
         ),
-        lambda instance: service_get_relationship_lineage(
+        lambda instance: _call_service(
+            "service_get_relationship_lineage",
             instance,
             from_type=from_type,
             from_id=from_id,
@@ -2014,7 +1987,7 @@ def get_entity_cmd(
     """Look up a specific entity by type and ID."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.get_entity(instance_id, entity_type, entity_id),
-        lambda instance: service_get_entity(instance, entity_type, entity_id),
+        lambda instance: _call_service("service_get_entity", instance, entity_type, entity_id),
     )
     if isinstance(result, contracts.GetEntityResult):
         if not result.found:
@@ -2048,7 +2021,7 @@ def get_entity_cmd(
             cast(ReadProfile, profile),
         )
         _emit_json(payload)
-        capture_json_read(
+        _capture_json_read(
             payload,
             source_cmd="entity get",
             ws_flag=ws_capture,
@@ -2089,7 +2062,8 @@ def get_relationship_cmd(
             to_id=to_id,
             edge_key=edge_key,
         ),
-        lambda instance: service_get_relationship(
+        lambda instance: _call_service(
+            "service_get_relationship",
             instance,
             from_type=from_type,
             from_id=from_id,
@@ -2132,7 +2106,7 @@ def get_relationship_cmd(
         _emit_json(payload)
         # Direct relationship inspection carries its endpoints explicitly, so
         # the payload is edge-shaped and captures as one edge record.
-        capture_json_read(
+        _capture_json_read(
             payload,
             source_cmd="relationship get",
             ws_flag=ws_capture,
@@ -2201,8 +2175,9 @@ def analyze_feedback_cmd(
         payload = remote_result.model_dump(mode="json")
     else:
         _common._guard_local_read_fallback()
-        instance = CruxibleInstance.load()
-        local_result = service_analyze_feedback(
+        instance = _load_local_instance()
+        local_result = _call_service(
+            "service_analyze_feedback",
             instance,
             relationship_type,
             limit=limit,
@@ -2313,8 +2288,9 @@ def analyze_outcomes_cmd(
         payload = remote_result.model_dump(mode="json")
     else:
         _common._guard_local_read_fallback()
-        instance = CruxibleInstance.load()
-        local_result = service_analyze_outcomes(
+        instance = _load_local_instance()
+        local_result = _call_service(
+            "service_analyze_outcomes",
             instance,
             anchor_type=cast(contracts.OutcomeAnchorType, anchor_type),
             relationship_type=relationship_type,

@@ -24,6 +24,24 @@ _JSON_TYPE_NAMES: dict[type[Any], str] = {
 }
 
 
+def compact_json(
+    value: Any,
+    *,
+    default: Callable[[Any], Any] | None = None,
+    sort_keys: bool = False,
+) -> str:
+    """Serialize to single-line JSON, preserving insertion order by default.
+
+    Unlike :func:`canonical_json` this does not sort keys unless asked:
+    display surfaces (CLI ``--json-compact``) must emit the same keys in the
+    same order as their pretty form, differing only in whitespace.
+    """
+    kwargs: dict[str, Any] = {}
+    if default is not None:
+        kwargs["default"] = default
+    return json.dumps(value, separators=(",", ":"), sort_keys=sort_keys, **kwargs)
+
+
 def canonical_json(value: Any, *, default: Callable[[Any], Any] | None = None) -> str:
     """Serialize a JSON-compatible value to a deterministic, RFC-compliant string.
 

@@ -7,11 +7,9 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import click
-import yaml
-from rich.console import Console
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.context import (
@@ -20,29 +18,38 @@ from cruxible_core.cli.context import (
     load_cli_context,
     save_cli_context,
 )
-from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
-from cruxible_core.config.loader import load_config
-from cruxible_core.config.provenance import compose_file_with_source_manifest
-from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError, InstanceNotFoundError
-from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
-from cruxible_core.graph.types import EntityInstance
-from cruxible_core.group.types import CandidateGroup, CandidateMember
-from cruxible_core.query.continuation import (
-    ContinuationSurface,
-    ContinuationToken,
-    compute_filter_hash,
-    decode_continuation_token,
-    mint_continuation_token,
-    validate_continuation_token,
-)
 from cruxible_core.server.config import get_runtime_bearer_token
-from cruxible_core.service import OperationContext, service_sample, service_schema
-from cruxible_core.service.types import list_truncated
-from cruxible_core.workflow.compiler import compute_lock_config_digest
 
-console = Console()
+if TYPE_CHECKING:
+    from rich.console import Console
+
+    from cruxible_core.cli.instance import CruxibleInstance
+    from cruxible_core.config.schema import CoreConfig
+    from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+    from cruxible_core.graph.types import EntityInstance
+    from cruxible_core.group.types import CandidateGroup, CandidateMember
+    from cruxible_core.query.continuation import ContinuationSurface, ContinuationToken
+    from cruxible_core.service import OperationContext
+
+
+class _LazyConsole:
+    """Delay Rich's rendering stack until a command emits a table."""
+
+    def __init__(self) -> None:
+        self._console: Console | None = None
+
+    def __getattr__(self, name: str) -> Any:
+        console = self._console
+        if console is None:
+            from rich.console import Console
+
+            console = Console()
+            self._console = console
+        return getattr(console, name)
+
+
+console = _LazyConsole()
 LocalResultT = TypeVar("LocalResultT")
 RemoteResultT = TypeVar("RemoteResultT")
 
@@ -162,6 +169,9 @@ def _local_continuation_binding(
     are valid only for local-mode reads of the same workspace; daemon-minted
     tokens are bound to the daemon instance id instead and are rejected here.
     """
+    from cruxible_core.query.continuation import compute_filter_hash
+    from cruxible_core.workflow.compiler import compute_lock_config_digest
+
     return {
         "instance_key": f"local:{Path(instance.get_root_path()).resolve()}",
         "config_digest": compute_lock_config_digest(instance.load_config()),
@@ -177,6 +187,11 @@ def _local_accept_continuation(
     filters: dict[str, Any],
     continuation: str | None,
 ) -> ContinuationToken | None:
+    from cruxible_core.query.continuation import (
+        decode_continuation_token,
+        validate_continuation_token,
+    )
+
     if continuation is None:
         return None
     token = decode_continuation_token(continuation)
@@ -192,6 +207,8 @@ def _local_mint_continuation(
     filters: dict[str, Any],
     cursor: dict[str, int],
 ) -> str:
+    from cruxible_core.query.continuation import mint_continuation_token
+
     return mint_continuation_token(
         surface=surface, cursor=cursor, **_local_continuation_binding(instance, filters)
     )
@@ -218,16 +235,12 @@ def _json_compact_enabled() -> bool:
 
 def _emit_json(data: Any, *, sort_keys: bool = False) -> None:
     """Emit structured JSON to stdout, bypassing Rich."""
-    compact = _json_compact_enabled()
-    click.echo(
-        _json.dumps(
-            data,
-            indent=None if compact else 2,
-            separators=(",", ":") if compact else None,
-            sort_keys=sort_keys,
-            default=str,
-        )
-    )
+    if _json_compact_enabled():
+        from cruxible_core.primitives import compact_json
+
+        click.echo(compact_json(data, default=str, sort_keys=sort_keys))
+        return
+    click.echo(_json.dumps(data, indent=2, sort_keys=sort_keys, default=str))
 
 
 def _list_envelope(
@@ -250,6 +263,8 @@ def _list_envelope(
             "truncated": result.truncated,
             "read_revision": getattr(result, "read_revision", None),
         }
+    from cruxible_core.service.types import list_truncated
+
     return {
         "total": total,
         "limit": limit,
@@ -272,6 +287,8 @@ class ActiveInstanceChange:
 
 
 def _operation_context(decision_record_id: str | None) -> OperationContext | None:
+    from cruxible_core.service import OperationContext
+
     resolved = _resolve_decision_record_id(decision_record_id)
     if resolved is None:
         return None
@@ -319,6 +336,8 @@ def _echo_active_write_target() -> None:
         )
         click.echo(f"target: {instance_id} @ {transport} ({qualifier})", err=True)
         return
+
+    from cruxible_core.cli.instance import CruxibleInstance
 
     try:
         instance = CruxibleInstance.load()
@@ -504,9 +523,14 @@ def _dispatch_cli_instance(
     allow_local: bool = True,
     command_name: str | None = None,
 ) -> RemoteResultT | LocalResultT:
+    def load_local_instance() -> CruxibleInstance:
+        from cruxible_core.cli.instance import CruxibleInstance
+
+        return CruxibleInstance.load()
+
     return _dispatch_cli(
         lambda client: remote_call(client, _require_instance_id()),
-        lambda: local_call(CruxibleInstance.load()),
+        lambda: local_call(load_local_instance()),
         allow_local=allow_local,
         command_name=command_name,
     )
@@ -536,6 +560,8 @@ def _raise_server_mode_unsupported(command_name: str) -> None:
 
 
 def _require_local_instance(command_name: str) -> CruxibleInstance:
+    from cruxible_core.cli.instance import CruxibleInstance
+
     if _get_client() is not None:
         _raise_server_mode_unsupported(command_name)
     return CruxibleInstance.load()
@@ -551,6 +577,11 @@ def _read_text_or_error(path_str: str) -> str:
 
 def _read_validation_yaml_or_error(path_str: str) -> str:
     """Read config YAML for remote validation, composing overlays when needed."""
+    import yaml
+
+    from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
+    from cruxible_core.config.loader import load_config
+
     path = Path(path_str)
     config = load_config(path)
     composed = compose_config_sequence(
@@ -564,6 +595,10 @@ def _read_config_upload_or_error(
     path_str: str,
 ) -> tuple[str, contracts.ConfigSourceManifest]:
     """Compose an authored config and return its complete source manifest."""
+    import yaml
+
+    from cruxible_core.config.provenance import compose_file_with_source_manifest
+
     composed, source_manifest = compose_file_with_source_manifest(path_str)
     composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
     config_yaml = yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
@@ -573,6 +608,8 @@ def _read_config_upload_or_error(
 
 
 def _read_input_payload(path_str: str) -> dict[str, Any]:
+    import yaml
+
     path = Path(path_str)
     try:
         raw = path.read_text()
@@ -590,6 +627,8 @@ def _read_input_payload(path_str: str) -> dict[str, Any]:
 
 
 def _parse_inline_mapping(raw: str, *, source: str) -> dict[str, Any]:
+    import yaml
+
     try:
         payload = yaml.safe_load(raw)
     except yaml.YAMLError as exc:
@@ -675,6 +714,8 @@ def _lookup_query_param_hints_local(
     instance: CruxibleInstance,
     query_name: str,
 ) -> contracts.QueryParamHints | None:
+    from cruxible_core.service import service_sample, service_schema
+
     config = service_schema(instance)
     query_schema = config.named_queries.get(query_name)
     if query_schema is None:
@@ -725,22 +766,32 @@ def _lookup_query_param_hints_server(
 
 
 def _entities_from_payload(items: list[dict[str, Any]]) -> list[EntityInstance]:
+    from cruxible_core.graph.types import EntityInstance
+
     return [EntityInstance.model_validate(item) for item in items]
 
 
 def _feedback_from_payload(items: list[dict[str, Any]]) -> list[FeedbackRecord]:
+    from cruxible_core.feedback.types import FeedbackRecord
+
     return [FeedbackRecord.model_validate(item) for item in items]
 
 
 def _outcomes_from_payload(items: list[dict[str, Any]]) -> list[OutcomeRecord]:
+    from cruxible_core.feedback.types import OutcomeRecord
+
     return [OutcomeRecord.model_validate(item) for item in items]
 
 
 def _groups_from_payload(items: list[dict[str, Any]]) -> list[CandidateGroup]:
+    from cruxible_core.group.types import CandidateGroup
+
     return [CandidateGroup.model_validate(item) for item in items]
 
 
 def _members_from_payload(items: list[dict[str, Any]]) -> list[CandidateMember]:
+    from cruxible_core.group.types import CandidateMember
+
     return [CandidateMember.model_validate(item) for item in items]
 
 

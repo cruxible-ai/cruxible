@@ -1,7 +1,8 @@
-"""CLI command registration — re-exports commands from domain submodules."""
+"""Lazy re-exports for CLI commands grouped by domain module."""
 
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -61,79 +62,81 @@ if TYPE_CHECKING:
     validate: Any
     state_group: Any
     ws_group: Any
-else:
-    from cruxible_core.cli.commands.config_views import (
-        config_expand_cmd,
-        config_views_cmd,
-    )
-    from cruxible_core.cli.commands.context import (
-        connect_group,
-    )
-    from cruxible_core.cli.commands.credentials import credential_group
-    from cruxible_core.cli.commands.decision_records import decision_records_cmd
-    from cruxible_core.cli.commands.feedback import (
-        feedback_batch_cmd,
-        feedback_cmd,
-        feedback_from_query_cmd,
-        feedback_group,
-        feedback_profile_cmd,
-        outcome_cmd,
-        outcome_group,
-        outcome_profile_cmd,
-    )
-    from cruxible_core.cli.commands.gates import gate_group
-    from cruxible_core.cli.commands.groups import (
-        group_group,
-    )
-    from cruxible_core.cli.commands.instances import instance_group
-    from cruxible_core.cli.commands.lists import (
-        export_group,
-        list_group,
-    )
-    from cruxible_core.cli.commands.mutations import (
-        add_constraint_cmd,
-        add_decision_policy_cmd,
-        add_entity_cmd,
-        add_relationship_cmd,
-        batch_direct_write_cmd,
-        config_status_cmd,
-        reload_config_cmd,
-        update_entity_cmd,
-        update_relationship_cmd,
-    )
-    from cruxible_core.cli.commands.reads import (
-        analyze_feedback_cmd,
-        analyze_outcomes_cmd,
-        evaluate,
-        explain,
-        get_entity_cmd,
-        get_relationship_cmd,
-        inspect_entity_cmd,
-        inspect_entity_history_cmd,
-        inspect_group,
-        inspect_relationship_lineage_cmd,
-        lint_cmd,
-        query,
-        sample,
-        schema,
-        stats_cmd,
-    )
-    from cruxible_core.cli.commands.server import server_group
-    from cruxible_core.cli.commands.source_artifacts import source_group
-    from cruxible_core.cli.commands.state import state_group
-    from cruxible_core.cli.commands.workflows import (
-        apply_cmd,
-        clone_cmd,
-        init,
-        lock_cmd,
-        plan_cmd,
-        propose_cmd,
-        run_cmd,
-        snapshot_group,
-        test_cmd,
-        validate,
-    )
-    from cruxible_core.cli.commands.working_set import ws_group
+
+_COMMAND_MODULES = {
+    "add_constraint_cmd": "mutations",
+    "add_decision_policy_cmd": "mutations",
+    "add_entity_cmd": "mutations",
+    "add_relationship_cmd": "mutations",
+    "analyze_feedback_cmd": "reads",
+    "analyze_outcomes_cmd": "reads",
+    "apply_cmd": "workflows",
+    "batch_direct_write_cmd": "mutations",
+    "clone_cmd": "workflows",
+    "config_expand_cmd": "config_views",
+    "config_status_cmd": "mutations",
+    "config_views_cmd": "config_views",
+    "connect_group": "context",
+    "credential_group": "credentials",
+    "decision_records_cmd": "decision_records",
+    "evaluate": "reads",
+    "explain": "reads",
+    "export_group": "lists",
+    "feedback_batch_cmd": "feedback",
+    "feedback_cmd": "feedback",
+    "feedback_from_query_cmd": "feedback",
+    "feedback_group": "feedback",
+    "feedback_profile_cmd": "feedback",
+    "gate_group": "gates",
+    "get_entity_cmd": "reads",
+    "get_relationship_cmd": "reads",
+    "group_group": "groups",
+    "init": "workflows",
+    "instance_group": "instances",
+    "inspect_entity_cmd": "reads",
+    "inspect_entity_history_cmd": "reads",
+    "inspect_group": "reads",
+    "inspect_relationship_lineage_cmd": "reads",
+    "lint_cmd": "reads",
+    "list_group": "lists",
+    "lock_cmd": "workflows",
+    "outcome_cmd": "feedback",
+    "outcome_group": "feedback",
+    "outcome_profile_cmd": "feedback",
+    "plan_cmd": "workflows",
+    "propose_cmd": "workflows",
+    "query": "reads",
+    "reload_config_cmd": "mutations",
+    "run_cmd": "workflows",
+    "sample": "reads",
+    "schema": "reads",
+    "server_group": "server",
+    "snapshot_group": "workflows",
+    "source_group": "source_artifacts",
+    "state_group": "state",
+    "stats_cmd": "read_stats",
+    "test_cmd": "workflows",
+    "update_entity_cmd": "mutations",
+    "update_relationship_cmd": "mutations",
+    "validate": "workflows",
+    "ws_group": "working_set",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Import only the domain module that owns the requested command."""
+    module_name = _COMMAND_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(f"{__name__}.{module_name}")
+    command = getattr(module, name)
+    globals()[name] = command
+    return command
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *_COMMAND_MODULES})
+
 
 __all__ = [
     "add_constraint_cmd",

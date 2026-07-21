@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
@@ -35,12 +35,24 @@ from cruxible_core.cli.formatting import (
     receipts_table,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.cli.working_set import capture_json_read
 from cruxible_core.errors import ConfigError
 from cruxible_core.query.continuation import cursor_int
 from cruxible_core.query.profiles import ReadProfile, profile_list_items
-from cruxible_core.service import service_export_edges, service_list, service_list_traces
-from cruxible_core.service.types import ListResult as ServiceListResult
+
+if TYPE_CHECKING:
+    from cruxible_core.service.types import ListResult as ServiceListResult
+
+
+def _call_service(name: str, *args: Any, **kwargs: Any) -> Any:
+    from cruxible_core import service
+
+    return getattr(service, name)(*args, **kwargs)
+
+
+def _capture_json_read(*args: Any, **kwargs: Any) -> None:
+    from cruxible_core.cli.working_set import capture_json_read
+
+    capture_json_read(*args, **kwargs)
 
 
 def _parse_where_options(values: tuple[str, ...]) -> dict[str, dict[str, Any]] | None:
@@ -121,7 +133,8 @@ def list_entities(
         )
         if token is not None:
             local_offset = cursor_int(token, "offset")
-        result = service_list(
+        result = _call_service(
+            "service_list",
             instance,
             "entities",
             entity_type=entity_type,
@@ -174,7 +187,7 @@ def list_entities(
             "continuation_token": continuation_token,
         }
         _emit_json(payload)
-        capture_json_read(payload, source_cmd="list entities", ws_flag=ws_capture)
+        _capture_json_read(payload, source_cmd="list entities", ws_flag=ws_capture)
         return
     console.print(entities_table(entities, entity_type))
     click.echo(f"{len(entities)} entity(ies) shown.")
@@ -205,7 +218,8 @@ def list_receipts(
             limit=limit,
             offset=offset,
         ),
-        lambda instance: service_list(
+        lambda instance: _call_service(
+            "service_list",
             instance,
             "receipts",
             query_name=query_name,
@@ -249,7 +263,8 @@ def list_traces(
             limit=limit,
             offset=offset,
         ),
-        lambda instance: service_list_traces(
+        lambda instance: _call_service(
+            "service_list_traces",
             instance,
             workflow_name=workflow_name,
             provider_name=provider_name,
@@ -292,8 +307,13 @@ def list_feedback(receipt_id: str | None, limit: int, offset: int, output_json: 
             limit=limit,
             offset=offset,
         ),
-        lambda instance: service_list(
-            instance, "feedback", receipt_id=receipt_id, limit=limit, offset=offset
+        lambda instance: _call_service(
+            "service_list",
+            instance,
+            "feedback",
+            receipt_id=receipt_id,
+            limit=limit,
+            offset=offset,
         ),
     )
     records = (
@@ -330,8 +350,13 @@ def list_outcomes(receipt_id: str | None, limit: int, offset: int, output_json: 
             limit=limit,
             offset=offset,
         ),
-        lambda instance: service_list(
-            instance, "outcomes", receipt_id=receipt_id, limit=limit, offset=offset
+        lambda instance: _call_service(
+            "service_list",
+            instance,
+            "outcomes",
+            receipt_id=receipt_id,
+            limit=limit,
+            offset=offset,
         ),
     )
     records = (
@@ -402,7 +427,8 @@ def list_edges(
         )
         if token is not None:
             local_offset = cursor_int(token, "offset")
-        result = service_list(
+        result = _call_service(
+            "service_list",
             instance,
             "edges",
             relationship_type=relationship,
@@ -443,7 +469,7 @@ def list_edges(
             "continuation_token": continuation_token,
         }
         _emit_json(payload)
-        capture_json_read(payload, source_cmd="list edges", ws_flag=ws_capture)
+        _capture_json_read(payload, source_cmd="list edges", ws_flag=ws_capture)
         return
     console.print(edges_table(result.items))
     click.echo(f"{len(result.items)} edge(s) shown.")
@@ -474,7 +500,8 @@ def export_group() -> None:
 def export_edges(output: str, relationship: str | None, exclude_rejected: bool) -> None:
     """Export all edges to CSV."""
     instance = _require_local_instance("export edges")
-    result = service_export_edges(
+    result = _call_service(
+        "service_export_edges",
         instance,
         relationship_type=relationship,
         exclude_rejected=exclude_rejected,

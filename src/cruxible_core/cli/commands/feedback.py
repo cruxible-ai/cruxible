@@ -19,18 +19,23 @@ from cruxible_core.cli.commands._common import (
     _require_instance_id,
     json_option,
 )
-from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.service import (
-    FeedbackItemInput,
-    RelationshipTargetInput,
-    service_feedback_batch_inputs,
-    service_feedback_from_query_result,
-    service_feedback_input,
-    service_get_feedback_profile,
-    service_get_outcome_profile,
-    service_outcome,
-)
+
+
+def _service_attr(name: str) -> Any:
+    from cruxible_core import service
+
+    return getattr(service, name)
+
+
+def _call_service(name: str, *args: Any, **kwargs: Any) -> Any:
+    return _service_attr(name)(*args, **kwargs)
+
+
+def _load_local_instance() -> Any:
+    from cruxible_core.cli.instance import CruxibleInstance
+
+    return CruxibleInstance.load()
 
 
 def _parse_json_object(raw: str | None, *, option: str) -> dict[str, Any] | None:
@@ -122,7 +127,7 @@ def feedback_cmd(
     corrections_dict = _parse_corrections(corrections)
     scope_hints_dict = _parse_json_object(scope_hints, option="--scope-hints")
 
-    target = RelationshipTargetInput(
+    target = _service_attr("RelationshipTargetInput")(
         from_type=from_type,
         from_id=from_id,
         relationship_type=relationship,
@@ -149,9 +154,10 @@ def feedback_cmd(
             corrections=corrections_dict,
             group_override=group_override,
         ),
-        lambda instance: service_feedback_input(
+        lambda instance: _call_service(
+            "service_feedback_input",
             instance,
-            FeedbackItemInput(
+            _service_attr("FeedbackItemInput")(
                 receipt_id=receipt_id,
                 action=cast(contracts.FeedbackAction, action),
                 target=target,
@@ -259,7 +265,8 @@ def feedback_from_query_cmd(
             path_index=path_index,
             path_alias=path_alias,
         ),
-        lambda instance: service_feedback_from_query_result(
+        lambda instance: _call_service(
+            "service_feedback_from_query_result",
             instance,
             receipt_id=receipt_id,
             result_index=result_index,
@@ -346,13 +353,14 @@ def feedback_batch_cmd(
             items=batch_items,
             source=cast(contracts.FeedbackSource, source),
         ),
-        lambda instance: service_feedback_batch_inputs(
+        lambda instance: _call_service(
+            "service_feedback_batch_inputs",
             instance,
             [
-                FeedbackItemInput(
+                _service_attr("FeedbackItemInput")(
                     receipt_id=item.receipt_id,
                     action=item.action,
-                    target=RelationshipTargetInput(
+                    target=_service_attr("RelationshipTargetInput")(
                         from_type=item.target.from_type,
                         from_id=item.target.from_id,
                         relationship_type=item.target.relationship_type,
@@ -415,7 +423,8 @@ def outcome_cmd(
             outcome=cast(contracts.OutcomeValue, outcome_value),
             detail=detail_dict,
         ),
-        lambda instance: service_outcome(
+        lambda instance: _call_service(
+            "service_outcome",
             instance,
             receipt_id=receipt_id,
             outcome=cast(contracts.OutcomeValue, outcome_value),
@@ -452,8 +461,8 @@ def feedback_profile_cmd(relationship_type: str, output_json: bool) -> None:
         return
 
     _guard_local_read_fallback()
-    instance = CruxibleInstance.load()
-    profile = service_get_feedback_profile(instance, relationship_type)
+    instance = _load_local_instance()
+    profile = _call_service("service_get_feedback_profile", instance, relationship_type)
     if profile is None:
         if output_json:
             _emit_json(None)
@@ -518,8 +527,9 @@ def outcome_profile_cmd(
         return
 
     _guard_local_read_fallback()
-    instance = CruxibleInstance.load()
-    profile_key, profile = service_get_outcome_profile(
+    instance = _load_local_instance()
+    profile_key, profile = _call_service(
+        "service_get_outcome_profile",
         instance,
         anchor_type=cast(contracts.OutcomeAnchorType, anchor_type),
         relationship_type=relationship_type,
