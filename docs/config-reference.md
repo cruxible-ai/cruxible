@@ -933,14 +933,22 @@ cruxible gate check deploy-clear-of-incidents --candidate "$SERVICE_ID" \
   && ./deploy "$SERVICE_ID"
 ```
 
-**Decisional gating — for judgments that are irreducibly new information.**
-Some actions require an approval no fact pattern derives (a human call, a
-cross-agent review). Then the judgment itself is the world event: model it as
-a durable decision record with an actor, rationale, and evidence — an entity
-whose meaning outlives the action it gates, feeding the audit trail and later
-outcome calibration — not a bare `{action_id, status}` token. A write-once,
-read-once approval token turns the graph into a message queue: technically
-evaluable, but it compresses nothing and should be a red flag in review.
+**Decisional gating — for commitments, not for missing facts.** The only
+decisions that belong in state as entities are *constitutive* acts — sign-offs,
+risk acceptance, authorization — where the act creates the fact rather than
+reports it. No world model derives a signature; the commitment is itself a
+world fact, so model it fully: actor, rationale, evidence, timestamps — an
+entity whose meaning outlives the action it gates — never a bare
+`{action_id, status}` token (a write-once approval token turns the graph into
+a message queue and should be a red flag in review).
+
+If a human is approving because the *state could not answer a derivable
+question*, that is not a decisional gate — it is an ontology gap. Minting
+verdict entities there relieves exactly the pressure that should improve the
+model. Treat each such judgment as debt: record what the decider consulted,
+and when those facts land in state, promote the gate to a derivational
+condition and retire the verdict type. A mature instance trends toward
+derivational gates everywhere except its genuine commitments.
 
 ```yaml
 gates:
