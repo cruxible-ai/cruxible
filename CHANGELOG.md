@@ -7,6 +7,42 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## 0.2.8 — 2026-07-21
+
+### Added
+
+- **Gate evaluation receipts**: every `gate check` mints a daemon-side
+  `gate_evaluation` receipt inside one write transaction — gate, kind,
+  candidates, per-candidate outcomes with satisfying entity IDs, verdict,
+  and the observed `(instance_id, read_revision)`; refused evaluations
+  (exit-2 paths) are receipted with the reason. Evaluation observes a
+  single revision (concurrent mutations wait rather than splitting the
+  verdict). New server-side check endpoint
+  (`POST /api/v1/{instance_id}/gates/{name}/check`) plus a typed client
+  method; CLI candidate sourcing, output, and exit codes unchanged.
+- **Loud write targets**: every mutating CLI verb prints a one-line
+  stderr target (`instance @ transport`) with provenance markers for
+  remembered-context vs explicit flags. JSON stdout stays clean; reads
+  stay silent.
+- **Write-verb flag consistency**: `relationship add/update` accept
+  `--type`; `entity add --id` is optional when the props carry the schema
+  primary key (conflicts fail naming both values).
+- **`read_revision` on stats**: the stats surface carries the freshness
+  counter as a first-class field; property-only updates provably advance
+  it.
+- **Compact JSON output**: `--json-compact` (or `CRUXIBLE_JSON_COMPACT=1`)
+  emits single-line JSON through one central helper; pretty stays the
+  default.
+
+### Changed
+
+- **CLI startup is ~8x faster on the read path**: lazy per-command
+  loading (`--version`/`--help` ~60ms, previously ~500ms), and
+  `cruxible_core.errors` no longer imports the HTTP client stack —
+  exception identity across the core/client boundary is preserved via a
+  shared dependency-free error base. Import-graph regression tests pin
+  the win.
+
 ### Fixed
 
 - **Kit bundles ship with every release**: the tag workflow deterministically
