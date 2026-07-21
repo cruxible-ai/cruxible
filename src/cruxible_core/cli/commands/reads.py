@@ -928,6 +928,9 @@ def explain(receipt_id: str, fmt: str) -> None:
             format=cast(contracts.ReceiptExplanationFormat, fmt),
         ),
     )
+    if fmt == "json":
+        _emit_json(json.loads(result.content))
+        return
     click.echo(result.content)
 
 
@@ -961,6 +964,7 @@ def stats_cmd(output_json: bool) -> None:
     relationship_counts = result.relationship_counts
     status_counts = result.status_counts
     head_snapshot_id = result.head_snapshot_id
+    read_revision = result.read_revision
     if output_json:
         _emit_json(
             {
@@ -970,10 +974,12 @@ def stats_cmd(output_json: bool) -> None:
                 "relationship_counts": relationship_counts,
                 "status_counts": status_counts,
                 "head_snapshot_id": head_snapshot_id,
+                "read_revision": read_revision,
             }
         )
         return
     click.echo(f"Graph: {entity_count} entities, {edge_count} edges")
+    click.echo(f"Read revision: {read_revision}")
     if head_snapshot_id:
         click.echo(f"Head snapshot: {head_snapshot_id}")
     console.print(stats_table(entity_counts, relationship_counts))

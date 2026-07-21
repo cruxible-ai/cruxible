@@ -271,6 +271,7 @@ QuerySurfaceServiceResult: TypeAlias = QueryServiceResult
 class StatsServiceResult:
     entity_count: int
     edge_count: int
+    read_revision: int
     entity_counts: dict[str, int] = field(default_factory=dict)
     relationship_counts: dict[str, int] = field(default_factory=dict)
     status_counts: dict[str, dict[str, int]] = field(default_factory=dict)
@@ -432,6 +433,10 @@ class ReceiptExplanationResult:
 class TraceListResult:
     items: list[dict[str, Any]] = field(default_factory=list)
     total: int = 0
+    limit: int | None = None
+    offset: int = 0
+    truncated: bool = False
+    read_revision: int | None = None
 
 
 @dataclass

@@ -1039,6 +1039,7 @@ def test_stats_and_inspect_routes_return_expected_shapes(
     assert stats_payload["edge_count"] == 3
     assert stats_payload["entity_counts"]["Vehicle"] == 2
     assert stats_payload["status_counts"] == {}
+    assert stats_payload["read_revision"] > 0
 
     inspect = app_client.get(f"/api/v1/{instance_id}/inspect/entity/Vehicle/V-2024-CIVIC-EX")
     assert inspect.status_code == 200

@@ -1781,10 +1781,10 @@ def list_traces(
     return contracts.TraceListResult(
         items=result.items,
         total=result.total,
-        limit=limit,
-        offset=offset,
-        truncated=list_truncated(total=result.total, offset=offset, returned=len(result.items)),
-        read_revision=instance.get_read_revision(),
+        limit=result.limit,
+        offset=result.offset,
+        truncated=result.truncated,
+        read_revision=result.read_revision,
     )
 
 
@@ -2677,7 +2677,7 @@ def stats(instance_id: str) -> contracts.StatsResult:
         relationship_counts=result.relationship_counts,
         status_counts=result.status_counts,
         head_snapshot_id=result.head_snapshot_id,
-        read_revision=instance.get_read_revision(),
+        read_revision=result.read_revision,
     )
 
 

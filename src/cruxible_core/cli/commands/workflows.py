@@ -465,9 +465,9 @@ def plan_cmd(workflow_name: str, input_text: str | None, input_file: str | None)
         lambda instance: service_plan(instance, workflow_name, payload),
     )
     if isinstance(result, contracts.WorkflowPlanResult):
-        click.echo(json.dumps(result.plan, indent=2, sort_keys=True))
+        _emit_json(result.plan, sort_keys=True)
         return
-    click.echo(result.plan.model_dump_json(indent=2))
+    _emit_json(result.plan.model_dump(mode="json"))
 
 
 @click.command("run")
@@ -554,7 +554,7 @@ def run_cmd(
         click.echo(f"Query receipt IDs: {', '.join(result.query_receipt_ids)}")
     if result.trace_ids:
         click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
-    click.echo(json.dumps(result.output, indent=2, sort_keys=True))
+    _emit_json(result.output, sort_keys=True)
 
 
 @click.command("apply")
@@ -709,7 +709,7 @@ def apply_cmd(
     click.echo(f"Receipt ID: {result.receipt_id}")
     if result.trace_ids:
         click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
-    click.echo(json.dumps(result.output, indent=2, sort_keys=True))
+    _emit_json(result.output, sort_keys=True)
 
 
 @click.command("test")
@@ -785,7 +785,7 @@ def propose_cmd(
         click.echo(f"Receipt ID: {result.receipt_id}")
         if result.trace_ids:
             click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
-        click.echo(json.dumps(result.output, indent=2, sort_keys=True))
+        _emit_json(result.output, sort_keys=True)
         return
 
     if result.group_id is None or result.suppressed:
@@ -805,7 +805,7 @@ def propose_cmd(
                     f"{item.from_type}:{item.from_id} -[{item.relationship_type}]-> "
                     f"{item.to_type}:{item.to_id} ({item.reason})"
                 )
-        click.echo(json.dumps(result.output, indent=2, sort_keys=True))
+        _emit_json(result.output, sort_keys=True)
         return
 
     click.echo(f"Workflow {result.workflow} proposed group {result.group_id}.")
@@ -821,7 +821,7 @@ def propose_cmd(
                 f"{item.from_type}:{item.from_id} -[{item.relationship_type}]-> "
                 f"{item.to_type}:{item.to_id} ({item.reason})"
             )
-    click.echo(json.dumps(result.output, indent=2, sort_keys=True))
+    _emit_json(result.output, sort_keys=True)
 
 
 @click.group("snapshot")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as _json
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -202,9 +203,31 @@ def _echo_continuation_hint(continuation_token: str | None) -> None:
         click.echo(f"Truncated. Continue with: --continue {continuation_token}")
 
 
-def _emit_json(data: Any) -> None:
+def _json_compact_enabled() -> bool:
+    """Resolve compact JSON at emit time; an explicit root flag wins over env."""
+    context_value = _root_ctx_obj().get("json_compact")
+    if context_value is not None:
+        return bool(context_value)
+    return os.environ.get("CRUXIBLE_JSON_COMPACT", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _emit_json(data: Any, *, sort_keys: bool = False) -> None:
     """Emit structured JSON to stdout, bypassing Rich."""
-    click.echo(_json.dumps(data, indent=2, default=str))
+    compact = _json_compact_enabled()
+    click.echo(
+        _json.dumps(
+            data,
+            indent=None if compact else 2,
+            separators=(",", ":") if compact else None,
+            sort_keys=sort_keys,
+            default=str,
+        )
+    )
 
 
 def _list_envelope(
@@ -216,7 +239,7 @@ def _list_envelope(
     local mode now gets it from the service ``ListResult`` (which owns
     truncation/read_revision), so both branches consume rather than re-derive.
     The synthesized fallback remains only for service results that predate the
-    envelope (e.g. traces).
+    envelope.
     """
     total = result.total
     if all(hasattr(result, name) for name in ("limit", "offset", "truncated")):

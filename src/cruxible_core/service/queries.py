@@ -594,6 +594,7 @@ def service_stats(instance: InstanceProtocol) -> StatsServiceResult:
     return StatsServiceResult(
         entity_count=result.entity_count,
         edge_count=result.edge_count,
+        read_revision=instance.get_read_revision(),
         entity_counts=result.entity_counts,
         relationship_counts=result.relationship_counts,
         status_counts=_status_counts(config, graph),
@@ -1056,7 +1057,14 @@ def service_list_traces(
         )
     finally:
         store.close()
-    return TraceListResult(items=traces, total=total)
+    return TraceListResult(
+        items=traces,
+        total=total,
+        limit=limit,
+        offset=offset,
+        truncated=list_truncated(total=total, offset=offset, returned=len(traces)),
+        read_revision=instance.get_read_revision(),
+    )
 
 
 # ---------------------------------------------------------------------------

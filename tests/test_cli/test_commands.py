@@ -66,6 +66,72 @@ def _assert_chunks_present(output: str, chunks: list[str]) -> None:
         assert chunk in output
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["stats", "--json"],
+        ["query", "list", "--json"],
+    ],
+    ids=["stats", "query-list"],
+)
+def test_json_compact_matches_pretty_content(
+    runner: CliRunner,
+    populated_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+    command: list[str],
+) -> None:
+    monkeypatch.delenv("CRUXIBLE_JSON_COMPACT", raising=False)
+
+    pretty = _chdir_run(runner, populated_instance.root, command)
+    compact = _chdir_run(
+        runner,
+        populated_instance.root,
+        ["--json-compact", *command],
+    )
+
+    assert pretty.exit_code == 0
+    assert compact.exit_code == 0
+    pretty_payload = json.loads(pretty.output)
+    compact_payload = json.loads(compact.output)
+    assert compact_payload == pretty_payload
+    assert list(compact_payload) == list(pretty_payload)
+    assert "\n  " in pretty.output
+    assert compact.output.endswith("\n")
+    assert "\n" not in compact.output.removesuffix("\n")
+
+
+def test_json_compact_environment_variable(
+    runner: CliRunner,
+    populated_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_JSON_COMPACT", "1")
+
+    result = _chdir_run(runner, populated_instance.root, ["stats", "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["entity_count"] == 4
+    assert "\n" not in result.output.removesuffix("\n")
+
+
+def test_json_compact_flag_wins_over_disabled_environment(
+    runner: CliRunner,
+    populated_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_JSON_COMPACT", "0")
+
+    result = _chdir_run(
+        runner,
+        populated_instance.root,
+        ["--json-compact", "stats", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["entity_count"] == 4
+    assert "\n" not in result.output.removesuffix("\n")
+
+
 def _assert_local_mutation_disabled(
     runner: CliRunner,
     directory: Path,
@@ -797,6 +863,18 @@ class TestStatsInspectReload:
         assert "Graph: 4 entities, 4 edges" in result.output
         assert "Vehicle" in result.output
         assert "fits" in result.output
+
+    def test_stats_json_includes_read_revision(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(runner, populated_instance.root, ["stats", "--json"])
+
+        assert result.exit_code == 0
+        assert json.loads(result.output)["read_revision"] == (
+            populated_instance.get_read_revision()
+        )
 
     def test_inspect_entity_outputs_neighbors(
         self,
@@ -1819,6 +1897,7 @@ class TestList:
         assert payload["limit"] == 100
         assert payload["offset"] == 0
         assert payload["truncated"] is False
+        assert payload["read_revision"] == populated_instance.get_read_revision()
 
     def test_list_feedback(
         self,

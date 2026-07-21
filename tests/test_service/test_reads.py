@@ -35,6 +35,7 @@ from cruxible_core.service import (
     service_add_constraint,
     service_add_decision_policy,
     service_add_entities,
+    service_add_entity_inputs,
     service_batch_direct_write,
     service_config_status,
     service_get_entity,
@@ -1566,6 +1567,10 @@ class TestTraceReads:
 
         assert result.total == 1
         assert result.items[0]["trace_id"] == "TRC-a"
+        assert result.limit == 10
+        assert result.offset == 0
+        assert result.truncated is False
+        assert result.read_revision == populated_instance.get_read_revision()
 
 
 # ---------------------------------------------------------------------------
@@ -1802,6 +1807,31 @@ class TestStats:
         assert result.entity_counts["Part"] == 2
         assert result.relationship_counts["fits"] == 3
         assert result.relationship_counts["replaces"] == 1
+        assert result.read_revision == populated_instance.get_read_revision()
+
+    def test_property_only_update_advances_read_revision(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        before = service_stats(populated_instance)
+
+        result = service_add_entity_inputs(
+            populated_instance,
+            [
+                EntityWriteInput(
+                    entity_type="Vehicle",
+                    entity_id="V-2024-CIVIC-EX",
+                    properties={"year": 2025},
+                )
+            ],
+        )
+        after = service_stats(populated_instance)
+
+        assert result.added == 0
+        assert result.updated == 1
+        assert after.entity_count == before.entity_count
+        assert after.edge_count == before.edge_count
+        assert after.read_revision == before.read_revision + 1
 
     def test_returns_status_counts_for_enum_backed_status_properties(
         self,

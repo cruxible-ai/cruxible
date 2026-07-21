@@ -19,6 +19,7 @@ import click
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.commands._common import (
+    _emit_json,
     _get_client,
     _guard_local_read_fallback,
     _require_instance_id,
@@ -192,8 +193,6 @@ def ws_path_cmd() -> None:
 @handle_errors
 def ws_status_cmd(output_json: bool) -> None:
     """Show record counts, file size, and cached-vs-current revision spread."""
-    import json as _json
-
     context, path = _ws_paths()
     read_result = read_records_detailed(path)
     records = read_result.records
@@ -230,7 +229,7 @@ def ws_status_cmd(output_json: bool) -> None:
         "oldest_cached_revision": min(revisions) if revisions else None,
     }
     if output_json:
-        click.echo(_json.dumps(payload, indent=2, default=str))
+        _emit_json(payload)
         return
     click.echo(f"Instance key: {payload['instance_key']}")
     click.echo(f"Records file: {payload['path']}")
@@ -267,8 +266,6 @@ def ws_verify_cmd(output_json: bool) -> None:
     anything is stale OR any invalid lines are present (a tampered/corrupt
     cache must be loud in scripts). Unknown alone never fails.
     """
-    import json as _json
-
     context, path = _ws_paths()
     read_result = read_records_detailed(path)
     records = read_result.records
@@ -277,22 +274,18 @@ def ws_verify_cmd(output_json: bool) -> None:
     fresh, stale, unknown = _classify(records, current_revision, current_config_digest)
 
     if output_json:
-        click.echo(
-            _json.dumps(
-                {
-                    "instance_key": context.instance_key,
-                    "current_read_revision": current_revision,
-                    "current_config_digest": current_config_digest,
-                    "total": len(records),
-                    "fresh": len(fresh),
-                    "stale": len(stale),
-                    "unknown": len(unknown),
-                    "invalid": read_result.invalid_lines,
-                    "stale_records": [_identity_label(record) for record in stale],
-                },
-                indent=2,
-                default=str,
-            )
+        _emit_json(
+            {
+                "instance_key": context.instance_key,
+                "current_read_revision": current_revision,
+                "current_config_digest": current_config_digest,
+                "total": len(records),
+                "fresh": len(fresh),
+                "stale": len(stale),
+                "unknown": len(unknown),
+                "invalid": read_result.invalid_lines,
+                "stale_records": [_identity_label(record) for record in stale],
+            }
         )
     else:
         click.echo(f"Instance key: {context.instance_key}")

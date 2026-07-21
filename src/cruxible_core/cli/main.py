@@ -188,12 +188,19 @@ def handle_errors(f: Any) -> Any:
     default=None,
     help="Opaque server-mode instance ID. Defaults to remembered CLI context.",
 )
+@click.option(
+    "--json-compact",
+    is_flag=True,
+    default=None,
+    help="Emit all CLI JSON as compact single-line output (also CRUXIBLE_JSON_COMPACT=1).",
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
     server_url: str | None,
     server_socket: str | None,
     instance_id: str | None,
+    json_compact: bool | None,
 ) -> None:
     """Cruxible — hard state for AI agents: governed, queryable, durable, with receipts."""
     try:
@@ -219,6 +226,7 @@ def cli(
             "server_socket": settings.server_socket,
             "instance_id": resolved_instance_id,
             "require_server": settings.require_server,
+            "json_compact": json_compact,
             "target_transport_source": _target_source(
                 explicit=server_url is not None or server_socket is not None,
                 environment=env_server_url is not None or env_server_socket is not None,
