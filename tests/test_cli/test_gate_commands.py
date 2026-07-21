@@ -224,9 +224,7 @@ class TestGateCheckValueOverride:
         )
         assert result.exit_code == 0
 
-    def test_candidate_option_is_public_and_value_option_is_hidden(
-        self, runner: CliRunner
-    ) -> None:
+    def test_candidate_option_is_public_and_value_option_is_hidden(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["gate", "check", "--help"])
         assert result.exit_code == 0
         assert "--candidate" in result.output
