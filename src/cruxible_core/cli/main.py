@@ -16,6 +16,83 @@ from cruxible_core.cli.context import load_cli_context
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
 
+# Authoritative CLI inventory for commands that write authoritative state or
+# write an artifact from a selected instance. ``handle_errors`` consults this
+# mapping immediately before invoking the command callback, which keeps target
+# visibility centralized and leaves every unlisted read command silent.
+#
+# Modes:
+# - active: acts on the selected instance.
+# - create: creates/restores an instance and therefore has no instance ID yet.
+# - lock: acts on the selected instance unless --kit-dir names an explicit kit.
+# - manual: the command resolves its target from command-specific inputs and
+#   emits the notice itself immediately before the write.
+MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
+    ("init",): "create",
+    ("lock",): "lock",
+    ("run",): "active",
+    ("apply",): "active",
+    ("propose",): "active",
+    ("snapshot", "create"): "active",
+    ("clone",): "active",
+    ("source", "register"): "active",
+    ("state", "publish"): "active",
+    ("state", "create-overlay"): "create",
+    ("state", "pull-apply"): "active",
+    ("instance", "backup"): "active",
+    ("instance", "restore"): "create",
+    ("instance", "relocate"): "active",
+    ("credential", "claim-bootstrap"): "active",
+    ("credential", "mint"): "active",
+    ("credential", "recover-admin"): "manual",
+    ("credential", "revoke"): "active",
+    ("credential", "rotate"): "active",
+    ("decision-record", "create"): "active",
+    ("decision-record", "finalize"): "active",
+    ("decision-record", "abandon"): "active",
+    ("config", "reload"): "active",
+    ("config", "add-constraint"): "active",
+    ("config", "add-decision-policy"): "active",
+    ("feedback", "record"): "active",
+    ("feedback", "from-query"): "active",
+    ("feedback", "batch"): "active",
+    ("outcome", "record"): "active",
+    ("entity", "add"): "active",
+    ("entity", "update"): "active",
+    ("relationship", "add"): "active",
+    ("relationship", "update"): "active",
+    ("batch-direct-write",): "active",
+    ("group", "propose"): "active",
+    ("group", "resolve"): "active",
+    ("group", "trust"): "active",
+}
+
+
+def _command_path(ctx: click.Context) -> tuple[str, ...]:
+    """Return the registered command path below the root CLI group."""
+    names: list[str] = []
+    current: click.Context | None = ctx
+    while current is not None and current.parent is not None:
+        if current.command.name:
+            names.append(current.command.name)
+        current = current.parent
+    return tuple(reversed(names))
+
+
+def _target_source(
+    *,
+    explicit: bool,
+    environment: bool,
+    remembered: bool,
+) -> str:
+    if explicit:
+        return "explicit"
+    if environment:
+        return "environment"
+    if remembered:
+        return "remembered"
+    return "local"
+
 
 def _resolve_cli_transport(
     *,
@@ -70,6 +147,14 @@ def handle_errors(f: Any) -> Any:
     @functools.wraps(f)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
+            ctx = click.get_current_context(silent=True)
+            if ctx is not None:
+                target_mode = MUTATING_COMMAND_TARGETS.get(_command_path(ctx))
+                if target_mode is not None and target_mode != "manual":
+                    # Runtime import avoids the main <-> commands import cycle.
+                    from cruxible_core.cli.commands._common import _echo_write_target
+
+                    _echo_write_target(target_mode, kwargs)
             return f(*args, **kwargs)
         except ServerUnreachableError as e:
             # Transport failures already render as a friendly single line; the
@@ -112,6 +197,9 @@ def cli(
 ) -> None:
     """Cruxible — hard state for AI agents: governed, queryable, durable, with receipts."""
     try:
+        stored = load_cli_context()
+        env_server_url = os.environ.get("CRUXIBLE_SERVER_URL")
+        env_server_socket = os.environ.get("CRUXIBLE_SERVER_SOCKET")
         resolved_url, resolved_socket = _resolve_cli_transport(
             server_url=server_url,
             server_socket=server_socket,
@@ -131,6 +219,16 @@ def cli(
             "server_socket": settings.server_socket,
             "instance_id": resolved_instance_id,
             "require_server": settings.require_server,
+            "target_transport_source": _target_source(
+                explicit=server_url is not None or server_socket is not None,
+                environment=env_server_url is not None or env_server_socket is not None,
+                remembered=stored.server_url is not None or stored.server_socket is not None,
+            ),
+            "target_instance_source": _target_source(
+                explicit=instance_id is not None,
+                environment=False,
+                remembered=stored.instance_id is not None,
+            ),
         }
     )
 

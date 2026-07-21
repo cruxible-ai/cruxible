@@ -120,7 +120,7 @@ def test_recover_admin_mints_new_admin_and_records_audit(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["token"].startswith("crt_")
     assert payload["existing_credentials_revoked"] is False
     assert payload["credential"] == {
@@ -228,7 +228,7 @@ def test_recover_admin_selects_instance_in_multi_instance_db(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["credential"]["instance_id"] == target_instance_id
 
     events = _recovery_event_rows(state_dir)
@@ -324,7 +324,7 @@ def test_recovered_admin_token_authenticates_against_server(
         ["credential", "recover-admin", "--state-dir", str(state_dir), "--json"],
     )
     assert result.exit_code == 0, result.output
-    token = json.loads(result.output)["token"]
+    token = json.loads(result.stdout)["token"]
 
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     reset_permissions()

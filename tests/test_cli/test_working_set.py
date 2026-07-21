@@ -1191,6 +1191,13 @@ class _WorkingSetTouched(AssertionError):
 class _StubWriteClient:
     """Server-mode stub covering every client call the write commands make."""
 
+    def schema(self, instance_id):
+        return {
+            "entity_types": {
+                "Part": {"properties": {"part_number": {"type": "string", "primary_key": True}}}
+            }
+        }
+
     def get_entity(self, instance_id, entity_type, entity_id, profile=None):
         from cruxible_client import contracts
 

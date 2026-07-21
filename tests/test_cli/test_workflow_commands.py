@@ -146,7 +146,7 @@ class TestWorkflowCli:
         lock_path = kit_dir / "cruxible.lock.yaml"
         assert lock_path.exists()
         payload = _read_lock_yaml(kit_dir)
-        assert result.output.startswith(f"Wrote lock file to {lock_path}")
+        assert result.stdout.startswith(f"Wrote lock file to {lock_path}")
         assert f"digest={payload['lock_digest']}" in result.output
         assert "providers=2 artifacts=1" in result.output
         assert "CRUXIBLE_KIT_DEV_RESOLVE" not in os.environ

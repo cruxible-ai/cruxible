@@ -138,7 +138,7 @@ def _run_canonical_workflow(
         invoke("run", "--workflow", workflow, "--json", instance_id=instance_id),
         f"run {workflow}",
     )
-    preview = json.loads(run.output)
+    preview = json.loads(run.stdout)
     assert preview["canonical"] is True
     assert preview["apply_digest"], f"{workflow} run produced no apply_digest"
 
@@ -156,7 +156,7 @@ def _run_canonical_workflow(
         ),
         f"apply {workflow}",
     )
-    applied = json.loads(apply.output)
+    applied = json.loads(apply.stdout)
     assert applied["committed_snapshot_id"], f"{workflow} apply committed no snapshot"
 
 
@@ -223,7 +223,7 @@ def test_promote_command_flow_end_to_end_via_cli(
         ),
         "propose propose_asset_products",
     )
-    propose_payload = json.loads(proposed.output)
+    propose_payload = json.loads(proposed.stdout)
     group_id = propose_payload["group_id"]
     assert group_id, f"propose produced no candidate group:\n{proposed.output}"
     assert propose_payload["group_status"] == "pending_review"
@@ -285,7 +285,7 @@ def test_promote_command_flow_end_to_end_via_cli(
         ),
         "group resolve approve",
     )
-    resolve_payload = json.loads(resolved.output)
+    resolve_payload = json.loads(resolved.stdout)
     assert resolve_payload["action"] == "approve"
     assert resolve_payload["edges_created"] > 0, "approving the group created no governed edges"
     resolution_id = resolve_payload["resolution_id"]

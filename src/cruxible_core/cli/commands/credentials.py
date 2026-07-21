@@ -263,6 +263,7 @@ def recover_admin_cmd(
     _require_owned_path(resolved_state_dir, description="State dir", uid=uid, directory=True)
     _require_owned_path(db_path, description="Runtime credentials DB", uid=uid, directory=False)
     resolved_instance_id = _select_recovery_instance_id(db_path, instance_id)
+    _common._echo_explicit_write_target(resolved_instance_id, resolved_state_dir)
 
     store = RuntimeCredentialStore(db_path, initialize=False)
     try:

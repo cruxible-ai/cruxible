@@ -48,7 +48,7 @@ def test_source_register_outputs_registered_artifact_json(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["source_artifact_id"].startswith("SRC-")
     assert payload["source_kind"] == "markdown"
     assert payload["source_retention"] == "manifest_only"
@@ -83,7 +83,7 @@ def test_source_dereference_returns_registered_source_text(
         ],
     )
     assert register.exit_code == 0, register.output
-    registered: dict[str, Any] = json.loads(register.output)
+    registered: dict[str, Any] = json.loads(register.stdout)
     paragraph_chunk = next(
         chunk for chunk in registered["chunks"] if chunk["block_selector"] == "paragraph:1"
     )

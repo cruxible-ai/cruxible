@@ -1178,7 +1178,7 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
         ],
     )
     assert create.exit_code == 0
-    assert json.loads(create.output)["record"]["decision_record_id"] == "DR-1"
+    assert json.loads(create.stdout)["record"]["decision_record_id"] == "DR-1"
 
     get = runner.invoke(
         cli,
@@ -1237,7 +1237,7 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
         ],
     )
     assert finalized.exit_code == 0
-    assert json.loads(finalized.output)["record"]["decision_class"] == "recommended"
+    assert json.loads(finalized.stdout)["record"]["decision_class"] == "recommended"
 
     abandoned = runner.invoke(
         cli,
@@ -1256,7 +1256,7 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
         ],
     )
     assert abandoned.exit_code == 0
-    assert json.loads(abandoned.output)["record"]["status"] == "abandoned"
+    assert json.loads(abandoned.stdout)["record"]["status"] == "abandoned"
 
     assert captured["create"] == (
         "inst_123",
@@ -1921,7 +1921,7 @@ def test_workflow_commands_delegate_to_client_in_server_mode(
         ],
     )
     assert run_json.exit_code == 0
-    assert json.loads(run_json.output)["read_metadata"] == {"any_read_truncated": True}
+    assert json.loads(run_json.stdout)["read_metadata"] == {"any_read_truncated": True}
 
     test = runner.invoke(
         cli,
@@ -2025,7 +2025,7 @@ def test_workflow_apply_explicit_digest_delegates_to_client(
         "expected_head_snapshot_id": "snap_manual",
         "input_payload": {"vendor": "acme"},
     }
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["read_metadata"] == {"any_read_truncated": True}
 
 
@@ -2193,7 +2193,7 @@ def test_workflow_apply_from_last_preview_uses_stored_preview(
         "expected_head_snapshot_id": "snap_preview",
         "input_payload": {"vendor": "acme"},
     }
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["committed_snapshot_id"] == "snap_committed"
 
 
@@ -2274,7 +2274,7 @@ def test_propose_json_includes_suppressed_members(
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["suppressed"] is True
     assert payload["read_metadata"] == {"any_read_truncated": True}
     assert payload["suppressed_members"] == [
@@ -2338,7 +2338,7 @@ def test_propose_json_includes_no_candidates_status(
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["group_id"] is None
     assert payload["group_status"] == "no_candidates"
     assert payload["output"]["group_created"] is False
@@ -2937,7 +2937,7 @@ def test_feedback_and_outcome_write_commands_emit_json_in_server_mode(
         ],
     )
     assert feedback.exit_code == 0, feedback.output
-    assert json.loads(feedback.output) == {
+    assert json.loads(feedback.stdout) == {
         "feedback_id": "FB-json",
         "applied": True,
         "receipt_id": "RCP-feedback-json",
@@ -2962,7 +2962,7 @@ def test_feedback_and_outcome_write_commands_emit_json_in_server_mode(
         ],
     )
     assert feedback_from_query.exit_code == 0, feedback_from_query.output
-    assert json.loads(feedback_from_query.output) == {
+    assert json.loads(feedback_from_query.stdout) == {
         "feedback_id": "FB-query-json",
         "applied": False,
         "receipt_id": "RCP-query-json",
@@ -2983,7 +2983,7 @@ def test_feedback_and_outcome_write_commands_emit_json_in_server_mode(
         ],
     )
     assert feedback_batch.exit_code == 0, feedback_batch.output
-    assert json.loads(feedback_batch.output) == {
+    assert json.loads(feedback_batch.stdout) == {
         "feedback_ids": ["FB-batch-json"],
         "applied_count": 1,
         "total": 1,
@@ -3009,7 +3009,7 @@ def test_feedback_and_outcome_write_commands_emit_json_in_server_mode(
         ],
     )
     assert outcome.exit_code == 0, outcome.output
-    assert json.loads(outcome.output) == {"outcome_id": "OUT-json"}
+    assert json.loads(outcome.stdout) == {"outcome_id": "OUT-json"}
 
 
 def test_reload_config_uploads_composed_yaml_in_server_mode(
@@ -3384,7 +3384,7 @@ def test_add_relationship_pending_forwards_to_server_client(
     payload = captured["payload"]
     assert isinstance(payload, contracts.BatchDirectWritePayload)
     assert payload.relationships[0].pending is True
-    output = json.loads(result.output)
+    output = json.loads(result.stdout)
     assert output["relationships_added"] == 1
     assert output["receipt_id"] == "RCP-pending"
 
@@ -3519,7 +3519,7 @@ shared_evidence: {}
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["pending_conflicts"][0]["group_id"] == "GRP-pending"
     assert payload["updated_group_backed_edges"] == []
 
@@ -3588,6 +3588,15 @@ def test_add_entity_shorthand_preserves_string_setters_and_json_values(
     captured: dict[str, object] = {}
 
     class StubClient:
+        def schema(self, instance_id):
+            return {
+                "entity_types": {
+                    "Vehicle": {
+                        "properties": {"vehicle_id": {"type": "string", "primary_key": True}}
+                    }
+                }
+            }
+
         def get_entity(self, instance_id, entity_type, entity_id):
             captured["preflight"] = (instance_id, entity_type, entity_id)
             return contracts.GetEntityResult(
@@ -3653,7 +3662,177 @@ def test_add_entity_shorthand_preserves_string_setters_and_json_values(
         "year": 2025,
         "metadata": {"ok": True},
     }
-    assert json.loads(result.output)["receipt_id"] == "RCP-add-verb"
+    assert json.loads(result.stdout)["receipt_id"] == "RCP-add-verb"
+
+
+def test_add_entity_derives_id_from_schema_primary_key_in_props(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def schema(self, instance_id):
+            captured["schema_instance_id"] = instance_id
+            return {
+                "entity_types": {
+                    "Note": {
+                        "properties": {
+                            "note_id": {"type": "string", "primary_key": True},
+                            "body": {"type": "string"},
+                        }
+                    }
+                }
+            }
+
+        def get_entity(self, instance_id, entity_type, entity_id):
+            captured["preflight"] = (instance_id, entity_type, entity_id)
+            return contracts.GetEntityResult(
+                found=False,
+                entity_type=entity_type,
+                entity_id=entity_id,
+            )
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            captured["payload"] = payload
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                entities_added=1,
+                receipt_id="RCP-derived-id",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "entity",
+            "add",
+            "--type",
+            "Note",
+            "--props",
+            '{"note_id":"NOTE-1","body":"Remember the target"}',
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["schema_instance_id"] == "inst_123"
+    assert captured["preflight"] == ("inst_123", "Note", "NOTE-1")
+    payload = captured["payload"]
+    assert isinstance(payload, contracts.BatchDirectWritePayload)
+    assert payload.entities[0].entity_id == "NOTE-1"
+    assert json.loads(result.stdout)["receipt_id"] == "RCP-derived-id"
+
+
+def test_add_entity_rejects_explicit_and_property_id_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    class StubClient:
+        def schema(self, instance_id):
+            return {
+                "entity_types": {
+                    "Note": {"properties": {"note_id": {"type": "string", "primary_key": True}}}
+                }
+            }
+
+        def get_entity(self, instance_id, entity_type, entity_id):
+            raise AssertionError("conflicting IDs must fail before the existence preflight")
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            raise AssertionError("conflicting IDs must not write")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "entity",
+            "add",
+            "--type",
+            "Note",
+            "--id",
+            "NOTE-explicit",
+            "--props",
+            '{"note_id":"NOTE-properties"}',
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Entity id conflict" in result.output
+    assert "NOTE-explicit" in result.output
+    assert "NOTE-properties" in result.output
+
+
+def test_add_relationship_accepts_type_alias(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def get_relationship(self, instance_id, **kwargs):
+            captured["preflight"] = (instance_id, kwargs)
+            return contracts.GetRelationshipResult(found=False, **kwargs)
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            captured["payload"] = payload
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                relationships_added=1,
+                receipt_id="RCP-type-alias",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "relationship",
+            "add",
+            "--type",
+            "references",
+            "--from-type",
+            "Note",
+            "--from-id",
+            "NOTE-1",
+            "--to-type",
+            "Note",
+            "--to-id",
+            "NOTE-2",
+            "--props",
+            '{"context":"follow-up"}',
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = captured["payload"]
+    assert isinstance(payload, contracts.BatchDirectWritePayload)
+    assert payload.relationships[0].relationship_type == "references"
+    assert json.loads(result.stdout)["receipt_id"] == "RCP-type-alias"
+
+
+@pytest.mark.parametrize("verb", ["add", "update"])
+def test_relationship_write_type_option_keeps_relationship_and_type_aliases(verb: str) -> None:
+    relationship_group = cli.commands["relationship"]
+    assert hasattr(relationship_group, "commands")
+    command = relationship_group.commands[verb]  # type: ignore[attr-defined]
+    option = next(param for param in command.params if param.name == "relationship_option")
+    assert "--relationship" in option.opts
+    assert "--type" in option.opts
 
 
 def test_update_entity_shorthand_requires_existing_entity(
@@ -4052,7 +4231,7 @@ def test_update_relationship_shorthand_forwards_evidence_only_update(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["relationships_updated"] == 1
     batch_payload = captured["payload"]
     assert isinstance(batch_payload, contracts.BatchDirectWritePayload)
@@ -4604,7 +4783,7 @@ def test_server_mode_feedback_json_emits_payload(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload == {
         "feedback_id": "fb-1",
         "applied": True,
@@ -4648,7 +4827,7 @@ def test_server_mode_feedback_from_query_json_emits_payload(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload == {
         "feedback_id": "fb-2",
         "applied": False,
@@ -4704,7 +4883,7 @@ def test_server_mode_feedback_batch_json_emits_payload(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload == {
         "feedback_ids": ["fb-1", "fb-2"],
         "applied_count": 1,
@@ -4743,7 +4922,7 @@ def test_server_mode_outcome_json_emits_payload(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload == {"outcome_id": "out-1"}
 
 

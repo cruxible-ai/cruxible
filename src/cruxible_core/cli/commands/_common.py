@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json as _json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -24,7 +24,7 @@ from cruxible_core.config.composer import compose_config_sequence, resolve_confi
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.provenance import compose_file_with_source_manifest
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember
@@ -262,6 +262,99 @@ def _root_ctx_obj() -> dict[str, Any]:
     root = ctx.find_root()
     root.ensure_object(dict)
     return cast(dict[str, Any], root.obj)
+
+
+def _transport_target(obj: Mapping[str, Any]) -> str | None:
+    server_url = obj.get("server_url")
+    if server_url:
+        return str(server_url)
+    server_socket = obj.get("server_socket")
+    if server_socket:
+        return f"unix://{Path(str(server_socket)).expanduser().resolve()}"
+    return None
+
+
+def _target_source_qualifier(instance_source: str, transport_source: str) -> str:
+    if instance_source == transport_source:
+        return instance_source
+    return f"instance={instance_source}, transport={transport_source}"
+
+
+def _echo_active_write_target() -> None:
+    """Emit the selected instance target once, without changing stdout."""
+    obj = _root_ctx_obj()
+    transport = _transport_target(obj)
+    if transport is not None:
+        instance_id = obj.get("instance_id")
+        if not instance_id:
+            # The command callback will produce the established usage error.
+            # There is no actionable target to display yet.
+            return
+        qualifier = _target_source_qualifier(
+            str(obj.get("target_instance_source") or "explicit"),
+            str(obj.get("target_transport_source") or "explicit"),
+        )
+        click.echo(f"target: {instance_id} @ {transport} ({qualifier})", err=True)
+        return
+
+    try:
+        instance = CruxibleInstance.load()
+    except InstanceNotFoundError:
+        # Preserve the command's own error when no local instance can resolve.
+        return
+    click.echo(
+        f"target: local @ {instance.get_root_path().resolve()} (discovered)",
+        err=True,
+    )
+
+
+def _echo_creation_write_target(params: Mapping[str, Any]) -> None:
+    """Emit a destination for a command whose instance ID does not exist yet."""
+    obj = _root_ctx_obj()
+    transport = _transport_target(obj)
+    command_name = click.get_current_context().command.name or "instance"
+    target_label = "<restored instance>" if command_name == "restore" else "<new instance>"
+    if transport is not None:
+        transport_source = str(obj.get("target_transport_source") or "explicit")
+        click.echo(
+            f"target: {target_label} @ {transport} (transport={transport_source})",
+            err=True,
+        )
+        return
+
+    root_dir = params.get("root_dir")
+    root = Path(str(root_dir)).expanduser().resolve() if root_dir else Path.cwd().resolve()
+    source = "explicit" if root_dir else "discovered"
+    click.echo(f"target: {target_label} @ {root} ({source})", err=True)
+
+
+def _echo_write_target(mode: str, params: Mapping[str, Any]) -> None:
+    """Central target notice used by the authoritative mutating-command inventory."""
+    if mode == "active":
+        _echo_active_write_target()
+        return
+    if mode == "create":
+        _echo_creation_write_target(params)
+        return
+    if mode == "lock":
+        kit_dir = params.get("kit_dir")
+        if kit_dir is not None:
+            click.echo(
+                f"target: workflow lock @ {Path(str(kit_dir)).resolve()} (explicit)",
+                err=True,
+            )
+        else:
+            _echo_active_write_target()
+        return
+    raise AssertionError(f"Unknown write target mode: {mode}")
+
+
+def _echo_explicit_write_target(instance_id: str, location: str | Path) -> None:
+    """Emit a target resolved from command-specific explicit local inputs."""
+    click.echo(
+        f"target: {instance_id} @ {Path(location).expanduser().resolve()} (explicit)",
+        err=True,
+    )
 
 
 def _get_client() -> CruxibleClient | None:

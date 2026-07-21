@@ -195,6 +195,83 @@ def _resolve_arg_or_option(
     return value
 
 
+def _resolve_optional_arg_or_option(
+    *,
+    arg_value: str | None,
+    option_value: str | None,
+    option_name: str,
+    label: str,
+) -> str | None:
+    if arg_value and option_value and arg_value != option_value:
+        raise click.UsageError(
+            f"{label} supplied both positionally and as {option_name} with different values"
+        )
+    return arg_value or option_value
+
+
+def _entity_primary_key(entity_type: str) -> str | None:
+    client, instance_id = _require_server_client("entity add")
+    payload = client.schema(instance_id)
+    entity_payload = (payload.get("entity_types") or {}).get(entity_type)
+    if not isinstance(entity_payload, dict):
+        return None
+    properties = entity_payload.get("properties") or {}
+    return next(
+        (
+            property_name
+            for property_name, property_schema in properties.items()
+            if isinstance(property_schema, dict) and property_schema.get("primary_key")
+        ),
+        None,
+    )
+
+
+def _resolve_add_entity_id(
+    entity_type: str,
+    entity_id: str | None,
+    *,
+    entity_id_option: str | None,
+    properties: Mapping[str, Any],
+) -> str:
+    explicit_id = _resolve_optional_arg_or_option(
+        arg_value=entity_id,
+        option_value=entity_id_option,
+        option_name="--id",
+        label="entity id",
+    )
+    if explicit_id is not None and not properties:
+        return explicit_id
+
+    primary_key = _entity_primary_key(entity_type)
+    if primary_key is None:
+        if explicit_id is not None:
+            return explicit_id
+        raise click.UsageError(
+            f"Cannot derive entity id: entity type '{entity_type}' has no schema primary key"
+        )
+
+    if primary_key not in properties:
+        if explicit_id is not None:
+            return explicit_id
+        raise click.UsageError(
+            "Missing entity id: pass --id or include schema primary-key property "
+            f"'{primary_key}' in --props, --set, or --set-json"
+        )
+
+    property_value = properties[primary_key]
+    if property_value is None or not str(property_value).strip():
+        raise click.UsageError(
+            f"Cannot derive entity id: primary-key property '{primary_key}' is empty"
+        )
+    derived_id = str(property_value)
+    if explicit_id is not None and explicit_id != derived_id:
+        raise click.UsageError(
+            f"Entity id conflict: --id/positional value {explicit_id!r} does not match "
+            f"primary-key property '{primary_key}' value {property_value!r}"
+        )
+    return explicit_id or derived_id
+
+
 def _resolve_entity_identity(
     entity_type: str | None,
     entity_id: str | None,
@@ -523,7 +600,12 @@ def _require_property_assignments(properties: Mapping[str, Any], *, command_name
 @click.argument("entity_type", required=False)
 @click.argument("entity_id", required=False)
 @click.option("--type", "entity_type_option", default=None, help="Entity type.")
-@click.option("--id", "entity_id_option", default=None, help="Entity ID.")
+@click.option(
+    "--id",
+    "entity_id_option",
+    default=None,
+    help="Entity ID; optional when properties include the schema primary key.",
+)
 @click.option("--props", default=None, help="JSON object of properties.")
 @click.option(
     "--set",
@@ -565,13 +647,19 @@ def add_entity_cmd(
     output_json: bool,
 ) -> None:
     """Create one entity using JSON properties or FIELD=VALUE assignments."""
-    entity_type, entity_id = _resolve_entity_identity(
-        entity_type,
-        entity_id,
-        entity_type_option=entity_type_option,
-        entity_id_option=entity_id_option,
+    entity_type = _resolve_arg_or_option(
+        arg_value=entity_type,
+        option_value=entity_type_option,
+        option_name="--type",
+        label="entity type",
     )
     properties = _parse_property_inputs(props, set_values, set_json_values)
+    entity_id = _resolve_add_entity_id(
+        entity_type,
+        entity_id,
+        entity_id_option=entity_id_option,
+        properties=properties,
+    )
     lifecycle = _build_entity_lifecycle_input(lifecycle_status, lifecycle_reason)
     if _entity_exists(entity_type, entity_id, command_name="entity add"):
         raise DataValidationError(f"Entity {entity_type}:{entity_id} already exists")
@@ -675,7 +763,13 @@ def update_entity_cmd(
 @click.argument("to_id", required=False)
 @click.option("--from-type", "from_type_option", default=None, help="Source entity type.")
 @click.option("--from-id", "from_id_option", default=None, help="Source entity ID.")
-@click.option("--relationship", "relationship_option", default=None, help="Relationship type.")
+@click.option(
+    "--relationship",
+    "--type",
+    "relationship_option",
+    default=None,
+    help="Relationship type.",
+)
 @click.option("--to-type", "to_type_option", default=None, help="Target entity type.")
 @click.option("--to-id", "to_id_option", default=None, help="Target entity ID.")
 @click.option("--props", default=None, help="JSON object of edge properties.")
@@ -816,7 +910,13 @@ def add_relationship_cmd(
 @click.argument("to_id", required=False)
 @click.option("--from-type", "from_type_option", default=None, help="Source entity type.")
 @click.option("--from-id", "from_id_option", default=None, help="Source entity ID.")
-@click.option("--relationship", "relationship_option", default=None, help="Relationship type.")
+@click.option(
+    "--relationship",
+    "--type",
+    "relationship_option",
+    default=None,
+    help="Relationship type.",
+)
 @click.option("--to-type", "to_type_option", default=None, help="Target entity type.")
 @click.option("--to-id", "to_id_option", default=None, help="Target entity ID.")
 @click.option("--props", default=None, help="JSON object of edge properties.")
