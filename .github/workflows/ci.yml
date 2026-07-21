@@ -56,6 +56,9 @@ jobs:
       - name: Verify kit lockfiles and distribution manifest are current
         run: uv run python scripts/check_kit_lockfiles.py
 
+      - name: Verify tagged kit release asset URLs are available
+        run: uv run python scripts/check_kit_release_assets.py
+
   docker-image-test:
     runs-on: ubuntu-latest
 

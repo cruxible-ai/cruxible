@@ -7,6 +7,14 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+### Fixed
+
+- **Kit bundles ship with every release**: the tag workflow deterministically
+  rebuilds bundles, refuses digest drift from the committed manifest, and
+  idempotently uploads them to the GitHub release. CI also checks every
+  manifest URL once its version tag exists, preventing a published package
+  from pointing all built-in kit aliases at missing release assets.
+
 ## 0.2.7 — 2026-07-20
 
 ### Added

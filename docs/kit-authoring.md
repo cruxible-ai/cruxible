@@ -273,10 +273,23 @@ runs: sorted members, zeroed timestamps and ownership, normalized permissions)
 and regenerates `src/cruxible_core/kit_distribution/manifest.json`, which ships
 in the wheel and pins each bundle by tarball sha256 and by the extracted
 directory digest — the same `compute_path_sha256` discipline kit locks use.
-The tarballs are uploaded as release assets on the `v<version>` tag; the
-regenerated manifest is committed before tagging, and CI asserts it matches a
-fresh digest of every `kits/<id>` directory (like the kit lock freshness
-check).
+The release sequence is:
+
+1. Stamp the package and kit version, run `scripts/build_kit_bundles.py`, and
+   commit the regenerated manifest (plus any refreshed kit locks).
+2. Run `scripts/check_kit_lockfiles.py`, then create and push the
+   `v<version>` tag.
+3. The tag-triggered publish workflow publishes the client package in parallel
+   with rebuilding the bundles from tagged source; the core package waits for
+   both. The bundle job refuses to upload unless the regenerated manifest,
+   including every tarball digest, exactly matches the committed manifest. It
+   creates the GitHub release when absent and replaces same-named bundle assets
+   on reruns, so a partial or manually created release is repaired without
+   changing its authored notes.
+4. CI runs `scripts/check_kit_release_assets.py`. Before the exact version tag
+   exists on `origin`, the check emits a notice and skips (the valid state
+   between stamping and tagging). Once the tag exists, every manifest asset
+   URL must answer an HTTP HEAD request with status 200.
 
 Alias resolution order:
 
