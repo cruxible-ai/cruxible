@@ -910,22 +910,57 @@ gates:
     adapter: {branch_pattern: refs/heads/main}
 ```
 
-For a non-git pre-action check, declare a `generic` gate without an `adapter`:
+For a non-git pre-action check, declare a `generic` gate without an `adapter`.
+There are two styles, and the difference is what the gate's condition reads.
+
+**Derivational gating — prefer it whenever permissibility is derivable.** The
+condition queries world facts that exist independently of any one action, so
+one set of facts answers many future questions. Here a deploy pipeline asks
+whether the service it is about to ship is clear of live incidents:
+
+```yaml
+gates:
+  deploy-clear-of-incidents:
+    description: A service deploys only while no live incident names it.
+    kind: generic
+    entity_type: Service
+    match_property: service_id
+    condition: {incident_status: clear}
+```
+
+```bash
+cruxible gate check deploy-clear-of-incidents --candidate "$SERVICE_ID" \
+  && ./deploy "$SERVICE_ID"
+```
+
+**Decisional gating — for judgments that are irreducibly new information.**
+Some actions require an approval no fact pattern derives (a human call, a
+cross-agent review). Then the judgment itself is the world event: model it as
+a durable decision record with an actor, rationale, and evidence — an entity
+whose meaning outlives the action it gates, feeding the audit trail and later
+outcome calibration — not a bare `{action_id, status}` token. A write-once,
+read-once approval token turns the graph into a message queue: technically
+evaluable, but it compresses nothing and should be a red flag in review.
 
 ```yaml
 gates:
   irreversible-action-approved:
-    description: An external verdict must approve each action before execution.
+    description: Each irreversible action needs a reviewed, live decision.
     kind: generic
-    entity_type: ActionVerdict
-    match_property: action_id
+    entity_type: Decision
+    match_property: approves_action_id
     condition: {status: approved}
 ```
 
-An external process can then emit one candidate value per line (blank lines are ignored; surrounding whitespace is trimmed):
+A decisional gate is only as strong as the write rules behind its entity:
+declare the decision type `governed` (or guard it) so approvals reach `live`
+through review, not through the acting agent's own direct write.
+
+An external process can emit one candidate value per line (blank lines are
+ignored; surrounding whitespace is trimmed):
 
 ```bash
-external-verdict candidates --format lines \
+verdict-layer pending-actions --format lines \
   | cruxible gate check irreversible-action-approved
 ```
 
