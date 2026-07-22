@@ -47,6 +47,40 @@ relationships: []
         with pytest.raises(ConfigError, match="Invalid YAML"):
             load_config("{{not: valid: yaml: [}")
 
+    @pytest.mark.parametrize("duplicate_key", ["entity_types", "relationships"])
+    def test_duplicate_composition_sections_are_rejected(self, duplicate_key: str):
+        sections = {
+            "entity_types": (
+                "entity_types:\n"
+                "  Existing:\n"
+                "    id: existing_id\n"
+                "relationships: []\n"
+                "entity_types:\n"
+                "  Added:\n"
+                "    id: added_id\n"
+            ),
+            "relationships": (
+                "entity_types:\n"
+                "  Existing:\n"
+                "    id: existing_id\n"
+                "  Added:\n"
+                "    id: added_id\n"
+                "relationships:\n"
+                "  - existing_to_added: Existing -> Added\n"
+                "relationships:\n"
+                "  - added_to_existing: Added -> Existing\n"
+            ),
+        }
+        yaml_str = (
+            "version: '1.0'\n"
+            "name: duplicate_sections\n"
+            "extends: base.yaml\n"
+            f"{sections[duplicate_key]}"
+        )
+
+        with pytest.raises(ConfigError, match=rf"found duplicate key \('{duplicate_key}'\)"):
+            load_config_from_string(yaml_str)
+
     def test_non_dict_yaml(self):
         with pytest.raises(ConfigError, match="mapping"):
             load_config("- just\n- a\n- list\n")

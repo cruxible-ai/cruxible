@@ -290,6 +290,43 @@ class TestRecursiveLayerResolution:
         ]
         assert list(composed.entity_types) == ["Actor", "WorkItem", "Strategy"]
 
+    def test_compact_child_additions_survive_recursive_composition(self, tmp_path: Path) -> None:
+        base = tmp_path / "base" / "config.yaml"
+        base.parent.mkdir()
+        base.write_text(
+            "version: '1.0'\n"
+            "name: base\n"
+            "entity_types:\n"
+            "  Actor:\n"
+            "    id: actor_id\n"
+            "  WorkItem:\n"
+            "    id: work_item_id\n"
+            "relationships:\n"
+            "  - work_item_owned_by_actor: WorkItem -> Actor\n"
+        )
+        child = tmp_path / "child" / "config.yaml"
+        child.parent.mkdir()
+        child.write_text(
+            "version: '2.0'\n"
+            "name: child\n"
+            "extends: ../base/config.yaml\n"
+            "entity_types:\n"
+            "  Strategy:\n"
+            "    id: strategy_id\n"
+            "relationships:\n"
+            "  - strategy_tracks_work_item: Strategy -> WorkItem\n"
+        )
+
+        composed = compose_config_sequence(
+            resolve_config_layers(load_config(child), config_path=child)
+        )
+
+        assert list(composed.entity_types) == ["Actor", "WorkItem", "Strategy"]
+        assert [relationship.name for relationship in composed.relationships] == [
+            "work_item_owned_by_actor",
+            "strategy_tracks_work_item",
+        ]
+
     def test_multiple_roots_deduplicate_shared_base_at_first_position(self, tmp_path: Path) -> None:
         base = tmp_path / "base" / "config.yaml"
         first = tmp_path / "first" / "config.yaml"

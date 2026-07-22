@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 from pydantic import ValidationError
+from yaml.constructor import ConstructorError
+from yaml.nodes import MappingNode
 
 from cruxible_core import __version__
 from cruxible_core.config.schema import CoreConfig
@@ -19,6 +21,32 @@ from cruxible_core.errors import ConfigError
 class _ParsedConfig:
     data: dict[str, Any]
     all_adjacent_queries: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects explicit duplicate mapping keys."""
+
+    def construct_mapping(self, node: MappingNode, deep: bool = False) -> dict[Any, Any]:
+        seen: dict[Any, yaml.Mark] = {}
+        for key_node, _value_node in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue
+            key = self.construct_object(key_node, deep=deep)  # type: ignore[no-untyped-call]
+            try:
+                first_mark = seen.get(key)
+            except TypeError:
+                continue
+            if first_mark is not None:
+                raise ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    "found duplicate key "
+                    f"({key!r}); first declared at line {first_mark.line + 1}, "
+                    f"column {first_mark.column + 1}",
+                    key_node.start_mark,
+                )
+            seen[key] = key_node.start_mark
+        return super().construct_mapping(node, deep=deep)
 
 
 def load_config(source: str | Path) -> CoreConfig:
@@ -146,7 +174,7 @@ def _is_overlay_kit_entry_config(path: Path | None) -> bool:
 def _parse_yaml(raw: str) -> dict[str, Any]:
     """Parse YAML string into a dict."""
     try:
-        data = yaml.safe_load(raw)
+        data = yaml.load(raw, Loader=_UniqueKeySafeLoader)
     except yaml.YAMLError as e:
         raise ConfigError(f"Invalid YAML: {e}") from e
 

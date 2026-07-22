@@ -270,6 +270,41 @@ class TestValidate:
         result = runner.invoke(cli, ["validate", "--config", str(bad)])
         assert result.exit_code == 1
 
+    def test_extends_summary_counts_composed_child_additions(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        base = tmp_path / "base" / "config.yaml"
+        base.parent.mkdir()
+        base.write_text(
+            "version: '1.0'\n"
+            "name: base\n"
+            "entity_types:\n"
+            "  Actor:\n"
+            "    id: actor_id\n"
+            "  WorkItem:\n"
+            "    id: work_item_id\n"
+            "relationships:\n"
+            "  - work_item_owned_by_actor: WorkItem -> Actor\n"
+        )
+        child = tmp_path / "child" / "config.yaml"
+        child.parent.mkdir()
+        child.write_text(
+            "version: '2.0'\n"
+            "name: child\n"
+            "extends: ../base/config.yaml\n"
+            "entity_types:\n"
+            "  Strategy:\n"
+            "    id: strategy_id\n"
+            "relationships:\n"
+            "  - strategy_tracks_work_item: Strategy -> WorkItem\n"
+        )
+
+        result = runner.invoke(cli, ["validate", "--config", str(child)])
+
+        assert result.exit_code == 0
+        assert "Config 'child' is valid." in result.output
+        assert "3 entity types, 2 relationships, 0 queries" in result.output
+
 
 # ---------------------------------------------------------------------------
 # query
