@@ -38,7 +38,7 @@ errors (runtime data), making it easy to catch by category.
 from __future__ import annotations
 
 from cruxible_client._error_base import (
-    CoreError,
+    CoreError as CoreError,
 )
 from cruxible_client._error_base import (
     InvalidContinuationError as _InvalidContinuationError,

@@ -7,9 +7,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from cruxible_client._error_base import (
-    CoreError,
-    InvalidContinuationError,
-    StaleContinuationError,
+    CoreError as CoreError,
+    InvalidContinuationError as InvalidContinuationError,
+    StaleContinuationError as StaleContinuationError,
 )
 
 _MAX_DISPLAY_ERRORS = 10

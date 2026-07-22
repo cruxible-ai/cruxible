@@ -704,7 +704,7 @@ def _query_list_envelope(
         )
 
         def builder(query: Any) -> dict[str, Any]:
-            return _call_service(builder_name, query)
+            return cast("dict[str, Any]", _call_service(builder_name, query))
 
         payload = [builder(query) for query in queries]
     return payload, envelope
