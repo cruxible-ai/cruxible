@@ -8,7 +8,11 @@ from pydantic import BaseModel, Field
 
 from cruxible_client._error_base import (
     CoreError as CoreError,
+)
+from cruxible_client._error_base import (
     InvalidContinuationError as InvalidContinuationError,
+)
+from cruxible_client._error_base import (
     StaleContinuationError as StaleContinuationError,
 )
 
