@@ -8,6 +8,7 @@ from cruxible_core.config.property_validation import entity_with_identity_proper
 from cruxible_core.config.schema import CoreConfig, GateSchema
 from cruxible_core.errors import CoreError
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.types import EntityInstance
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.entity_state import entity_matches_query_state
 from cruxible_core.receipt.builder import ReceiptBuilder
@@ -18,6 +19,16 @@ from cruxible_core.service.types import (
 )
 
 _READ_REVISION_STATE_KEY = "read_revision"
+
+
+def entity_matches_property_equality_condition(
+    config: CoreConfig,
+    entity: EntityInstance,
+    condition: dict[str, str | int | float | bool],
+) -> bool:
+    """Return whether one entity matches every declared property equality."""
+    properties = entity_with_identity_properties(config, entity).properties
+    return all(properties.get(property_name) == value for property_name, value in condition.items())
 
 
 def _failure_reason(prefix: str, exc: Exception) -> str:
@@ -53,8 +64,7 @@ def _satisfying_entity_ids(
     for entity in graph.list_entities(gate.entity_type):
         if not entity_matches_query_state(entity.metadata, "live"):
             continue
-        properties = entity_with_identity_properties(config, entity).properties
-        if all(properties.get(property_name) == value for property_name, value in expected.items()):
+        if entity_matches_property_equality_condition(config, entity, expected):
             matches.append(entity.entity_id)
     return sorted(matches)
 

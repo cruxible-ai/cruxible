@@ -161,9 +161,7 @@ def execute_repeat_handler(
     outer_outputs = context.step_outputs
     outer_alias_step_ids = context.alias_step_ids
     nested_output_keys = [
-        nested.as_name or nested.step_id
-        for nested in compiled_step.repeat_steps
-        if nested.as_name is not None
+        nested.as_name for nested in compiled_step.repeat_steps if nested.as_name is not None
     ]
 
     for attempt_count in range(1, compiled_step.repeat_max_attempts + 1):

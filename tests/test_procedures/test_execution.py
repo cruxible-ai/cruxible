@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -24,6 +25,7 @@ from cruxible_core.service import (
     service_lock,
     service_promote_procedure,
     service_propose_procedure,
+    service_retire_procedure,
     service_run_procedure,
 )
 from tests.test_procedures.conftest import actor, provider_definition
@@ -80,15 +82,24 @@ def _stub_provider(
     monkeypatch.setattr("cruxible_core.workflow.io.resolve_provider", resolve_provider)
 
 
-def _add_task(instance: CruxibleInstance, task_id: str, status: str) -> None:
-    task = EntityInstance(
-        entity_type="Task",
-        entity_id=task_id,
+def _add_entity(
+    instance: CruxibleInstance,
+    entity_type: str,
+    entity_id: str,
+    status: str,
+) -> None:
+    entity = EntityInstance(
+        entity_type=entity_type,
+        entity_id=entity_id,
         properties={"status": status},
     )
     graph = instance.load_graph()
-    graph.add_entity(task)
-    instance.save_graph_delta(graph, entities=[task])
+    graph.add_entity(entity)
+    instance.save_graph_delta(graph, entities=[entity])
+
+
+def _add_task(instance: CruxibleInstance, task_id: str, status: str) -> None:
+    _add_entity(instance, "Task", task_id, status)
 
 
 def _repeat_definition(
@@ -141,8 +152,12 @@ def test_precondition_refusal_finalizes_started_run_and_receipts_revision(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    definition = provider_definition("requires_ready_task").model_copy(
-        update={"precondition": {"status": "ready"}}
+    definition = provider_definition(
+        "requires_ready_task",
+        precondition={
+            "entity_type": "Task",
+            "condition": {"status": "ready"},
+        },
     )
     procedure_id = _promote(procedure_instance, definition)
     _stub_provider(monkeypatch, lambda payload: payload)
@@ -171,14 +186,19 @@ def test_precondition_refusal_finalizes_started_run_and_receipts_revision(
     assert receipt.nodes[0].detail["verdict"] == "refused"
 
 
-def test_satisfied_precondition_records_satisfier_entity_ids(
+def test_precondition_matches_only_named_type_and_records_typed_satisfiers(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _add_task(procedure_instance, "task-ready", "ready")
     _add_task(procedure_instance, "task-waiting", "waiting")
-    definition = provider_definition("ready_task_action").model_copy(
-        update={"precondition": {"status": "ready"}}
+    _add_entity(procedure_instance, "Incident", "incident-ready", "ready")
+    definition = provider_definition(
+        "ready_task_action",
+        precondition={
+            "entity_type": "Task",
+            "condition": {"status": "ready"},
+        },
     )
     procedure_id = _promote(procedure_instance, definition)
     _stub_provider(monkeypatch, lambda payload: payload)
@@ -191,17 +211,50 @@ def test_satisfied_precondition_records_satisfier_entity_ids(
     )
 
     assert result.output == {"value": 7}
-    assert result.receipt.nodes[0].detail["precondition"]["satisfying_entity_ids"] == ["task-ready"]
-    lookups = [node.entity_id for node in result.receipt.nodes if node.node_type == "entity_lookup"]
-    assert lookups == ["task-ready"]
+    precondition = result.receipt.nodes[0].detail["precondition"]
+    assert precondition["satisfying_entity_ids"] == ["task-ready"]
+    assert precondition["satisfiers"] == [{"entity_type": "Task", "entity_id": "task-ready"}]
+    lookups = [
+        (node.entity_type, node.entity_id)
+        for node in result.receipt.nodes
+        if node.node_type == "entity_lookup"
+    ]
+    assert lookups == [("Task", "task-ready")]
+
+
+def test_empty_precondition_is_always_eligible(
+    procedure_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    procedure_id = _promote(
+        procedure_instance,
+        provider_definition("always_eligible"),
+    )
+    _stub_provider(monkeypatch, lambda payload: payload)
+
+    result = service_run_procedure(
+        procedure_instance,
+        procedure_id,
+        {"value": 8},
+        actor("runner"),
+    )
+
+    precondition = result.receipt.nodes[0].detail["precondition"]
+    assert result.run.verdict == "succeeded"
+    assert precondition["satisfied"] is True
+    assert precondition["satisfiers"] == []
 
 
 def test_started_run_exists_before_precondition_evaluation(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    definition = provider_definition("started_before_precondition").model_copy(
-        update={"precondition": {"status": "ready"}}
+    definition = provider_definition(
+        "started_before_precondition",
+        precondition={
+            "entity_type": "Task",
+            "condition": {"status": "ready"},
+        },
     )
     procedure_id = _promote(procedure_instance, definition)
     observed: list[ProcedureRun] = []
@@ -232,6 +285,75 @@ def test_started_run_exists_before_precondition_evaluation(
     assert observed[0].status == "started"
     assert observed[0].verdict is None
     assert observed[0].receipt_id is None
+
+
+def test_retirement_between_started_run_and_authorization_is_receipted_refusal(
+    procedure_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    procedure_id = _promote(
+        procedure_instance,
+        provider_definition("retired_before_authorization"),
+    )
+    provider_called = False
+
+    def provider(payload: dict[str, Any]) -> dict[str, Any]:
+        nonlocal provider_called
+        provider_called = True
+        return payload
+
+    _stub_provider(monkeypatch, provider)
+    original_write_transaction = procedure_instance.write_transaction
+    transaction_count = 0
+    retired = False
+
+    @contextmanager
+    def retire_after_started_run() -> Iterator[Any]:
+        nonlocal transaction_count, retired
+        transaction_count += 1
+        transaction_number = transaction_count
+        with original_write_transaction() as uow:
+            yield uow
+        if transaction_number == 1:
+            service_retire_procedure(
+                procedure_instance,
+                procedure_id,
+                expected_version=2,
+                reason="retired during authorization window",
+                actor_context=actor("retirer"),
+            )
+            retired = True
+
+    monkeypatch.setattr(
+        procedure_instance,
+        "write_transaction",
+        retire_after_started_run,
+    )
+
+    with pytest.raises(ConfigError, match="must be live to run; found 'retired'") as exc_info:
+        service_run_procedure(
+            procedure_instance,
+            procedure_id,
+            {"value": 1},
+            actor("runner"),
+        )
+
+    run = _run(procedure_instance, getattr(exc_info.value, "procedure_run_id"))
+    assert retired is True
+    assert provider_called is False
+    assert run.status == "finalized"
+    assert run.verdict == "refused"
+    assert run.receipt_id is not None
+    receipt = _receipt(procedure_instance, run.receipt_id)
+    precondition_node = next(
+        node
+        for node in receipt.nodes
+        if node.node_type == "validation" and node.detail.get("kind") == "procedure_precondition"
+    )
+    assert precondition_node.detail["procedure_status"] == "retired"
+    assert precondition_node.detail["evaluated"] is False
+    assert precondition_node.detail["read_revision"] == procedure_instance.get_read_revision()
+    assert receipt.nodes[0].detail["verdict"] == "refused"
 
 
 def test_provider_runs_after_precondition_transaction_closes(

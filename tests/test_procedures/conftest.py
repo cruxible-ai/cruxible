@@ -24,6 +24,13 @@ entity_types:
         primary_key: true
       status:
         type: string
+  Incident:
+    properties:
+      incident_id:
+        type: string
+        primary_key: true
+      status:
+        type: string
 
 relationships: []
 
@@ -77,7 +84,11 @@ def actor(actor_id: str, operation_id: str | None = None) -> GovernedActorContex
     )
 
 
-def provider_definition(name: str = "restart_task") -> ProcedureDefinition:
+def provider_definition(
+    name: str = "restart_task",
+    *,
+    precondition: dict[str, object] | None = None,
+) -> ProcedureDefinition:
     """Return a valid definition that exercises provider export/tier checks."""
     return ProcedureDefinition.model_validate(
         {
@@ -94,7 +105,7 @@ def provider_definition(name: str = "restart_task") -> ProcedureDefinition:
                 }
             ],
             "returns": "result",
-            "precondition": {},
+            "precondition": {} if precondition is None else precondition,
             "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
             "declared_tier": "graph_write",
         }

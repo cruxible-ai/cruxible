@@ -75,6 +75,81 @@ def test_propose_and_promote_pin_definition_config_and_lock_digests(
     assert _receipt(procedure_instance, promoted.receipt_id).committed is True
 
 
+def test_proposal_refuses_unknown_precondition_entity_type_with_receipt(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    definition = provider_definition(
+        "unknown_precondition_type",
+        precondition={
+            "entity_type": "UnknownType",
+            "condition": {"status": "ready"},
+        },
+    )
+
+    with pytest.raises(
+        ConfigError,
+        match="precondition references unknown entity type 'UnknownType'",
+    ) as exc_info:
+        service_propose_procedure(
+            procedure_instance,
+            definition,
+            actor_context=actor("proposer"),
+        )
+
+    assert exc_info.value.mutation_receipt_id is not None
+    receipt = _receipt(procedure_instance, exc_info.value.mutation_receipt_id)
+    assert receipt.committed is False
+    assert any(
+        "UnknownType" in str(node.detail.get("reason", ""))
+        for node in receipt.nodes
+        if node.node_type == "validation"
+    )
+
+
+def test_promotion_refuses_precondition_entity_type_removed_after_proposal(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    definition = provider_definition(
+        "removed_precondition_type",
+        precondition={
+            "entity_type": "Task",
+            "condition": {"status": "ready"},
+        },
+    )
+    proposed = service_propose_procedure(
+        procedure_instance,
+        definition,
+        actor_context=actor("proposer"),
+    )
+    config = procedure_instance.load_config()
+    del config.entity_types["Task"]
+    procedure_instance.save_config(config)
+
+    with pytest.raises(
+        ConfigError,
+        match="precondition references unknown entity type 'Task'",
+    ) as exc_info:
+        service_promote_procedure(
+            procedure_instance,
+            proposed.procedure.procedure_id,
+            expected_version=1,
+            actor_context=actor("reviewer"),
+        )
+
+    assert exc_info.value.mutation_receipt_id is not None
+    receipt = _receipt(procedure_instance, exc_info.value.mutation_receipt_id)
+    assert receipt.committed is False
+    assert any(
+        "Task" in str(node.detail.get("reason", ""))
+        for node in receipt.nodes
+        if node.node_type == "validation"
+    )
+    assert (
+        service_get_procedure(procedure_instance, proposed.procedure.procedure_id).status
+        == "pending"
+    )
+
+
 def test_promotion_refuses_same_actor_and_receipts_the_refusal(
     procedure_instance: CruxibleInstance,
 ) -> None:

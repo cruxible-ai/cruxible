@@ -91,7 +91,7 @@ def test_type_is_not_part_of_procedure_body() -> None:
 
 
 def test_empty_precondition_is_explicitly_allowed() -> None:
-    assert _definition().precondition == {}
+    assert _definition().precondition.model_dump(exclude_none=True) == {}
 
 
 def test_precondition_refuses_reserved_query_key_like_gate_conditions() -> None:
@@ -99,7 +99,50 @@ def test_precondition_refuses_reserved_query_key_like_gate_conditions() -> None:
         ValidationError,
         match="reserved for a future named-query condition variant",
     ):
-        _definition(precondition={"query": "eligible_tasks"})
+        _definition(
+            precondition={
+                "entity_type": "Task",
+                "condition": {"query": "eligible_tasks"},
+            }
+        )
+
+
+def test_precondition_refuses_legacy_flat_property_shape() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        _definition(precondition={"status": "ready"})
+
+
+def test_precondition_requires_named_entity_type_with_condition() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="entity_type must be non-empty when condition is present",
+    ):
+        _definition(precondition={"condition": {"status": "ready"}})
+
+    with pytest.raises(
+        ValidationError,
+        match="entity_type must be non-empty when condition is present",
+    ):
+        _definition(
+            precondition={
+                "entity_type": " ",
+                "condition": {"status": "ready"},
+            }
+        )
+
+
+def test_precondition_requires_non_empty_condition_with_entity_type() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="condition must declare at least one property=value pair",
+    ):
+        _definition(precondition={"entity_type": "Task"})
+
+    with pytest.raises(
+        ValidationError,
+        match="condition must declare at least one property=value pair",
+    ):
+        _definition(precondition={"entity_type": "Task", "condition": {}})
 
 
 def test_build_write_workflow_kinds_are_refused() -> None:

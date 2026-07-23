@@ -30,7 +30,10 @@ def _definition(name: str = "stored_procedure") -> ProcedureDefinition:
                 }
             ],
             "returns": "eligible",
-            "precondition": {"status": "ready"},
+            "precondition": {
+                "entity_type": "Task",
+                "condition": {"status": "ready"},
+            },
             "budget": {"wall_clock_s": 60, "max_provider_calls": 0},
         }
     )
@@ -75,7 +78,10 @@ def test_procedure_definition_round_trip(store: ProcedureStore) -> None:
 
     assert loaded == record
     assert loaded is not None
-    assert loaded.definition.precondition == {"status": "ready"}
+    assert loaded.definition.precondition.model_dump(exclude_none=True) == {
+        "entity_type": "Task",
+        "condition": {"status": "ready"},
+    }
     assert loaded.proposed_actor_context == actor("proposer")
 
 

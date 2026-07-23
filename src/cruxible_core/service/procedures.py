@@ -6,7 +6,6 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, NoReturn
 
-from cruxible_core.config.property_validation import entity_with_identity_properties
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import (
     ConfigError,
@@ -22,6 +21,7 @@ from cruxible_core.procedure.types import (
     ProcedureBudgetSpent,
     ProcedureDefinition,
     ProcedureExecutionResult,
+    ProcedurePrecondition,
     ProcedureRecord,
     ProcedureRun,
     ProcedureRunVerdict,
@@ -33,6 +33,7 @@ from cruxible_core.query.entity_state import entity_matches_query_state
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.runtime.permissions import PermissionMode, get_current_mode
+from cruxible_core.service.gates import entity_matches_property_equality_condition
 from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import (
@@ -63,6 +64,13 @@ def validate_procedure_definition_against_config(
     config: CoreConfig,
 ) -> ProcedureTier:
     """Validate provider exports and return the procedure's effective tier."""
+    precondition_entity_type = definition.precondition.entity_type
+    if precondition_entity_type is not None and precondition_entity_type not in config.entity_types:
+        raise ConfigError(
+            f"Procedure '{definition.name}' precondition references unknown entity type "
+            f"'{precondition_entity_type}'"
+        )
+
     effective_tier: ProcedureTier = "governed_write"
     for provider_name in sorted(definition.referenced_providers()):
         provider = config.providers.get(provider_name)
@@ -349,7 +357,8 @@ def service_run_procedure(
     precondition_detail: dict[str, Any] = {
         "evaluated": False,
         "read_revision": None,
-        "condition": dict(procedure.definition.precondition),
+        "entity_type": procedure.definition.precondition.entity_type,
+        "condition": dict(procedure.definition.precondition.condition or {}),
         "satisfying_entity_ids": [],
     }
     executed_config_digest: str | None = None
@@ -432,26 +441,57 @@ def service_run_procedure(
     with instance.write_transaction() as uow:
         revision_value = uow.snapshots.get_instance_state(_READ_REVISION_STATE_KEY)
         read_revision = int(revision_value) if isinstance(revision_value, int) else 0
-        try:
-            satisfiers = _procedure_precondition_satisfiers(
-                config,
-                uow.graph.load_graph(),
-                procedure.definition.precondition,
-            )
-        except Exception as exc:
+        authorization_procedure = _get_procedure(uow.procedures, procedure_id)
+        authorization_definition_digest = compute_procedure_definition_digest(
+            authorization_procedure.definition
+        )
+        if authorization_procedure.status != "live":
             refusal = ConfigError(
-                f"Procedure precondition evaluation failed closed: {type(exc).__name__}: {exc}"
+                f"Procedure '{authorization_procedure.procedure_id}' must be live to run; "
+                f"found '{authorization_procedure.status}'"
             )
-            satisfiers = []
+        elif authorization_procedure.definition_digest != procedure.definition_digest:
+            refusal = ConfigError(
+                "Procedure definition digest changed before authorization: "
+                f"started={procedure.definition_digest}, "
+                f"current={authorization_procedure.definition_digest}"
+            )
+        elif authorization_definition_digest != authorization_procedure.definition_digest:
+            refusal = ConfigError(
+                "Procedure definition digest changed before authorization: "
+                f"stored={authorization_procedure.definition_digest}, "
+                f"computed={authorization_definition_digest}"
+            )
 
-        satisfied = not procedure.definition.precondition or bool(satisfiers)
-        if refusal is not None:
-            satisfied = False
-        satisfying_ids = sorted({entity_id for _, entity_id in satisfiers})
+        satisfiers: list[tuple[str, str]] = []
+        precondition_evaluated = refusal is None
+        if precondition_evaluated:
+            try:
+                satisfiers = _procedure_precondition_satisfiers(
+                    config,
+                    uow.graph.load_graph(),
+                    authorization_procedure.definition.precondition,
+                )
+            except Exception as exc:
+                refusal = ConfigError(
+                    f"Procedure precondition evaluation failed closed: {type(exc).__name__}: {exc}"
+                )
+
+        satisfied = refusal is None and (
+            authorization_procedure.definition.precondition.is_empty or bool(satisfiers)
+        )
+        if not satisfied and refusal is None:
+            refusal = ConfigError(
+                f"Procedure '{procedure.procedure_id}' precondition was unsatisfied"
+            )
+        satisfying_ids = [entity_id for _, entity_id in satisfiers]
         precondition_detail = {
-            "evaluated": True,
+            "evaluated": precondition_evaluated,
             "read_revision": read_revision,
-            "condition": dict(procedure.definition.precondition),
+            "procedure_status": authorization_procedure.status,
+            "definition_digest": authorization_procedure.definition_digest,
+            "entity_type": authorization_procedure.definition.precondition.entity_type,
+            "condition": dict(authorization_procedure.definition.precondition.condition or {}),
             "satisfied": satisfied,
             "satisfying_entity_ids": satisfying_ids,
             "satisfiers": [
@@ -459,6 +499,8 @@ def service_run_procedure(
                 for entity_type, entity_id in satisfiers
             ],
         }
+        if refusal is not None:
+            precondition_detail["reason"] = str(refusal)
         precondition_node = builder.record_validation(
             passed=satisfied,
             detail={"kind": "procedure_precondition", **precondition_detail},
@@ -470,10 +512,7 @@ def service_run_procedure(
                 parent_id=precondition_node,
             )
         if not satisfied:
-            if refusal is None:
-                refusal = ConfigError(
-                    f"Procedure '{procedure.procedure_id}' precondition was unsatisfied"
-                )
+            assert refusal is not None
             refusal_receipt, refusal_run = _finalize_procedure_invocation_in_uow(
                 uow,
                 procedure=procedure,
@@ -576,19 +615,23 @@ def service_run_procedure(
 def _procedure_precondition_satisfiers(
     config: CoreConfig,
     graph: Any,
-    condition: dict[str, str | int | float | bool],
+    precondition: ProcedurePrecondition,
 ) -> list[tuple[str, str]]:
-    """Return live satisfiers in stable type/id order for a property condition."""
-    if not condition:
+    """Return live satisfiers in stable ID order for one named entity type."""
+    if precondition.is_empty:
         return []
+    assert precondition.entity_type is not None
+    assert precondition.condition is not None
     satisfiers: list[tuple[str, str]] = []
-    for entity_type in sorted(config.entity_types):
-        for entity in graph.list_entities(entity_type):
-            if not entity_matches_query_state(entity.metadata, "live"):
-                continue
-            properties = entity_with_identity_properties(config, entity).properties
-            if all(properties.get(name) == expected for name, expected in condition.items()):
-                satisfiers.append((entity_type, entity.entity_id))
+    for entity in graph.list_entities(precondition.entity_type):
+        if not entity_matches_query_state(entity.metadata, "live"):
+            continue
+        if entity_matches_property_equality_condition(
+            config,
+            entity,
+            precondition.condition,
+        ):
+            satisfiers.append((precondition.entity_type, entity.entity_id))
     return sorted(satisfiers)
 
 

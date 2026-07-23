@@ -134,6 +134,37 @@ class ProcedureStaticExpansion(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ProcedurePrecondition(BaseModel):
+    """Optional named-type property-equality authorization condition."""
+
+    entity_type: str | None = None
+    condition: dict[str, str | int | float | bool] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> ProcedurePrecondition:
+        has_entity_type = "entity_type" in self.model_fields_set
+        has_condition = "condition" in self.model_fields_set
+        if not has_entity_type and not has_condition:
+            return self
+        if has_condition and (self.entity_type is None or not self.entity_type.strip()):
+            raise ValueError("entity_type must be non-empty when condition is present")
+        if has_entity_type and not self.condition:
+            raise ValueError(
+                "condition must declare at least one property=value pair "
+                "when entity_type is present"
+            )
+        assert self.condition is not None
+        reject_reserved_property_equality_condition_keys(self.condition)
+        return self
+
+    @property
+    def is_empty(self) -> bool:
+        """Return whether this precondition authorizes every invocation."""
+        return self.entity_type is None
+
+
 class ProcedureDefinition(BaseModel):
     """Agent-proposable utility plan constrained to the procedure step subset.
 
@@ -150,7 +181,7 @@ class ProcedureDefinition(BaseModel):
     contract_out: ContractReference | None = None
     steps: list[ProcedureStepSchema] = Field(min_length=1)
     returns: str
-    precondition: dict[str, str | int | float | bool]
+    precondition: ProcedurePrecondition
     budget: ProcedureBudget
     declared_tier: ProcedureTier = "governed_write"
 
@@ -160,7 +191,6 @@ class ProcedureDefinition(BaseModel):
     def validate_definition(self) -> ProcedureDefinition:
         if not self.name.strip():
             raise ValueError("procedure name must be non-empty")
-        reject_reserved_property_equality_condition_keys(self.precondition)
 
         disallowed = sorted(
             {
@@ -354,6 +384,7 @@ __all__ = [
     "ProcedureBudgetSpent",
     "ProcedureDefinition",
     "ProcedureExecutionResult",
+    "ProcedurePrecondition",
     "ProcedureRecord",
     "ProcedureRepeatSpec",
     "ProcedureRepeatStepSchema",
