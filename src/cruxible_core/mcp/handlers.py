@@ -1581,6 +1581,173 @@ def handle_relationship_lineage(
     )
 
 
+def handle_propose_procedure(
+    instance_id: str,
+    definition: dict[str, Any],
+    *,
+    supersedes_procedure_id: str | None = None,
+    evidence_refs: list[contracts.EvidenceRef] | None = None,
+) -> dict[str, Any]:
+    """Propose a state-held procedure definition for review."""
+    return _dispatch_remote_or_local(
+        lambda client: client.propose_procedure(
+            instance_id,
+            definition=definition,
+            supersedes_procedure_id=supersedes_procedure_id,
+            evidence_refs=evidence_refs,
+        ),
+        lambda: api.propose_procedure(
+            instance_id,
+            definition,
+            supersedes_procedure_id=supersedes_procedure_id,
+            evidence_refs=evidence_refs,
+        ),
+        allow_local=False,
+        operation_name="cruxible_propose_procedure",
+    )
+
+
+def handle_list_procedures(
+    instance_id: str,
+    *,
+    status: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.ListResult:
+    """List procedure definitions with lifecycle state."""
+    result = _dispatch_remote_or_local(
+        lambda client: client.list_procedures(
+            instance_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        ),
+        lambda: api.list_procedures(
+            instance_id,
+            status=status,  # type: ignore[arg-type]
+            limit=limit,
+            offset=offset,
+        ),
+    )
+    return _captured_read(result, tool="cruxible_list_procedures", instance_id=instance_id)
+
+
+def handle_get_procedure(instance_id: str, procedure_id: str) -> dict[str, Any]:
+    """Get one procedure definition with lifecycle state."""
+    result = _dispatch_remote_or_local(
+        lambda client: client.get_procedure(instance_id, procedure_id),
+        lambda: api.get_procedure(instance_id, procedure_id),
+    )
+    return _captured_read(result, tool="cruxible_get_procedure", instance_id=instance_id)
+
+
+def handle_resolve_procedure(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    action: str,
+    expected_version: int,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Promote or reject one pending procedure."""
+    return _dispatch_remote_or_local(
+        lambda client: client.resolve_procedure(
+            instance_id,
+            procedure_id,
+            action=action,
+            expected_version=expected_version,
+            reason=reason,
+        ),
+        lambda: api.resolve_procedure(
+            instance_id,
+            procedure_id,
+            action=action,  # type: ignore[arg-type]
+            expected_version=expected_version,
+            reason=reason,
+        ),
+        allow_local=False,
+        operation_name="cruxible_resolve_procedure",
+    )
+
+
+def handle_retire_procedure(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    expected_version: int,
+    reason: str,
+) -> dict[str, Any]:
+    """Retire one live procedure."""
+    return _dispatch_remote_or_local(
+        lambda client: client.retire_procedure(
+            instance_id,
+            procedure_id,
+            expected_version=expected_version,
+            reason=reason,
+        ),
+        lambda: api.retire_procedure(
+            instance_id,
+            procedure_id,
+            expected_version=expected_version,
+            reason=reason,
+        ),
+        allow_local=False,
+        operation_name="cruxible_retire_procedure",
+    )
+
+
+def handle_run_procedure(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Run one live procedure through the generic execution surface."""
+    return _dispatch_remote_or_local(
+        lambda client: client.run_procedure(
+            instance_id,
+            procedure_id,
+            input_payload=input_payload,
+        ),
+        lambda: api.run_procedure(
+            instance_id,
+            procedure_id,
+            input_payload=input_payload,
+        ),
+        allow_local=False,
+        operation_name="cruxible_run_procedure",
+    )
+
+
+def handle_list_procedure_runs(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.ListResult:
+    """List completed runs and started tombstones for one procedure."""
+    result = _dispatch_remote_or_local(
+        lambda client: client.list_procedure_runs(
+            instance_id,
+            procedure_id,
+            limit=limit,
+            offset=offset,
+        ),
+        lambda: api.list_procedure_runs(
+            instance_id,
+            procedure_id,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+    return _captured_read(
+        result,
+        tool="cruxible_list_procedure_runs",
+        instance_id=instance_id,
+    )
+
+
 def handle_propose_group(
     instance_id: str,
     relationship_type: str,

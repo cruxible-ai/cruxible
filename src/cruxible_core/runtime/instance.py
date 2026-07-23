@@ -36,9 +36,10 @@ from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
-from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
 from cruxible_core.primitives import new_id
 from cruxible_core.procedure.store import ProcedureStore
+from cruxible_core.procedure.types import ProcedureRecord
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.snapshot.types import StateSnapshot, UpstreamMetadata
 from cruxible_core.storage.sqlite import (
@@ -62,6 +63,8 @@ InstanceMode = Literal["dev", "governed"]
 _HEAD_SNAPSHOT_STATE_KEY = "head_snapshot_id"
 _READ_REVISION_STATE_KEY = "read_revision"
 _ORIGIN_SNAPSHOT_STATE_KEY = "origin_snapshot_id"
+_PROCEDURES_SNAPSHOT_ARTIFACT = "procedures.json"
+_PROCEDURES_SNAPSHOT_FORMAT_VERSION = 1
 CONFIG_INTEGRITY_OVERRIDE_ENV = "CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH"
 
 
@@ -537,6 +540,9 @@ class CruxibleInstance(InstanceProtocol):
                 uow.graph.upsert_relationships(relationships or ())
             elif persist_live_graph:
                 uow.graph.save_graph(graph)
+            artifacts[_PROCEDURES_SNAPSHOT_ARTIFACT] = _serialize_snapshot_procedures(
+                uow.procedures
+            )
             uow.snapshots.save_snapshot(snapshot, artifacts)
             uow.snapshots.set_instance_state(_HEAD_SNAPSHOT_STATE_KEY, snapshot_id)
             uow.snapshots.set_instance_state(
@@ -612,19 +618,26 @@ class CruxibleInstance(InstanceProtocol):
 
         graph_data = json.loads(graph_bytes.decode("utf-8"))
         graph = EntityGraph.from_dict(graph_data)
-        # The snapshot bundle is graph+config+lock with NO receipts: any
-        # receipt_id a cloned edge carries points at a receipt in the source
-        # instance that does not exist here. Clear those dangling pointers and
-        # stamp clone origin so no edge in the clone references a phantom receipt.
+        # The snapshot bundle is graph+config+lock+procedure definitions with NO
+        # receipts or procedure runs: any receipt_id a cloned edge carries points
+        # at a receipt in the source instance that does not exist here. Clear those
+        # dangling pointers and stamp clone origin so no edge in the clone
+        # references a phantom receipt.
         graph.relabel_clone_receipts()
 
         lock_bytes = artifacts.get(LOCK_FILE_NAME)
         if lock_bytes is not None:
             (instance.get_instance_dir() / LOCK_FILE_NAME).write_bytes(lock_bytes)
 
+        procedures = _load_snapshot_procedures(
+            artifacts.get(_PROCEDURES_SNAPSHOT_ARTIFACT),
+            snapshot_id=snapshot_id,
+        )
         origin_snapshot_id = snapshot.origin_snapshot_id or snapshot.snapshot_id
         with instance.write_transaction() as uow:
             uow.graph.save_graph(graph)
+            for procedure in procedures:
+                uow.procedures.save_procedure(procedure)
             uow.snapshots.save_snapshot(snapshot, artifacts)
             uow.snapshots.set_instance_state(_HEAD_SNAPSHOT_STATE_KEY, snapshot.snapshot_id)
             uow.snapshots.set_instance_state(_ORIGIN_SNAPSHOT_STATE_KEY, origin_snapshot_id)
@@ -699,3 +712,104 @@ class CruxibleInstance(InstanceProtocol):
                 for error in exc.errors()
             ]
             raise ConfigError("Invalid instance metadata", errors=errors) from exc
+
+
+def _serialize_snapshot_procedures(store: ProcedureStoreProtocol) -> bytes:
+    """Serialize snapshot-time definitions and lifecycle state, excluding runs."""
+    total = store.count_procedures()
+    procedures = store.list_procedures(limit=max(total, 1), offset=0)
+    procedures = _dependency_order_procedures(
+        procedures,
+        context="Current procedure state",
+    )
+    return (
+        json.dumps(
+            {
+                "format_version": _PROCEDURES_SNAPSHOT_FORMAT_VERSION,
+                "procedures": [
+                    procedure.model_dump(mode="json", by_alias=True, exclude_none=True)
+                    for procedure in procedures
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _load_snapshot_procedures(
+    content: bytes | None,
+    *,
+    snapshot_id: str,
+) -> list[ProcedureRecord]:
+    """Validate a procedure snapshot artifact in dependency-safe restore order."""
+    if content is None:
+        # Snapshots created before procedures existed remain cloneable and
+        # correctly reconstruct an empty procedure table.
+        return []
+    try:
+        payload = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ConfigError(
+            f"Snapshot '{snapshot_id}' has an invalid procedures.json artifact"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ConfigError(f"Snapshot '{snapshot_id}' has an invalid procedures.json artifact")
+    if payload.get("format_version") != _PROCEDURES_SNAPSHOT_FORMAT_VERSION:
+        raise ConfigError(
+            f"Snapshot '{snapshot_id}' has unsupported procedures.json format_version"
+        )
+    raw_procedures = payload.get("procedures")
+    if not isinstance(raw_procedures, list):
+        raise ConfigError(
+            f"Snapshot '{snapshot_id}' procedures.json must contain a procedures list"
+        )
+    try:
+        procedures = [ProcedureRecord.model_validate(item) for item in raw_procedures]
+    except ValidationError as exc:
+        raise ConfigError(f"Snapshot '{snapshot_id}' contains an invalid procedure record") from exc
+    return _dependency_order_procedures(
+        procedures,
+        context=f"Snapshot '{snapshot_id}'",
+    )
+
+
+def _dependency_order_procedures(
+    procedures: list[ProcedureRecord],
+    *,
+    context: str,
+) -> list[ProcedureRecord]:
+    """Order procedure definitions so superseded parents are inserted first."""
+    by_id = {procedure.procedure_id: procedure for procedure in procedures}
+    if len(by_id) != len(procedures):
+        raise ConfigError(f"{context} contains duplicate procedure ids")
+
+    remaining = dict(by_id)
+    ordered: list[ProcedureRecord] = []
+    restored_ids: set[str] = set()
+    while remaining:
+        ready = [
+            procedure
+            for procedure in remaining.values()
+            if procedure.supersedes_procedure_id is None
+            or procedure.supersedes_procedure_id in restored_ids
+        ]
+        if not ready:
+            procedure = min(
+                remaining.values(),
+                key=lambda item: (item.proposed_at, item.procedure_id),
+            )
+            supersedes = procedure.supersedes_procedure_id
+            assert supersedes is not None
+            problem = "missing" if supersedes not in by_id else "cyclic"
+            raise ConfigError(
+                f"{context} procedure '{procedure.procedure_id}' has a {problem} "
+                f"supersedes dependency '{supersedes}'"
+            )
+        ready.sort(key=lambda item: (item.proposed_at, item.procedure_id))
+        for procedure in ready:
+            ordered.append(procedure)
+            restored_ids.add(procedure.procedure_id)
+            remaining.pop(procedure.procedure_id)
+    return ordered

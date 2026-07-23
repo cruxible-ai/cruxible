@@ -5,7 +5,7 @@ from __future__ import annotations
 import builtins
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, TypeVar
 
 import httpx
@@ -1618,6 +1618,127 @@ class CruxibleClient:
             ),
         )
         return self._parse_model(response, contracts.RelationshipLineageResult)
+
+    def propose_procedure(
+        self,
+        instance_id: str,
+        *,
+        definition: dict[str, Any],
+        supersedes_procedure_id: str | None = None,
+        evidence_refs: Sequence[contracts.EvidenceRef | dict[str, Any]] | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/procedures/propose",
+            json=self._with_actor_context(
+                {
+                    "definition": definition,
+                    "supersedes_procedure_id": supersedes_procedure_id,
+                    "evidence_refs": [
+                        item.model_dump(mode="json") if isinstance(item, BaseModel) else item
+                        for item in (evidence_refs or [])
+                    ],
+                },
+                actor_context,
+            ),
+        )
+        return self._parse_json(response)
+
+    def list_procedures(
+        self,
+        instance_id: str,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/procedures",
+            params=self._omit_none_params(
+                {
+                    "status": status,
+                    "limit": limit,
+                    "offset": offset,
+                }
+            ),
+        )
+        return self._parse_model(response, contracts.ListResult)
+
+    def get_procedure(self, instance_id: str, procedure_id: str) -> dict[str, Any]:
+        response = self._client.get(f"/api/v1/{instance_id}/procedures/{procedure_id}")
+        return self._parse_json(response)
+
+    def resolve_procedure(
+        self,
+        instance_id: str,
+        procedure_id: str,
+        *,
+        action: str,
+        expected_version: int,
+        reason: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/procedures/{procedure_id}/resolve",
+            json=self._with_actor_context(
+                {
+                    "action": action,
+                    "expected_version": expected_version,
+                    "reason": reason,
+                },
+                actor_context,
+            ),
+        )
+        return self._parse_json(response)
+
+    def retire_procedure(
+        self,
+        instance_id: str,
+        procedure_id: str,
+        *,
+        expected_version: int,
+        reason: str,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/procedures/{procedure_id}/retire",
+            json=self._with_actor_context(
+                {
+                    "expected_version": expected_version,
+                    "reason": reason,
+                },
+                actor_context,
+            ),
+        )
+        return self._parse_json(response)
+
+    def run_procedure(
+        self,
+        instance_id: str,
+        procedure_id: str,
+        *,
+        input_payload: dict[str, Any],
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/procedures/{procedure_id}/run",
+            json=self._with_actor_context({"input_payload": input_payload}, actor_context),
+        )
+        return self._parse_json(response)
+
+    def list_procedure_runs(
+        self,
+        instance_id: str,
+        procedure_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/procedures/{procedure_id}/runs",
+            params={"limit": limit, "offset": offset},
+        )
+        return self._parse_model(response, contracts.ListResult)
 
     def propose_group(
         self,

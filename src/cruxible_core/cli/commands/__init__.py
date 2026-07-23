@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     outcome_profile_cmd: Any
     plan_cmd: Any
     propose_cmd: Any
+    procedure_group: Any
     query: Any
     reload_config_cmd: Any
     run_cmd: Any
@@ -105,6 +106,7 @@ _COMMAND_MODULES = {
     "outcome_profile_cmd": "feedback",
     "plan_cmd": "workflows",
     "propose_cmd": "workflows",
+    "procedure_group": "procedures",
     "query": "reads",
     "reload_config_cmd": "mutations",
     "run_cmd": "workflows",
@@ -180,6 +182,7 @@ __all__ = [
     "outcome_profile_cmd",
     "plan_cmd",
     "propose_cmd",
+    "procedure_group",
     "query",
     "reload_config_cmd",
     "run_cmd",

@@ -197,6 +197,31 @@ class UpdateTrustStatusRequest(BaseModel):
     actor_context: contracts.GovernedActorContext | None = None
 
 
+class ProposeProcedureRequest(BaseModel):
+    definition: dict[str, Any]
+    supersedes_procedure_id: str | None = None
+    evidence_refs: list[contracts.EvidenceRef] = Field(default_factory=list)
+    actor_context: contracts.GovernedActorContext | None = None
+
+
+class ResolveProcedureRequest(BaseModel):
+    action: Literal["promote", "reject"]
+    expected_version: int = Field(ge=1)
+    reason: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
+
+
+class RetireProcedureRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    reason: str = Field(min_length=1)
+    actor_context: contracts.GovernedActorContext | None = None
+
+
+class RunProcedureRequest(BaseModel):
+    input_payload: dict[str, Any]
+    actor_context: contracts.GovernedActorContext | None = None
+
+
 class RegisterSourceArtifactRequest(BaseModel):
     source_path: str
     source_artifact_id: str | None = None

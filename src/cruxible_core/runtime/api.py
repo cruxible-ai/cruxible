@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -33,6 +33,12 @@ from cruxible_core.graph.provenance import (
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kit_defaults import get_default_base_kit
 from cruxible_core.primitives import canonical_json, new_id
+from cruxible_core.procedure.types import (
+    ProcedureDefinition,
+    ProcedureRecord,
+    ProcedureStatus,
+    ProcedureTransitionResult,
+)
 from cruxible_core.query.continuation import (
     ContinuationSurface,
     compute_filter_hash,
@@ -100,6 +106,7 @@ from cruxible_core.service import (
     service_get_feedback_profile,
     service_get_group,
     service_get_outcome_profile,
+    service_get_procedure,
     service_get_receipt,
     service_get_relationship,
     service_get_relationship_lineage,
@@ -115,6 +122,8 @@ from cruxible_core.service import (
     service_list_decision_events,
     service_list_decision_records,
     service_list_groups,
+    service_list_procedure_runs,
+    service_list_procedures,
     service_list_queries,
     service_list_resolutions,
     service_list_snapshots,
@@ -123,7 +132,9 @@ from cruxible_core.service import (
     service_lock,
     service_outcome,
     service_plan,
+    service_promote_procedure,
     service_propose_group_inputs,
+    service_propose_procedure,
     service_propose_workflow,
     service_publish_state,
     service_pull_state_apply,
@@ -131,12 +142,15 @@ from cruxible_core.service import (
     service_query_inline_surface,
     service_query_surface,
     service_register_source_artifact,
+    service_reject_procedure,
     service_reload_config,
     service_relocate_instance,
     service_resolve_feedback_query_target,
     service_resolve_group,
     service_restore_instance,
+    service_retire_procedure,
     service_run,
+    service_run_procedure,
     service_sample,
     service_schema,
     service_server_info,
@@ -3550,6 +3564,184 @@ def get_relationship_lineage(
         source_workflow_receipt_id=result.source_workflow_receipt_id,
         source_trace_ids=result.source_trace_ids,
         warnings=result.warnings,
+    )
+
+
+def _procedure_record_payload(procedure: ProcedureRecord) -> dict[str, Any]:
+    return procedure.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+def _procedure_transition_payload(result: ProcedureTransitionResult) -> dict[str, Any]:
+    return {
+        "action": result.action,
+        "procedure": _procedure_record_payload(result.procedure),
+        "receipt_id": result.receipt_id,
+    }
+
+
+def propose_procedure(
+    instance_id: str,
+    definition: dict[str, Any],
+    *,
+    supersedes_procedure_id: str | None = None,
+    evidence_refs: Sequence[contracts.EvidenceRef | dict[str, Any]] | None = None,
+    actor_context: Any | None = None,
+) -> dict[str, Any]:
+    """Validate and persist a pending governed procedure definition."""
+    check_permission("cruxible_propose_procedure", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
+    instance = get_manager().get(instance_id)
+    parsed_definition = ProcedureDefinition.model_validate(definition)
+    parsed_evidence = [
+        ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
+        for ref in (evidence_refs or [])
+    ]
+    result = service_propose_procedure(
+        instance,
+        parsed_definition,
+        actor_context=actor,
+        supersedes_procedure_id=supersedes_procedure_id,
+        evidence_refs=parsed_evidence,
+    )
+    return _procedure_transition_payload(result)
+
+
+def list_procedures(
+    instance_id: str,
+    *,
+    status: ProcedureStatus | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.ListResult:
+    """List governed procedure definitions with lifecycle state."""
+    check_permission("cruxible_list_procedures", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_list_procedures(
+        instance,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    return contracts.ListResult(
+        items=[_procedure_record_payload(item) for item in result.items],
+        total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        truncated=result.truncated,
+        read_revision=result.read_revision,
+    )
+
+
+def get_procedure(instance_id: str, procedure_id: str) -> dict[str, Any]:
+    """Return one governed procedure definition and lifecycle record."""
+    check_permission("cruxible_get_procedure", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    procedure = service_get_procedure(instance, procedure_id)
+    return {"procedure": _procedure_record_payload(procedure)}
+
+
+def resolve_procedure(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    action: Literal["promote", "reject"],
+    expected_version: int,
+    reason: str | None = None,
+    actor_context: Any | None = None,
+) -> dict[str, Any]:
+    """Promote or reject one pending procedure after attributed review."""
+    check_permission("cruxible_resolve_procedure", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
+    instance = get_manager().get(instance_id)
+    if action == "promote":
+        result = service_promote_procedure(
+            instance,
+            procedure_id,
+            expected_version=expected_version,
+            actor_context=actor,
+        )
+    else:
+        result = service_reject_procedure(
+            instance,
+            procedure_id,
+            expected_version=expected_version,
+            reason=reason or "",
+            actor_context=actor,
+        )
+    return _procedure_transition_payload(result)
+
+
+def retire_procedure(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    expected_version: int,
+    reason: str,
+    actor_context: Any | None = None,
+) -> dict[str, Any]:
+    """Retire one live immutable procedure definition."""
+    check_permission("cruxible_retire_procedure", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
+    instance = get_manager().get(instance_id)
+    result = service_retire_procedure(
+        instance,
+        procedure_id,
+        expected_version=expected_version,
+        reason=reason,
+        actor_context=actor,
+    )
+    return _procedure_transition_payload(result)
+
+
+def run_procedure(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    input_payload: dict[str, Any],
+    actor_context: Any | None = None,
+) -> dict[str, Any]:
+    """Run one live procedure after floor and effective-tier authorization."""
+    check_permission("cruxible_run_procedure", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
+    instance = get_manager().get(instance_id)
+    result = service_run_procedure(
+        instance,
+        procedure_id,
+        input_payload,
+        actor,
+    )
+    return {
+        "procedure": _procedure_record_payload(result.procedure),
+        "run": result.run.model_dump(mode="json"),
+        "output": result.output,
+        "receipt": result.receipt.model_dump(mode="json"),
+        "step_outputs": result.step_outputs,
+    }
+
+
+def list_procedure_runs(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.ListResult:
+    """List finalized runs and started-with-null-verdict tombstones."""
+    check_permission("cruxible_list_procedure_runs", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_list_procedure_runs(
+        instance,
+        procedure_id,
+        limit=limit,
+        offset=offset,
+    )
+    return contracts.ListResult(
+        items=[item.model_dump(mode="json") for item in result.items],
+        total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        truncated=result.truncated,
+        read_revision=result.read_revision,
     )
 
 

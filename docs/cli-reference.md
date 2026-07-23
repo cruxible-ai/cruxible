@@ -1417,6 +1417,144 @@ The `git-pre-push` kind evaluates merge commits only: squash merges mint new SHA
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
 
+## cruxible procedure
+
+**Usage:** `cruxible procedure [OPTIONS] COMMAND [ARGS]...`
+
+**Purpose:** Manage governed executable procedures.
+
+Workflows are designed; procedures are learned.
+
+**Subcommands:**
+
+- `cruxible procedure propose` - Propose a definition from a JSON or YAML file.
+- `cruxible procedure list` - List definitions and lifecycle state.
+- `cruxible procedure show` - Show one definition and lifecycle record.
+- `cruxible procedure resolve` - Promote or reject a pending definition.
+- `cruxible procedure retire` - Retire a live definition.
+- `cruxible procedure run` - Execute a live definition.
+- `cruxible procedure runs` - List invocation records.
+
+## cruxible procedure propose
+
+**Usage:** `cruxible procedure propose [OPTIONS] DEFINITION_FILE`
+
+**Purpose:** Propose a bounded procedure definition for independent review.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `DEFINITION_FILE` | yes |  | file | JSON or YAML procedure definition. |
+| `--supersedes` | no |  | text | Procedure ID this immutable replacement supersedes. |
+| `--evidence-ref` | no |  | text | JSON evidence-ref object; repeat to attach multiple refs. |
+
+**Output And Side Effects:**
+- Requires daemon transport and `governed_write`.
+- Persists a pending definition and a transition receipt.
+
+## cruxible procedure list
+
+**Usage:** `cruxible procedure list [OPTIONS]`
+
+**Purpose:** List governed procedures.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--status` | no |  | choice | Filter by `pending`, `live`, `rejected`, or `retired`. |
+| `--limit` | no | `100` | integer | Maximum definitions to return. |
+| `--offset` | no | `0` | integer | Definitions to skip. |
+| `--json` | no | `False` | boolean | Emit the standard list envelope. |
+
+The JSON result contains `items`, `total`, `limit`, `offset`, `truncated`, and
+`read_revision`.
+
+## cruxible procedure show
+
+**Usage:** `cruxible procedure show [OPTIONS] PROCEDURE_ID`
+
+**Purpose:** Show one procedure definition and lifecycle record.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROCEDURE_ID` | yes |  | argument | Procedure ID. |
+| `--json` | no | `False` | boolean | Emit a `procedure` object envelope. |
+
+## cruxible procedure resolve
+
+**Usage:** `cruxible procedure resolve [OPTIONS] PROCEDURE_ID`
+
+**Purpose:** Promote or reject one pending procedure.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROCEDURE_ID` | yes |  | argument | Procedure ID. |
+| `--action` | yes |  | choice | `promote` or `reject`. |
+| `--expected-version` | yes |  | integer | Optimistic lifecycle version. |
+| `--reason` | no |  | text | Required by the service when rejecting. |
+
+Promotion requires an independently identified reviewer. This command requires
+daemon transport and `graph_write`.
+
+## cruxible procedure retire
+
+**Usage:** `cruxible procedure retire [OPTIONS] PROCEDURE_ID`
+
+**Purpose:** Retire one live procedure.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROCEDURE_ID` | yes |  | argument | Procedure ID. |
+| `--expected-version` | yes |  | integer | Optimistic lifecycle version. |
+| `--reason` | yes |  | text | Non-empty retirement reason. |
+
+This command requires daemon transport and `graph_write`.
+
+## cruxible procedure run
+
+**Usage:** `cruxible procedure run [OPTIONS] PROCEDURE_ID`
+
+**Purpose:** Execute one live procedure through the generic runner.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROCEDURE_ID` | yes |  | argument | Procedure ID. |
+| `--input` | yes |  | text | JSON object validated against `contract_in`. |
+| `--json` | no | `False` | boolean | Emit the execution result as JSON. |
+
+This command requires daemon transport. Its permission floor is
+`governed_write`; the service also enforces the procedure's effective provider
+tier.
+
+## cruxible procedure runs
+
+**Usage:** `cruxible procedure runs [OPTIONS] PROCEDURE_ID`
+
+**Purpose:** List invocation history for one procedure.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROCEDURE_ID` | yes |  | argument | Procedure ID. |
+| `--limit` | no | `100` | integer | Maximum runs to return. |
+| `--offset` | no | `0` | integer | Runs to skip. |
+| `--json` | no | `False` | boolean | Emit the standard list envelope. |
+
+Text output labels an interrupted record as
+`verdict=null (started/unfinalized tombstone)`. JSON preserves
+`status: started` with `verdict: null` explicitly.
+
 ## cruxible group
 
 **Usage:** `cruxible group [OPTIONS]`

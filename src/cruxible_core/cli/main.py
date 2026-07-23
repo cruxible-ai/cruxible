@@ -67,6 +67,10 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("group", "propose"): "active",
     ("group", "resolve"): "active",
     ("group", "trust"): "active",
+    ("procedure", "propose"): "active",
+    ("procedure", "resolve"): "active",
+    ("procedure", "retire"): "active",
+    ("procedure", "run"): "active",
 }
 
 
@@ -825,6 +829,40 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         },
         module="groups",
         attr="group_group",
+    ),
+    "procedure": _group(
+        "Manage governed executable procedures. Workflows are designed; procedures are learned.",
+        {
+            "propose": _command(
+                "procedures",
+                "procedure_propose",
+                "Propose a procedure definition from a JSON or YAML file.",
+            ),
+            "list": _command("procedures", "procedure_list", "List governed procedures."),
+            "show": _command(
+                "procedures",
+                "procedure_show",
+                "Show one procedure definition and lifecycle record.",
+            ),
+            "resolve": _command(
+                "procedures",
+                "procedure_resolve",
+                "Promote or reject one pending procedure.",
+            ),
+            "retire": _command("procedures", "procedure_retire", "Retire one live procedure."),
+            "run": _command(
+                "procedures",
+                "procedure_run",
+                "Run one live procedure through the generic procedure executor.",
+            ),
+            "runs": _command(
+                "procedures",
+                "procedure_runs",
+                "List runs, including started records with null verdicts.",
+            ),
+        },
+        module="procedures",
+        attr="procedure_group",
     ),
 }
 

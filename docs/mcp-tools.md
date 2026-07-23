@@ -7,8 +7,8 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | Mode | Env value | Meaning |
 | --- | --- | --- |
 | READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, snapshots listing. |
-| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow runs/tests, proposal workflows, feedback, outcomes, decision records, proposal groups, snapshot creation, and source artifact registration. |
-| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, and group resolution/trust updates. |
+| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow and procedure runs, procedure/group proposals, feedback, outcomes, decision records, snapshot creation, and source artifact registration. |
+| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, group resolution/trust updates, and procedure resolution/retirement. |
 | ADMIN | `admin` | Full lifecycle, config reload, locks, snapshots, clone, state publication/pull, ingest, constraints, and policies. |
 
 `tools/list` advertises only tools allowed by the active `CRUXIBLE_MODE`; call-time permission checks still enforce the same tiers as a backstop.
@@ -1412,6 +1412,138 @@ without it, only the active materialized digest is checked.
 - Unknown `instance_id` or missing daemon configuration.
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_propose_procedure
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Use when you need to propose a bounded composition of procedure-exported actions for independent review.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `definition` | yes | object | Restricted procedure definition. |
+| `supersedes_procedure_id` | no | string or null | Immutable procedure being replaced. |
+| `evidence_refs` | no | array or null | Distillation evidence refs. |
+
+**Returns:** The pending procedure record and transition receipt ID.
+
+**Side Effects:** Persists a pending procedure and receipt.
+
+## cruxible_list_procedures
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need to find governed procedures by lifecycle status or page.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `status` | no | string or null | `pending`, `live`, `rejected`, or `retired`. |
+| `limit` | no | integer | Maximum records. |
+| `offset` | no | integer | Records to skip. |
+
+**Returns:** Standard list envelope with procedure records.
+
+**Side Effects:** Read-only.
+
+## cruxible_get_procedure
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need one procedure's definition, budget, precondition, and lifecycle.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `procedure_id` | yes | string | Procedure ID. |
+
+**Returns:** A `procedure` object envelope.
+
+**Side Effects:** Read-only.
+
+## cruxible_resolve_procedure
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Use when an independent reviewer needs to promote or reject a pending procedure.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `procedure_id` | yes | string | Procedure ID. |
+| `action` | yes | string | `promote` or `reject`. |
+| `expected_version` | yes | integer | Optimistic lifecycle version. |
+| `reason` | no | string or null | Required when rejecting. |
+
+**Returns:** The transitioned procedure and receipt ID.
+
+**Side Effects:** Promotes or rejects a pending procedure and writes a receipt.
+
+## cruxible_retire_procedure
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Use when a reviewer needs to retire a live immutable procedure.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `procedure_id` | yes | string | Procedure ID. |
+| `expected_version` | yes | integer | Optimistic lifecycle version. |
+| `reason` | yes | string | Non-empty retirement reason. |
+
+**Returns:** The retired procedure and receipt ID.
+
+**Side Effects:** Retires a live procedure and writes a receipt.
+
+## cruxible_run_procedure
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Use when you need to execute one live procedure through the generic receipted runner.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `procedure_id` | yes | string | Procedure ID. |
+| `input_payload` | yes | object | Input validated against the procedure contract. |
+
+**Returns:** Procedure, run, output, receipt, and step-output fields.
+
+**Side Effects:** Writes a crash-safe run record, provider traces where applicable, and a receipt.
+
+## cruxible_list_procedure_runs
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need invocation history or crash-visible started tombstones for one procedure.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `procedure_id` | yes | string | Procedure ID. |
+| `limit` | no | integer | Maximum records. |
+| `offset` | no | integer | Records to skip. |
+
+**Returns:** Standard list envelope containing finalized runs and
+`status: started`/`verdict: null` tombstones.
+
+**Side Effects:** Read-only.
 
 ## cruxible_propose_group
 

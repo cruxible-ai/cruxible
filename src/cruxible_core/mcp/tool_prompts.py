@@ -247,6 +247,29 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_abandon_decision_record": (
         "Use when a tracked decision should be closed without a final decision."
     ),
+    "cruxible_propose_procedure": (
+        "Use when you need to propose a bounded composition of procedure-exported actions "
+        "for independent review."
+    ),
+    "cruxible_list_procedures": (
+        "Use when you need to find governed procedures by lifecycle status or page."
+    ),
+    "cruxible_get_procedure": (
+        "Use when you need one procedure's definition, budget, precondition, and lifecycle."
+    ),
+    "cruxible_resolve_procedure": (
+        "Use when an independent reviewer needs to promote or reject a pending procedure."
+    ),
+    "cruxible_retire_procedure": (
+        "Use when a reviewer needs to retire a live immutable procedure."
+    ),
+    "cruxible_run_procedure": (
+        "Use when you need to execute one live procedure through the generic receipted runner."
+    ),
+    "cruxible_list_procedure_runs": (
+        "Use when you need invocation history or crash-visible started tombstones "
+        "for one procedure."
+    ),
     "cruxible_propose_group": (
         "Use when you need to create a review group for candidate relationship changes."
     ),

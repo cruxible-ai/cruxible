@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from functools import wraps
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import TypeAdapter
@@ -1067,6 +1067,104 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             instance_id,
             decision_record_id,
             reason=reason,
+        )
+
+    @_tool
+    def cruxible_propose_procedure(
+        instance_id: str,
+        definition: dict[str, Any],
+        supersedes_procedure_id: str | None = None,
+        evidence_refs: list[contracts.EvidenceRef] | None = None,
+    ) -> dict[str, Any]:
+        """Propose a bounded procedure definition for governed review."""
+        return handlers.handle_propose_procedure(
+            instance_id,
+            definition,
+            supersedes_procedure_id=supersedes_procedure_id,
+            evidence_refs=evidence_refs,
+        )
+
+    @_tool
+    def cruxible_list_procedures(
+        instance_id: str,
+        status: Literal["pending", "live", "rejected", "retired"] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        """List governed procedures with optional lifecycle filtering."""
+        return handlers.handle_list_procedures(
+            instance_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+
+    @_tool
+    def cruxible_get_procedure(
+        instance_id: str,
+        procedure_id: str,
+    ) -> dict[str, Any]:
+        """Get one procedure definition and its lifecycle fields."""
+        return handlers.handle_get_procedure(instance_id, procedure_id)
+
+    @_tool
+    def cruxible_resolve_procedure(
+        instance_id: str,
+        procedure_id: str,
+        action: Literal["promote", "reject"],
+        expected_version: int,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Promote or reject one pending procedure after review."""
+        return handlers.handle_resolve_procedure(
+            instance_id,
+            procedure_id,
+            action=action,
+            expected_version=expected_version,
+            reason=reason,
+        )
+
+    @_tool
+    def cruxible_retire_procedure(
+        instance_id: str,
+        procedure_id: str,
+        expected_version: int,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Retire one live procedure with an attributed reason."""
+        return handlers.handle_retire_procedure(
+            instance_id,
+            procedure_id,
+            expected_version=expected_version,
+            reason=reason,
+        )
+
+    @_tool
+    def cruxible_run_procedure(
+        instance_id: str,
+        procedure_id: str,
+        input_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Run one live procedure through the generic procedure executor."""
+        return handlers.handle_run_procedure(
+            instance_id,
+            procedure_id,
+            input_payload=input_payload,
+        )
+
+    @_tool
+    def cruxible_list_procedure_runs(
+        instance_id: str,
+        procedure_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        """List procedure runs, including unfinalized started tombstones."""
+        return handlers.handle_list_procedure_runs(
+            instance_id,
+            procedure_id,
+            limit=limit,
+            offset=offset,
         )
 
     @_tool

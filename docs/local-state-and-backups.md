@@ -3,7 +3,7 @@
 SQLite is an acceptable starting point for OSS, local daemon, and single-droplet
 deployments. The important rule is that all state changes still go through
 Cruxible surfaces: workflows, canonical apply, proposal groups, feedback,
-queries, and receipts.
+procedures, queries, and receipts.
 
 Do not treat SQLite as an application API. Treat it as the local persistence
 backend.
@@ -54,6 +54,7 @@ A Cruxible instance can include:
 - query and workflow receipts
 - provider execution traces
 - candidate groups and group resolutions
+- procedure definitions, lifecycle state, and run records
 - decision records and decision events
 - feedback and outcomes
 
@@ -84,7 +85,11 @@ volume in a way that gives a consistent filesystem view.
 ## Snapshots Versus Backups
 
 Cruxible snapshots are state snapshots. They are useful for cloning,
-preview identity checks, and comparing graph state over time.
+preview identity checks, and comparing graph state over time. A snapshot carries
+the procedure definitions and lifecycle fields that existed at that revision.
+Cloning reconstructs those definitions, but excludes procedure runs because
+snapshots omit receipts and other audit history; copying runs would leave
+dangling receipt references.
 
 Backups are operational recovery artifacts. They should include the graph plus
 the surrounding evidence stores: receipts, traces, groups, resolutions,
@@ -104,12 +109,12 @@ is backfilled:
   `receipt_id` because no receipt was ever written for them.
 - **Cloned, snapshot-restored, and pulled-overlay edges** have their `receipt_id`
   cleared on materialization. A snapshot/clone/state-pull bundle is
-  graph+config+lock with no receipts, so the original `receipt_id` would point at
-  a receipt that lives only in the source instance. On materialization Cruxible
-  nulls that dangling pointer and stamps `clone_origin: upstream-snapshot` on the
-  provenance (preserving the original id under `cloned_receipt_id` for
-  traceability), so the edge is honestly labeled as clone-origin rather than
-  referencing a phantom receipt.
+  graph+config+lock+procedure-definitions with no receipts or procedure runs, so
+  the original `receipt_id` would point at a receipt that lives only in the
+  source instance. On materialization Cruxible nulls that dangling pointer and
+  stamps `clone_origin: upstream-snapshot` on the provenance (preserving the
+  original id under `cloned_receipt_id` for traceability), so the edge is
+  honestly labeled as clone-origin rather than referencing a phantom receipt.
 
 `cruxible instance backup` writes a portable same-identity backup artifact for
 the active instance. The artifact includes the SQLite state database, active
@@ -135,6 +140,7 @@ When moving to a future managed backend, the data that must be portable is:
 - config and lock state
 - receipts and provider traces
 - candidate groups and resolutions
+- procedure definitions, lifecycle state, and run records
 - decision records and events
 - feedback and outcomes
 - kit metadata and source artifact provenance

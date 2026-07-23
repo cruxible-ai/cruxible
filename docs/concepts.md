@@ -166,6 +166,31 @@ Use built-in step types for generic deterministic dataflow mechanics:
 construction, and canonical apply steps. Use providers for source adapters,
 external services, model calls, and domain policy.
 
+## Procedures
+
+Workflows are designed; procedures are learned.
+
+Procedures are state-held, agent-proposable compositions of operator-exported
+actions. Their lifecycle is `pending → live`, `pending → rejected`, or
+`live → retired`; promotion requires an independently identified reviewer, and
+a live definition is immutable. Propose a replacement with a `supersedes` link
+instead of editing one in place.
+
+Every definition has an explicit precondition. Use `{}` for always eligible, or
+use `{entity_type, condition}` where `condition` is a property-equality mapping
+evaluated against accepted graph state. It also has a required execution budget:
+`wall_clock_s` is capped at 600 seconds, and `max_provider_calls` must cover the
+statically computed maximum, including bounded `repeat` attempts.
+
+Config providers are unavailable to procedures by default. An operator must set
+`procedure_access` to `governed_write`, `graph_write`, or `admin`; only
+timeout-enforced `http_json` and command providers are exportable. A run requires
+the highest exported provider tier it references, with a `governed_write` floor.
+Each invocation writes a crash-safe run record before evaluating its
+precondition, so an interrupted run remains visible as `started` with a null
+verdict. Run verdicts are execution telemetry; external-world results belong in
+outcomes attached to the run receipt.
+
 ## The Entity Graph
 
 Cruxible stores entities and relationships in a directed graph. Each node is an

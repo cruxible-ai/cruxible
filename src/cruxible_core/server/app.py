@@ -37,6 +37,7 @@ from cruxible_core.server.routes.groups import router as groups_router
 from cruxible_core.server.routes.hosted_instances import router as hosted_instances_router
 from cruxible_core.server.routes.instances import router as instances_router
 from cruxible_core.server.routes.mutations import router as mutations_router
+from cruxible_core.server.routes.procedures import router as procedures_router
 from cruxible_core.server.routes.queries import router as queries_router
 from cruxible_core.server.routes.runtime_credentials import (
     router as runtime_credentials_router,
@@ -175,6 +176,7 @@ def create_app() -> FastAPI:
     app.include_router(feedback_router)
     app.include_router(gates_router)
     app.include_router(groups_router)
+    app.include_router(procedures_router)
     app.include_router(workflows_router)
     app.include_router(snapshots_router)
     app.include_router(source_artifacts_router)

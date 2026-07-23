@@ -76,6 +76,7 @@ from cruxible_core.service.mutations import (
 from cruxible_core.service.procedures import (
     compile_procedure_definition,
     service_get_procedure,
+    service_list_procedure_runs,
     service_list_procedures,
     service_promote_procedure,
     service_propose_procedure,
@@ -391,6 +392,7 @@ __all__ = [
     # Procedures
     "compile_procedure_definition",
     "service_get_procedure",
+    "service_list_procedure_runs",
     "service_list_procedures",
     "service_promote_procedure",
     "service_propose_procedure",

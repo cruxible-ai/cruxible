@@ -24,7 +24,9 @@ from cruxible_core.procedure.types import (
     ProcedurePrecondition,
     ProcedureRecord,
     ProcedureRun,
+    ProcedureRunStatus,
     ProcedureRunVerdict,
+    ProcedureStatus,
     ProcedureTier,
     ProcedureTransitionResult,
     compute_procedure_definition_digest,
@@ -35,6 +37,7 @@ from cruxible_core.receipt.types import Receipt
 from cruxible_core.runtime.permissions import PermissionMode, get_current_mode
 from cruxible_core.service.gates import entity_matches_property_equality_condition
 from cruxible_core.service.mutation_receipts import mutation_receipt
+from cruxible_core.service.types import ListResult, list_truncated
 from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import (
     compile_plan_definition,
@@ -305,18 +308,60 @@ def service_list_procedures(
     instance: InstanceProtocol,
     *,
     name: str | None = None,
-    status: str | None = None,
+    status: ProcedureStatus | None = None,
     limit: int = 100,
     offset: int = 0,
-) -> list[ProcedureRecord]:
-    """Read procedure records without exposing a CLI/MCP/HTTP surface."""
+) -> ListResult:
+    """List procedure records with the standard read-surface envelope."""
+    _validate_list_page(limit=limit, offset=offset)
     store = instance.get_procedure_store()
     try:
-        return store.list_procedures(
+        items = store.list_procedures(
             name=name,
             status=status,
             limit=limit,
             offset=offset,
+        )
+        total = store.count_procedures(name=name, status=status)
+        return ListResult(
+            items=items,
+            total=total,
+            limit=limit,
+            offset=offset,
+            truncated=list_truncated(total=total, offset=offset, returned=len(items)),
+            read_revision=instance.get_read_revision(),
+        )
+    finally:
+        store.close()
+
+
+def service_list_procedure_runs(
+    instance: InstanceProtocol,
+    procedure_id: str,
+    *,
+    status: ProcedureRunStatus | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> ListResult:
+    """List invocation records, including crash-visible started tombstones."""
+    _validate_list_page(limit=limit, offset=offset)
+    store = instance.get_procedure_store()
+    try:
+        _get_procedure(store, procedure_id)
+        items = store.list_runs(
+            procedure_id=procedure_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+        total = store.count_runs(procedure_id=procedure_id, status=status)
+        return ListResult(
+            items=items,
+            total=total,
+            limit=limit,
+            offset=offset,
+            truncated=list_truncated(total=total, offset=offset, returned=len(items)),
+            read_revision=instance.get_read_revision(),
         )
     finally:
         store.close()
@@ -1084,9 +1129,17 @@ def _provider_tier(access: str) -> ProcedureTier:
     raise ConfigError(f"Unsupported procedure_access '{access}'")
 
 
+def _validate_list_page(*, limit: int, offset: int) -> None:
+    if limit < 1:
+        raise ConfigError("Procedure list limit must be at least 1")
+    if offset < 0:
+        raise ConfigError("Procedure list offset must be at least 0")
+
+
 __all__ = [
     "compile_procedure_definition",
     "service_get_procedure",
+    "service_list_procedure_runs",
     "service_list_procedures",
     "service_promote_procedure",
     "service_propose_procedure",

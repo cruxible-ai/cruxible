@@ -498,6 +498,8 @@ def run_cmd(
 ) -> None:
     """Execute a workflow for the current instance.
 
+    Workflows are designed; procedures are learned.
+
     Canonical workflows run as previews and return apply identity values.
     For workflows that produce group proposals, use 'cruxible propose' instead.
     """
