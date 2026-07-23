@@ -108,10 +108,11 @@ is backfilled:
 - **Legacy edges** created before per-edge receipts existed carry a null
   `receipt_id` because no receipt was ever written for them.
 - **Cloned, snapshot-restored, and pulled-overlay edges** have their `receipt_id`
-  cleared on materialization. A snapshot/clone/state-pull bundle is
-  graph+config+lock+procedure-definitions with no receipts or procedure runs, so
-  the original `receipt_id` would point at a receipt that lives only in the
-  source instance. On materialization Cruxible nulls that dangling pointer and
+  cleared on materialization. A snapshot/clone bundle is
+  graph+config+lock+procedure-definitions with no receipts or procedure runs
+  (published state-pull release bundles carry graph+config+lock only — no
+  procedure definitions), so the original `receipt_id` would point at a
+  receipt that lives only in the source instance. On materialization Cruxible nulls that dangling pointer and
   stamps `clone_origin: upstream-snapshot` on the provenance (preserving the
   original id under `cloned_receipt_id` for traceability), so the edge is
   honestly labeled as clone-origin rather than referencing a phantom receipt.

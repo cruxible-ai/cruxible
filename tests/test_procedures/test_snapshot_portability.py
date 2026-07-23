@@ -80,3 +80,28 @@ def test_clone_restores_snapshot_time_procedures_but_excludes_runs(
         assert clone_store.list_runs(procedure_id=procedure_id) == []
     finally:
         clone_store.close()
+
+
+def test_clone_from_pre_procedures_snapshot_yields_empty_table(
+    procedure_instance: CruxibleInstance, tmp_path: Path
+) -> None:
+    snapshot = procedure_instance.create_snapshot(label="legacy-shape")
+    artifact_path = (
+        procedure_instance.get_instance_dir()
+        / "snapshots"
+        / snapshot.snapshot_id
+        / "procedures.json"
+    )
+    artifact_path.unlink()
+
+    clone, _ = CruxibleInstance.clone_from_snapshot(
+        procedure_instance,
+        snapshot.snapshot_id,
+        tmp_path / "legacy-clone",
+    )
+    clone_store = clone.get_procedure_store()
+    try:
+        assert clone_store.list_procedures(limit=10) == []
+        assert clone_store.count_runs() == 0
+    finally:
+        clone_store.close()
