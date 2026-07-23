@@ -38,15 +38,28 @@ def resolve_provider(
     provider: ProviderSchema,
     *,
     config_base_path: Path | None = None,
+    timeout_ceiling_s: float | None = None,
 ) -> ProviderCallable:
-    """Resolve a provider into an executable callable for its declared runtime."""
+    """Resolve a provider into an executable callable for its declared runtime.
+
+    ``timeout_ceiling_s`` is an invocation-level ceiling used by procedures.
+    The default preserves the configured provider timeout semantics exactly.
+    """
     _enforce_execution_policy()
     if provider.runtime == "python":
         return _resolve_python_provider(provider_name, provider, config_base_path=config_base_path)
     if provider.runtime == "http_json":
-        return _build_http_json_provider(provider_name, provider)
+        return _build_http_json_provider(
+            provider_name,
+            provider,
+            timeout_ceiling_s=timeout_ceiling_s,
+        )
     if provider.runtime == "command":
-        return _build_command_provider(provider_name, provider)
+        return _build_command_provider(
+            provider_name,
+            provider,
+            timeout_ceiling_s=timeout_ceiling_s,
+        )
 
     raise ConfigError(
         f"Provider '{provider_name}' uses unsupported runtime '{provider.runtime}'. "
@@ -141,7 +154,12 @@ def _resolve_python_candidate(
     return candidate
 
 
-def _build_http_json_provider(provider_name: str, provider: ProviderSchema) -> ProviderCallable:
+def _build_http_json_provider(
+    provider_name: str,
+    provider: ProviderSchema,
+    *,
+    timeout_ceiling_s: float | None,
+) -> ProviderCallable:
     parsed = urlparse(provider.ref)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ConfigError(
@@ -155,7 +173,12 @@ def _build_http_json_provider(provider_name: str, provider: ProviderSchema) -> P
     ):
         raise ConfigError(f"Provider '{provider_name}' config.headers must be a string map")
 
-    timeout_s = _coerce_timeout(provider_name, provider.config.get("timeout_s", 30))
+    configured_timeout_s = _coerce_timeout(provider_name, provider.config.get("timeout_s", 30))
+    timeout_s = _effective_timeout(
+        provider_name,
+        configured_timeout_s,
+        timeout_ceiling_s,
+    )
 
     def _execute(input_payload: dict[str, Any], _context: ProviderContext) -> dict[str, Any]:
         try:
@@ -192,7 +215,12 @@ def _build_http_json_provider(provider_name: str, provider: ProviderSchema) -> P
     return cast(ProviderCallable, _execute)
 
 
-def _build_command_provider(provider_name: str, provider: ProviderSchema) -> ProviderCallable:
+def _build_command_provider(
+    provider_name: str,
+    provider: ProviderSchema,
+    *,
+    timeout_ceiling_s: float | None,
+) -> ProviderCallable:
     if not provider.ref.strip():
         raise ConfigError(f"Provider '{provider_name}' command ref must not be empty")
 
@@ -206,7 +234,12 @@ def _build_command_provider(provider_name: str, provider: ProviderSchema) -> Pro
     ):
         raise ConfigError(f"Provider '{provider_name}' config.env must be a string map")
 
-    timeout_s = _coerce_timeout(provider_name, provider.config.get("timeout_s", 30))
+    configured_timeout_s = _coerce_timeout(provider_name, provider.config.get("timeout_s", 30))
+    timeout_s = _effective_timeout(
+        provider_name,
+        configured_timeout_s,
+        timeout_ceiling_s,
+    )
     command = [provider.ref, *args]
 
     def _execute(input_payload: dict[str, Any], _context: ProviderContext) -> dict[str, Any]:
@@ -263,3 +296,14 @@ def _coerce_timeout(provider_name: str, value: object) -> float:
     if timeout_s <= 0:
         raise ConfigError(f"Provider '{provider_name}' timeout_s must be greater than zero")
     return timeout_s
+
+
+def _effective_timeout(
+    provider_name: str,
+    configured_timeout_s: float,
+    timeout_ceiling_s: float | None,
+) -> float:
+    if timeout_ceiling_s is None:
+        return configured_timeout_s
+    ceiling = _coerce_timeout(provider_name, timeout_ceiling_s)
+    return min(configured_timeout_s, ceiling)

@@ -4,6 +4,7 @@ from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.procedure.types import (
     ProcedureBudget,
     ProcedureDefinition,
+    ProcedureExecutionResult,
     ProcedureRecord,
     ProcedureRepeatSpec,
     ProcedureRepeatStepSchema,
@@ -16,6 +17,7 @@ from cruxible_core.procedure.types import (
 __all__ = [
     "ProcedureBudget",
     "ProcedureDefinition",
+    "ProcedureExecutionResult",
     "ProcedureRecord",
     "ProcedureRepeatSpec",
     "ProcedureRepeatStepSchema",

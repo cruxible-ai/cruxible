@@ -10,6 +10,7 @@ import pytest
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.procedure.types import (
+    ProcedureBudgetSpent,
     ProcedureDefinition,
     ProcedureRecord,
     ProcedureRun,
@@ -229,3 +230,35 @@ def test_run_requires_existing_procedure(store: ProcedureStore) -> None:
 
     with pytest.raises(sqlite3.IntegrityError):
         store.save_run(run)
+
+
+def test_started_run_finalizes_exactly_once(store: ProcedureStore) -> None:
+    procedure = _record()
+    store.save_procedure(procedure)
+    started = ProcedureRun(
+        run_id="PRN-finalize001",
+        procedure_id=procedure.procedure_id,
+        definition_digest=procedure.definition_digest,
+    )
+    store.save_run(started)
+
+    assert store.finalize_run(
+        started.run_id,
+        verdict="refused",
+        budget_spent=ProcedureBudgetSpent(wall_clock_s=0.5, provider_calls=0),
+        receipt_id="RCP-finalize001",
+        finalized_at="2026-07-22T13:00:00Z",
+    )
+    assert not store.finalize_run(
+        started.run_id,
+        verdict="failed",
+        budget_spent=ProcedureBudgetSpent(wall_clock_s=1, provider_calls=1),
+        receipt_id="RCP-finalize002",
+        finalized_at="2026-07-22T13:00:01Z",
+    )
+
+    finalized = store.get_run(started.run_id)
+    assert finalized is not None
+    assert finalized.status == "finalized"
+    assert finalized.verdict == "refused"
+    assert finalized.receipt_id == "RCP-finalize001"

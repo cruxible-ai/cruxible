@@ -7,6 +7,8 @@ as the engine traverses the graph, and produces a Receipt at the end.
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from cruxible_core.governance.actors import GovernedActorContext
@@ -57,6 +59,7 @@ class ReceiptBuilder:
         self._nodes: list[ReceiptNode] = []
         self._edges: list[EvidenceEdge] = []
         self._counter = 0
+        self._plan_step_scopes: list[tuple[str | None, dict[str, Any]]] = []
         self._start_ns = time.monotonic_ns()
         # "Committed" is intentionally conservative: it flips only after the
         # caller reaches the operation-specific durability boundary.
@@ -218,12 +221,45 @@ class ReceiptBuilder:
         parent_id: str | None = None,
     ) -> str:
         """Record a workflow plan step with step-specific detail."""
+        scoped_parent = parent_id
+        scoped_detail: dict[str, Any] = {}
+        if self._plan_step_scopes:
+            default_parent, scoped_detail = self._plan_step_scopes[-1]
+            if scoped_parent is None:
+                scoped_parent = default_parent
         node_id = self._add_node(
             node_type="plan_step",
-            detail={"step_id": step_id, "kind": kind, **(detail or {})},
+            detail={
+                "step_id": step_id,
+                "kind": kind,
+                **scoped_detail,
+                **(detail or {}),
+            },
         )
-        self._add_edge(parent_id or self._root_id, node_id, "produced")
+        self._add_edge(scoped_parent or self._root_id, node_id, "produced")
         return node_id
+
+    @contextmanager
+    def plan_step_scope(
+        self,
+        *,
+        parent_id: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> Iterator[None]:
+        """Apply parent/detail metadata to plan-step nodes recorded in a scope."""
+        self._plan_step_scopes.append((parent_id, dict(detail or {})))
+        try:
+            yield
+        finally:
+            self._plan_step_scopes.pop()
+
+    def update_node_detail(self, node_id: str, detail: dict[str, Any]) -> None:
+        """Merge detail into a node already recorded by this builder."""
+        for node in self._nodes:
+            if node.node_id == node_id:
+                node.detail.update(detail)
+                return
+        raise ValueError(f"Receipt node '{node_id}' not found")
 
     def mark_committed(self) -> None:
         """Mark the operation as having reached its durable state boundary."""

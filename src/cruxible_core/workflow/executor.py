@@ -21,11 +21,21 @@ from cruxible_core.receipt.types import Receipt
 from cruxible_core.workflow.apply import compute_apply_digest
 from cruxible_core.workflow.compiler import compile_workflow, load_lock, resolve_lock_path
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
-from cruxible_core.workflow.execution_context import WorkflowExecutionContext
-from cruxible_core.workflow.step_handlers import DEFAULT_STEP_HANDLER_REGISTRY
+from cruxible_core.workflow.execution_context import (
+    ProcedureExecutionBudget,
+    WorkflowExecutionContext,
+)
+from cruxible_core.workflow.step_handlers import (
+    DEFAULT_STEP_HANDLER_REGISTRY,
+    PROCEDURE_STEP_HANDLER_REGISTRY,
+)
 from cruxible_core.workflow.step_helpers import extract_read_metadata
 from cruxible_core.workflow.tracing import persist_receipt as persist_workflow_receipt
-from cruxible_core.workflow.types import WorkflowExecutionResult
+from cruxible_core.workflow.types import (
+    CompiledPlan,
+    WorkflowExecutionResult,
+    WorkflowLock,
+)
 from cruxible_core.workflow_execution_types import (
     WorkflowExecutionAction,
     WorkflowResultMode,
@@ -229,6 +239,105 @@ def execute_workflow(
     )
 
 
+def execute_procedure_plan(
+    instance: InstanceProtocol,
+    config: CoreConfig,
+    definition: Any,
+    plan: CompiledPlan,
+    lock: WorkflowLock,
+    receipt_builder: ReceiptBuilder,
+    budget: ProcedureExecutionBudget,
+    *,
+    persist_query_receipts: bool = True,
+    persist_traces: bool = True,
+    actor_context: GovernedActorContext | None = None,
+) -> WorkflowExecutionResult:
+    """Execute a compiled procedure through the shared workflow step machinery.
+
+    Receipt and run-record persistence remain service-owned so they can be
+    finalized atomically. Provider traces and nested query receipts retain their
+    established independent persistence behavior.
+    """
+    head_snapshot_id = instance.get_head_snapshot_id()
+    context = WorkflowExecutionContext(
+        instance=instance,
+        config=config,
+        workflow_name=definition.name,
+        workflow=definition,
+        lock=lock,
+        plan=plan,
+        graph=instance.load_graph(),
+        receipt_builder=receipt_builder,
+        execution_action="run",
+        result_mode="run",
+        persist_receipt=False,
+        persist_query_receipts=persist_query_receipts,
+        persist_traces=persist_traces,
+        config_base_path=instance.get_config_path().parent,
+        head_snapshot_id=head_snapshot_id,
+        actor_context=actor_context,
+        procedure_budget=budget,
+    )
+    results_recorded = False
+
+    try:
+        for compiled_step in context.plan.steps:
+            context.check_procedure_wall_clock()
+            PROCEDURE_STEP_HANDLER_REGISTRY.execute(context, compiled_step)
+        context.check_procedure_wall_clock()
+
+        output = context.step_outputs[context.plan.returns]
+        output = _validate_procedure_output_contract(
+            config,
+            definition.name,
+            definition,
+            output,
+        )
+        read_metadata = _aggregate_workflow_read_metadata(
+            context.plan,
+            context.step_outputs,
+            context.query_receipt_ids,
+        )
+        success_results = [{"output": output}]
+        context.receipt_builder.record_results(success_results)
+        results_recorded = True
+        receipt = context.receipt_builder.build(results=success_results)
+        _annotate_workflow_receipt(
+            receipt,
+            plan=context.plan,
+            result_mode="run",
+            apply_digest=None,
+            read_metadata=read_metadata,
+        )
+    except Exception as exc:
+        failed_receipt = _build_failed_workflow_receipt(
+            context.receipt_builder,
+            plan=context.plan,
+            result_mode="run",
+            error=exc,
+            results_recorded=results_recorded,
+            step_outputs=context.step_outputs,
+            query_receipt_ids=context.query_receipt_ids,
+        )
+        setattr(exc, FAILED_WORKFLOW_RECEIPT_ATTR, failed_receipt)
+        raise
+
+    return WorkflowExecutionResult(
+        workflow=definition.name,
+        output=output,
+        receipt=receipt,
+        mode="run",
+        workflow_type="utility",
+        head_snapshot_id=head_snapshot_id,
+        query_receipt_ids=context.query_receipt_ids,
+        read_metadata=read_metadata,
+        traces=context.traces,
+        step_outputs=context.step_outputs,
+        alias_step_ids=context.alias_step_ids,
+        step_trace_ids=context.step_trace_ids,
+    )
+
+
 def _validate_workflow_output_contract(
     config: CoreConfig,
     workflow_name: str,
@@ -247,6 +356,27 @@ def _validate_workflow_output_contract(
         workflow.contract_out,
         output,
         subject=f"Workflow '{workflow_name}' output",
+        error_factory=query_execution_error,
+    )
+
+
+def _validate_procedure_output_contract(
+    config: CoreConfig,
+    procedure_name: str,
+    definition: Any,
+    output: Any,
+) -> Any:
+    if definition.contract_out is None:
+        return output
+    if not isinstance(output, dict):
+        raise QueryExecutionError(
+            f"Procedure '{procedure_name}' output failed contract: expected dict output"
+        )
+    return validate_contract_payload(
+        config,
+        definition.contract_out,
+        output,
+        subject=f"Procedure '{procedure_name}' output",
         error_factory=query_execution_error,
     )
 

@@ -6,7 +6,11 @@ import hashlib
 from typing import Any, Protocol, get_args
 
 from cruxible_core.config.schema import StepKind
-from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.errors import (
+    ConfigError,
+    ProcedureRepeatExhaustedError,
+    QueryExecutionError,
+)
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.workflow.apply import (
@@ -17,6 +21,7 @@ from cruxible_core.workflow.apply import (
 )
 from cruxible_core.workflow.execution_context import WorkflowExecutionContext
 from cruxible_core.workflow.io import (
+    evaluate_assert_condition,
     execute_assert_count_step,
     execute_assert_exists_step,
     execute_assert_not_truncated_step,
@@ -42,6 +47,7 @@ from cruxible_core.workflow.transforms import (
 from cruxible_core.workflow.types import CompiledPlanStep, EntitySet, RelationshipSet
 
 VALID_STEP_KINDS: frozenset[str] = frozenset(str(kind) for kind in get_args(StepKind))
+PROCEDURE_STEP_KINDS: frozenset[str] = VALID_STEP_KINDS | {"repeat"}
 
 
 class WorkflowStepHandler(Protocol):
@@ -60,8 +66,13 @@ class WorkflowStepRegistry:
     def __init__(
         self,
         registrations: list[tuple[str, WorkflowStepHandler]] | None = None,
+        *,
+        allowed_kinds: frozenset[str] = VALID_STEP_KINDS,
+        required_kinds: frozenset[str] = VALID_STEP_KINDS,
     ) -> None:
         self._handlers: dict[str, WorkflowStepHandler] = {}
+        self._allowed_kinds = allowed_kinds
+        self._required_kinds = required_kinds
         for kind, handler in registrations or []:
             self.register(kind, handler)
 
@@ -70,15 +81,15 @@ class WorkflowStepRegistry:
         return tuple(sorted(self._handlers))
 
     def register(self, kind: str, handler: WorkflowStepHandler) -> None:
-        if kind not in VALID_STEP_KINDS:
-            valid = ", ".join(sorted(VALID_STEP_KINDS))
+        if kind not in self._allowed_kinds:
+            valid = ", ".join(sorted(self._allowed_kinds))
             raise ValueError(f"Unknown workflow step kind '{kind}'. Valid kinds: {valid}")
         if kind in self._handlers:
             raise ValueError(f"Duplicate workflow step handler for kind '{kind}'")
         self._handlers[kind] = handler
 
     def validate_complete(self) -> None:
-        missing = sorted(VALID_STEP_KINDS.difference(self._handlers))
+        missing = sorted(self._required_kinds.difference(self._handlers))
         if missing:
             raise ValueError(f"Missing workflow step handler(s): {missing}")
 
@@ -113,6 +124,9 @@ def execute_provider_handler(
     context: WorkflowExecutionContext,
     compiled_step: CompiledPlanStep,
 ) -> None:
+    before_invocation = (
+        context.before_provider_invocation if context.procedure_budget is not None else None
+    )
     execute_provider_step(
         context.instance,
         context.config,
@@ -127,6 +141,105 @@ def execute_provider_handler(
         workflow_name=context.workflow_name,
         persist_traces=context.persist_traces,
         config_base_path=context.config_base_path,
+        before_provider_invocation=before_invocation,
+    )
+    context.check_procedure_wall_clock()
+
+
+def execute_repeat_handler(
+    context: WorkflowExecutionContext,
+    compiled_step: CompiledPlanStep,
+) -> None:
+    """Execute one bounded, attempt-isolated procedure repeat."""
+    assert compiled_step.repeat_max_attempts is not None
+    assert compiled_step.repeat_until_spec is not None
+    repeat_node = context.receipt_builder.record_plan_step(
+        compiled_step.step_id,
+        "repeat",
+        detail={"max_attempts": compiled_step.repeat_max_attempts},
+    )
+    outer_outputs = context.step_outputs
+    outer_alias_step_ids = context.alias_step_ids
+    nested_output_keys = [
+        nested.as_name or nested.step_id
+        for nested in compiled_step.repeat_steps
+        if nested.as_name is not None
+    ]
+
+    for attempt_count in range(1, compiled_step.repeat_max_attempts + 1):
+        context.check_procedure_wall_clock()
+        attempt_outputs = dict(outer_outputs)
+        attempt_alias_step_ids = dict(outer_alias_step_ids)
+        context.step_outputs = attempt_outputs
+        context.alias_step_ids = attempt_alias_step_ids
+        try:
+            with context.receipt_builder.plan_step_scope(
+                parent_id=repeat_node,
+                detail={
+                    "repeat_step_id": compiled_step.step_id,
+                    "attempt_count": attempt_count,
+                },
+            ):
+                for nested_step in compiled_step.repeat_steps:
+                    context.check_procedure_wall_clock()
+                    PROCEDURE_STEP_HANDLER_REGISTRY.execute(context, nested_step)
+        except Exception:
+            context.receipt_builder.update_node_detail(
+                repeat_node,
+                {"attempt_count": attempt_count, "satisfied": False},
+            )
+            raise
+        finally:
+            context.step_outputs = outer_outputs
+            context.alias_step_ids = outer_alias_step_ids
+
+        attempt_scoped_outputs = {
+            output_key: attempt_outputs[output_key]
+            for output_key in nested_output_keys
+            if output_key in attempt_outputs
+        }
+        satisfied, left, right = evaluate_assert_condition(
+            compiled_step.repeat_until_spec,
+            context.plan.input_payload,
+            attempt_scoped_outputs,
+        )
+        context.receipt_builder.record_validation(
+            passed=satisfied,
+            detail={
+                "kind": "repeat_until",
+                "repeat_step_id": compiled_step.step_id,
+                "attempt_count": attempt_count,
+                "op": compiled_step.repeat_until_spec.op,
+                "left": left,
+                "right": right,
+                "message": compiled_step.repeat_until_spec.message,
+            },
+            parent_id=repeat_node,
+        )
+        context.check_procedure_wall_clock()
+        if satisfied:
+            repeat_output = {
+                **attempt_scoped_outputs,
+                "attempt_count": attempt_count,
+            }
+            context.set_step_output(compiled_step, repeat_output)
+            context.receipt_builder.update_node_detail(
+                repeat_node,
+                {"attempt_count": attempt_count, "satisfied": True},
+            )
+            return
+
+    context.receipt_builder.update_node_detail(
+        repeat_node,
+        {
+            "attempt_count": compiled_step.repeat_max_attempts,
+            "satisfied": False,
+            "repeat_exhausted": True,
+        },
+    )
+    raise ProcedureRepeatExhaustedError(
+        compiled_step.step_id,
+        compiled_step.repeat_max_attempts,
     )
 
 
@@ -851,28 +964,35 @@ def _apply_all_preview_payload(
     }
 
 
-DEFAULT_STEP_HANDLER_REGISTRY = WorkflowStepRegistry(
-    [
-        ("query", execute_query_handler),
-        ("provider", execute_provider_handler),
-        ("assert", execute_assert_handler),
-        ("assert_not_truncated", execute_assert_not_truncated_handler),
-        ("assert_count", execute_assert_count_handler),
-        ("assert_exists", execute_assert_exists_handler),
-        ("shape_items", execute_shape_items_handler),
-        ("join_items", execute_join_items_handler),
-        ("filter_items", execute_filter_items_handler),
-        ("aggregate_items", execute_aggregate_items_handler),
-        ("dedupe_items", execute_dedupe_items_handler),
-        ("make_candidates", execute_make_candidates_handler),
-        ("map_signals", execute_map_signals_handler),
-        ("propose_relationship_group", execute_propose_relationship_group_handler),
-        ("make_entities", execute_make_entities_handler),
-        ("make_relationships", execute_make_relationships_handler),
-        ("register_source_artifacts", execute_register_source_artifacts_handler),
-        ("apply_entities", execute_apply_entities_handler),
-        ("apply_relationships", execute_apply_relationships_handler),
-        ("apply_all", execute_apply_all_handler),
-    ]
-)
+_DEFAULT_STEP_HANDLERS: list[tuple[str, WorkflowStepHandler]] = [
+    ("query", execute_query_handler),
+    ("provider", execute_provider_handler),
+    ("assert", execute_assert_handler),
+    ("assert_not_truncated", execute_assert_not_truncated_handler),
+    ("assert_count", execute_assert_count_handler),
+    ("assert_exists", execute_assert_exists_handler),
+    ("shape_items", execute_shape_items_handler),
+    ("join_items", execute_join_items_handler),
+    ("filter_items", execute_filter_items_handler),
+    ("aggregate_items", execute_aggregate_items_handler),
+    ("dedupe_items", execute_dedupe_items_handler),
+    ("make_candidates", execute_make_candidates_handler),
+    ("map_signals", execute_map_signals_handler),
+    ("propose_relationship_group", execute_propose_relationship_group_handler),
+    ("make_entities", execute_make_entities_handler),
+    ("make_relationships", execute_make_relationships_handler),
+    ("register_source_artifacts", execute_register_source_artifacts_handler),
+    ("apply_entities", execute_apply_entities_handler),
+    ("apply_relationships", execute_apply_relationships_handler),
+    ("apply_all", execute_apply_all_handler),
+]
+
+DEFAULT_STEP_HANDLER_REGISTRY = WorkflowStepRegistry(_DEFAULT_STEP_HANDLERS)
 DEFAULT_STEP_HANDLER_REGISTRY.validate_complete()
+
+PROCEDURE_STEP_HANDLER_REGISTRY = WorkflowStepRegistry(
+    [*_DEFAULT_STEP_HANDLERS, ("repeat", execute_repeat_handler)],
+    allowed_kinds=PROCEDURE_STEP_KINDS,
+    required_kinds=PROCEDURE_STEP_KINDS,
+)
+PROCEDURE_STEP_HANDLER_REGISTRY.validate_complete()

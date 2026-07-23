@@ -2,32 +2,60 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, NoReturn
 
+from cruxible_core.config.property_validation import entity_with_identity_properties
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import ConfigError, ProcedureNotFoundError
+from cruxible_core.errors import (
+    ConfigError,
+    CoreError,
+    ProcedureBudgetExceededError,
+    ProcedureNotFoundError,
+    QueryExecutionError,
+)
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
 from cruxible_core.procedure.types import (
+    ProcedureBudgetSpent,
     ProcedureDefinition,
+    ProcedureExecutionResult,
     ProcedureRecord,
+    ProcedureRun,
+    ProcedureRunVerdict,
     ProcedureTier,
     ProcedureTransitionResult,
     compute_procedure_definition_digest,
 )
+from cruxible_core.query.entity_state import entity_matches_query_state
 from cruxible_core.receipt.builder import ReceiptBuilder
+from cruxible_core.receipt.types import Receipt
+from cruxible_core.runtime.permissions import PermissionMode, get_current_mode
 from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import (
     compile_plan_definition,
+    compute_lock_config_digest,
+    compute_lock_digest,
     load_lock,
     resolve_lock_path,
+)
+from cruxible_core.workflow.execution_context import ProcedureExecutionBudget
+from cruxible_core.workflow.executor import (
+    FAILED_WORKFLOW_RECEIPT_ATTR,
+    execute_procedure_plan,
 )
 from cruxible_core.workflow.types import CompiledPlan
 
 _TIER_RANK = {"governed_write": 2, "graph_write": 3, "admin": 4}
+_PERMISSION_BY_TIER = {
+    "governed_write": PermissionMode.GOVERNED_WRITE,
+    "graph_write": PermissionMode.GRAPH_WRITE,
+    "admin": PermissionMode.ADMIN,
+}
+_READ_REVISION_STATE_KEY = "read_revision"
 
 
 def validate_procedure_definition_against_config(
@@ -67,6 +95,7 @@ def validate_procedure_definition_against_config(
 def compile_procedure_definition(
     instance: InstanceProtocol,
     definition: ProcedureDefinition,
+    input_payload: dict[str, Any] | None = None,
 ) -> CompiledPlan:
     """Compile a state-held procedure definition against the active config/lock."""
     config = instance.load_config()
@@ -77,7 +106,7 @@ def compile_procedure_definition(
         lock,
         definition.name,
         definition,
-        None,
+        input_payload,
         config_base_path=instance.get_config_path().parent,
         definition_label="Procedure",
     )
@@ -283,6 +312,482 @@ def service_list_procedures(
         )
     finally:
         store.close()
+
+
+def service_run_procedure(
+    instance: InstanceProtocol,
+    procedure_id: str,
+    input_payload: dict[str, Any],
+    actor_context: GovernedActorContext | None,
+) -> ProcedureExecutionResult:
+    """Run one live procedure with short authorization and crash-safe audit state."""
+    invocation_started = time.monotonic()
+    with instance.write_transaction() as uow:
+        procedure = _get_procedure(uow.procedures, procedure_id)
+        started_run = ProcedureRun(
+            procedure_id=procedure.procedure_id,
+            definition_digest=procedure.definition_digest,
+        )
+        uow.procedures.save_run(started_run)
+
+    budget = ProcedureExecutionBudget(
+        wall_clock_s=procedure.definition.budget.wall_clock_s,
+        max_provider_calls=procedure.definition.budget.max_provider_calls,
+        started_monotonic=invocation_started,
+    )
+    builder = ReceiptBuilder(
+        query_name=procedure.definition.name,
+        parameters={
+            "procedure_id": procedure.procedure_id,
+            "definition_digest": procedure.definition_digest,
+            "input": input_payload,
+        },
+        operation_type="procedure",
+        head_snapshot_id=instance.get_head_snapshot_id(),
+        actor_context=actor_context,
+    )
+    precondition_detail: dict[str, Any] = {
+        "evaluated": False,
+        "read_revision": None,
+        "condition": dict(procedure.definition.precondition),
+        "satisfying_entity_ids": [],
+    }
+    executed_config_digest: str | None = None
+    executed_lock_digest: str | None = None
+
+    try:
+        if procedure.status != "live":
+            raise ConfigError(
+                f"Procedure '{procedure.procedure_id}' must be live to run; "
+                f"found '{procedure.status}'"
+            )
+        current_definition_digest = compute_procedure_definition_digest(procedure.definition)
+        if current_definition_digest != procedure.definition_digest:
+            raise ConfigError(
+                "Procedure definition digest changed since promotion: "
+                f"stored={procedure.definition_digest}, computed={current_definition_digest}"
+            )
+
+        config = instance.load_config()
+        lock = load_lock(resolve_lock_path(instance))
+        executed_config_digest = compute_lock_config_digest(config)
+        executed_lock_digest = compute_lock_digest(lock)
+        effective_tier = validate_procedure_definition_against_config(
+            procedure.definition,
+            config,
+        )
+        _require_procedure_execution_tier(effective_tier)
+        plan = compile_plan_definition(
+            config,
+            lock,
+            procedure.definition.name,
+            procedure.definition,
+            input_payload,
+            config_base_path=instance.get_config_path().parent,
+            definition_label="Procedure",
+        )
+    except Exception as exc:
+        refusal_error = (
+            exc
+            if isinstance(exc, ConfigError)
+            else ConfigError(f"Procedure preflight failed closed: {type(exc).__name__}: {exc}")
+        )
+        builder.record_validation(
+            passed=False,
+            detail={
+                "kind": "procedure_preflight",
+                "reason": str(refusal_error),
+            },
+        )
+        builder.record_validation(
+            passed=False,
+            detail={
+                "kind": "procedure_precondition",
+                **precondition_detail,
+                "reason": "not evaluated because procedure preflight was refused",
+            },
+        )
+        receipt, finalized_run = _finalize_procedure_invocation(
+            instance,
+            procedure=procedure,
+            started_run=started_run,
+            builder=builder,
+            verdict="refused",
+            budget=budget,
+            precondition_detail=precondition_detail,
+            promoted_config_digest=procedure.promoted_config_digest,
+            promoted_lock_digest=procedure.promoted_lock_digest,
+            executed_config_digest=executed_config_digest,
+            executed_lock_digest=executed_lock_digest,
+            error=refusal_error,
+        )
+        _tag_procedure_exception(refusal_error, finalized_run, receipt)
+        if refusal_error is exc:
+            raise
+        raise refusal_error from exc
+
+    refusal: ConfigError | None = None
+    refusal_receipt: Receipt | None = None
+    refusal_run: ProcedureRun | None = None
+    with instance.write_transaction() as uow:
+        revision_value = uow.snapshots.get_instance_state(_READ_REVISION_STATE_KEY)
+        read_revision = int(revision_value) if isinstance(revision_value, int) else 0
+        try:
+            satisfiers = _procedure_precondition_satisfiers(
+                config,
+                uow.graph.load_graph(),
+                procedure.definition.precondition,
+            )
+        except Exception as exc:
+            refusal = ConfigError(
+                f"Procedure precondition evaluation failed closed: {type(exc).__name__}: {exc}"
+            )
+            satisfiers = []
+
+        satisfied = not procedure.definition.precondition or bool(satisfiers)
+        if refusal is not None:
+            satisfied = False
+        satisfying_ids = sorted({entity_id for _, entity_id in satisfiers})
+        precondition_detail = {
+            "evaluated": True,
+            "read_revision": read_revision,
+            "condition": dict(procedure.definition.precondition),
+            "satisfied": satisfied,
+            "satisfying_entity_ids": satisfying_ids,
+            "satisfiers": [
+                {"entity_type": entity_type, "entity_id": entity_id}
+                for entity_type, entity_id in satisfiers
+            ],
+        }
+        precondition_node = builder.record_validation(
+            passed=satisfied,
+            detail={"kind": "procedure_precondition", **precondition_detail},
+        )
+        for entity_type, entity_id in satisfiers:
+            builder.record_entity_lookup(
+                entity_type,
+                entity_id,
+                parent_id=precondition_node,
+            )
+        if not satisfied:
+            if refusal is None:
+                refusal = ConfigError(
+                    f"Procedure '{procedure.procedure_id}' precondition was unsatisfied"
+                )
+            refusal_receipt, refusal_run = _finalize_procedure_invocation_in_uow(
+                uow,
+                procedure=procedure,
+                started_run=started_run,
+                builder=builder,
+                verdict="refused",
+                budget=budget,
+                precondition_detail=precondition_detail,
+                promoted_config_digest=procedure.promoted_config_digest,
+                promoted_lock_digest=procedure.promoted_lock_digest,
+                executed_config_digest=plan.config_digest,
+                executed_lock_digest=plan.lock_digest,
+                error=refusal,
+            )
+
+    if refusal is not None:
+        assert refusal_receipt is not None
+        assert refusal_run is not None
+        _tag_procedure_exception(refusal, refusal_run, refusal_receipt)
+        raise refusal
+
+    try:
+        execution = execute_procedure_plan(
+            instance,
+            config,
+            procedure.definition,
+            plan,
+            lock,
+            builder,
+            budget,
+            actor_context=actor_context,
+        )
+    except Exception as exc:
+        original_exc = exc
+        failure: BaseException
+        failed_receipt = getattr(original_exc, FAILED_WORKFLOW_RECEIPT_ATTR, None)
+        if not isinstance(failed_receipt, Receipt):
+            if isinstance(original_exc, CoreError):
+                execution_error = original_exc
+            else:
+                execution_error = QueryExecutionError(
+                    f"Unexpected procedure execution failure: {type(original_exc).__name__}"
+                )
+            builder.record_results([{"output": None, "error": str(execution_error)}])
+            receipt = builder.build(results=[{"output": None, "error": str(execution_error)}])
+            failure = execution_error
+        else:
+            receipt = failed_receipt
+            failure = original_exc
+        wall_clock_exceeded = budget.remaining_wall_clock_s() <= 0
+        verdict: ProcedureRunVerdict = (
+            "budget_exceeded"
+            if isinstance(failure, ProcedureBudgetExceededError)
+            or bool(getattr(failure, "budget_exceeded", False))
+            or wall_clock_exceeded
+            else "failed"
+        )
+        receipt, finalized_run = _persist_built_procedure_receipt(
+            instance,
+            procedure=procedure,
+            started_run=started_run,
+            receipt=receipt,
+            verdict=verdict,
+            budget=budget,
+            precondition_detail=precondition_detail,
+            promoted_config_digest=procedure.promoted_config_digest,
+            promoted_lock_digest=procedure.promoted_lock_digest,
+            executed_config_digest=plan.config_digest,
+            executed_lock_digest=plan.lock_digest,
+            error=failure,
+        )
+        _tag_procedure_exception(failure, finalized_run, receipt)
+        if failure is original_exc:
+            raise
+        raise failure from original_exc
+
+    receipt, finalized_run = _persist_built_procedure_receipt(
+        instance,
+        procedure=procedure,
+        started_run=started_run,
+        receipt=execution.receipt,
+        verdict="succeeded",
+        budget=budget,
+        precondition_detail=precondition_detail,
+        promoted_config_digest=procedure.promoted_config_digest,
+        promoted_lock_digest=procedure.promoted_lock_digest,
+        executed_config_digest=plan.config_digest,
+        executed_lock_digest=plan.lock_digest,
+        error=None,
+    )
+    return ProcedureExecutionResult(
+        procedure=procedure,
+        run=finalized_run,
+        output=execution.output,
+        receipt=receipt,
+        step_outputs=execution.step_outputs,
+    )
+
+
+def _procedure_precondition_satisfiers(
+    config: CoreConfig,
+    graph: Any,
+    condition: dict[str, str | int | float | bool],
+) -> list[tuple[str, str]]:
+    """Return live satisfiers in stable type/id order for a property condition."""
+    if not condition:
+        return []
+    satisfiers: list[tuple[str, str]] = []
+    for entity_type in sorted(config.entity_types):
+        for entity in graph.list_entities(entity_type):
+            if not entity_matches_query_state(entity.metadata, "live"):
+                continue
+            properties = entity_with_identity_properties(config, entity).properties
+            if all(properties.get(name) == expected for name, expected in condition.items()):
+                satisfiers.append((entity_type, entity.entity_id))
+    return sorted(satisfiers)
+
+
+def _require_procedure_execution_tier(effective_tier: ProcedureTier) -> None:
+    current_mode = get_current_mode()
+    required_mode = _PERMISSION_BY_TIER[effective_tier]
+    if current_mode < required_mode:
+        raise ConfigError(
+            f"Procedure execution requires tier '{effective_tier}', but the caller "
+            f"ceiling is '{current_mode.name.lower()}'"
+        )
+
+
+def _procedure_budget_spent(
+    budget: ProcedureExecutionBudget,
+) -> ProcedureBudgetSpent:
+    return ProcedureBudgetSpent(
+        wall_clock_s=budget.elapsed_s(),
+        provider_calls=budget.provider_calls,
+    )
+
+
+def _finalize_procedure_invocation(
+    instance: InstanceProtocol,
+    *,
+    procedure: ProcedureRecord,
+    started_run: ProcedureRun,
+    builder: ReceiptBuilder,
+    verdict: ProcedureRunVerdict,
+    budget: ProcedureExecutionBudget,
+    precondition_detail: dict[str, Any],
+    promoted_config_digest: str | None,
+    promoted_lock_digest: str | None,
+    executed_config_digest: str | None,
+    executed_lock_digest: str | None,
+    error: BaseException | None,
+) -> tuple[Receipt, ProcedureRun]:
+    with instance.write_transaction() as uow:
+        return _finalize_procedure_invocation_in_uow(
+            uow,
+            procedure=procedure,
+            started_run=started_run,
+            builder=builder,
+            verdict=verdict,
+            budget=budget,
+            precondition_detail=precondition_detail,
+            promoted_config_digest=promoted_config_digest,
+            promoted_lock_digest=promoted_lock_digest,
+            executed_config_digest=executed_config_digest,
+            executed_lock_digest=executed_lock_digest,
+            error=error,
+        )
+
+
+def _finalize_procedure_invocation_in_uow(
+    uow: Any,
+    *,
+    procedure: ProcedureRecord,
+    started_run: ProcedureRun,
+    builder: ReceiptBuilder,
+    verdict: ProcedureRunVerdict,
+    budget: ProcedureExecutionBudget,
+    precondition_detail: dict[str, Any],
+    promoted_config_digest: str | None,
+    promoted_lock_digest: str | None,
+    executed_config_digest: str | None,
+    executed_lock_digest: str | None,
+    error: BaseException | None,
+) -> tuple[Receipt, ProcedureRun]:
+    results = [{"output": None, "error": str(error)}] if error is not None else [{"output": None}]
+    builder.record_results(results)
+    receipt = builder.build(results=results)
+    return _persist_built_procedure_receipt_in_uow(
+        uow,
+        procedure=procedure,
+        started_run=started_run,
+        receipt=receipt,
+        verdict=verdict,
+        budget=budget,
+        precondition_detail=precondition_detail,
+        promoted_config_digest=promoted_config_digest,
+        promoted_lock_digest=promoted_lock_digest,
+        executed_config_digest=executed_config_digest,
+        executed_lock_digest=executed_lock_digest,
+        error=error,
+    )
+
+
+def _persist_built_procedure_receipt(
+    instance: InstanceProtocol,
+    *,
+    procedure: ProcedureRecord,
+    started_run: ProcedureRun,
+    receipt: Receipt,
+    verdict: ProcedureRunVerdict,
+    budget: ProcedureExecutionBudget,
+    precondition_detail: dict[str, Any],
+    promoted_config_digest: str | None,
+    promoted_lock_digest: str | None,
+    executed_config_digest: str | None,
+    executed_lock_digest: str | None,
+    error: BaseException | None,
+) -> tuple[Receipt, ProcedureRun]:
+    with instance.write_transaction() as uow:
+        return _persist_built_procedure_receipt_in_uow(
+            uow,
+            procedure=procedure,
+            started_run=started_run,
+            receipt=receipt,
+            verdict=verdict,
+            budget=budget,
+            precondition_detail=precondition_detail,
+            promoted_config_digest=promoted_config_digest,
+            promoted_lock_digest=promoted_lock_digest,
+            executed_config_digest=executed_config_digest,
+            executed_lock_digest=executed_lock_digest,
+            error=error,
+        )
+
+
+def _persist_built_procedure_receipt_in_uow(
+    uow: Any,
+    *,
+    procedure: ProcedureRecord,
+    started_run: ProcedureRun,
+    receipt: Receipt,
+    verdict: ProcedureRunVerdict,
+    budget: ProcedureExecutionBudget,
+    precondition_detail: dict[str, Any],
+    promoted_config_digest: str | None,
+    promoted_lock_digest: str | None,
+    executed_config_digest: str | None,
+    executed_lock_digest: str | None,
+    error: BaseException | None,
+) -> tuple[Receipt, ProcedureRun]:
+    budget_spent = _procedure_budget_spent(budget)
+    root_detail = receipt.nodes[0].detail
+    root_detail.update(
+        {
+            "procedure_id": procedure.procedure_id,
+            "definition_digest": procedure.definition_digest,
+            "promoted_against": {
+                "config_digest": promoted_config_digest,
+                "lock_digest": promoted_lock_digest,
+            },
+            "executed_against": {
+                "config_digest": executed_config_digest,
+                "lock_digest": executed_lock_digest,
+            },
+            "precondition": precondition_detail,
+            "budget": {
+                "declared": procedure.definition.budget.model_dump(mode="json"),
+                "spent": budget_spent.model_dump(mode="json"),
+            },
+            "verdict": verdict,
+        }
+    )
+    if error is not None:
+        root_detail.update(
+            {
+                "error": str(error),
+                "error_type": type(error).__name__,
+            }
+        )
+    if verdict == "budget_exceeded" or bool(getattr(error, "budget_exceeded", False)):
+        root_detail["budget_exceeded"] = True
+    if bool(getattr(error, "repeat_exhausted", False)):
+        root_detail["repeat_exhausted"] = True
+    receipt.committed = True
+    uow.receipts.save_receipt(receipt)
+    finalized_at = utc_now()
+    updated = uow.procedures.finalize_run(
+        started_run.run_id,
+        verdict=verdict,
+        budget_spent=budget_spent,
+        receipt_id=receipt.receipt_id,
+        finalized_at=format_datetime(finalized_at),
+    )
+    if not updated:
+        raise QueryExecutionError(
+            f"Procedure run '{started_run.run_id}' was not in started state at finalization"
+        )
+    finalized_run = uow.procedures.get_run(started_run.run_id)
+    if finalized_run is None:
+        raise QueryExecutionError(
+            f"Procedure run '{started_run.run_id}' disappeared during finalization"
+        )
+    return receipt, finalized_run
+
+
+def _tag_procedure_exception(
+    exc: BaseException,
+    run: ProcedureRun,
+    receipt: Receipt,
+) -> None:
+    if isinstance(exc, CoreError):
+        exc.mutation_receipt_id = receipt.receipt_id
+    setattr(exc, "procedure_run_id", run.run_id)
+    setattr(exc, "procedure_receipt_id", receipt.receipt_id)
 
 
 def _transition_pending_procedure(

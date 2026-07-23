@@ -24,8 +24,10 @@ if TYPE_CHECKING:
     from cruxible_core.graph.types import EntityInstance, RelationshipInstance
     from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
     from cruxible_core.procedure.types import (
+        ProcedureBudgetSpent,
         ProcedureRecord,
         ProcedureRun,
+        ProcedureRunVerdict,
         ProcedureStatus,
     )
     from cruxible_core.provider.types import ExecutionTrace
@@ -393,6 +395,16 @@ class ProcedureStoreProtocol(ABC):
     ) -> bool: ...
     @abstractmethod
     def save_run(self, run: ProcedureRun) -> str: ...
+    @abstractmethod
+    def finalize_run(
+        self,
+        run_id: str,
+        *,
+        verdict: ProcedureRunVerdict,
+        budget_spent: ProcedureBudgetSpent,
+        receipt_id: str,
+        finalized_at: str,
+    ) -> bool: ...
     @abstractmethod
     def get_run(self, run_id: str) -> ProcedureRun | None: ...
     @abstractmethod

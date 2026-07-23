@@ -275,6 +275,27 @@ class TransportError(ExecutionError):
     pass
 
 
+class ProcedureBudgetExceededError(QueryExecutionError):
+    """A procedure exhausted one of its declared execution budgets."""
+
+    def __init__(self, message: str):
+        self.budget_exceeded = True
+        super().__init__(message)
+
+
+class ProcedureRepeatExhaustedError(QueryExecutionError):
+    """A bounded procedure repeat ended without satisfying its condition."""
+
+    def __init__(self, step_id: str, max_attempts: int):
+        self.repeat_exhausted = True
+        self.step_id = step_id
+        self.max_attempts = max_attempts
+        super().__init__(
+            f"Procedure repeat step '{step_id}' exhausted {max_attempts} attempt(s) "
+            "without satisfying its until condition"
+        )
+
+
 class OwnershipError(CoreError):
     """Write rejected because the target type is upstream-owned in a overlay instance."""
 

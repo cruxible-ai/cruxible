@@ -81,6 +81,7 @@ from cruxible_core.service.procedures import (
     service_propose_procedure,
     service_reject_procedure,
     service_retire_procedure,
+    service_run_procedure,
     validate_procedure_definition_against_config,
 )
 from cruxible_core.service.queries import (
@@ -395,6 +396,7 @@ __all__ = [
     "service_propose_procedure",
     "service_reject_procedure",
     "service_retire_procedure",
+    "service_run_procedure",
     "validate_procedure_definition_against_config",
     # Gates
     "service_evaluate_gate",

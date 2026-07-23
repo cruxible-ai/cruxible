@@ -18,6 +18,7 @@ from cruxible_core.config.schema import (
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.primitives import canonical_json, new_id
+from cruxible_core.receipt.types import Receipt
 from cruxible_core.temporal import utc_now
 
 ProcedureStatus = Literal["pending", "live", "rejected", "retired"]
@@ -302,6 +303,16 @@ class ProcedureTransitionResult(BaseModel):
     receipt_id: str | None = None
 
 
+class ProcedureExecutionResult(BaseModel):
+    """Successful result of one finalized procedure invocation."""
+
+    procedure: ProcedureRecord
+    run: ProcedureRun
+    output: Any
+    receipt: Receipt
+    step_outputs: dict[str, Any] = Field(default_factory=dict)
+
+
 def compute_procedure_definition_digest(definition: ProcedureDefinition) -> str:
     """Return the stable content digest of one validated definition."""
     payload = definition.model_dump(mode="json", by_alias=True, exclude_none=True)
@@ -342,6 +353,7 @@ __all__ = [
     "ProcedureBudget",
     "ProcedureBudgetSpent",
     "ProcedureDefinition",
+    "ProcedureExecutionResult",
     "ProcedureRecord",
     "ProcedureRepeatSpec",
     "ProcedureRepeatStepSchema",

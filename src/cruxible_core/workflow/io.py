@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.schema import AssertSpec, CoreConfig
 from cruxible_core.errors import ConfigError, CoreError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -56,6 +57,23 @@ def _evaluate_assert(
         return evaluate_typed_comparison(left, op, right, value_type=value_type)
     except ValueError as exc:
         raise ConfigError(f"Unsupported assert op '{op}'") from exc
+
+
+def evaluate_assert_condition(
+    spec: AssertSpec,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> tuple[bool, Any, Any]:
+    """Resolve and evaluate one assert-shape condition without raising on false."""
+    left = resolve_value(spec.left, input_payload, step_outputs)
+    right = resolve_value(spec.right, input_payload, step_outputs)
+    passed = _evaluate_assert(
+        left,
+        spec.op,
+        right,
+        value_type=spec.value_type,
+    )
+    return passed, left, right
 
 
 def _resolve_query_relationship_state(
@@ -242,6 +260,7 @@ def execute_provider_step(
     workflow_name: str,
     persist_traces: bool,
     config_base_path: Path,
+    before_provider_invocation: Callable[[], float | None] | None = None,
 ) -> None:
     assert compiled_step.provider_name is not None
     provider_schema = config.providers[compiled_step.provider_name]
@@ -276,11 +295,22 @@ def execute_provider_step(
         deterministic=locked_provider.deterministic,
         artifact=artifact,
     )
-    provider_fn = resolve_provider(
-        compiled_step.provider_name,
-        provider_schema,
-        config_base_path=config_base_path,
+    timeout_ceiling_s = (
+        before_provider_invocation() if before_provider_invocation is not None else None
     )
+    if timeout_ceiling_s is None:
+        provider_fn = resolve_provider(
+            compiled_step.provider_name,
+            provider_schema,
+            config_base_path=config_base_path,
+        )
+    else:
+        provider_fn = resolve_provider(
+            compiled_step.provider_name,
+            provider_schema,
+            config_base_path=config_base_path,
+            timeout_ceiling_s=timeout_ceiling_s,
+        )
     started = time.monotonic_ns()
     started_at = utc_now()
     status: Literal["success", "error"] = "success"
@@ -398,13 +428,10 @@ def execute_assert_step(
     receipt_builder: ReceiptBuilder,
 ) -> None:
     assert compiled_step.assert_spec is not None
-    left = resolve_value(compiled_step.assert_spec.left, input_payload, step_outputs)
-    right = resolve_value(compiled_step.assert_spec.right, input_payload, step_outputs)
-    passed = _evaluate_assert(
-        left,
-        compiled_step.assert_spec.op,
-        right,
-        value_type=compiled_step.assert_spec.value_type,
+    passed, left, right = evaluate_assert_condition(
+        compiled_step.assert_spec,
+        input_payload,
+        step_outputs,
     )
     detail = {
         "op": compiled_step.assert_spec.op,

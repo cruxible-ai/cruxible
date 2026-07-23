@@ -19,8 +19,10 @@ from cruxible_core.governance.actors import (
 )
 from cruxible_core.instance_protocol import ProcedureStoreProtocol
 from cruxible_core.procedure.types import (
+    ProcedureBudgetSpent,
     ProcedureRecord,
     ProcedureRun,
+    ProcedureRunVerdict,
     ProcedureStatus,
     compute_procedure_definition_digest,
 )
@@ -273,6 +275,30 @@ class ProcedureStore(ProcedureStoreProtocol):
             ),
         )
         return run.run_id
+
+    def finalize_run(
+        self,
+        run_id: str,
+        *,
+        verdict: ProcedureRunVerdict,
+        budget_spent: ProcedureBudgetSpent,
+        receipt_id: str,
+        finalized_at: str,
+    ) -> bool:
+        """Finalize one started run exactly once. Does not commit."""
+        cursor = self._conn.execute(
+            "UPDATE procedure_runs SET status = 'finalized', verdict = ?, "
+            "budget_spent_json = ?, receipt_id = ?, finalized_at = ? "
+            "WHERE run_id = ? AND status = 'started' AND verdict IS NULL",
+            (
+                verdict,
+                json.dumps(budget_spent.model_dump(mode="json"), sort_keys=True),
+                receipt_id,
+                finalized_at,
+                run_id,
+            ),
+        )
+        return cursor.rowcount == 1
 
     def get_run(self, run_id: str) -> ProcedureRun | None:
         """Load one procedure run by ID."""
