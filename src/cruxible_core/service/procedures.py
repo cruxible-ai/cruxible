@@ -315,7 +315,8 @@ def _transition_pending_procedure(
             expected_version=expected_version,
             builder=ctx.builder,
         )
-        _validate_reviewer_independence(procedure, reviewer, builder=ctx.builder)
+        if action == "promote":
+            _validate_reviewer_independence(procedure, reviewer, builder=ctx.builder)
         normalized_reason = None
         if action == "reject":
             normalized_reason = _require_reason(reason, action="reject", builder=ctx.builder)
@@ -342,6 +343,21 @@ def _transition_pending_procedure(
                 raise
             config_digest = plan.config_digest
             lock_digest = plan.lock_digest
+            allowed_live_ids = {procedure.procedure_id, procedure.supersedes_procedure_id}
+            conflicting = sorted(
+                row.procedure_id
+                for row in ctx.uow.procedures.list_procedures(
+                    name=procedure.definition.name, status="live"
+                )
+                if row.procedure_id not in allowed_live_ids
+            )
+            if conflicting:
+                _refuse(
+                    ctx.builder,
+                    "another live procedure already holds name "
+                    f"'{procedure.definition.name}': {', '.join(conflicting)}; "
+                    "one live version per name",
+                )
 
         updated = ctx.uow.procedures.transition_procedure(
             procedure_id,

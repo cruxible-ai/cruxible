@@ -322,3 +322,109 @@ def test_promotion_recompiles_and_refuses_a_provider_deexported_after_proposal(
         service_get_procedure(procedure_instance, proposed.procedure.procedure_id).status
         == "pending"
     )
+
+
+def test_proposer_may_reject_own_proposal_as_withdrawal(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    proposed = service_propose_procedure(
+        procedure_instance,
+        provider_definition("withdraw_me"),
+        actor_context=actor("proposer"),
+    )
+    withdrawn = service_reject_procedure(
+        procedure_instance,
+        proposed.procedure.procedure_id,
+        expected_version=1,
+        reason="withdrawing my own proposal",
+        actor_context=actor("proposer"),
+    )
+    assert withdrawn.procedure.status == "rejected"
+    assert withdrawn.procedure.reason == "withdrawing my own proposal"
+
+
+def test_promotion_refuses_second_live_procedure_with_same_name(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    first = service_propose_procedure(
+        procedure_instance,
+        provider_definition("unique_name"),
+        actor_context=actor("proposer-a"),
+    )
+    service_promote_procedure(
+        procedure_instance,
+        first.procedure.procedure_id,
+        expected_version=1,
+        actor_context=actor("reviewer-a"),
+    )
+    second = service_propose_procedure(
+        procedure_instance,
+        provider_definition("unique_name"),
+        actor_context=actor("proposer-b"),
+    )
+    with pytest.raises(ConfigError, match="one live version per name") as exc_info:
+        service_promote_procedure(
+            procedure_instance,
+            second.procedure.procedure_id,
+            expected_version=1,
+            actor_context=actor("reviewer-b"),
+        )
+    assert exc_info.value.mutation_receipt_id is not None
+    assert (
+        service_get_procedure(procedure_instance, second.procedure.procedure_id).status == "pending"
+    )
+
+
+def test_supersede_race_second_promotion_refused(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    v1 = service_propose_procedure(
+        procedure_instance,
+        provider_definition("raced_name"),
+        actor_context=actor("proposer-a"),
+    )
+    v1_live = service_promote_procedure(
+        procedure_instance,
+        v1.procedure.procedure_id,
+        expected_version=1,
+        actor_context=actor("reviewer-a"),
+    )
+    v2a = service_propose_procedure(
+        procedure_instance,
+        provider_definition("raced_name"),
+        actor_context=actor("proposer-b"),
+        supersedes_procedure_id=v1_live.procedure.procedure_id,
+    )
+    v2b = service_propose_procedure(
+        procedure_instance,
+        provider_definition("raced_name"),
+        actor_context=actor("proposer-c"),
+        supersedes_procedure_id=v1_live.procedure.procedure_id,
+    )
+    service_promote_procedure(
+        procedure_instance,
+        v2a.procedure.procedure_id,
+        expected_version=1,
+        actor_context=actor("reviewer-b"),
+    )
+    with pytest.raises(ConfigError, match="one live version per name"):
+        service_promote_procedure(
+            procedure_instance,
+            v2b.procedure.procedure_id,
+            expected_version=1,
+            actor_context=actor("reviewer-c"),
+        )
+    live_rows = [
+        record
+        for record in (
+            service_get_procedure(procedure_instance, pid)
+            for pid in (
+                v1_live.procedure.procedure_id,
+                v2a.procedure.procedure_id,
+                v2b.procedure.procedure_id,
+            )
+        )
+        if record.status == "live"
+    ]
+    assert len(live_rows) == 1
+    assert live_rows[0].procedure_id == v2a.procedure.procedure_id

@@ -25,7 +25,7 @@ classifiers = [
 
 dependencies = [
     "cruxible-client==0.2.8",
-    "pydantic>=2.0",
+    "pydantic>=2.12",
     "networkx>=3.0",
     "polars>=1.0",
     "pyyaml>=6.0",
