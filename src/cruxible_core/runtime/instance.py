@@ -38,6 +38,7 @@ from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import new_id
+from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.snapshot.types import StateSnapshot, UpstreamMetadata
 from cruxible_core.storage.sqlite import (
@@ -663,6 +664,13 @@ class CruxibleInstance(InstanceProtocol):
             return self._active_uow.groups
         self._ensure_state_initialized()
         return GroupStore(self._state_db_path())
+
+    def get_procedure_store(self) -> ProcedureStore:
+        """Get or create the procedure SQLite store."""
+        if self._active_uow is not None:
+            return self._active_uow.procedures
+        self._ensure_state_initialized()
+        return ProcedureStore(self._state_db_path())
 
     def get_source_artifact_store(self) -> SQLiteSourceArtifactStore:
         """Get or create the source artifact SQLite store."""

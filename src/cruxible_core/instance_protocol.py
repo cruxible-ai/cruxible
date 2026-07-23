@@ -23,6 +23,11 @@ if TYPE_CHECKING:
     from cruxible_core.graph.entity_graph import EntityGraph
     from cruxible_core.graph.types import EntityInstance, RelationshipInstance
     from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
+    from cruxible_core.procedure.types import (
+        ProcedureRecord,
+        ProcedureRun,
+        ProcedureStatus,
+    )
     from cruxible_core.provider.types import ExecutionTrace
     from cruxible_core.receipt.types import Receipt
     from cruxible_core.snapshot.types import StateSnapshot, UpstreamMetadata
@@ -278,7 +283,7 @@ class GroupStoreProtocol(ABC):
         resolved_by: str,
         trust_status: str = "watch",
         confirmed: bool = False,
-        resolved_actor_context: Any | None = None,
+        resolved_actor_context: GovernedActorContext | None = None,
     ) -> str: ...
     @abstractmethod
     def confirm_resolution(self, resolution_id: str, trust_status: str | None = None) -> None: ...
@@ -343,6 +348,69 @@ class GroupStoreProtocol(ABC):
         trust_reason: str = "",
         trust_actor_context: Any | None = None,
     ) -> bool: ...
+    @abstractmethod
+    def close(self) -> None: ...
+
+
+class ProcedureStoreProtocol(ABC):
+    """Interface for immutable procedure definitions and run records."""
+
+    @abstractmethod
+    def save_procedure(self, procedure: ProcedureRecord) -> str: ...
+    @abstractmethod
+    def get_procedure(self, procedure_id: str) -> ProcedureRecord | None: ...
+    @abstractmethod
+    def list_procedures(
+        self,
+        *,
+        name: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ProcedureRecord]: ...
+    @abstractmethod
+    def count_procedures(
+        self,
+        *,
+        name: str | None = None,
+        status: str | None = None,
+    ) -> int: ...
+    @abstractmethod
+    def transition_procedure(
+        self,
+        procedure_id: str,
+        *,
+        from_status: ProcedureStatus,
+        to_status: ProcedureStatus,
+        expected_version: int,
+        resolved_actor_context: Any | None = None,
+        resolved_at: str | None = None,
+        retired_actor_context: GovernedActorContext | None = None,
+        retired_at: str | None = None,
+        reason: str | None = None,
+        promoted_config_digest: str | None = None,
+        promoted_lock_digest: str | None = None,
+    ) -> bool: ...
+    @abstractmethod
+    def save_run(self, run: ProcedureRun) -> str: ...
+    @abstractmethod
+    def get_run(self, run_id: str) -> ProcedureRun | None: ...
+    @abstractmethod
+    def list_runs(
+        self,
+        *,
+        procedure_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ProcedureRun]: ...
+    @abstractmethod
+    def count_runs(
+        self,
+        *,
+        procedure_id: str | None = None,
+        status: str | None = None,
+    ) -> int: ...
     @abstractmethod
     def close(self) -> None: ...
 
@@ -427,5 +495,7 @@ class InstanceProtocol(ABC):
     def get_feedback_store(self) -> FeedbackStoreProtocol: ...
     @abstractmethod
     def get_group_store(self) -> GroupStoreProtocol: ...
+    @abstractmethod
+    def get_procedure_store(self) -> ProcedureStoreProtocol: ...
     @abstractmethod
     def get_source_artifact_store(self) -> SourceArtifactStoreProtocol: ...

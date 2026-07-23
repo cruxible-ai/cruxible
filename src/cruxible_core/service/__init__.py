@@ -73,6 +73,16 @@ from cruxible_core.service.mutations import (
     service_add_relationships,
     service_batch_direct_write,
 )
+from cruxible_core.service.procedures import (
+    compile_procedure_definition,
+    service_get_procedure,
+    service_list_procedures,
+    service_promote_procedure,
+    service_propose_procedure,
+    service_reject_procedure,
+    service_retire_procedure,
+    validate_procedure_definition_against_config,
+)
 from cruxible_core.service.queries import (
     query_definition_full_payload,
     query_definition_summary_payload,
@@ -377,6 +387,15 @@ __all__ = [
     "service_propose_group_inputs",
     "service_resolve_group",
     "service_update_trust_status",
+    # Procedures
+    "compile_procedure_definition",
+    "service_get_procedure",
+    "service_list_procedures",
+    "service_promote_procedure",
+    "service_propose_procedure",
+    "service_reject_procedure",
+    "service_retire_procedure",
+    "validate_procedure_definition_against_config",
     # Gates
     "service_evaluate_gate",
     # Mutations

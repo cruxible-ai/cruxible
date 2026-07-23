@@ -27,6 +27,7 @@ errors (runtime data), making it easy to catch by category.
     ├── OutcomeNotFoundError (feedback store lookup)
     ├── InstanceNotFoundError (instance registry lookup)
     ├── GroupNotFoundError (group store lookup)
+    ├── ProcedureNotFoundError (procedure store lookup)
     ├── SourceArtifactNotFoundError (source artifact store lookup)
     ├── RuntimeCredentialNotFoundError (server credential store lookup)
     ├── AuthenticationError (HTTP/API credential failure)
@@ -325,6 +326,14 @@ class GroupNotFoundError(CoreError):
     def __init__(self, group_id: str):
         self.group_id = group_id
         super().__init__(f"Group '{group_id}' not found")
+
+
+class ProcedureNotFoundError(CoreError):
+    """Procedure ID not found in store."""
+
+    def __init__(self, procedure_id: str):
+        self.procedure_id = procedure_id
+        super().__init__(f"Procedure '{procedure_id}' not found")
 
 
 class SourceArtifactNotFoundError(CoreError):

@@ -3,6 +3,7 @@
 from cruxible_core.workflow.compiler import (
     LOCK_FILE_NAME,
     build_lock,
+    compile_plan_definition,
     compile_workflow,
     compute_lock_config_digest,
     compute_lock_digest,
@@ -30,6 +31,7 @@ __all__ = [
     "WorkflowExecutionResult",
     "WorkflowLock",
     "build_lock",
+    "compile_plan_definition",
     "compile_workflow",
     "compute_lock_config_digest",
     "compute_lock_digest",

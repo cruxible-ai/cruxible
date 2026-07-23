@@ -18,6 +18,7 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
 from cruxible_core.primitives import canonical_json
+from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.snapshot.types import StateSnapshot
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
@@ -178,6 +179,7 @@ _AUDIT_ONLY_TABLES = frozenset(
         "receipts",
         "receipt_entities",
         "execution_traces",
+        "procedure_runs",
         "decision_events",
         "instance_state",
         "storage_migrations",
@@ -701,6 +703,11 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
             connection=self._conn,
             initialize_schema=False,
         )
+        self.procedures = ProcedureStore(
+            self.db_path,
+            connection=self._conn,
+            initialize_schema=False,
+        )
         self.decisions = DecisionStore(
             self.db_path,
             connection=self._conn,
@@ -892,6 +899,7 @@ class SQLiteStorageBackend:
         SQLiteReceiptStore(self.db_path, connection=conn)
         FeedbackStore(self.db_path, connection=conn)
         GroupStore(self.db_path, connection=conn)
+        ProcedureStore(self.db_path, connection=conn)
         DecisionStore(self.db_path, connection=conn)
         SQLiteSourceArtifactStore(self.db_path, connection=conn)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):

@@ -86,6 +86,11 @@ class ReceiptBuilder:
                 node_type="workflow",
                 detail={"workflow_name": query_name, "parameters": self._parameters},
             )
+        elif operation_type == "procedure":
+            self._root_id = self._add_node(
+                node_type="procedure",
+                detail={"procedure_name": query_name, "parameters": self._parameters},
+            )
         else:
             self._root_id = self._add_node(
                 node_type="mutation",
@@ -253,7 +258,7 @@ class ReceiptBuilder:
           the raw full body.
         * ``full``     -- the complete body, retained inline verbatim.
         """
-        if self._operation_type in ("query", "gate_evaluation", "workflow"):
+        if self._operation_type in ("query", "gate_evaluation", "workflow", "procedure"):
             return
         root = self._nodes[0]
         if root.node_type != "mutation":

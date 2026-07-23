@@ -12,6 +12,7 @@ from cruxible_core.instance_protocol import (
     DecisionStoreProtocol,
     FeedbackStoreProtocol,
     GroupStoreProtocol,
+    ProcedureStoreProtocol,
     ReceiptStoreProtocol,
 )
 from cruxible_core.snapshot.types import StateSnapshot
@@ -52,6 +53,7 @@ class UnitOfWorkProtocol(Protocol):
     receipts: ReceiptStoreProtocol
     feedback: FeedbackStoreProtocol
     groups: GroupStoreProtocol
+    procedures: ProcedureStoreProtocol
     decisions: DecisionStoreProtocol
     source_artifacts: SourceArtifactStoreProtocol
 

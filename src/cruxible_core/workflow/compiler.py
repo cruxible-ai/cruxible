@@ -7,11 +7,12 @@ import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import yaml
 
-from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.schema import CoreConfig, WorkflowType
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import compute_kit_provider_sha256, is_kit_provider_ref
@@ -22,7 +23,7 @@ from cruxible_core.workflow.contracts import (
     resolve_contract,
     validate_contract_payload,
 )
-from cruxible_core.workflow.refs import preview_value
+from cruxible_core.workflow.refs import preview_definition_value, preview_value
 from cruxible_core.workflow.types import (
     CompiledPlan,
     CompiledPlanStep,
@@ -179,7 +180,11 @@ def load_lock(path: Path) -> WorkflowLock:
     return WorkflowLock.model_validate(raw)
 
 
-def _prior_step_aliases_by_index(steps: Sequence[Any]) -> list[frozenset[str]]:
+def _prior_step_aliases_by_index(
+    steps: Sequence[Any],
+    *,
+    initial_aliases: frozenset[str] = frozenset(),
+) -> list[frozenset[str]]:
     """Return, per step index, the set of aliases declared by earlier steps.
 
     Used to tell ``preview_value`` which ``$steps.<alias>`` references are valid
@@ -187,7 +192,7 @@ def _prior_step_aliases_by_index(steps: Sequence[Any]) -> list[frozenset[str]]:
     fail closed on unknown step aliases without breaking valid forward refs.
     """
     per_index: list[frozenset[str]] = []
-    seen: set[str] = set()
+    seen = set(initial_aliases)
     for step in steps:
         per_index.append(frozenset(seen))
         alias = getattr(step, "as_", None)
@@ -219,7 +224,54 @@ def compile_workflow(
     workflow = config.workflows.get(workflow_name)
     if workflow is None:
         raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
-    workflow_type = workflow.type
+    return compile_plan_definition(
+        config,
+        lock,
+        workflow_name,
+        workflow,
+        input_payload,
+        config_base_path=config_base_path,
+        definition_label="Workflow",
+        _validated_config_digest=digest,
+    )
+
+
+def compile_plan_definition(
+    config: CoreConfig,
+    lock: WorkflowLock,
+    definition_name: str,
+    definition: Any,
+    input_payload: dict[str, Any] | None,
+    *,
+    config_base_path: Path | None = None,
+    definition_label: str = "Plan",
+    _validated_config_digest: str | None = None,
+    _initial_step_aliases: frozenset[str] = frozenset(),
+) -> CompiledPlan:
+    """Compile a supplied plan definition without resolving it from config.
+
+    ``input_payload=None`` is the definition-time mode used when procedures are
+    proposed or promoted. It validates contract references and step-reference
+    structure while preserving unresolved ``$input`` references. Configured
+    workflows always pass a concrete payload through :func:`compile_workflow`,
+    retaining their existing validation and compiled output byte-for-byte.
+    """
+    digest = _validated_config_digest
+    if digest is None:
+        digest = compute_lock_config_digest(config)
+        if lock.config_digest != digest:
+            raise ConfigError(
+                "Lock file config digest does not match current config. Run `cruxible lock`."
+            )
+        expected_lock_digest = compute_lock_digest(lock)
+        if lock.lock_digest != expected_lock_digest:
+            raise ConfigError(
+                "Lock file digest does not match current lock contents. Run `cruxible lock`."
+            )
+
+    workflow = definition
+    workflow_name = definition_name
+    workflow_type = cast("WorkflowType", getattr(workflow, "type", "utility"))
     is_canonical = workflow_type == "canonical"
     if (
         workflow.contract_out is not None
@@ -227,18 +279,33 @@ def compile_workflow(
     ):
         contract_label = contract_reference_label(workflow.contract_out)
         raise ConfigError(
-            f"Workflow '{workflow_name}' references unknown contract_out '{contract_label}'"
+            f"{definition_label} '{workflow_name}' references unknown "
+            f"contract_out '{contract_label}'"
         )
 
-    normalized_input = validate_contract_payload(
-        config,
-        workflow.contract_in,
-        input_payload,
-        subject=f"Workflow '{workflow_name}' input",
-        error_factory=ConfigError,
-        empty_payload_hint="Use --input or --input-file to provide workflow input.",
-        strip_reserved_source_metadata=True,
-    )
+    if input_payload is None:
+        if resolve_contract(config, workflow.contract_in) is None:
+            contract_label = contract_reference_label(workflow.contract_in)
+            raise ConfigError(
+                f"{definition_label} '{workflow_name}' references unknown "
+                f"contract_in '{contract_label}'"
+            )
+        normalized_input: dict[str, Any] = {}
+    else:
+        normalized_input = validate_contract_payload(
+            config,
+            workflow.contract_in,
+            input_payload,
+            subject=f"{definition_label} '{workflow_name}' input",
+            error_factory=ConfigError,
+            empty_payload_hint="Use --input or --input-file to provide workflow input.",
+            strip_reserved_source_metadata=True,
+        )
+
+    def preview(template: Any, *, step_aliases: frozenset[str]) -> Any:
+        if input_payload is None:
+            return preview_definition_value(template, step_aliases=step_aliases)
+        return preview_value(template, normalized_input, step_aliases=step_aliases)
 
     compiled_steps: list[CompiledPlanStep] = []
     # Aliases of steps that appear before each step index. A `$steps.<alias>`
@@ -246,13 +313,53 @@ def compile_workflow(
     # only when <alias> names one of these prior steps; preview_value fails
     # closed otherwise. Any step kind (query/provider/transform/...) may declare
     # an alias and be referenced downstream, so all prior aliases are tracked.
-    prior_aliases_by_index = _prior_step_aliases_by_index(workflow.steps)
+    prior_aliases_by_index = _prior_step_aliases_by_index(
+        workflow.steps,
+        initial_aliases=_initial_step_aliases,
+    )
     for step_index, step in enumerate(workflow.steps):
         prior_step_aliases = prior_aliases_by_index[step_index]
+        repeat_spec = getattr(step, "repeat", None)
+        if repeat_spec is not None:
+            nested_aliases = [nested.as_ for nested in repeat_spec.steps if nested.as_ is not None]
+            preview(
+                repeat_spec.until.model_dump(mode="python"),
+                step_aliases=frozenset(nested_aliases),
+            )
+            nested_definition = SimpleNamespace(
+                type="utility",
+                contract_in=workflow.contract_in,
+                contract_out=None,
+                steps=repeat_spec.steps,
+                returns=nested_aliases[-1] if nested_aliases else step.id,
+            )
+            nested_plan = compile_plan_definition(
+                config,
+                lock,
+                f"{workflow_name}.{step.id}",
+                nested_definition,
+                input_payload,
+                config_base_path=config_base_path,
+                definition_label=definition_label,
+                _validated_config_digest=digest,
+                _initial_step_aliases=prior_step_aliases,
+            )
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="repeat",
+                    workflow_type="utility",
+                    as_name=step.as_,
+                    repeat_max_attempts=repeat_spec.max_attempts,
+                    repeat_until_spec=repeat_spec.until,
+                    repeat_steps=nested_plan.steps,
+                )
+            )
+            continue
         if step.query is not None:
             if isinstance(step.query, str) and step.query not in config.named_queries:
                 raise ConfigError(
-                    f"Workflow '{workflow_name}' references unknown query '{step.query}'"
+                    f"{definition_label} '{workflow_name}' references unknown query '{step.query}'"
                 )
             query_name = step.query if isinstance(step.query, str) else None
             compiled_steps.append(
@@ -264,9 +371,7 @@ def compile_workflow(
                     query_name=query_name,
                     inline_query=None if isinstance(step.query, str) else step.query,
                     params_template=step.params,
-                    params_preview=preview_value(
-                        step.params, normalized_input, step_aliases=prior_step_aliases
-                    ),
+                    params_preview=preview(step.params, step_aliases=prior_step_aliases),
                     relationship_state_template=step.relationship_state,
                     include_source=step.include_source,
                 )
@@ -328,9 +433,7 @@ def compile_workflow(
                         lock.artifacts[locked.artifact].digest if locked.artifact else None
                     ),
                     input_template=step.input,
-                    input_preview=preview_value(
-                        step.input, normalized_input, step_aliases=prior_step_aliases
-                    ),
+                    input_preview=preview(step.input, step_aliases=prior_step_aliases),
                 )
             )
             continue

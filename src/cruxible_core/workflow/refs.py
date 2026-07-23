@@ -36,6 +36,36 @@ def preview_value(
     return _preview_value(value, input_payload, known_aliases)
 
 
+def preview_definition_value(
+    value: Any,
+    *,
+    step_aliases: Iterable[str] = (),
+) -> Any:
+    """Validate definition-time refs while preserving unresolved ``$input`` refs.
+
+    State-held procedure definitions are compiled before an invocation payload
+    exists. Their input references remain literal, while unknown step aliases
+    and unsupported item refs still fail closed exactly as plan preview does.
+    """
+    known_aliases = frozenset(step_aliases)
+    return _preview_definition_value(value, known_aliases)
+
+
+def _preview_definition_value(value: Any, known_aliases: frozenset[str]) -> Any:
+    if isinstance(value, str):
+        if value == "$input" or value.startswith("$input."):
+            return value
+        if _is_resolvable_step_ref(value, known_aliases):
+            return value
+        _reject_unresolvable_preview_ref(value)
+        return value
+    if isinstance(value, dict):
+        return {key: _preview_definition_value(item, known_aliases) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_preview_definition_value(item, known_aliases) for item in value]
+    return value
+
+
 def _preview_value(
     value: Any,
     input_payload: dict[str, Any],

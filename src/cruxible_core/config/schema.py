@@ -920,7 +920,7 @@ closed (exit 2) if it is ever asked to check a gate whose kind it has no
 adapter for.
 """
 
-_GATE_CONDITION_RESERVED_KEYS = frozenset({"query"})
+PROPERTY_EQUALITY_CONDITION_RESERVED_KEYS = frozenset({"query"})
 """Condition keys reserved for future variants.
 
 ``condition`` today is a property-equality predicate (every key is an entity
@@ -929,6 +929,20 @@ refused — so a future named-query condition variant
 (``condition: {query: <named-query>}``) can be added WITHOUT a breaking
 schema change: no existing declaration can already be using the spelling.
 """
+
+
+def reject_reserved_property_equality_condition_keys(
+    condition: dict[str, str | int | float | bool],
+) -> None:
+    """Reject property keys reserved for future shared-condition variants."""
+    reserved = PROPERTY_EQUALITY_CONDITION_RESERVED_KEYS.intersection(condition)
+    if reserved:
+        msg = (
+            f"condition key(s) {sorted(reserved)} are reserved for a future "
+            "named-query condition variant and cannot be used as property "
+            "predicates"
+        )
+        raise ValueError(msg)
 
 
 class GitPrePushAdapterSchema(BaseModel):
@@ -987,14 +1001,7 @@ class GateSchema(BaseModel):
         if not self.condition:
             msg = "condition must declare at least one property=value pair"
             raise ValueError(msg)
-        reserved = _GATE_CONDITION_RESERVED_KEYS.intersection(self.condition)
-        if reserved:
-            msg = (
-                f"condition key(s) {sorted(reserved)} are reserved for a future "
-                "named-query condition variant and cannot be used as property "
-                "predicates"
-            )
-            raise ValueError(msg)
+        reject_reserved_property_equality_condition_keys(self.condition)
         if self.match_property in self.condition:
             msg = (
                 "condition may not constrain match_property "
@@ -1727,6 +1734,20 @@ class ProviderSchema(BaseModel):
     runtime: Literal["python", "http_json", "command"] = "python"
     side_effects: bool = False
     config: dict[str, Any] = Field(default_factory=dict)
+    procedure_access: Literal["disabled", "governed_write", "graph_write", "admin"] = Field(
+        default="disabled", exclude_if=lambda value: value == "disabled"
+    )
+
+    @model_validator(mode="after")
+    def validate_procedure_transport(self) -> ProviderSchema:
+        """Only timeout-enforced transports may be exported to procedures."""
+        if self.procedure_access != "disabled" and self.runtime == "python":
+            msg = (
+                "in-process Python providers cannot set procedure_access; "
+                "use 'disabled' or a timeout-enforced http_json/command transport"
+            )
+            raise ValueError(msg)
+        return self
 
 
 ShapeCastType = Literal["str", "int", "float", "bool", "json"]

@@ -92,7 +92,7 @@ class CompiledPlanStep(BaseModel):
     """Single compiled workflow step."""
 
     step_id: str
-    kind: StepKind
+    kind: StepKind | Literal["repeat"]
     workflow_type: WorkflowType = "utility"
     as_name: str | None = None
     query_name: str | None = None
@@ -127,6 +127,13 @@ class CompiledPlanStep(BaseModel):
     apply_entities_spec: ApplyEntitiesSpec | None = None
     apply_relationships_spec: ApplyRelationshipsSpec | None = None
     apply_all_spec: ApplyAllSpec | None = None
+    repeat_max_attempts: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    repeat_until_spec: AssertSpec | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    repeat_steps: list[CompiledPlanStep] = Field(
+        default_factory=list, exclude_if=lambda value: not value
+    )
 
     @property
     def canonical(self) -> bool:
