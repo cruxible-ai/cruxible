@@ -362,7 +362,7 @@ The cache is NON-AUTHORITATIVE and its files are same-user-writable by design: a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need a one-off bounded graph query without adding it to the config. Inline definitions use the configured named-query JSON shape plus a required name; accept repeated or workflow-critical queries into config. Items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context. Pass layout='graph' to receive deduplicated nodes/edges with results as ordered references instead of per-row items.
+**Purpose:** Use when you need a one-off bounded graph query without adding it to the config. Inline definitions use the configured named-query JSON shape plus a required name; promote repeated or workflow-critical queries into config. Items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context. Pass layout='graph' to receive deduplicated nodes/edges with results as ordered references instead of per-row items.
 
 **Arguments:**
 
