@@ -54,6 +54,7 @@ NodeType = Literal[
     "result",
     "plan_step",
     "mutation",
+    "proposal",
     "validation",
     "entity_write",
     "relationship_write",
@@ -67,6 +68,7 @@ EdgeType = Literal[
     "filtered",
     "evaluated",
     "produced",
+    "proposed",
     "validated",
     "mutated",
     "applied",
@@ -118,6 +120,15 @@ class Receipt(BaseModel):
     head_snapshot_id: str | None = Field(
         default=None,
         description="Instance head snapshot observed when the operation began, if available.",
+    )
+    read_revision: int | None = Field(
+        default=None,
+        description=(
+            "Instance read revision observed when the operation began, if available. "
+            "Together with head_snapshot_id this is the decision-time state coordinate "
+            "of the operation. Receipts predating this field load with null and remain "
+            "valid; the coordinate is ambiguous across snapshot-restore lineages."
+        ),
     )
     workflow_mode: WorkflowReceiptMode | None = Field(
         default=None,

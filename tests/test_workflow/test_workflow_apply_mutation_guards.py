@@ -30,6 +30,7 @@ from tests.support.workflow_helpers import write_lock_for_instance
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import QueryExecutionError
 from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
@@ -38,7 +39,10 @@ from cruxible_core.service import (
     service_batch_direct_write,
 )
 from cruxible_core.temporal import utc_now
-from cruxible_core.workflow.executor import execute_workflow
+from cruxible_core.workflow.executor import (
+    FAILED_WORKFLOW_RECEIPT_ATTR,
+    execute_workflow,
+)
 
 KIT_CONFIG = Path(__file__).resolve().parents[2] / "kits" / "agent-operation" / "config.yaml"
 
@@ -510,3 +514,75 @@ class TestCanonicalPreviewDoesNotMutateLiveCache:
         assert reloaded.load_graph().get_entity("WorkItem", "wi-gated").properties["status"] == (
             "active"
         )
+
+
+class TestWorkflowApplyRefusalReceipt:
+    """A workflow refusal is a refusal: it lands the same structured evidence.
+
+    The canonical apply path refuses through ``QueryExecutionError``, not through
+    the mutation-receipt wrapper, so it needs its own coverage that the refused
+    proposal and the structured guard nodes reach the PERSISTED workflow receipt
+    — not just the in-memory error message.
+    """
+
+    def _refused_workflow_receipt(self, instance: CruxibleInstance) -> Receipt:
+        with pytest.raises(QueryExecutionError) as excinfo:
+            execute_workflow(
+                instance,
+                instance.load_config(),
+                "close_work_item",
+                {"work_item_id": "wi-gated", "status": "closed"},
+                mode="apply",
+            )
+        failed = getattr(excinfo.value, FAILED_WORKFLOW_RECEIPT_ATTR, None)
+        assert failed is not None
+        store = instance.get_receipt_store()
+        try:
+            persisted = store.get_receipt(failed.receipt_id)
+        finally:
+            store.close()
+        assert persisted is not None
+        return persisted
+
+    def test_guard_refusal_nodes_reach_the_persisted_workflow_receipt(self, tmp_path: Path) -> None:
+        instance = _instance_with_close_workflow(tmp_path)
+        _seed_work_item(instance)
+        receipt = self._refused_workflow_receipt(instance)
+
+        refusals = [n for n in receipt.nodes if "guard_error" in n.detail]
+        assert len(refusals) == 1
+        node = refusals[0]
+        assert node.node_type == "validation"
+        assert node.detail["passed"] is False
+        assert node.detail["guard_name"] == "work_item_closed_requires_approved_review"
+        assert node.entity_type == "WorkItem"
+        assert node.entity_id == "wi-gated"
+
+    def test_refused_workflow_apply_retains_its_proposal(self, tmp_path: Path) -> None:
+        instance = _instance_with_close_workflow(tmp_path)
+        _seed_work_item(instance)
+        receipt = self._refused_workflow_receipt(instance)
+
+        proposals = [n for n in receipt.nodes if n.node_type == "proposal"]
+        assert len(proposals) == 1
+        body = proposals[0].detail["proposal"]
+        assert body["operation"] == "workflow_apply_entities"
+        member = body["entities"][0]
+        assert member["entity_type"] == "WorkItem"
+        assert member["entity_id"] == "wi-gated"
+        assert member["properties"]["status"] == "closed"
+        assert proposals[0].detail["subjects"] == [
+            {"entity_type": "WorkItem", "entity_id": "wi-gated"}
+        ]
+
+    def test_refused_workflow_receipt_is_joinable_from_the_subject(self, tmp_path: Path) -> None:
+        instance = _instance_with_close_workflow(tmp_path)
+        _seed_work_item(instance)
+        receipt = self._refused_workflow_receipt(instance)
+
+        store = instance.get_receipt_store()
+        try:
+            found = store.get_receipts_for_entity("WorkItem", "wi-gated")
+        finally:
+            store.close()
+        assert receipt.receipt_id in found

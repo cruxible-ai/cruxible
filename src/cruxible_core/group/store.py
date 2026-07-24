@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS group_resolutions (
     confirmed INTEGER NOT NULL DEFAULT 0,
     resolved_by TEXT NOT NULL,
     resolved_at TEXT NOT NULL,
-    resolved_actor_context TEXT
+    resolved_actor_context TEXT,
+    receipt_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_group_resolutions_match
     ON group_resolutions(relationship_type, group_signature);
@@ -122,9 +123,10 @@ class GroupStore(GroupStoreProtocol):
         if initialize_schema:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.executescript(_SCHEMA)
-            self._ensure_actor_context_columns()
+            self._ensure_additive_columns()
 
-    def _ensure_actor_context_columns(self) -> None:
+    def _ensure_additive_columns(self) -> None:
+        """Backfill additively-introduced columns on pre-existing databases."""
         resolution_columns = {
             row["name"]
             for row in self._conn.execute("PRAGMA table_info(group_resolutions)").fetchall()
@@ -135,6 +137,8 @@ class GroupStore(GroupStoreProtocol):
             )
         if "trust_actor_context" not in resolution_columns:
             self._conn.execute("ALTER TABLE group_resolutions ADD COLUMN trust_actor_context TEXT")
+        if "receipt_id" not in resolution_columns:
+            self._conn.execute("ALTER TABLE group_resolutions ADD COLUMN receipt_id TEXT")
         group_columns = {
             row["name"]
             for row in self._conn.execute("PRAGMA table_info(candidate_groups)").fetchall()
@@ -556,15 +560,21 @@ class GroupStore(GroupStoreProtocol):
         trust_status: str = "watch",
         confirmed: bool = False,
         resolved_actor_context: Any | None = None,
+        receipt_id: str | None = None,
     ) -> str:
-        """Persist a resolution. Does NOT commit. Returns resolution_id."""
+        """Persist a resolution. Does NOT commit. Returns resolution_id.
+
+        ``receipt_id`` is the mutation receipt of the resolving act. It is the
+        only join a REJECTION has: rejections write no edges, so there is no
+        edge provenance to walk back from.
+        """
         resolution_id = new_id("RES")
         self._conn.execute(
             "INSERT INTO group_resolutions "
             "(resolution_id, relationship_type, group_signature, action, rationale, "
             "thesis_text, thesis_facts, analysis_state, trust_status, confirmed, "
-            "resolved_by, resolved_at, resolved_actor_context) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "resolved_by, resolved_at, resolved_actor_context, receipt_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 resolution_id,
                 relationship_type,
@@ -579,6 +589,7 @@ class GroupStore(GroupStoreProtocol):
                 resolved_by,
                 format_datetime(utc_now()),
                 json.dumps(dump_actor_context(resolved_actor_context)),
+                receipt_id,
             ),
         )
         return resolution_id
@@ -600,6 +611,19 @@ class GroupStore(GroupStoreProtocol):
                 "UPDATE group_resolutions SET confirmed = 1 WHERE resolution_id = ?",
                 (resolution_id,),
             )
+
+    def stamp_resolution_receipt_id(self, resolution_id: str, receipt_id: str) -> None:
+        """Fill a resolution's receipt_id if it has none. Does NOT commit.
+
+        Backfill only: a resolution already naming a receipt keeps it, because
+        that receipt is the act that created the resolution. Used by approve
+        crash-recovery to repair rows written before the column existed.
+        """
+        self._conn.execute(
+            "UPDATE group_resolutions SET receipt_id = ? "
+            "WHERE resolution_id = ? AND receipt_id IS NULL",
+            (receipt_id, resolution_id),
+        )
 
     def get_resolution(self, resolution_id: str) -> GroupResolution | None:
         """Load a resolution by ID."""
@@ -778,6 +802,7 @@ class GroupStore(GroupStoreProtocol):
             resolved_actor_context=load_actor_context(
                 json.loads(row["resolved_actor_context"]) if row["resolved_actor_context"] else None
             ),
+            receipt_id=row["receipt_id"],
         )
 
     # -----------------------------------------------------------------

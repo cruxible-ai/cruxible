@@ -36,7 +36,14 @@ from cruxible_core.group.types import (
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.primitives import ordered_unique
 from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.service.mutation_guards import relationship_mutation_guard_errors
+from cruxible_core.service.mutation_guards import (
+    evaluate_relationship_mutation_guards,
+    record_guard_evaluation,
+)
+from cruxible_core.service.mutation_proposals import (
+    build_proposal,
+    relationship_instance_member,
+)
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.types import ResolveGroupResult, UpdateTrustStatusResult
 from cruxible_core.storage.protocols import UnitOfWorkProtocol
@@ -337,6 +344,7 @@ def _reject_group(
         trust_status="watch",
         confirmed=True,
         resolved_actor_context=actor_context,
+        receipt_id=builder.receipt_id,
     )
     group_store.update_group_status(
         group.group_id,
@@ -463,9 +471,29 @@ def _start_approval_resolution(
     is_retry: bool,
     validation: _ApprovalValidation,
     actor_context: GovernedActorContext | None,
+    receipt_id: str,
 ) -> str:
+    """Return the resolution id this approve attempt applies edges under.
+
+    A retry is crash recovery: the group is in ``applying`` because a prior
+    attempt already wrote its (unconfirmed) resolution row and stamped that
+    attempt's receipt id on it. We deliberately keep the FIRST attempt's
+    ``receipt_id`` — the resolution was created by that act, and re-pointing it
+    at the recovery receipt would erase the act that produced it. The retry is
+    not lost: it has its own ``group_resolve`` receipt, joinable through the
+    edge provenance it stamps.
+
+    The one case where a retry finds NO receipt id is a resolution row written
+    before the column existed (the additive migration backfills NULL) — that
+    predates the invariant, so the recovery attempt fills it rather than leaving
+    a permanently unjoinable row. A non-null id is never overwritten.
+    """
     if is_retry:
-        return cast(str, group.resolution_id)
+        prior_resolution_id = cast(str, group.resolution_id)
+        existing = group_store.get_resolution(prior_resolution_id)
+        if existing is not None and existing.receipt_id is None:
+            group_store.stamp_resolution_receipt_id(prior_resolution_id, receipt_id)
+        return prior_resolution_id
 
     if not validation.valid_inputs and not validation.skipped_existing:
         if validation.validation_errors:
@@ -493,6 +521,7 @@ def _start_approval_resolution(
         trust_status=_inherited_trust_status(prior),
         confirmed=False,
         resolved_actor_context=actor_context,
+        receipt_id=receipt_id,
     )
     group_store.update_group_status(
         group.group_id,
@@ -754,6 +783,28 @@ def _approve_group(
     config = instance.load_config()
     graph = instance.load_graph()
 
+    # An approval's proposal IS the group's staged edges. Recorded before member
+    # validation and before the guards, so a refused approval retains the full
+    # staged set — including members that validation or a guard rejected, which
+    # nothing else on the receipt would preserve.
+    proposal, subjects = build_proposal(
+        operation="group_approve",
+        relationships=[
+            relationship_instance_member(member.as_relationship()) for member in members
+        ],
+        extra={
+            "group_id": group.group_id,
+            "relationship_type": group.relationship_type,
+            "group_signature": group.signature,
+            "pending_version": group.pending_version,
+            "rationale": rationale,
+            "resolved_by": resolved_by,
+            "stamp_existing": stamp_existing,
+            "is_retry": is_retry,
+        },
+    )
+    builder.record_proposal(proposal, subjects=subjects)
+
     validation = _validate_approval_members(
         config=config,
         graph=graph,
@@ -761,14 +812,14 @@ def _approve_group(
         members=members,
         builder=builder,
     )
-    guard_errors = relationship_mutation_guard_errors(
+    guard_evaluation = evaluate_relationship_mutation_guards(
         instance,
         config,
         current_graph=graph,
         relationships=validation.valid_inputs,
     )
-    for error in guard_errors:
-        builder.record_validation(passed=False, detail={"guard_error": error})
+    record_guard_evaluation(builder, guard_evaluation)
+    guard_errors = guard_evaluation.messages
     if guard_errors:
         raise DataValidationError(
             f"Mutation guard validation failed with {len(guard_errors)} error(s)",
@@ -783,6 +834,7 @@ def _approve_group(
         is_retry=is_retry,
         validation=validation,
         actor_context=actor_context,
+        receipt_id=builder.receipt_id,
     )
     _record_relationship_write_nodes(builder, validation.valid_inputs)
     edges_created = _apply_resolved_relationships(

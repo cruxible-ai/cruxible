@@ -17,7 +17,7 @@ from cruxible_core.group.types import (
     QuerySourceEvidence,
     SignalBucketBasis,
 )
-from cruxible_core.temporal import utc_now
+from cruxible_core.temporal import format_datetime, utc_now
 
 
 def _now() -> datetime:
@@ -468,6 +468,89 @@ class TestClose:
         store = GroupStore(":memory:")
         store.close()
         store.close()  # should not raise
+
+
+_LEGACY_RESOLUTIONS_TABLE = """\
+CREATE TABLE group_resolutions (
+    resolution_id TEXT PRIMARY KEY,
+    relationship_type TEXT NOT NULL,
+    group_signature TEXT NOT NULL,
+    action TEXT NOT NULL,
+    rationale TEXT DEFAULT '',
+    thesis_text TEXT NOT NULL DEFAULT '',
+    thesis_facts TEXT NOT NULL DEFAULT '{}',
+    analysis_state TEXT NOT NULL DEFAULT '{}',
+    trust_status TEXT NOT NULL DEFAULT 'watch',
+    trust_reason TEXT NOT NULL DEFAULT '',
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    resolved_by TEXT NOT NULL,
+    resolved_at TEXT NOT NULL
+);
+"""
+
+
+class TestAdditiveColumnMigration:
+    """The receipt_id migration must be safe on a POPULATED pre-existing DB.
+
+    An empty-DB migration test proves nothing about the case that actually
+    happens: an instance that has been resolving groups for months and is
+    upgraded. Existing rows must survive, load with a null receipt_id, and a
+    second open must not re-run the ALTER.
+    """
+
+    def _legacy_db(self, tmp_path) -> str:
+        db = tmp_path / "state.db"
+        conn = sqlite3.connect(db)
+        conn.executescript(_LEGACY_RESOLUTIONS_TABLE)
+        conn.execute(
+            "INSERT INTO group_resolutions "
+            "(resolution_id, relationship_type, group_signature, action, resolved_by, resolved_at) "
+            "VALUES ('RES-legacy', 'fits', 'sig-legacy', 'reject', 'human', ?)",
+            (format_datetime(utc_now()),),
+        )
+        conn.commit()
+        conn.close()
+        return str(db)
+
+    def test_populated_db_migrates_and_is_idempotent(self, tmp_path) -> None:
+        db = self._legacy_db(tmp_path)
+
+        first = GroupStore(db)
+        try:
+            legacy = first.get_resolution("RES-legacy")
+            assert legacy is not None
+            assert legacy.receipt_id is None
+            assert legacy.relationship_type == "fits"
+            first.save_resolution(
+                "fits",
+                "sig-new",
+                "approve",
+                "",
+                "",
+                {},
+                {},
+                "human",
+                receipt_id="RCP-new",
+            )
+            first._conn.commit()
+        finally:
+            first.close()
+
+        # Second open runs _ensure_additive_columns again against a populated DB.
+        second = GroupStore(db)
+        try:
+            columns = [
+                row["name"]
+                for row in second._conn.execute("PRAGMA table_info(group_resolutions)").fetchall()
+            ]
+            assert columns.count("receipt_id") == 1
+            assert columns.count("trust_actor_context") == 1
+            assert second.get_resolution("RES-legacy").receipt_id is None
+            stamped = second.find_resolution("fits", "sig-new")
+            assert stamped is not None
+            assert stamped.receipt_id == "RCP-new"
+        finally:
+            second.close()
 
 
 class TestCoexistence:

@@ -343,6 +343,7 @@ def apply_entity_set(
         step_id,
         validated_entities,
         actor_context=actor_context,
+        receipt_builder=receipt_builder,
     )
 
     for validated in validated_entities:
@@ -465,6 +466,7 @@ def apply_relationship_set(
         graph,
         step_id,
         validated_relationships,
+        receipt_builder=receipt_builder,
     )
 
     source_ref = f"workflow:{workflow_name}:{step_id}"
@@ -544,6 +546,7 @@ def _enforce_entity_mutation_guards(
     validated_entities: list[ValidatedEntity],
     *,
     actor_context: GovernedActorContext | None,
+    receipt_builder: ReceiptBuilder,
 ) -> None:
     """Reject canonical workflow entity writes that violate config mutation guards.
 
@@ -564,9 +567,21 @@ def _enforce_entity_mutation_guards(
     # -> workflow.executor -> workflow.apply, so a top-level import here would be
     # circular. The function-local import breaks that cycle.
     from cruxible_core.service.mutation_guards import (
-        mutation_guard_errors,
+        evaluate_mutation_guards,
         receipt_creation_actor_resolver,
+        record_guard_evaluation,
     )
+    from cruxible_core.service.mutation_proposals import build_proposal, entity_instance_member
+
+    # The proposal lands before the guard runs, so a refused workflow apply
+    # retains what it refused. Recorded only when guards are configured: with no
+    # guards this path cannot refuse, and the applied writes are on the receipt.
+    proposal, subjects = build_proposal(
+        operation="workflow_apply_entities",
+        entities=[entity_instance_member(validated.entity) for validated in validated_entities],
+        extra={"step_id": step_id},
+    )
+    receipt_builder.record_proposal(proposal, subjects=subjects)
 
     proposed_graph = EntityGraph.from_dict(deepcopy(graph.to_dict()))
     for validated in validated_entities:
@@ -579,7 +594,7 @@ def _enforce_entity_mutation_guards(
         # refuse_direct_writes decision.
         apply_entity(proposed_graph, validated, config=config, source="workflow_apply")
 
-    guard_errors = mutation_guard_errors(
+    evaluation = evaluate_mutation_guards(
         config,
         current_graph=graph,
         proposed_graph=proposed_graph,
@@ -587,6 +602,8 @@ def _enforce_entity_mutation_guards(
         actor_context=actor_context,
         creation_actor_resolver=receipt_creation_actor_resolver(instance),
     )
+    record_guard_evaluation(receipt_builder, evaluation)
+    guard_errors = evaluation.messages
     if guard_errors:
         raise QueryExecutionError(
             f"Workflow step '{step_id}' mutation guard validation failed: "
@@ -600,20 +617,41 @@ def _enforce_relationship_mutation_guards(
     graph: EntityGraph,
     step_id: str,
     validated_relationships: list[ValidatedRelationship],
+    *,
+    receipt_builder: ReceiptBuilder,
 ) -> None:
     """Reject canonical workflow relationship writes that violate config guards."""
     if not config.mutation_guards or not validated_relationships:
         return
 
     # Deferred import for the same reason as _enforce_entity_mutation_guards.
-    from cruxible_core.service.mutation_guards import relationship_mutation_guard_errors
+    from cruxible_core.service.mutation_guards import (
+        evaluate_relationship_mutation_guards,
+        record_guard_evaluation,
+    )
+    from cruxible_core.service.mutation_proposals import (
+        build_proposal,
+        relationship_instance_member,
+    )
 
-    guard_errors = relationship_mutation_guard_errors(
+    proposal, subjects = build_proposal(
+        operation="workflow_apply_relationships",
+        relationships=[
+            relationship_instance_member(validated.relationship)
+            for validated in validated_relationships
+        ],
+        extra={"step_id": step_id},
+    )
+    receipt_builder.record_proposal(proposal, subjects=subjects)
+
+    evaluation = evaluate_relationship_mutation_guards(
         instance,
         config,
         current_graph=graph,
         relationships=validated_relationships,
     )
+    record_guard_evaluation(receipt_builder, evaluation)
+    guard_errors = evaluation.messages
     if guard_errors:
         raise QueryExecutionError(
             f"Workflow step '{step_id}' mutation guard validation failed: "

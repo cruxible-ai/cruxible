@@ -7,13 +7,14 @@ as the engine traverses the graph, and produces a Receipt at the end.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any
 
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.primitives import new_id
 from cruxible_core.receipt.mutation_payloads import (
+    MAX_RETAINED_PAYLOAD_BYTES,
     MutationPayloadRetention,
     retain_mutation_payload,
 )
@@ -40,6 +41,7 @@ class ReceiptBuilder:
         execution_options: dict[str, Any] | None = None,
         root_detail: dict[str, Any] | None = None,
         actor_context: GovernedActorContext | None = None,
+        read_revision: int | None = None,
     ) -> None:
         # Pre-allocated so write paths can stamp the creating receipt id into
         # relationship provenance within the same transaction that persists
@@ -51,6 +53,7 @@ class ReceiptBuilder:
         self._root_detail = root_detail or {}
         self._operation_type = operation_type
         self._head_snapshot_id = head_snapshot_id
+        self._read_revision = read_revision
         self._workflow_mode = workflow_mode
         # Token-derived actor identity for this operation, preserved onto the
         # built receipt where available. None on auth-off/local paths -- we do
@@ -58,6 +61,11 @@ class ReceiptBuilder:
         self._actor_context = actor_context
         self._nodes: list[ReceiptNode] = []
         self._edges: list[EvidenceEdge] = []
+        # Proposal bodies are held here in FULL for the builder's lifetime and
+        # only ever materialized onto their nodes through _materialize_proposals,
+        # so digest/byte_count are always computed over the original body no
+        # matter how many times retention is re-applied.
+        self._proposals: list[tuple[str, dict[str, Any]]] = []
         self._counter = 0
         self._plan_step_scopes: list[tuple[str | None, dict[str, Any]]] = []
         self._start_ns = time.monotonic_ns()
@@ -120,6 +128,24 @@ class ReceiptBuilder:
     def receipt_id(self) -> str:
         """The id the built receipt will carry, available before build()."""
         return self._receipt_id
+
+    def stamp_state_coordinates(
+        self,
+        *,
+        head_snapshot_id: str | None = None,
+        read_revision: int | None = None,
+    ) -> None:
+        """Record the decision-time state coordinates observed when the op opened.
+
+        Builders for operations that own a write transaction cannot read these
+        at construction time (the transaction is not open yet), so they stamp
+        them once the boundary is entered. Only non-None values overwrite; a
+        failed lookup leaves the coordinate honestly unset rather than zeroed.
+        """
+        if head_snapshot_id is not None:
+            self._head_snapshot_id = head_snapshot_id
+        if read_revision is not None:
+            self._read_revision = read_revision
 
     def record_entity_lookup(
         self,
@@ -269,6 +295,7 @@ class ReceiptBuilder:
         self,
         *,
         retention: MutationPayloadRetention = "metadata",
+        max_inline_bytes: int | None = None,
     ) -> None:
         """Reduce the mutation payload to the mode's canonical representation.
 
@@ -292,16 +319,26 @@ class ReceiptBuilder:
         * ``metadata`` -- digest + byte_count only; never any body.
         * ``preview``  -- digest + byte_count + bounded structural preview; never
           the raw full body.
-        * ``full``     -- the complete body, retained inline verbatim.
+        * ``full``     -- the complete body, retained inline verbatim (bounded
+          by ``max_inline_bytes`` when the caller supplies a ceiling).
+
+        Any recorded PROPOSAL bodies are re-materialized at the same mode, so a
+        committed receipt sheds its proposal exactly like its parameters and a
+        refusal keeps both under the refusal floor. Non-mutation receipts return
+        early: their proposals keep the bounded ``full`` form written at record
+        time, matching how workflow/procedure receipts already keep their
+        ``parameters``.
         """
         if self._operation_type in ("query", "gate_evaluation", "workflow", "procedure"):
             return
         root = self._nodes[0]
         if root.node_type != "mutation":
             return
+        self._materialize_proposals(retention=retention, max_inline_bytes=max_inline_bytes)
         retained_payload, metadata = retain_mutation_payload(
             self._parameters,
             retention=retention,
+            max_inline_bytes=max_inline_bytes,
         )
         root.payload_metadata = metadata
         # The reduced representation is canonical: carry it on the root node AND
@@ -313,15 +350,84 @@ class ReceiptBuilder:
             "parameters": retained_payload,
         }
 
+    def record_proposal(
+        self,
+        proposal: dict[str, Any],
+        *,
+        subjects: Sequence[Mapping[str, Any]] = (),
+        parent_id: str | None = None,
+    ) -> str:
+        """Record WHAT was proposed, before any guard or validation decides on it.
+
+        The mutation ``parameters`` a call site opens its receipt with are a
+        summary (``{"count": 3}``); the nodes that carry actual proposed
+        properties are recorded only after the guards pass. A refused write
+        therefore left no copy of the thing that was refused — and a refused
+        write writes no state to reconstruct it from. This node closes that gap:
+        it is attached BEFORE guard evaluation and carries the submitted body.
+
+        ``subjects`` are the entity/edge coordinates the proposal touches, in the
+        same detail keys ``relationship_write`` nodes use. They are what makes a
+        refusal reverse-indexable in ``receipt_entities`` regardless of which
+        layer refused — including guard-evaluation ERRORS, which are refusals
+        that can attribute no guard and so carry no coordinates of their own.
+
+        The body is materialized bounded (:data:`MAX_RETAINED_PAYLOAD_BYTES`)
+        immediately, and re-materialized under the operator's configured mode by
+        :meth:`apply_mutation_payload_retention` when the receipt is a committed
+        mutation. Subjects are never shed: they are join keys, not body.
+        """
+        node_id = self._add_node(
+            node_type="proposal",
+            detail={"subjects": [dict(subject) for subject in subjects]},
+        )
+        self._add_edge(parent_id or self._root_id, node_id, "proposed")
+        self._proposals.append((node_id, proposal))
+        self._materialize_proposals(retention="full", max_inline_bytes=MAX_RETAINED_PAYLOAD_BYTES)
+        return node_id
+
+    def _materialize_proposals(
+        self,
+        *,
+        retention: MutationPayloadRetention,
+        max_inline_bytes: int | None,
+    ) -> None:
+        """Rewrite every proposal node's body at the given retention."""
+        if not self._proposals:
+            return
+        by_id = {node.node_id: node for node in self._nodes}
+        for node_id, body in self._proposals:
+            node = by_id.get(node_id)
+            if node is None:
+                continue
+            retained, metadata = retain_mutation_payload(
+                body,
+                retention=retention,
+                max_inline_bytes=max_inline_bytes,
+            )
+            node.detail = {**node.detail, "proposal": retained}
+            node.payload_metadata = metadata
+
     def record_validation(
         self,
         passed: bool,
         detail: dict[str, Any] | None = None,
         parent_id: str | None = None,
+        *,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
     ) -> str:
-        """Record a validation check result."""
+        """Record a validation check result.
+
+        ``entity_type``/``entity_id`` are the subject coordinates of the check.
+        Supplying them is what makes the node reverse-indexable in
+        ``receipt_entities`` — a refused write whose validation nodes carry no
+        coordinates indexes nothing and cannot be found from its own subject.
+        """
         node_id = self._add_node(
             node_type="validation",
+            entity_type=entity_type,
+            entity_id=entity_id,
             detail={"passed": passed, **(detail or {})},
         )
         self._add_edge(parent_id or self._root_id, node_id, "validated")
@@ -403,6 +509,7 @@ class ReceiptBuilder:
             duration_ms=round(elapsed_ms, 3),
             operation_type=self._operation_type,
             head_snapshot_id=self._head_snapshot_id,
+            read_revision=self._read_revision,
             workflow_mode=self._workflow_mode,
             committed=self._committed,
             actor_context=self._actor_context,

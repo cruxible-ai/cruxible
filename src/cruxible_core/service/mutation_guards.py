@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -33,6 +33,7 @@ from cruxible_core.query.predicates import (
     entity_matches_predicates,
     entity_matches_related_predicates,
 )
+from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 
@@ -45,6 +46,151 @@ class _GuardEntityContext:
     proposed: EntityInstance
     old_value: Any
     new_value: Any
+
+
+def _coordinate_detail(
+    *,
+    entity_type: str | None,
+    entity_id: str | None,
+    relationship: RelationshipInstance | None,
+) -> dict[str, Any]:
+    """Build the JSON-safe entity/edge coordinates for a guard receipt node.
+
+    Edge coordinates use the same ``from_type``/``from_id``/``to_type``/``to_id``/
+    ``relationship`` detail keys that ``relationship_write`` nodes use, so the
+    receipt store indexes both endpoints through the one shared code path.
+    """
+    detail: dict[str, Any] = {}
+    if entity_type and entity_id:
+        detail["entity_type"] = entity_type
+        detail["entity_id"] = entity_id
+    if relationship is not None:
+        detail["from_type"] = relationship.from_type
+        detail["from_id"] = relationship.from_id
+        detail["to_type"] = relationship.to_type
+        detail["to_id"] = relationship.to_id
+        detail["relationship"] = relationship.relationship_type
+    return detail
+
+
+@dataclass(frozen=True)
+class GuardRefusal:
+    """One mutation-guard refusal, with the coordinates that produced it.
+
+    ``message`` is the operator-facing refusal string (unchanged from the
+    pre-existing flat ``list[str]`` contract). The remaining fields are the
+    structured coordinates a refusal receipt needs in order to be queryable:
+    without them a refusal indexes zero rows in ``receipt_entities`` and "prior
+    refusals on this subject" cannot be asked. ``guard_name`` is None only for
+    refusals synthesized from a guard-evaluation error, which carries no
+    attributable guard.
+    """
+
+    message: str
+    guard_name: str | None = None
+    entity_type: str | None = None
+    entity_id: str | None = None
+    guard_property: str | None = None
+    guard_value: Any = _MISSING
+    relationship: RelationshipInstance | None = None
+
+    def receipt_detail(self) -> dict[str, Any]:
+        """Structured ``validation`` node detail for this refusal."""
+        detail: dict[str, Any] = {"guard_error": self.message}
+        if self.guard_name is not None:
+            detail["guard_name"] = self.guard_name
+        detail.update(
+            _coordinate_detail(
+                entity_type=self.entity_type,
+                entity_id=self.entity_id,
+                relationship=self.relationship,
+            )
+        )
+        if self.guard_property is not None:
+            detail["guard_property"] = self.guard_property
+        if self.guard_value is not _MISSING:
+            detail["guard_value"] = self.guard_value
+        return detail
+
+
+@dataclass(frozen=True)
+class GuardPass:
+    """One mutation guard that evaluated against a write and permitted it.
+
+    Recorded so a committed receipt states which guards actually ran, rather
+    than leaving guardedness to be re-derived from config that has since
+    drifted. A guard whose trigger never matched is NOT a pass and is not
+    recorded — only conditions that were genuinely evaluated.
+    """
+
+    guard_name: str
+    entity_type: str | None = None
+    entity_id: str | None = None
+    guard_property: str | None = None
+    relationship: RelationshipInstance | None = None
+
+    def receipt_detail(self) -> dict[str, Any]:
+        """Structured ``validation`` node detail for this passing guard."""
+        detail: dict[str, Any] = {"guard_passed": self.guard_name}
+        detail.update(
+            _coordinate_detail(
+                entity_type=self.entity_type,
+                entity_id=self.entity_id,
+                relationship=self.relationship,
+            )
+        )
+        if self.guard_property is not None:
+            detail["guard_property"] = self.guard_property
+        return detail
+
+
+@dataclass(frozen=True)
+class GuardEvaluation:
+    """Structured outcome of evaluating the configured mutation guards."""
+
+    refusals: tuple[GuardRefusal, ...] = ()
+    passes: tuple[GuardPass, ...] = ()
+
+    @property
+    def messages(self) -> list[str]:
+        """Refusal messages, preserving the flat ``list[str]`` guard contract."""
+        return [refusal.message for refusal in self.refusals]
+
+    @classmethod
+    def from_messages(cls, messages: Iterable[str]) -> GuardEvaluation:
+        """Wrap unattributed refusal messages (guard-evaluation errors)."""
+        return cls(refusals=tuple(GuardRefusal(message=message) for message in messages))
+
+
+@dataclass
+class _GuardEvaluationAccumulator:
+    refusals: list[GuardRefusal] = field(default_factory=list)
+    passes: list[GuardPass] = field(default_factory=list)
+
+    def result(self) -> GuardEvaluation:
+        return GuardEvaluation(refusals=tuple(self.refusals), passes=tuple(self.passes))
+
+
+def record_guard_evaluation(builder: ReceiptBuilder, evaluation: GuardEvaluation) -> None:
+    """Write structured guard refusal/pass nodes onto a receipt builder.
+
+    Refusals land first so a refusal receipt reads top-down as the reason it
+    was refused.
+    """
+    for refusal in evaluation.refusals:
+        builder.record_validation(
+            passed=False,
+            detail=refusal.receipt_detail(),
+            entity_type=refusal.entity_type,
+            entity_id=refusal.entity_id,
+        )
+    for guard_pass in evaluation.passes:
+        builder.record_validation(
+            passed=True,
+            detail=guard_pass.receipt_detail(),
+            entity_type=guard_pass.entity_type,
+            entity_id=guard_pass.entity_id,
+        )
 
 
 @dataclass(frozen=True)
@@ -155,7 +301,7 @@ def build_guard_write_delta(
     return GuardWriteDelta(created_entities=created_entities, created_edges=created_edges)
 
 
-def mutation_guard_errors(
+def evaluate_mutation_guards(
     config: CoreConfig,
     *,
     current_graph: EntityGraph,
@@ -164,18 +310,18 @@ def mutation_guard_errors(
     actor_context: GovernedActorContext | None = None,
     write_delta: GuardWriteDelta | None = None,
     creation_actor_resolver: CreationActorResolver | None = None,
-) -> list[str]:
-    """Return mutation guard errors for proposed entity writes (creates and updates).
+) -> GuardEvaluation:
+    """Evaluate entity mutation guards, returning structured refusals and passes.
 
     ``creation_actor_resolver`` supplies creation-provenance lookups for
     ``distinct_from_creation_actor`` conditions; when it is None those
     conditions fail closed.
     """
+    outcome = _GuardEvaluationAccumulator()
     if not config.mutation_guards:
-        return []
+        return outcome.result()
 
     delta = write_delta if write_delta is not None else GuardWriteDelta.empty()
-    errors: list[str] = []
     for entity in entities:
         current = current_graph.get_entity(
             entity.entity.entity_type,
@@ -189,18 +335,38 @@ def mutation_guard_errors(
             continue
         for guard in config.mutation_guards:
             if isinstance(guard.condition, FrozenPropertyGuardCondition):
-                frozen_error = _frozen_property_guard_error(
+                evaluated, frozen_error = _frozen_property_guard_outcome(
                     config, guard, guard.condition, entity, current, proposed
                 )
                 if frozen_error is not None:
-                    errors.append(frozen_error)
+                    outcome.refusals.append(
+                        GuardRefusal(
+                            message=frozen_error,
+                            guard_name=guard.name,
+                            entity_type=proposed.entity_type,
+                            entity_id=proposed.entity_id,
+                            guard_property=guard.property,
+                            guard_value=proposed.properties.get(guard.property, _MISSING)
+                            if guard.property
+                            else _MISSING,
+                        )
+                    )
+                elif evaluated:
+                    outcome.passes.append(
+                        GuardPass(
+                            guard_name=guard.name,
+                            entity_type=proposed.entity_type,
+                            entity_id=proposed.entity_id,
+                            guard_property=guard.property,
+                        )
+                    )
                 continue
             context = _matching_guard_context(
                 config, guard, entity, current, proposed, proposed_graph
             )
             if context is None:
                 continue
-            if not _guard_condition_passes(
+            if _guard_condition_passes(
                 config,
                 guard,
                 proposed_graph,
@@ -209,20 +375,61 @@ def mutation_guard_errors(
                 write_delta=delta,
                 creation_actor_resolver=creation_actor_resolver,
             ):
-                errors.append(_guard_error_message(guard, entity.entity, context))
-    return errors
+                outcome.passes.append(
+                    GuardPass(
+                        guard_name=guard.name,
+                        entity_type=proposed.entity_type,
+                        entity_id=proposed.entity_id,
+                        guard_property=guard.property,
+                    )
+                )
+            else:
+                outcome.refusals.append(
+                    GuardRefusal(
+                        message=_guard_error_message(guard, entity.entity, context),
+                        guard_name=guard.name,
+                        entity_type=proposed.entity_type,
+                        entity_id=proposed.entity_id,
+                        guard_property=guard.property,
+                        guard_value=context.new_value,
+                    )
+                )
+    return outcome.result()
 
 
-def relationship_mutation_guard_errors(
+def mutation_guard_errors(
+    config: CoreConfig,
+    *,
+    current_graph: EntityGraph,
+    proposed_graph: EntityGraph,
+    entities: Sequence[ValidatedEntity],
+    actor_context: GovernedActorContext | None = None,
+    write_delta: GuardWriteDelta | None = None,
+    creation_actor_resolver: CreationActorResolver | None = None,
+) -> list[str]:
+    """Return mutation guard errors for proposed entity writes (creates and updates)."""
+    return evaluate_mutation_guards(
+        config,
+        current_graph=current_graph,
+        proposed_graph=proposed_graph,
+        entities=entities,
+        actor_context=actor_context,
+        write_delta=write_delta,
+        creation_actor_resolver=creation_actor_resolver,
+    ).messages
+
+
+def evaluate_relationship_mutation_guards(
     instance: InstanceProtocol,
     config: CoreConfig,
     *,
     current_graph: EntityGraph,
     relationships: Sequence[ValidatedRelationship],
-) -> list[str]:
-    """Return mutation guard errors for proposed relationship writes."""
+) -> GuardEvaluation:
+    """Evaluate relationship mutation guards, returning refusals and passes."""
+    outcome = _GuardEvaluationAccumulator()
     if not config.mutation_guards:
-        return []
+        return outcome.result()
 
     evidence_guards = [
         guard
@@ -230,9 +437,8 @@ def relationship_mutation_guard_errors(
         if isinstance(guard.condition, EvidenceRequirementGuardCondition)
     ]
     if not evidence_guards:
-        return []
+        return outcome.result()
 
-    errors: list[str] = []
     store = instance.get_source_artifact_store()
     try:
         for relationship in relationships:
@@ -245,17 +451,28 @@ def relationship_mutation_guard_errors(
                 evidence = _resulting_relationship_evidence(current_graph, relationship)
                 count = _dereferenceable_source_evidence_count(store, evidence)
                 if count < condition.min_count:
-                    errors.append(
-                        _relationship_evidence_guard_error_message(
-                            guard,
-                            relationship.relationship,
-                            required_count=condition.min_count,
-                            actual_count=count,
+                    outcome.refusals.append(
+                        GuardRefusal(
+                            message=_relationship_evidence_guard_error_message(
+                                guard,
+                                relationship.relationship,
+                                required_count=condition.min_count,
+                                actual_count=count,
+                            ),
+                            guard_name=guard.name,
+                            relationship=relationship.relationship,
+                        )
+                    )
+                else:
+                    outcome.passes.append(
+                        GuardPass(
+                            guard_name=guard.name,
+                            relationship=relationship.relationship,
                         )
                     )
     finally:
         store.close()
-    return errors
+    return outcome.result()
 
 
 def validate_mutation_guards(
@@ -342,15 +559,20 @@ def _guarded_value_list(new_value: Any) -> list[Any]:
     return [new_value]
 
 
-def _frozen_property_guard_error(
+def _frozen_property_guard_outcome(
     config: CoreConfig,
     guard: MutationGuardSchema,
     condition: FrozenPropertyGuardCondition,
     validated: ValidatedEntity,
     current: EntityInstance | None,
     proposed: EntityInstance,
-) -> str | None:
-    """Return the refusal message when an update changes a frozen property.
+) -> tuple[bool, str | None]:
+    """Return ``(evaluated, refusal_message)`` for a frozen-property guard.
+
+    ``evaluated`` is True when this guard genuinely ran its freeze check against
+    this write — the guard's entity type matched and the write is an update, the
+    only shape that can trip a freeze. Creates and other entity types are not
+    evaluations and are never annotated as passes.
 
     Freeze semantics, all evaluated against the STORED (pre-write) entity:
 
@@ -371,12 +593,12 @@ def _frozen_property_guard_error(
       never silently deactivate a freeze).
     """
     if guard.entity_type != validated.entity.entity_type:
-        return None
+        return False, None
     assert guard.property is not None
     if not validated.is_update:
-        return None
+        return False, None
     if current is None:
-        return (
+        return True, (
             f"Mutation guard '{guard.name}' rejected write "
             f"{proposed.entity_type}:{proposed.entity_id} "
             f"{guard.property}: stored pre-write state is unavailable (fail-closed)"
@@ -384,14 +606,14 @@ def _frozen_property_guard_error(
     old_value = current.properties.get(guard.property, _MISSING)
     new_value = proposed.properties.get(guard.property, _MISSING)
     if old_value == new_value:
-        return None
+        return True, None
     if condition.while_state is not None:
         try:
             in_freeze_state = _frozen_while_state_matches(
                 config, guard.entity_type, condition.while_state, current
             )
         except _FrozenClauseNormalizationError as exc:
-            return (
+            return True, (
                 f"Mutation guard '{guard.name}' rejected write "
                 f"{proposed.entity_type}:{proposed.entity_id} "
                 f"{guard.property}: 'while' clause {exc.key}={exc.value!r} does not "
@@ -399,8 +621,8 @@ def _frozen_property_guard_error(
                 f"cannot be evaluated (fail-closed)"
             )
         if not in_freeze_state:
-            return None
-    return _frozen_guard_error_message(guard, condition, proposed, new_value)
+            return True, None
+    return True, _frozen_guard_error_message(guard, condition, proposed, new_value)
 
 
 class _FrozenClauseNormalizationError(Exception):
@@ -763,10 +985,15 @@ def _relationship_evidence_guard_error_message(
 __all__ = [
     "CreationActorResolution",
     "CreationActorResolver",
+    "GuardEvaluation",
+    "GuardPass",
+    "GuardRefusal",
     "GuardWriteDelta",
     "build_guard_write_delta",
+    "evaluate_mutation_guards",
+    "evaluate_relationship_mutation_guards",
     "mutation_guard_errors",
     "receipt_creation_actor_resolver",
-    "relationship_mutation_guard_errors",
+    "record_guard_evaluation",
     "validate_mutation_guards",
 ]

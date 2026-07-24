@@ -1,14 +1,18 @@
 """Tests for SQLite receipt storage."""
 
+import json
 from datetime import datetime, timezone
 
 import pytest
 
+from cruxible_core.errors import DataValidationError
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
+from cruxible_core.receipt.mutation_payloads import retain_mutation_payload
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.storage.sqlite import SQLiteStorageBackend
+from cruxible_core.temporal import format_datetime
 
 
 def _trace_timing() -> dict[str, object]:
@@ -144,6 +148,168 @@ class TestSQLiteReceiptStore:
         assert [r["receipt_id"] for r in rest] == ids[1:]
         assert store.count_receipts(before=high_water) == 2
 
+    def _daily_receipts(self, store: SQLiteReceiptStore) -> list[str]:
+        """Save one receipt per day, Jan 1-5 2026, returning ids in day order."""
+        ids = []
+        for day in range(1, 6):
+            receipt = ReceiptBuilder(query_name="q", parameters={"day": day}).build(results=[])
+            receipt = receipt.model_copy(
+                update={"created_at": datetime(2026, 1, day, tzinfo=timezone.utc)}
+            )
+            store.save_receipt(receipt)
+            ids.append(receipt.receipt_id)
+        return ids
+
+    def test_list_receipts_since_is_inclusive(self, store: SQLiteReceiptStore):
+        ids = self._daily_receipts(store)
+        since = format_datetime(datetime(2026, 1, 3, tzinfo=timezone.utc))
+        page = store.list_receipts(since=since)
+        assert [r["receipt_id"] for r in page] == [ids[4], ids[3], ids[2]]
+        assert store.count_receipts(since=since) == 3
+
+    def test_list_receipts_until_is_exclusive(self, store: SQLiteReceiptStore):
+        ids = self._daily_receipts(store)
+        until = format_datetime(datetime(2026, 1, 3, tzinfo=timezone.utc))
+        page = store.list_receipts(until=until)
+        assert [r["receipt_id"] for r in page] == [ids[1], ids[0]]
+        assert store.count_receipts(until=until) == 2
+
+    def test_since_until_windows_tile_without_overlap(self, store: SQLiteReceiptStore):
+        """Half-open [since, until) means adjacent windows partition the set."""
+        ids = self._daily_receipts(store)
+        boundary = format_datetime(datetime(2026, 1, 3, tzinfo=timezone.utc))
+        earlier = {r["receipt_id"] for r in store.list_receipts(until=boundary)}
+        later = {r["receipt_id"] for r in store.list_receipts(since=boundary)}
+        assert earlier & later == set()
+        assert earlier | later == set(ids)
+
+    def test_since_until_compose_with_other_filters(self, store: SQLiteReceiptStore):
+        ids = self._daily_receipts(store)
+        other = ReceiptBuilder(query_name="other", parameters={}).build(results=[])
+        other = other.model_copy(update={"created_at": datetime(2026, 1, 3, tzinfo=timezone.utc)})
+        store.save_receipt(other)
+
+        window = {
+            "since": format_datetime(datetime(2026, 1, 2, tzinfo=timezone.utc)),
+            "until": format_datetime(datetime(2026, 1, 4, tzinfo=timezone.utc)),
+        }
+        assert store.count_receipts(**window) == 3
+        page = store.list_receipts(query_name="q", **window)
+        assert [r["receipt_id"] for r in page] == [ids[2], ids[1]]
+        assert store.count_receipts(query_name="q", **window) == 2
+
+        # The window also composes with the keyset high-water mark.
+        high_water = (page[0]["created_at"], page[0]["receipt_id"])
+        rest = store.list_receipts(query_name="q", before=high_water, **window)
+        assert [r["receipt_id"] for r in rest] == [ids[1]]
+
+    def test_window_bounds_accept_a_z_suffix(self, store: SQLiteReceiptStore):
+        """``created_at`` is compared as a STRING, so the spelling has to match.
+
+        A Z-suffixed bound is the same instant as the stored ``+00:00`` spelling
+        but sorts as a different string; unnormalized it would silently select
+        the wrong window rather than fail.
+        """
+        ids = self._daily_receipts(store)
+        assert [r["receipt_id"] for r in store.list_receipts(since="2026-01-03T00:00:00Z")] == [
+            ids[4],
+            ids[3],
+            ids[2],
+        ]
+        assert store.count_receipts(since="2026-01-03T00:00:00Z") == 3
+        assert store.count_receipts(until="2026-01-03T00:00:00Z") == 2
+
+    def test_window_bounds_accept_an_explicit_utc_offset(self, store: SQLiteReceiptStore):
+        ids = self._daily_receipts(store)
+        page = store.list_receipts(since="2026-01-03T00:00:00+00:00")
+        assert [r["receipt_id"] for r in page] == [ids[4], ids[3], ids[2]]
+
+    def test_window_bounds_normalize_a_non_utc_offset(self, store: SQLiteReceiptStore):
+        """02:00+02:00 IS 00:00 UTC — the boundary receipt must be included."""
+        ids = self._daily_receipts(store)
+        page = store.list_receipts(since="2026-01-03T02:00:00+02:00")
+        assert [r["receipt_id"] for r in page] == [ids[4], ids[3], ids[2]]
+
+    def test_all_bound_spellings_of_one_instant_agree(self, store: SQLiteReceiptStore):
+        self._daily_receipts(store)
+        counts = {
+            store.count_receipts(since=bound)
+            for bound in (
+                "2026-01-03T00:00:00Z",
+                "2026-01-03T00:00:00+00:00",
+                "2026-01-03T02:00:00+02:00",
+            )
+        }
+        assert counts == {3}
+
+    @pytest.mark.parametrize("bound", ["not-a-date", "2026-13-01T00:00:00Z", ""])
+    def test_malformed_window_bounds_refuse_loudly(self, store: SQLiteReceiptStore, bound: str):
+        """An unparseable bound is a caller error, never a silently empty window."""
+        with pytest.raises(DataValidationError, match="Invalid receipt window bound"):
+            store.list_receipts(since=bound)
+        with pytest.raises(DataValidationError, match="Invalid receipt window bound"):
+            store.count_receipts(until=bound)
+
+    def test_legacy_receipt_json_without_read_revision_survives_retention(
+        self, store: SQLiteReceiptStore
+    ):
+        """Receipts persisted before ``read_revision`` existed must still work.
+
+        Loading them is only half the contract: they also have to survive the
+        payload-retention machinery, which rewrites ``parameters`` and re-saves.
+        """
+        legacy = {
+            "receipt_id": "RCP-legacy",
+            "query_name": "",
+            "parameters": {"count": 1, "source": "add_entity"},
+            "execution_options": {},
+            "nodes": [
+                {
+                    "node_id": "n1",
+                    "node_type": "mutation",
+                    "detail": {
+                        "operation_type": "add_entity",
+                        "parameters": {"count": 1, "source": "add_entity"},
+                    },
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                }
+            ],
+            "edges": [],
+            "results": [],
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "duration_ms": 1.0,
+            "operation_type": "add_entity",
+            "committed": True,
+        }
+        store._conn.execute(
+            "INSERT INTO receipts "
+            "(receipt_id, query_name, parameters, receipt_json, created_at, duration_ms, "
+            "operation_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "RCP-legacy",
+                "",
+                json.dumps(legacy["parameters"]),
+                json.dumps(legacy),
+                "2026-01-01T00:00:00+00:00",
+                1.0,
+                "add_entity",
+            ),
+        )
+
+        loaded = store.get_receipt("RCP-legacy")
+        assert loaded is not None
+        assert loaded.read_revision is None
+        assert loaded.head_snapshot_id is None
+
+        for retention in ("full", "preview", "metadata"):
+            retained, metadata = retain_mutation_payload(loaded.parameters, retention=retention)
+            assert metadata.payload_digest.startswith("sha256:")
+            store.save_receipt(loaded.model_copy(update={"parameters": retained}))
+            reloaded = store.get_receipt("RCP-legacy")
+            assert reloaded is not None
+            assert reloaded.read_revision is None
+            assert reloaded.parameters == retained
+
     def test_delete_receipt(self, store: SQLiteReceiptStore, sample_receipt: Receipt):
         store.save_receipt(sample_receipt)
         assert store.delete_receipt(sample_receipt.receipt_id) is True
@@ -206,6 +372,74 @@ class TestSQLiteReceiptStore:
         # even though the relationship_write node leaves entity_type/entity_id empty.
         assert store.get_receipts_for_entity("Part", "P-1") == [receipt_id]
         assert store.get_receipts_for_entity("Vehicle", "V-1") == [receipt_id]
+
+    def test_get_receipts_for_entity_indexes_validation_node_coordinates(
+        self, store: SQLiteReceiptStore
+    ):
+        """A refused write is findable from its own subject.
+
+        Validation nodes carrying entity coordinates (guard refusals) index like
+        any other entity-bearing node; edge-scoped ones carry their endpoints in
+        detail, exactly as relationship_write nodes do.
+        """
+        builder = ReceiptBuilder(operation_type="add_entity", parameters={})
+        builder.record_validation(
+            passed=False,
+            detail={"guard_error": "refused", "guard_name": "g"},
+            entity_type="Review",
+            entity_id="rev-1",
+        )
+        builder.record_validation(
+            passed=False,
+            detail={
+                "guard_error": "refused",
+                "from_type": "Part",
+                "from_id": "P-1",
+                "to_type": "Vehicle",
+                "to_id": "V-1",
+                "relationship": "fits",
+            },
+        )
+        receipt_id = store.save_receipt(builder.build())
+
+        assert store.get_receipts_for_entity("Review", "rev-1") == [receipt_id]
+        assert store.get_receipts_for_entity("Part", "P-1") == [receipt_id]
+        assert store.get_receipts_for_entity("Vehicle", "V-1") == [receipt_id]
+
+    def test_get_receipts_for_entity_indexes_proposal_subjects(self, store: SQLiteReceiptStore):
+        """The proposal is the coordinate source of last resort.
+
+        A refusal raised by the guard EVALUATOR (rather than by a named guard)
+        has no guard coordinates to index — the proposal's subjects are what
+        keep the receipt joinable to what it refused.
+        """
+        builder = ReceiptBuilder(operation_type="add_entity", parameters={})
+        builder.record_proposal(
+            {"operation": "add_entity"},
+            subjects=[
+                {"entity_type": "WorkItem", "entity_id": "wi-1"},
+                {
+                    "from_type": "Part",
+                    "from_id": "P-9",
+                    "to_type": "Vehicle",
+                    "to_id": "V-9",
+                    "relationship": "fits",
+                },
+            ],
+        )
+        builder.record_validation(passed=False, detail={"guard_error": "unattributed"})
+        receipt_id = store.save_receipt(builder.build())
+
+        assert store.get_receipts_for_entity("WorkItem", "wi-1") == [receipt_id]
+        assert store.get_receipts_for_entity("Part", "P-9") == [receipt_id]
+        assert store.get_receipts_for_entity("Vehicle", "V-9") == [receipt_id]
+
+    def test_validation_nodes_without_coordinates_index_nothing(self, store: SQLiteReceiptStore):
+        builder = ReceiptBuilder(operation_type="add_entity", parameters={})
+        builder.record_validation(passed=True, detail={"entity": 1})
+        store.save_receipt(builder.build())
+        row = store._conn.execute("SELECT COUNT(*) AS count FROM receipt_entities").fetchone()
+        assert row["count"] == 0
 
     def test_receipt_entity_index_replaces_old_rows(self, store: SQLiteReceiptStore):
         builder = ReceiptBuilder(query_name="q", parameters={})

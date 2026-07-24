@@ -81,6 +81,8 @@ class ReceiptStoreProtocol(ABC):
         limit: int = 100,
         offset: int = 0,
         before: tuple[str, str] | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> list[dict[str, Any]]: ...
     @abstractmethod
     def count_receipts(
@@ -89,6 +91,8 @@ class ReceiptStoreProtocol(ABC):
         query_name: str | None = None,
         operation_type: str | None = None,
         before: tuple[str, str] | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> int: ...
     @abstractmethod
     def get_receipts_for_entity(self, entity_type: str, entity_id: str) -> list[str]: ...
@@ -294,9 +298,12 @@ class GroupStoreProtocol(ABC):
         trust_status: str = "watch",
         confirmed: bool = False,
         resolved_actor_context: GovernedActorContext | None = None,
+        receipt_id: str | None = None,
     ) -> str: ...
     @abstractmethod
     def confirm_resolution(self, resolution_id: str, trust_status: str | None = None) -> None: ...
+    @abstractmethod
+    def stamp_resolution_receipt_id(self, resolution_id: str, receipt_id: str) -> None: ...
     @abstractmethod
     def get_resolution(self, resolution_id: str) -> GroupResolution | None: ...
     @abstractmethod

@@ -35,10 +35,18 @@ from cruxible_core.group.types import CandidateGroup
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.mutation_guards import (
+    GuardEvaluation,
     build_guard_write_delta,
-    mutation_guard_errors,
+    evaluate_mutation_guards,
+    evaluate_relationship_mutation_guards,
     receipt_creation_actor_resolver,
-    relationship_mutation_guard_errors,
+    record_guard_evaluation,
+)
+from cruxible_core.service.mutation_proposals import (
+    batch_direct_write_proposal,
+    build_proposal,
+    entity_instance_member,
+    relationship_instance_member,
 )
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.property_diffs import property_value_changes
@@ -724,7 +732,7 @@ def _prepare_batch_direct_write(
             )
 
     try:
-        guard_errors = mutation_guard_errors(
+        guard_evaluation = evaluate_mutation_guards(
             config,
             current_graph=current_graph,
             proposed_graph=proposed_guard_graph,
@@ -737,31 +745,23 @@ def _prepare_batch_direct_write(
             creation_actor_resolver=receipt_creation_actor_resolver(instance),
         )
     except DataValidationError as exc:
-        guard_errors = [str(exc), *exc.errors]
-    for error in guard_errors:
-        errors.append(error)
-        if builder:
-            builder.record_validation(
-                passed=False,
-                detail={"guard_error": error},
-            )
+        guard_evaluation = GuardEvaluation.from_messages([str(exc), *exc.errors])
+    if builder:
+        record_guard_evaluation(builder, guard_evaluation)
+    errors.extend(guard_evaluation.messages)
 
     try:
-        relationship_guard_errors = relationship_mutation_guard_errors(
+        relationship_guard_evaluation = evaluate_relationship_mutation_guards(
             instance,
             config,
             current_graph=current_graph,
             relationships=[item.validated for item in validated_relationships],
         )
     except DataValidationError as exc:
-        relationship_guard_errors = [str(exc), *exc.errors]
-    for error in relationship_guard_errors:
-        errors.append(error)
-        if builder:
-            builder.record_validation(
-                passed=False,
-                detail={"guard_error": error},
-            )
+        relationship_guard_evaluation = GuardEvaluation.from_messages([str(exc), *exc.errors])
+    if builder:
+        record_guard_evaluation(builder, relationship_guard_evaluation)
+    errors.extend(relationship_guard_evaluation.messages)
 
     interactions = _detect_direct_write_group_interactions(
         instance,
@@ -854,6 +854,9 @@ def service_batch_direct_write(
         actor_context=actor_context,
     ) as ctx:
         builder = ctx.builder
+        if builder:
+            proposal, subjects = batch_direct_write_proposal(payload, source=source)
+            builder.record_proposal(proposal, subjects=subjects)
         prepared = _prepare_batch_direct_write(
             instance,
             payload,
@@ -1011,6 +1014,12 @@ def service_add_entities(
         actor_context=actor_context,
     ) as ctx:
         builder = ctx.builder
+        if builder:
+            proposal, subjects = build_proposal(
+                operation="add_entity",
+                entities=[entity_instance_member(entity) for entity in entities],
+            )
+            builder.record_proposal(proposal, subjects=subjects)
         errors: list[str] = []
         batch_seen: set[tuple[str, str]] = set()
         pending = []
@@ -1059,7 +1068,7 @@ def service_add_entities(
         for validated in pending:
             apply_entity(graph, validated, config=config, source="add_entity")
         try:
-            guard_errors = mutation_guard_errors(
+            guard_evaluation = evaluate_mutation_guards(
                 config,
                 current_graph=current_graph,
                 proposed_graph=graph,
@@ -1069,13 +1078,10 @@ def service_add_entities(
                 creation_actor_resolver=receipt_creation_actor_resolver(instance),
             )
         except DataValidationError as exc:
-            guard_errors = [str(exc), *exc.errors]
-        for error in guard_errors:
-            if builder:
-                builder.record_validation(
-                    passed=False,
-                    detail={"guard_error": error},
-                )
+            guard_evaluation = GuardEvaluation.from_messages([str(exc), *exc.errors])
+        if builder:
+            record_guard_evaluation(builder, guard_evaluation)
+        guard_errors = guard_evaluation.messages
         if guard_errors:
             raise DataValidationError(
                 f"Mutation guard validation failed with {len(guard_errors)} error(s)",
@@ -1196,6 +1202,20 @@ def service_add_relationships(
         actor_context=actor_context,
     ) as ctx:
         builder = ctx.builder
+        if builder:
+            proposal, subjects = build_proposal(
+                operation="add_relationship",
+                relationships=[
+                    relationship_instance_member(relationship) for relationship in relationships
+                ],
+                extra={
+                    "source": source,
+                    "source_ref": source_ref,
+                    "pending": pending,
+                    "lifecycle": lifecycle,
+                },
+            )
+            builder.record_proposal(proposal, subjects=subjects)
         errors: list[str] = []
         batch_seen: set[tuple[str, str, str, str, str]] = set()
         prepared_relationships = []
@@ -1273,7 +1293,7 @@ def service_add_relationships(
                 errors=errors,
             )
 
-        guard_errors = relationship_mutation_guard_errors(
+        guard_evaluation = evaluate_relationship_mutation_guards(
             instance,
             config,
             current_graph=graph,
@@ -1281,12 +1301,9 @@ def service_add_relationships(
                 validated for validated, _edge, _pending_flag, _lifecycle in prepared_relationships
             ],
         )
-        for error in guard_errors:
-            if builder:
-                builder.record_validation(
-                    passed=False,
-                    detail={"guard_error": error},
-                )
+        if builder:
+            record_guard_evaluation(builder, guard_evaluation)
+        guard_errors = guard_evaluation.messages
         if guard_errors:
             raise DataValidationError(
                 f"Mutation guard validation failed with {len(guard_errors)} error(s)",

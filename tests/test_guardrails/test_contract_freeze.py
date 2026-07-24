@@ -194,6 +194,12 @@ def test_receipt_shape_is_pinned_as_exempt() -> None:
     Robert-approved): `actor_context` was promoted to a first-class receipt field
     so token-derived actor identity is usable by governance without digging into
     node detail. Additive + defaults None (older receipts still load).
+
+    Deliberate decision (wi-negative-experience-fidelity): `read_revision` joins
+    `head_snapshot_id` as a first-class decision-time state coordinate. It sits
+    at the top level rather than in root-node detail because the mutation
+    payload-retention pass rewrites that detail wholesale, and because its
+    sibling coordinate already lives here. Additive + defaults None.
     """
     assert sorted(Receipt.model_fields.keys()) == [
         "actor_context",
@@ -207,6 +213,7 @@ def test_receipt_shape_is_pinned_as_exempt() -> None:
         "operation_type",
         "parameters",
         "query_name",
+        "read_revision",
         "receipt_id",
         "results",
         "workflow_mode",
