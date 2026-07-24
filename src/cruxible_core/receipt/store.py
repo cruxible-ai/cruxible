@@ -126,12 +126,14 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         Most nodes carry the touched entity on entity_type/entity_id. relationship_write
         nodes instead store both endpoints in detail (the node-level entity fields are
         empty), so they would otherwise be missed by get_receipts_for_entity even though
-        the edge write touched both endpoints.
+        the edge write touched both endpoints. validation nodes for edge-scoped guard
+        results follow the same convention, so a refused edge write is reachable from
+        both of its endpoints.
         """
         endpoints: list[tuple[str, str]] = []
         if node.entity_type and node.entity_id:
             endpoints.append((node.entity_type, node.entity_id))
-        if node.node_type == "relationship_write":
+        if node.node_type in ("relationship_write", "validation"):
             detail = node.detail
             for type_key, id_key in (("from_type", "from_id"), ("to_type", "to_id")):
                 end_type = detail.get(type_key)
@@ -230,6 +232,8 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         limit: int = 100,
         offset: int = 0,
         before: tuple[str, str] | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> list[dict[str, Any]]:
         """List receipt summaries, optionally filtered by query name or operation type.
 
@@ -237,18 +241,21 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         only receipts strictly older than it (in the newest-first sort order)
         are returned. It makes continuation pages stable under concurrent
         receipt insertion, which offset pagination is not.
+
+        ``since``/``until`` bound ``created_at`` as the half-open window
+        ``[since, until)`` — since inclusive, until exclusive — so adjacent
+        windows tile without double-counting a boundary receipt. Both are
+        ISO-8601 UTC strings in the stored format (see
+        :func:`cruxible_core.temporal.format_datetime`); the column sorts
+        lexicographically in that format. ``before`` and the window compose.
         """
-        conditions: list[str] = []
-        params: list[Any] = []
-        if query_name is not None:
-            conditions.append("query_name = ?")
-            params.append(query_name)
-        if operation_type is not None:
-            conditions.append("operation_type = ?")
-            params.append(operation_type)
-        if before is not None:
-            conditions.append("(created_at, receipt_id) < (?, ?)")
-            params.extend(before)
+        conditions, params = self._receipt_filters(
+            query_name=query_name,
+            operation_type=operation_type,
+            before=before,
+            since=since,
+            until=until,
+        )
 
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         params.extend([limit, offset])
@@ -345,18 +352,16 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         ).fetchone()
         return int(row["count"]) if row else 0
 
-    def count_receipts(
-        self,
+    @staticmethod
+    def _receipt_filters(
         *,
-        query_name: str | None = None,
-        operation_type: str | None = None,
-        before: tuple[str, str] | None = None,
-    ) -> int:
-        """Count receipt records with optional filters.
-
-        ``before`` counts only receipts strictly older than the
-        ``(created_at, receipt_id)`` high-water mark (see :meth:`list_receipts`).
-        """
+        query_name: str | None,
+        operation_type: str | None,
+        before: tuple[str, str] | None,
+        since: str | None,
+        until: str | None,
+    ) -> tuple[list[str], list[Any]]:
+        """Build the shared WHERE conditions for receipt list/count reads."""
         conditions: list[str] = []
         params: list[Any] = []
         if query_name is not None:
@@ -368,6 +373,36 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         if before is not None:
             conditions.append("(created_at, receipt_id) < (?, ?)")
             params.extend(before)
+        if since is not None:
+            conditions.append("created_at >= ?")
+            params.append(since)
+        if until is not None:
+            conditions.append("created_at < ?")
+            params.append(until)
+        return conditions, params
+
+    def count_receipts(
+        self,
+        *,
+        query_name: str | None = None,
+        operation_type: str | None = None,
+        before: tuple[str, str] | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> int:
+        """Count receipt records with optional filters.
+
+        ``before`` counts only receipts strictly older than the
+        ``(created_at, receipt_id)`` high-water mark, and ``since``/``until``
+        apply the same half-open ``created_at`` window (see :meth:`list_receipts`).
+        """
+        conditions, params = self._receipt_filters(
+            query_name=query_name,
+            operation_type=operation_type,
+            before=before,
+            since=since,
+            until=until,
+        )
 
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         row = self._conn.execute(

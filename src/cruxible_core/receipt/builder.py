@@ -40,6 +40,7 @@ class ReceiptBuilder:
         execution_options: dict[str, Any] | None = None,
         root_detail: dict[str, Any] | None = None,
         actor_context: GovernedActorContext | None = None,
+        read_revision: int | None = None,
     ) -> None:
         # Pre-allocated so write paths can stamp the creating receipt id into
         # relationship provenance within the same transaction that persists
@@ -51,6 +52,7 @@ class ReceiptBuilder:
         self._root_detail = root_detail or {}
         self._operation_type = operation_type
         self._head_snapshot_id = head_snapshot_id
+        self._read_revision = read_revision
         self._workflow_mode = workflow_mode
         # Token-derived actor identity for this operation, preserved onto the
         # built receipt where available. None on auth-off/local paths -- we do
@@ -120,6 +122,24 @@ class ReceiptBuilder:
     def receipt_id(self) -> str:
         """The id the built receipt will carry, available before build()."""
         return self._receipt_id
+
+    def stamp_state_coordinates(
+        self,
+        *,
+        head_snapshot_id: str | None = None,
+        read_revision: int | None = None,
+    ) -> None:
+        """Record the decision-time state coordinates observed when the op opened.
+
+        Builders for operations that own a write transaction cannot read these
+        at construction time (the transaction is not open yet), so they stamp
+        them once the boundary is entered. Only non-None values overwrite; a
+        failed lookup leaves the coordinate honestly unset rather than zeroed.
+        """
+        if head_snapshot_id is not None:
+            self._head_snapshot_id = head_snapshot_id
+        if read_revision is not None:
+            self._read_revision = read_revision
 
     def record_entity_lookup(
         self,
@@ -318,10 +338,21 @@ class ReceiptBuilder:
         passed: bool,
         detail: dict[str, Any] | None = None,
         parent_id: str | None = None,
+        *,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
     ) -> str:
-        """Record a validation check result."""
+        """Record a validation check result.
+
+        ``entity_type``/``entity_id`` are the subject coordinates of the check.
+        Supplying them is what makes the node reverse-indexable in
+        ``receipt_entities`` — a refused write whose validation nodes carry no
+        coordinates indexes nothing and cannot be found from its own subject.
+        """
         node_id = self._add_node(
             node_type="validation",
+            entity_type=entity_type,
+            entity_id=entity_id,
             detail={"passed": passed, **(detail or {})},
         )
         self._add_edge(parent_id or self._root_id, node_id, "validated")
@@ -403,6 +434,7 @@ class ReceiptBuilder:
             duration_ms=round(elapsed_ms, 3),
             operation_type=self._operation_type,
             head_snapshot_id=self._head_snapshot_id,
+            read_revision=self._read_revision,
             workflow_mode=self._workflow_mode,
             committed=self._committed,
             actor_context=self._actor_context,

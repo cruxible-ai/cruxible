@@ -36,7 +36,10 @@ from cruxible_core.group.types import (
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.primitives import ordered_unique
 from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.service.mutation_guards import relationship_mutation_guard_errors
+from cruxible_core.service.mutation_guards import (
+    evaluate_relationship_mutation_guards,
+    record_guard_evaluation,
+)
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.types import ResolveGroupResult, UpdateTrustStatusResult
 from cruxible_core.storage.protocols import UnitOfWorkProtocol
@@ -337,6 +340,7 @@ def _reject_group(
         trust_status="watch",
         confirmed=True,
         resolved_actor_context=actor_context,
+        receipt_id=builder.receipt_id,
     )
     group_store.update_group_status(
         group.group_id,
@@ -463,6 +467,7 @@ def _start_approval_resolution(
     is_retry: bool,
     validation: _ApprovalValidation,
     actor_context: GovernedActorContext | None,
+    receipt_id: str,
 ) -> str:
     if is_retry:
         return cast(str, group.resolution_id)
@@ -493,6 +498,7 @@ def _start_approval_resolution(
         trust_status=_inherited_trust_status(prior),
         confirmed=False,
         resolved_actor_context=actor_context,
+        receipt_id=receipt_id,
     )
     group_store.update_group_status(
         group.group_id,
@@ -761,14 +767,14 @@ def _approve_group(
         members=members,
         builder=builder,
     )
-    guard_errors = relationship_mutation_guard_errors(
+    guard_evaluation = evaluate_relationship_mutation_guards(
         instance,
         config,
         current_graph=graph,
         relationships=validation.valid_inputs,
     )
-    for error in guard_errors:
-        builder.record_validation(passed=False, detail={"guard_error": error})
+    record_guard_evaluation(builder, guard_evaluation)
+    guard_errors = guard_evaluation.messages
     if guard_errors:
         raise DataValidationError(
             f"Mutation guard validation failed with {len(guard_errors)} error(s)",
@@ -783,6 +789,7 @@ def _approve_group(
         is_retry=is_retry,
         validation=validation,
         actor_context=actor_context,
+        receipt_id=builder.receipt_id,
     )
     _record_relationship_write_nodes(builder, validation.valid_inputs)
     edges_created = _apply_resolved_relationships(

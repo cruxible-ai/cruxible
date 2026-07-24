@@ -745,6 +745,73 @@ class TestReject:
             service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
 
 
+class TestResolutionReceiptId:
+    """Resolutions name the receipt of the act that produced them.
+
+    Approvals are also reachable through the provenance stamped on the edges
+    they created. Rejections create no edges, so without this field a rejection
+    is unjoinable to the act that made it.
+    """
+
+    def _resolution(self, instance: CruxibleInstance, group_id: str) -> Any:
+        store = instance.get_group_store()
+        try:
+            group = store.get_group(group_id)
+            assert group is not None
+            assert group.resolution_id is not None
+            return store.get_resolution(group.resolution_id)
+        finally:
+            store.close()
+
+    def test_reject_stamps_receipt_id(self, instance: CruxibleInstance) -> None:
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        result = service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
+        resolution = self._resolution(instance, group_id)
+        assert resolution.receipt_id is not None
+        assert resolution.receipt_id.startswith("RCP-")
+        assert resolution.receipt_id == result.receipt_id
+
+    def test_approve_stamps_receipt_id(self, instance: CruxibleInstance) -> None:
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        resolution = self._resolution(instance, group_id)
+        assert resolution.receipt_id is not None
+        assert resolution.receipt_id == result.receipt_id
+
+    def test_stamped_receipt_is_retrievable(self, instance: CruxibleInstance) -> None:
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
+        resolution = self._resolution(instance, group_id)
+        store = instance.get_receipt_store()
+        try:
+            receipt = store.get_receipt(resolution.receipt_id)
+        finally:
+            store.close()
+        assert receipt is not None
+        assert receipt.operation_type == "group_resolve"
+
+    def test_receipt_id_defaults_to_none_when_unstamped(self, instance: CruxibleInstance) -> None:
+        """Resolutions written before the field existed still load."""
+        resolution_id = _save_resolution(
+            instance,
+            "fits",
+            compute_group_signature("fits", {"style": "casual"}),
+            "reject",
+            "",
+            "",
+            {},
+            {},
+            "human",
+        )
+        store = instance.get_group_store()
+        try:
+            resolution = store.get_resolution(resolution_id)
+        finally:
+            store.close()
+        assert resolution is not None
+        assert resolution.receipt_id is None
+
+
 # ---------------------------------------------------------------------------
 # Status guards
 # ---------------------------------------------------------------------------

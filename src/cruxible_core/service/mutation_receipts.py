@@ -21,6 +21,18 @@ from cruxible_core.receipt.types import OperationType, Receipt
 
 logger = structlog.get_logger()
 
+REFUSAL_PAYLOAD_RETENTION: MutationPayloadRetention = "full"
+"""Retention floor for refusal receipts, independent of configured retention.
+
+A refused mutation's payload IS the refused proposal — the rejected
+alternative, and the single most valuable row of negative experience the
+instance produces. Shedding it to a digest under the default
+``mutation_payloads="metadata"`` destroys the only copy: nothing was written,
+so there is no state to reconstruct it from. Accepted-path retention is
+untouched by this floor — a committed write's payload is recoverable from the
+state it produced, so the operator's configured mode still governs there.
+"""
+
 
 class SupportsReceiptId(Protocol):
     """Result objects that can be annotated with a mutation receipt."""
@@ -64,6 +76,23 @@ def _build_retained_receipt(
     """Stamp payload retention on the mutation node, then build the receipt."""
     builder.apply_mutation_payload_retention(retention=retention)
     return builder.build()
+
+
+def _stamp_state_coordinates(instance: InstanceProtocol, builder: ReceiptBuilder) -> None:
+    """Stamp decision-time state coordinates onto an open mutation receipt.
+
+    Both reads happen inside the wrapper's already-open write transaction, so
+    they observe exactly the state this mutation was decided against. Failure to
+    read is logged and leaves the coordinates unset: a missing audit coordinate
+    must never be a reason to fail an otherwise valid mutation.
+    """
+    try:
+        builder.stamp_state_coordinates(
+            head_snapshot_id=instance.get_head_snapshot_id(),
+            read_revision=instance.get_read_revision(),
+        )
+    except Exception:
+        logger.warning("Failed to read decision-time state coordinates", exc_info=True)
 
 
 def _persist_receipt(instance: InstanceProtocol, receipt: Receipt) -> bool:
@@ -127,6 +156,15 @@ def mutation_receipt(
     ``actor_context`` is the runtime actor identity for the operation: credential-
     derived when auth is on, and the declared local operator when auth is off.
     Older/local direct service calls may still leave it null.
+
+    Two audit properties are enforced here rather than at the call sites:
+
+    * Decision-time coordinates (``head_snapshot_id`` + ``read_revision``) are
+      stamped once the write boundary opens, so every mutation receipt states
+      the state it was decided against.
+    * Refusal receipts retain their payload in full
+      (:data:`REFUSAL_PAYLOAD_RETENTION`); only committed receipts follow the
+      configured ``runtime.mutation_payloads`` mode.
     """
     builder = (
         ReceiptBuilder(
@@ -147,6 +185,8 @@ def mutation_receipt(
         tx_manager = instance.write_transaction()
         uow = tx_manager.__enter__()
         ctx.uow = uow
+        if builder is not None:
+            _stamp_state_coordinates(instance, builder)
         yield ctx
     except CoreError as exc:
         exc_to_tag = exc
@@ -154,7 +194,7 @@ def mutation_receipt(
         tx_closed = True
         instance.invalidate_graph_cache()
         if builder is not None:
-            receipt = _build_retained_receipt(builder, retention)
+            receipt = _build_retained_receipt(builder, REFUSAL_PAYLOAD_RETENTION)
             if _persist_receipt(instance, receipt):
                 exc_to_tag.mutation_receipt_id = receipt.receipt_id
         raise
@@ -165,7 +205,7 @@ def mutation_receipt(
         tx_closed = True
         instance.invalidate_graph_cache()
         if builder is not None:
-            receipt = _build_retained_receipt(builder, retention)
+            receipt = _build_retained_receipt(builder, REFUSAL_PAYLOAD_RETENTION)
             if _persist_receipt(instance, receipt):
                 exc_to_tag.mutation_receipt_id = receipt.receipt_id
         raise wrapped from exc

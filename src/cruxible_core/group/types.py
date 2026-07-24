@@ -157,6 +157,15 @@ class GroupResolution(BaseModel):
     resolved_by: Literal["human", "agent"] = "human"
     resolved_at: datetime
     resolved_actor_context: GovernedActorContext | None = None
+    receipt_id: str | None = Field(
+        default=None,
+        description=(
+            "Mutation receipt that resolved this group. Approvals are also "
+            "reachable through the provenance stamped on the edges they created; "
+            "rejections create no edges, so without this field a rejection joins "
+            "to nothing. Resolutions predating this field load with null."
+        ),
+    )
 
 
 class CandidateGroup(BaseModel):
