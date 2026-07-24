@@ -154,6 +154,8 @@ def profile_edge_payload(payload: dict[str, Any], profile: ReadProfile) -> dict[
             compact[key] = _compact_edge_metadata(value or {})
         elif key == "alias":
             compact[key] = value
+        elif key == "corroboration":
+            compact[key] = value
     return compact
 
 
@@ -268,6 +270,7 @@ def profile_inspect_neighbor(payload: dict[str, Any], profile: ReadProfile) -> d
         "edge_key": payload.get("edge_key"),
         "properties": dict(payload.get("properties") or {}),
         "metadata": _compact_edge_metadata(payload.get("metadata") or {}),
+        **({"corroboration": payload["corroboration"]} if "corroboration" in payload else {}),
         "entity": profile_entity_payload(payload.get("entity") or {}, profile),
     }
 
@@ -340,6 +343,7 @@ def neighborhood_edge_payload(
         "edge_key": edge.get("edge_key"),
         "properties": dict(edge.get("properties") or {}),
         "metadata": edge.get("metadata") or {},
+        **({"corroboration": edge["corroboration"]} if "corroboration" in edge else {}),
     }
     return profile_edge_payload(payload, profile)
 

@@ -1417,6 +1417,119 @@ The `git-pre-push` kind evaluates merge commits only: squash merges mint new SHA
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
 
+## cruxible attest
+
+**Usage:** `cruxible attest [OPTIONS] COMMAND [ARGS]...`
+
+**Purpose:** Record and review immutable observations against relationship claims.
+
+**Subcommands:**
+
+- `cruxible attest record` - Record one support, contradict, or unsure observation.
+- `cruxible attest list` - List immutable observation history with current tuple markers.
+- `cruxible attest queue` - List live claims with open current-content contradictions.
+- `cruxible attest resolve` - Append a reviewer disposition.
+
+**Output And Side Effects:**
+
+- Record and resolve require daemon transport so actor attribution and permissions are enforced.
+- List and queue are read-only and return standard paged envelopes with `--json`.
+- Attestations and dispositions are append-only; neither mutates the target claim.
+
+## cruxible attest record
+
+**Usage:**
+
+```bash
+cruxible attest record --relationship REL_TYPE --from-type TYPE --from-id ID --to-type TYPE --to-id ID --stance support|contradict|unsure --observed-at ISO_TIME [--evidence-ref JSON]... [--edge-key INTEGER] [--properties JSON] [--note TEXT] [--idempotency-key KEY] [--json]
+```
+
+**Purpose:** Record one observation against a tuple-first relationship claim.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--relationship` | yes |  | text | Relationship type of the claim. |
+| `--from-type` | yes |  | text | Source endpoint entity type. |
+| `--from-id` | yes |  | text | Source endpoint entity ID. |
+| `--to-type` | yes |  | text | Target endpoint entity type. |
+| `--to-id` | yes |  | text | Target endpoint entity ID. |
+| `--stance` | yes |  | choice | `support`, `contradict`, or `unsure`. |
+| `--observed-at` | yes |  | text | ISO-8601 time when the world was observed. |
+| `--evidence-ref` | no |  | JSON | Evidence pointer; repeatable and required for support or contradict. |
+| `--edge-key` | no |  | integer | Disambiguation hint; tuple coordinates remain authoritative. |
+| `--properties` | no |  | JSON | Properties used only when absent support creates a pending claim. |
+| `--note` | no |  | text | Optional note, encouraged for unsure. |
+| `--idempotency-key` | no |  | text | Retry-safe key scoped to actor and claim tuple. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+
+- Appends an immutable attestation and receipt.
+- If the tuple is absent, support creates a pending claim when both endpoints exist; contradict and unsure refuse.
+- If the tuple exists in any state, the observation attaches and any properties payload is ignored with a warning.
+
+## cruxible attest list
+
+**Usage:** `cruxible attest list [--claim JSON] [--stance support|contradict|unsure] [--limit N] [--offset N] [--json]`
+
+**Purpose:** List immutable attestation history.
+
+`--claim` is one JSON object containing exactly `relationship_type`, `from_type`,
+`from_id`, `to_type`, and `to_id`.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--claim` | no |  | JSON | Exact five-coordinate claim tuple. |
+| `--stance` | no |  | choice | Optional stance filter. |
+| `--limit` | no | `100` | integer | Maximum records. |
+| `--offset` | no | `0` | integer | Records to skip. |
+| `--json` | no | `False` | boolean | Output as a standard list envelope. |
+
+**Output And Side Effects:** Read-only. Items include latest disposition plus
+`unresolved_target`, `edge_key_mismatch`, and `stale_content` markers.
+
+## cruxible attest queue
+
+**Usage:** `cruxible attest queue [--limit N] [--offset N] [--json]`
+
+**Purpose:** List live claims with open current-content contradictions.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--limit` | no | `100` | integer | Maximum per-claim entries. |
+| `--offset` | no | `0` | integer | Entries to skip. |
+| `--json` | no | `False` | boolean | Output as a standard list envelope. |
+
+**Output And Side Effects:** Read-only. Entries aggregate open contradiction
+count, distinct contradicting actors, and latest observation time per claim.
+Unsure and stale-content observations never enter this queue.
+
+## cruxible attest resolve
+
+**Usage:** `cruxible attest resolve ATTESTATION_ID --verdict upheld|corrected|invalidated [--note TEXT] [--follow-up-receipt RECEIPT_ID] [--json]`
+
+**Purpose:** Append a reviewer disposition to one immutable attestation.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `ATTESTATION_ID` | yes |  | text | Attestation being reviewed. |
+| `--verdict` | yes |  | choice | `upheld`, `corrected`, or `invalidated`. |
+| `--note` | no |  | text | Optional reviewer explanation. |
+| `--follow-up-receipt` | no |  | text | Receipt for a correcting or re-adjudicating action. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:** Appends a disposition and receipt. The latest
+disposition controls derived summary treatment; the claim and original
+attestation remain unchanged.
+
 ## cruxible procedure
 
 **Usage:** `cruxible procedure [OPTIONS] COMMAND [ARGS]...`

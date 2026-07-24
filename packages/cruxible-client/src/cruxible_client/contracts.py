@@ -318,6 +318,27 @@ class EvidenceRef(BaseModel):
         return value
 
 
+AttestationStance = Literal["support", "contradict", "unsure"]
+AttestationVerdict = Literal["upheld", "corrected", "invalidated"]
+
+
+class AttestationRecordResult(BaseModel):
+    """Recorded immutable observation plus D2 routing outcome."""
+
+    attestation: dict[str, Any]
+    created_claim: bool = False
+    idempotent_replay: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    receipt_id: str | None = None
+
+
+class AttestationDispositionResult(BaseModel):
+    """Appended reviewer disposition and receipt."""
+
+    disposition: dict[str, Any]
+    receipt_id: str | None = None
+
+
 class SourceEvidenceInput(BaseModel):
     source_artifact_id: str = Field(
         description="Id of the registered source artifact this evidence points into."
@@ -690,6 +711,9 @@ class QueryPathSegmentItem(BaseModel):
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    corroboration: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     alias: str | None = None
 
 
@@ -734,6 +758,9 @@ class QueryRelationshipItem(BaseModel):
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    corroboration: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     entry: QueryEntityItem
     from_entity: QueryEntityItem | None = None
     to_entity: QueryEntityItem | None = None
@@ -796,6 +823,9 @@ class QueryGraphEdgeItem(BaseModel):
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    corroboration: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class QueryGraphPathStepRef(BaseModel):
@@ -1236,6 +1266,9 @@ class GetRelationshipResult(BaseModel):
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    corroboration: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class RelationshipLineageResult(BaseModel):
@@ -1342,6 +1375,9 @@ class InspectNeighborResult(BaseModel):
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    corroboration: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     entity: dict[str, Any]
 
 
@@ -1384,6 +1420,9 @@ class NeighborhoodEdgeResult(BaseModel):
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    corroboration: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class InspectNeighborhoodResult(BaseModel):

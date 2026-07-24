@@ -7,8 +7,8 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | Mode | Env value | Meaning |
 | --- | --- | --- |
 | READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, snapshots listing. |
-| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow and procedure runs, procedure/group proposals, feedback, outcomes, decision records, snapshot creation, and source artifact registration. |
-| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, group resolution/trust updates, and procedure resolution/retirement. |
+| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow and procedure runs, procedure/group proposals, claim attestations, feedback, outcomes, decision records, snapshot creation, and source artifact registration. |
+| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, group resolution/trust updates, procedure resolution/retirement, and attestation dispositions. |
 | ADMIN | `admin` | Full lifecycle, config reload, locks, snapshots, clone, state publication/pull, ingest, constraints, and policies. |
 
 `tools/list` advertises only tools allowed by the active `CRUXIBLE_MODE`; call-time permission checks still enforce the same tiers as a backstop.
@@ -1412,6 +1412,96 @@ without it, only the active materialized digest is checked.
 - Unknown `instance_id` or missing daemon configuration.
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_attest
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Use when you observed evidence supporting, contradicting, or leaving you unsure about one relationship claim. Supply evidence for support or contradict; a note is optional but encouraged for unsure.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `relationship_type` | yes | string | Relationship type of the target claim. |
+| `from_type` | yes | string | Source endpoint entity type. |
+| `from_id` | yes | string | Source endpoint entity ID. |
+| `to_type` | yes | string | Target endpoint entity type. |
+| `to_id` | yes | string | Target endpoint entity ID. |
+| `stance` | yes | string | `support`, `contradict`, or `unsure`. |
+| `observed_at` | yes | string | ISO-8601 time when the world was observed; it cannot be in the future. |
+| `evidence_refs` | no | array or null | Evidence pointers; at least one is required for `support` and `contradict`. |
+| `edge_key` | no | integer or null | Unstable disambiguation hint; tuple coordinates remain authoritative. |
+| `properties` | no | object or null | Required relationship properties when absent support creates a pending claim; ignored on attach. |
+| `note` | no | string or null | Optional observation note, encouraged for `unsure`. |
+| `idempotency_key` | no | string or null | Retry-safe key scoped to the claim tuple and resolved actor. |
+
+**Returns:** The immutable attestation, pending-claim creation marker, warnings, replay marker, and receipt ID.
+
+**Side Effects:** Appends an attestation and receipt; absent support may also create one pending claim.
+
+## cruxible_list_attestations
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need immutable observation history for one claim tuple or stance.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `relationship_type` | no | string or null | Relationship type; provide all five claim coordinates together. |
+| `from_type` | no | string or null | Source endpoint type; provide all five claim coordinates together. |
+| `from_id` | no | string or null | Source endpoint ID; provide all five claim coordinates together. |
+| `to_type` | no | string or null | Target endpoint type; provide all five claim coordinates together. |
+| `to_id` | no | string or null | Target endpoint ID; provide all five claim coordinates together. |
+| `stance` | no | string or null | Optional `support`, `contradict`, or `unsure` filter. |
+| `limit` | no | integer | Maximum records. |
+| `offset` | no | integer | Records to skip. |
+
+**Returns:** Standard list envelope with immutable records, latest dispositions, and tuple-resolution markers.
+
+**Side Effects:** Read-only.
+
+## cruxible_attestation_queue
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when a reviewer needs live claims with open current-content contradictions, aggregated per claim.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `limit` | no | integer | Maximum per-claim entries. |
+| `offset` | no | integer | Entries to skip. |
+
+**Returns:** Standard list envelope with per-claim contradiction counts, actor diversity, and latest observation time.
+
+**Side Effects:** Read-only.
+
+## cruxible_resolve_attestation
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Use when a reviewer needs to uphold, correct, or invalidate an attestation without changing its immutable history.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `attestation_id` | yes | string | Immutable attestation being reviewed. |
+| `verdict` | yes | string | `upheld`, `corrected`, or `invalidated`. |
+| `note` | no | string or null | Optional reviewer explanation. |
+| `follow_up_receipt_id` | no | string or null | Receipt for a follow-up correction or re-adjudication. |
+
+**Returns:** The appended disposition and receipt ID.
+
+**Side Effects:** Appends a disposition and receipt; never mutates the target claim or attestation.
 
 ## cruxible_propose_procedure
 

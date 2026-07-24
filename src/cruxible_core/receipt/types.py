@@ -24,6 +24,8 @@ OperationType = Literal[
     "workflow",
     "procedure",
     "procedure_transition",
+    "attestation",
+    "attestation_disposition",
     "add_entity",
     "add_relationship",
     "batch_direct_write",

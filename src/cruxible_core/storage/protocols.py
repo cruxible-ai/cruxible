@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import (
+    AttestationStoreProtocol,
     DecisionStoreProtocol,
     FeedbackStoreProtocol,
     GroupStoreProtocol,
@@ -54,6 +55,7 @@ class UnitOfWorkProtocol(Protocol):
     feedback: FeedbackStoreProtocol
     groups: GroupStoreProtocol
     procedures: ProcedureStoreProtocol
+    attestations: AttestationStoreProtocol
     decisions: DecisionStoreProtocol
     source_artifacts: SourceArtifactStoreProtocol
 

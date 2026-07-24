@@ -15,6 +15,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from cruxible_core.attestation.types import (
+        AttestationDisposition,
+        AttestationRecord,
+        AttestationStance,
+        ClaimKey,
+        CorroborationSummary,
+    )
     from cruxible_core.config.provenance import ConfigProvenanceMetadata
     from cruxible_core.config.schema import CoreConfig
     from cruxible_core.decision.types import DecisionEvent, DecisionRecord
@@ -25,6 +32,7 @@ if TYPE_CHECKING:
     from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
     from cruxible_core.procedure.types import (
         ProcedureBudgetSpent,
+        ProcedureEvidenceArtifact,
         ProcedureRecord,
         ProcedureRun,
         ProcedureRunVerdict,
@@ -424,6 +432,82 @@ class ProcedureStoreProtocol(ABC):
         status: str | None = None,
     ) -> int: ...
     @abstractmethod
+    def save_evidence_artifact(self, artifact: ProcedureEvidenceArtifact) -> str: ...
+    @abstractmethod
+    def link_run_evidence(
+        self,
+        *,
+        run_id: str,
+        output_alias: str,
+        artifact_id: str,
+        receipt_id: str,
+    ) -> None: ...
+    @abstractmethod
+    def get_evidence_artifact(
+        self,
+        artifact_id: str,
+    ) -> ProcedureEvidenceArtifact | None: ...
+    @abstractmethod
+    def list_run_evidence_refs(self, run_id: str) -> list[Any]: ...
+    @abstractmethod
+    def close(self) -> None: ...
+
+
+class AttestationStoreProtocol(ABC):
+    """Interface for immutable claim observations and dispositions."""
+
+    @abstractmethod
+    def save_attestation(self, record: AttestationRecord) -> str: ...
+    @abstractmethod
+    def get_attestation(self, attestation_id: str) -> AttestationRecord | None: ...
+    @abstractmethod
+    def find_idempotent_attestation(
+        self,
+        *,
+        idempotency_key: str,
+        claim_key: ClaimKey,
+        actor_org_id: str,
+        actor_id: str,
+    ) -> AttestationRecord | None: ...
+    @abstractmethod
+    def list_attestations(
+        self,
+        *,
+        claim_key: ClaimKey | None = None,
+        stance: AttestationStance | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AttestationRecord]: ...
+    @abstractmethod
+    def count_attestations(
+        self,
+        *,
+        claim_key: ClaimKey | None = None,
+        stance: AttestationStance | None = None,
+    ) -> int: ...
+    @abstractmethod
+    def save_disposition(self, disposition: AttestationDisposition) -> str: ...
+    @abstractmethod
+    def list_dispositions(
+        self,
+        *,
+        attestation_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AttestationDisposition]: ...
+    @abstractmethod
+    def get_latest_dispositions(
+        self,
+        attestation_ids: Sequence[str],
+    ) -> dict[str, AttestationDisposition]: ...
+    @abstractmethod
+    def summaries_for_claims(
+        self,
+        claim_digests: dict[ClaimKey, str],
+    ) -> dict[ClaimKey, CorroborationSummary]: ...
+    @abstractmethod
+    def list_open_contradictions(self) -> list[AttestationRecord]: ...
+    @abstractmethod
     def close(self) -> None: ...
 
 
@@ -509,5 +593,7 @@ class InstanceProtocol(ABC):
     def get_group_store(self) -> GroupStoreProtocol: ...
     @abstractmethod
     def get_procedure_store(self) -> ProcedureStoreProtocol: ...
+    @abstractmethod
+    def get_attestation_store(self) -> AttestationStoreProtocol: ...
     @abstractmethod
     def get_source_artifact_store(self) -> SourceArtifactStoreProtocol: ...

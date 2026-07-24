@@ -13,6 +13,14 @@ from cruxible_core.service.analysis import (
     service_lint,
     service_state_health,
 )
+from cruxible_core.service.attestations import (
+    attach_corroboration_summaries,
+    service_attest,
+    service_attestation_queue,
+    service_corroboration_summaries,
+    service_list_attestations,
+    service_resolve_attestation,
+)
 from cruxible_core.service.config_mutations import (
     service_add_constraint,
     service_add_decision_policy,
@@ -75,10 +83,10 @@ from cruxible_core.service.mutations import (
 )
 from cruxible_core.service.procedures import (
     compile_procedure_definition,
+    service_accept_procedure,
     service_get_procedure,
     service_list_procedure_runs,
     service_list_procedures,
-    service_accept_procedure,
     service_propose_procedure,
     service_reject_procedure,
     service_retire_procedure,
@@ -400,6 +408,13 @@ __all__ = [
     "service_retire_procedure",
     "service_run_procedure",
     "validate_procedure_definition_against_config",
+    # Attestations
+    "attach_corroboration_summaries",
+    "service_attest",
+    "service_attestation_queue",
+    "service_corroboration_summaries",
+    "service_list_attestations",
+    "service_resolve_attestation",
     # Gates
     "service_evaluate_gate",
     # Mutations

@@ -1115,7 +1115,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         expected_version: int,
         reason: str | None = None,
     ) -> dict[str, Any]:
-        """Promote or reject one pending procedure after review."""
+        """Accept or reject one pending procedure after review."""
         return handlers.handle_resolve_procedure(
             instance_id,
             procedure_id,
@@ -1165,6 +1165,94 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             procedure_id,
             limit=limit,
             offset=offset,
+        )
+
+    @_tool
+    def cruxible_attest(
+        instance_id: str,
+        relationship_type: str,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        stance: contracts.AttestationStance,
+        observed_at: str,
+        evidence_refs: list[contracts.EvidenceRef] | None = None,
+        edge_key: int | None = None,
+        properties: dict[str, Any] | None = None,
+        note: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> contracts.AttestationRecordResult:
+        """Record one observation against a tuple-first relationship claim."""
+        return handlers.handle_attest(
+            instance_id,
+            relationship_type=relationship_type,
+            from_type=from_type,
+            from_id=from_id,
+            to_type=to_type,
+            to_id=to_id,
+            stance=stance,
+            observed_at=observed_at,
+            evidence_refs=evidence_refs,
+            edge_key=edge_key,
+            properties=properties,
+            note=note,
+            idempotency_key=idempotency_key,
+        )
+
+    @_tool
+    def cruxible_list_attestations(
+        instance_id: str,
+        relationship_type: str | None = None,
+        from_type: str | None = None,
+        from_id: str | None = None,
+        to_type: str | None = None,
+        to_id: str | None = None,
+        stance: contracts.AttestationStance | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        """List immutable observations with current tuple-resolution markers."""
+        return handlers.handle_list_attestations(
+            instance_id,
+            relationship_type=relationship_type,
+            from_type=from_type,
+            from_id=from_id,
+            to_type=to_type,
+            to_id=to_id,
+            stance=stance,
+            limit=limit,
+            offset=offset,
+        )
+
+    @_tool
+    def cruxible_attestation_queue(
+        instance_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        """List live claims with open current-content contradictions."""
+        return handlers.handle_attestation_queue(
+            instance_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    @_tool
+    def cruxible_resolve_attestation(
+        instance_id: str,
+        attestation_id: str,
+        verdict: contracts.AttestationVerdict,
+        note: str | None = None,
+        follow_up_receipt_id: str | None = None,
+    ) -> contracts.AttestationDispositionResult:
+        """Append one reviewer disposition to an immutable attestation."""
+        return handlers.handle_resolve_attestation(
+            instance_id,
+            attestation_id,
+            verdict=verdict,
+            note=note,
+            follow_up_receipt_id=follow_up_receipt_id,
         )
 
     @_tool

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -219,6 +220,29 @@ class RetireProcedureRequest(BaseModel):
 
 class RunProcedureRequest(BaseModel):
     input_payload: dict[str, Any]
+    actor_context: contracts.GovernedActorContext | None = None
+
+
+class AttestRequest(BaseModel):
+    relationship_type: str
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    stance: contracts.AttestationStance
+    evidence_refs: list[contracts.EvidenceRef] = Field(default_factory=list)
+    observed_at: datetime
+    edge_key: int | None = None
+    properties: dict[str, Any] | None = None
+    note: str | None = None
+    idempotency_key: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
+
+
+class ResolveAttestationRequest(BaseModel):
+    verdict: contracts.AttestationVerdict
+    note: str | None = None
+    follow_up_receipt_id: str | None = None
     actor_context: contracts.GovernedActorContext | None = None
 
 

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_core import __version__
+from cruxible_core.attestation.store import AttestationStore
 from cruxible_core.config.loader import load_config, save_config
 from cruxible_core.config.provenance import (
     ConfigProvenanceMetadata,
@@ -684,6 +685,13 @@ class CruxibleInstance(InstanceProtocol):
             return self._active_uow.procedures
         self._ensure_state_initialized()
         return ProcedureStore(self._state_db_path())
+
+    def get_attestation_store(self) -> AttestationStore:
+        """Get or create the append-only attestation SQLite store."""
+        if self._active_uow is not None:
+            return self._active_uow.attestations
+        self._ensure_state_initialized()
+        return AttestationStore(self._state_db_path())
 
     def get_source_artifact_store(self) -> SQLiteSourceArtifactStore:
         """Get or create the source artifact SQLite store."""

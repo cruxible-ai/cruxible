@@ -1644,6 +1644,115 @@ class CruxibleClient:
         )
         return self._parse_json(response)
 
+    def attest(
+        self,
+        instance_id: str,
+        *,
+        relationship_type: str,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        stance: contracts.AttestationStance,
+        evidence_refs: Sequence[contracts.EvidenceRef | dict[str, Any]],
+        observed_at: str,
+        edge_key: int | None = None,
+        properties: dict[str, Any] | None = None,
+        note: str | None = None,
+        idempotency_key: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.AttestationRecordResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/attestations/record",
+            json=self._with_actor_context(
+                {
+                    "relationship_type": relationship_type,
+                    "from_type": from_type,
+                    "from_id": from_id,
+                    "to_type": to_type,
+                    "to_id": to_id,
+                    "stance": stance,
+                    "evidence_refs": [
+                        item.model_dump(mode="json") if isinstance(item, BaseModel) else item
+                        for item in evidence_refs
+                    ],
+                    "observed_at": observed_at,
+                    "edge_key": edge_key,
+                    "properties": properties,
+                    "note": note,
+                    "idempotency_key": idempotency_key,
+                },
+                actor_context,
+            ),
+        )
+        return self._parse_model(response, contracts.AttestationRecordResult)
+
+    def list_attestations(
+        self,
+        instance_id: str,
+        *,
+        relationship_type: str | None = None,
+        from_type: str | None = None,
+        from_id: str | None = None,
+        to_type: str | None = None,
+        to_id: str | None = None,
+        stance: contracts.AttestationStance | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/attestations",
+            params=self._omit_none_params(
+                {
+                    "relationship_type": relationship_type,
+                    "from_type": from_type,
+                    "from_id": from_id,
+                    "to_type": to_type,
+                    "to_id": to_id,
+                    "stance": stance,
+                    "limit": limit,
+                    "offset": offset,
+                }
+            ),
+        )
+        return self._parse_model(response, contracts.ListResult)
+
+    def attestation_queue(
+        self,
+        instance_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/attestations/queue",
+            params={"limit": limit, "offset": offset},
+        )
+        return self._parse_model(response, contracts.ListResult)
+
+    def resolve_attestation(
+        self,
+        instance_id: str,
+        attestation_id: str,
+        *,
+        verdict: contracts.AttestationVerdict,
+        note: str | None = None,
+        follow_up_receipt_id: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.AttestationDispositionResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/attestations/{attestation_id}/resolve",
+            json=self._with_actor_context(
+                {
+                    "verdict": verdict,
+                    "note": note,
+                    "follow_up_receipt_id": follow_up_receipt_id,
+                },
+                actor_context,
+            ),
+        )
+        return self._parse_model(response, contracts.AttestationDispositionResult)
+
     def list_procedures(
         self,
         instance_id: str,

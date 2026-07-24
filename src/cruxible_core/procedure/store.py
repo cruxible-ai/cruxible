@@ -20,6 +20,7 @@ from cruxible_core.governance.actors import (
 from cruxible_core.instance_protocol import ProcedureStoreProtocol
 from cruxible_core.procedure.types import (
     ProcedureBudgetSpent,
+    ProcedureEvidenceArtifact,
     ProcedureRecord,
     ProcedureRun,
     ProcedureRunVerdict,
@@ -67,6 +68,26 @@ CREATE TABLE IF NOT EXISTS procedure_runs (
 CREATE INDEX IF NOT EXISTS idx_procedure_runs_procedure
     ON procedure_runs(procedure_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_procedure_runs_status ON procedure_runs(status);
+
+CREATE TABLE IF NOT EXISTS procedure_evidence_artifacts (
+    artifact_id TEXT PRIMARY KEY,
+    content_digest TEXT NOT NULL UNIQUE,
+    byte_count INTEGER NOT NULL,
+    payload_json TEXT,
+    truncated_head TEXT,
+    oversized INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS procedure_run_evidence (
+    run_id TEXT NOT NULL REFERENCES procedure_runs(run_id),
+    output_alias TEXT NOT NULL,
+    artifact_id TEXT NOT NULL REFERENCES procedure_evidence_artifacts(artifact_id),
+    receipt_id TEXT NOT NULL,
+    PRIMARY KEY (run_id, output_alias)
+);
+CREATE INDEX IF NOT EXISTS idx_procedure_run_evidence_artifact
+    ON procedure_run_evidence(artifact_id);
 """
 
 
@@ -353,6 +374,89 @@ class ProcedureStore(ProcedureStoreProtocol):
             tuple(params),
         ).fetchone()
         return int(row["count"]) if row is not None else 0
+
+    def save_evidence_artifact(self, artifact: ProcedureEvidenceArtifact) -> str:
+        """Persist digest-addressed typed JSON content without committing."""
+        self._conn.execute(
+            "INSERT OR IGNORE INTO procedure_evidence_artifacts "
+            "(artifact_id, content_digest, byte_count, payload_json, truncated_head, "
+            "oversized, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                artifact.artifact_id,
+                artifact.content_digest,
+                artifact.byte_count,
+                (None if artifact.oversized else json.dumps(artifact.payload, sort_keys=True)),
+                artifact.truncated_head,
+                int(artifact.oversized),
+                format_datetime(artifact.created_at),
+            ),
+        )
+        return artifact.artifact_id
+
+    def link_run_evidence(
+        self,
+        *,
+        run_id: str,
+        output_alias: str,
+        artifact_id: str,
+        receipt_id: str,
+    ) -> None:
+        """Link one declared output to its finalized run receipt."""
+        self._conn.execute(
+            "INSERT INTO procedure_run_evidence "
+            "(run_id, output_alias, artifact_id, receipt_id) VALUES (?, ?, ?, ?)",
+            (run_id, output_alias, artifact_id, receipt_id),
+        )
+
+    def get_evidence_artifact(
+        self,
+        artifact_id: str,
+    ) -> ProcedureEvidenceArtifact | None:
+        """Load one whole chunkless typed JSON artifact."""
+        row = self._conn.execute(
+            "SELECT * FROM procedure_evidence_artifacts WHERE artifact_id = ?",
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        oversized = bool(row["oversized"])
+        return ProcedureEvidenceArtifact(
+            artifact_id=row["artifact_id"],
+            content_digest=row["content_digest"],
+            byte_count=int(row["byte_count"]),
+            payload=None if oversized else json.loads(row["payload_json"]),
+            truncated_head=row["truncated_head"],
+            oversized=oversized,
+            created_at=row["created_at"],
+        )
+
+    def list_run_evidence_refs(self, run_id: str) -> list[Any]:
+        """Return ready-made refs in declaration order for one run."""
+        from cruxible_core.graph.evidence import EvidenceRef
+
+        rows = self._conn.execute(
+            "SELECT e.output_alias, e.artifact_id, e.receipt_id, "
+            "a.content_digest, a.byte_count, a.oversized "
+            "FROM procedure_run_evidence e "
+            "JOIN procedure_evidence_artifacts a ON a.artifact_id = e.artifact_id "
+            "WHERE e.run_id = ? ORDER BY e.rowid",
+            (run_id,),
+        ).fetchall()
+        return [
+            EvidenceRef(
+                source="procedure_run",
+                source_record_id=run_id,
+                artifact_id=row["artifact_id"],
+                label=row["output_alias"],
+                metadata={
+                    "receipt_id": row["receipt_id"],
+                    "content_digest": row["content_digest"],
+                    "byte_count": int(row["byte_count"]),
+                    "oversized": bool(row["oversized"]),
+                },
+            )
+            for row in rows
+        ]
 
     def close(self) -> None:
         """Close an owned connection."""

@@ -354,8 +354,15 @@ def _emit_query_command_result(
     layout: str = "rows",
     capture_source: str | None = None,
     ws_capture: bool = False,
+    summary_instance: Any | None = None,
 ) -> None:
     projected_results, entity_results, structured_results = _split_query_result_items(result)
+    if summary_instance is not None:
+        _call_service(
+            "attach_corroboration_summaries",
+            summary_instance,
+            structured_results,
+        )
 
     total = result.total
     graph_sections: dict[str, Any] | None = None
@@ -363,7 +370,11 @@ def _emit_query_command_result(
         # Graph layout normalizes the full serialized rows for EVERY result
         # shape (the entity-table shortcut below would drop metadata), after
         # the same display-limit window the rows layout shows.
-        payload_rows = _query_result_item_payloads(list(result.items))
+        payload_rows = (
+            structured_results
+            if summary_instance is not None
+            else _query_result_item_payloads(list(result.items))
+        )
         if limit is not None:
             payload_rows = payload_rows[:limit]
         graph_sections = _query_graph_sections(payload_rows, profile)
@@ -542,6 +553,7 @@ def _run_query_command(
         row for row in results if isinstance(row, EntityInstance) and not projected_results
     ]
     structured_results = _query_rows_payload(results)
+    _call_service("attach_corroboration_summaries", instance, structured_results)
     total = local_result.total
     graph_sections = (
         _query_graph_sections(structured_results, profile)
@@ -820,6 +832,7 @@ def query_inline_cmd(
     response_limit = 1 if count_only and limit is None else limit
     query_name = f"inline:{definition.name}"
     client = _common._get_client()
+    summary_instance: CruxibleInstance | None = None
     result: Any
     if client is not None:
         result = client.query_inline(
@@ -833,6 +846,7 @@ def query_inline_cmd(
     else:
         _common._guard_local_read_fallback()
         instance = _load_local_instance()
+        summary_instance = instance
         result = _call_service(
             "service_query_inline_surface",
             instance,
@@ -849,6 +863,7 @@ def query_inline_cmd(
         count_only=count_only,
         output_json=output_json,
         layout=layout,
+        summary_instance=summary_instance,
     )
 
 
@@ -1635,9 +1650,11 @@ def inspect_entity_cmd(
             limit=limit,
         )
         assert isinstance(inspect_result, InspectEntityResult)
+        neighbor_rows = _inspect_neighbor_rows(list(inspect_result.neighbors))
+        _call_service("attach_corroboration_summaries", instance, neighbor_rows)
         return (
             inspect_result,
-            _inspect_neighbor_rows(list(inspect_result.neighbors)),
+            neighbor_rows,
             instance.get_read_revision(),
         )
 
@@ -1792,6 +1809,11 @@ def _inspect_neighborhood(
     payload = _neighborhood_payload(result, projection=projection, profile=profile)
     if not isinstance(result, contracts.InspectNeighborhoodResult):
         # Local mode: mirror the contract's envelope keys exactly.
+        _call_service(
+            "attach_corroboration_summaries",
+            _load_local_instance(),
+            payload["edges"],
+        )
         payload["read_revision"] = read_revision
         payload["continuation_token"] = continuation_token
     if output_json:
@@ -1964,6 +1986,13 @@ def inspect_relationship_lineage_cmd(
             "source_trace_ids": result.source_trace_ids,
             "warnings": result.warnings,
         }
+        relationship_payload = payload.get("relationship")
+        if isinstance(relationship_payload, dict):
+            _call_service(
+                "attach_corroboration_summaries",
+                _load_local_instance(),
+                [relationship_payload],
+            )
     if output_json:
         _emit_json(payload)
         return
@@ -2103,6 +2132,15 @@ def get_relationship_cmd(
         rel = result
     if output_json:
         payload = rel.model_dump(mode="python")
+        if isinstance(result, contracts.GetRelationshipResult):
+            if result.corroboration is not None:
+                payload["corroboration"] = result.corroboration
+        else:
+            _call_service(
+                "attach_corroboration_summaries",
+                _load_local_instance(),
+                [payload],
+            )
         _emit_json(payload)
         # Direct relationship inspection carries its endpoints explicitly, so
         # the payload is edge-shaped and captures as one edge record.

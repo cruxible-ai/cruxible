@@ -6,6 +6,7 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    attest_group: Any
     add_constraint_cmd: Any
     add_decision_policy_cmd: Any
     add_entity_cmd: Any
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
     ws_group: Any
 
 _COMMAND_MODULES = {
+    "attest_group": "attestations",
     "add_constraint_cmd": "mutations",
     "add_decision_policy_cmd": "mutations",
     "add_entity_cmd": "mutations",
@@ -141,6 +143,7 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "attest_group",
     "add_constraint_cmd",
     "add_decision_policy_cmd",
     "add_entity_cmd",

@@ -67,6 +67,7 @@ _EDGE_PAYLOAD_KEYS: tuple[str, ...] = (
     "edge_key",
     "properties",
     "metadata",
+    "corroboration",
 )
 
 

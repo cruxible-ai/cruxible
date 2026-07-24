@@ -26,6 +26,12 @@ ProcedureTier = Literal["governed_write", "graph_write", "admin"]
 ProcedureRunStatus = Literal["started", "finalized"]
 ProcedureRunVerdict = Literal["succeeded", "failed", "refused", "budget_exceeded"]
 
+MAX_PROCEDURE_EVIDENCE_BYTES = 256 * 1024
+"""Maximum canonical JSON bytes retained for one typed procedure output."""
+
+PROCEDURE_EVIDENCE_HEAD_BYTES = 4096
+"""Bounded UTF-8 head retained for an oversized procedure output."""
+
 MAX_PROCEDURE_STEPS = 100
 """Maximum stored step definitions, counting repeat containers and nested steps once."""
 
@@ -184,6 +190,7 @@ class ProcedureDefinition(BaseModel):
     precondition: ProcedurePrecondition
     budget: ProcedureBudget
     declared_tier: ProcedureTier = "governed_write"
+    evidence_outputs: list[str] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -206,6 +213,16 @@ class ProcedureDefinition(BaseModel):
                 f"procedure steps may only use {allowed}; found disallowed kinds {disallowed}"
             )
         _validate_unique_step_ids(self.steps, context="procedure steps")
+        if self.evidence_outputs is not None:
+            if len(set(self.evidence_outputs)) != len(self.evidence_outputs):
+                raise ValueError("evidence_outputs must not contain duplicate aliases")
+            available_outputs = {
+                step.as_ if isinstance(step, ProcedureRepeatStepSchema) else (step.as_ or step.id)
+                for step in self.steps
+            }
+            unknown = sorted(set(self.evidence_outputs) - available_outputs)
+            if unknown:
+                raise ValueError(f"evidence_outputs references unknown step aliases: {unknown}")
 
         expansion = self.static_expansion()
         refusals: list[str] = []
@@ -341,6 +358,30 @@ class ProcedureExecutionResult(BaseModel):
     output: Any
     receipt: Receipt
     step_outputs: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+
+
+class ProcedureEvidenceArtifact(BaseModel):
+    """Chunkless digest-addressed typed JSON persisted from one run output."""
+
+    artifact_id: str
+    content_digest: str
+    byte_count: int = Field(ge=0)
+    payload: Any | None = None
+    truncated_head: str | None = None
+    oversized: bool = False
+    created_at: datetime = Field(default_factory=utc_now)
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="after")
+    def validate_storage_shape(self) -> ProcedureEvidenceArtifact:
+        if self.oversized:
+            if self.payload is not None or self.truncated_head is None:
+                raise ValueError("oversized procedure evidence stores only a truncated head")
+        elif self.truncated_head is not None:
+            raise ValueError("non-oversized procedure evidence cannot have a truncated head")
+        return self
 
 
 def compute_procedure_definition_digest(definition: ProcedureDefinition) -> str:
@@ -378,11 +419,14 @@ def _workflow_references(value: Any) -> list[str]:
 __all__ = [
     "MAX_PROCEDURE_EXPANDED_PROVIDER_CALLS",
     "MAX_PROCEDURE_EXPANDED_STEPS",
+    "MAX_PROCEDURE_EVIDENCE_BYTES",
     "MAX_PROCEDURE_REPEAT_ATTEMPTS",
     "MAX_PROCEDURE_STEPS",
+    "PROCEDURE_EVIDENCE_HEAD_BYTES",
     "ProcedureBudget",
     "ProcedureBudgetSpent",
     "ProcedureDefinition",
+    "ProcedureEvidenceArtifact",
     "ProcedureExecutionResult",
     "ProcedurePrecondition",
     "ProcedureRecord",

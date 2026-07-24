@@ -3,6 +3,7 @@
 Verifies that Literal params produce enum constraints, typed returns
 produce outputSchema, and errors propagate as ToolError.
 """
+# mypy: disable-error-code="no-untyped-def,no-untyped-call"
 
 from __future__ import annotations
 
@@ -538,6 +539,7 @@ class TestOutputSchema:
                     "edge_key",
                     "properties",
                     "metadata",
+                    "corroboration",
                 },
             ),
         ],

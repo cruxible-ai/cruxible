@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, NoReturn
@@ -17,9 +18,13 @@ from cruxible_core.errors import (
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
+from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.types import (
+    MAX_PROCEDURE_EVIDENCE_BYTES,
+    PROCEDURE_EVIDENCE_HEAD_BYTES,
     ProcedureBudgetSpent,
     ProcedureDefinition,
+    ProcedureEvidenceArtifact,
     ProcedureExecutionResult,
     ProcedurePrecondition,
     ProcedureRecord,
@@ -648,12 +653,72 @@ def service_run_procedure(
         executed_lock_digest=plan.lock_digest,
         error=None,
     )
+    evidence_refs = _persist_procedure_evidence_outputs(
+        instance,
+        procedure=procedure,
+        run=finalized_run,
+        receipt=receipt,
+        output=execution.output,
+        step_outputs=execution.step_outputs,
+    )
     return ProcedureExecutionResult(
         procedure=procedure,
         run=finalized_run,
         output=execution.output,
         receipt=receipt,
         step_outputs=execution.step_outputs,
+        evidence_refs=evidence_refs,
+    )
+
+
+def _persist_procedure_evidence_outputs(
+    instance: InstanceProtocol,
+    *,
+    procedure: ProcedureRecord,
+    run: ProcedureRun,
+    receipt: Receipt,
+    output: Any,
+    step_outputs: Mapping[str, Any],
+) -> list[EvidenceRef]:
+    """Persist only the definition-approved typed outputs as whole artifacts."""
+    declared = procedure.definition.evidence_outputs
+    selected = (
+        [(procedure.definition.returns, output)]
+        if declared is None
+        else [(alias, step_outputs[alias]) for alias in declared]
+    )
+    if not selected:
+        return []
+    with instance.write_transaction() as uow:
+        for output_alias, value in selected:
+            artifact = _procedure_evidence_artifact(value)
+            uow.procedures.save_evidence_artifact(artifact)
+            uow.procedures.link_run_evidence(
+                run_id=run.run_id,
+                output_alias=output_alias,
+                artifact_id=artifact.artifact_id,
+                receipt_id=receipt.receipt_id,
+            )
+        return uow.procedures.list_run_evidence_refs(run.run_id)
+
+
+def _procedure_evidence_artifact(value: Any) -> ProcedureEvidenceArtifact:
+    canonical = canonical_json(value)
+    encoded = canonical.encode("utf-8")
+    digest_hex = hashlib.sha256(encoded).hexdigest()
+    content_digest = f"sha256:{digest_hex}"
+    oversized = len(encoded) > MAX_PROCEDURE_EVIDENCE_BYTES
+    return ProcedureEvidenceArtifact(
+        artifact_id=f"PJA-{digest_hex}",
+        content_digest=content_digest,
+        byte_count=len(encoded),
+        payload=None if oversized else value,
+        truncated_head=(
+            encoded[:PROCEDURE_EVIDENCE_HEAD_BYTES].decode("utf-8", errors="replace")
+            if oversized
+            else None
+        ),
+        oversized=oversized,
     )
 
 

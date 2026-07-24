@@ -11,6 +11,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
 
+from cruxible_core.attestation.store import AttestationStore
 from cruxible_core.decision.store import DecisionStore
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.governance.actors import dump_actor_context, load_actor_context
@@ -180,6 +181,8 @@ _AUDIT_ONLY_TABLES = frozenset(
         "receipt_entities",
         "execution_traces",
         "procedure_runs",
+        "procedure_evidence_artifacts",
+        "procedure_run_evidence",
         "decision_events",
         "instance_state",
         "storage_migrations",
@@ -708,6 +711,11 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
             connection=self._conn,
             initialize_schema=False,
         )
+        self.attestations = AttestationStore(
+            self.db_path,
+            connection=self._conn,
+            initialize_schema=False,
+        )
         self.decisions = DecisionStore(
             self.db_path,
             connection=self._conn,
@@ -900,6 +908,7 @@ class SQLiteStorageBackend:
         FeedbackStore(self.db_path, connection=conn)
         GroupStore(self.db_path, connection=conn)
         ProcedureStore(self.db_path, connection=conn)
+        AttestationStore(self.db_path, connection=conn)
         DecisionStore(self.db_path, connection=conn)
         SQLiteSourceArtifactStore(self.db_path, connection=conn)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):

@@ -270,6 +270,22 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need invocation history or crash-visible started tombstones "
         "for one procedure."
     ),
+    "cruxible_attest": (
+        "Use when you observed evidence supporting, contradicting, or leaving you "
+        "unsure about one relationship claim. Supply evidence for support or "
+        "contradict; a note is optional but encouraged for unsure."
+    ),
+    "cruxible_list_attestations": (
+        "Use when you need immutable observation history for one claim tuple or stance."
+    ),
+    "cruxible_attestation_queue": (
+        "Use when a reviewer needs live claims with open current-content "
+        "contradictions, aggregated per claim."
+    ),
+    "cruxible_resolve_attestation": (
+        "Use when a reviewer needs to uphold, correct, or invalidate an attestation "
+        "without changing its immutable history."
+    ),
     "cruxible_propose_group": (
         "Use when you need to create a review group for candidate relationship changes."
     ),

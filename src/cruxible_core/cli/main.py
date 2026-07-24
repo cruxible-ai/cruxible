@@ -830,6 +830,33 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         module="groups",
         attr="group_group",
     ),
+    "attest": _group(
+        "Record and review observations against relationship claims.",
+        {
+            "record": _command(
+                "attestations",
+                "attest_record",
+                "Record one observation against a relationship claim.",
+            ),
+            "list": _command(
+                "attestations",
+                "attest_list",
+                "List immutable attestation history.",
+            ),
+            "queue": _command(
+                "attestations",
+                "attest_queue",
+                "List live claims with open current-content contradictions.",
+            ),
+            "resolve": _command(
+                "attestations",
+                "attest_resolve",
+                "Append a reviewer disposition to one attestation.",
+            ),
+        },
+        module="attestations",
+        attr="attest_group",
+    ),
     "procedure": _group(
         "Manage governed executable procedures. Workflows are designed; procedures are learned.",
         {
@@ -847,7 +874,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "resolve": _command(
                 "procedures",
                 "procedure_resolve",
-                "Promote or reject one pending procedure.",
+                "Accept or reject one pending procedure.",
             ),
             "retire": _command("procedures", "procedure_retire", "Retire one live procedure."),
             "run": _command(

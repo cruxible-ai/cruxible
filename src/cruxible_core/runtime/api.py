@@ -8,6 +8,7 @@ import logging
 import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
@@ -72,6 +73,7 @@ from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.service import (
     AnalyzeFeedbackResult,
     AnalyzeOutcomesResult,
+    attach_corroboration_summaries,
     query_definition_full_payload,
     query_definition_summary_payload,
     resolve_contained_source_path,
@@ -84,6 +86,8 @@ from cruxible_core.service import (
     service_analyze_feedback,
     service_analyze_outcomes,
     service_apply_workflow,
+    service_attest,
+    service_attestation_queue,
     service_backup_instance,
     service_batch_direct_write,
     service_clone_snapshot,
@@ -120,6 +124,7 @@ from cruxible_core.service import (
     service_inspect_view,
     service_lint,
     service_list,
+    service_list_attestations,
     service_list_decision_events,
     service_list_decision_records,
     service_list_groups,
@@ -145,6 +150,7 @@ from cruxible_core.service import (
     service_reject_procedure,
     service_reload_config,
     service_relocate_instance,
+    service_resolve_attestation,
     service_resolve_feedback_query_target,
     service_resolve_group,
     service_restore_instance,
@@ -184,7 +190,7 @@ from cruxible_core.service.types import (
 from cruxible_core.service.types import (
     InspectNeighborhoodResult as ServiceInspectNeighborhoodResult,
 )
-from cruxible_core.temporal import format_datetime, utc_now
+from cruxible_core.temporal import format_datetime, parse_datetime, utc_now
 from cruxible_core.workflow.compiler import compute_lock_config_digest
 
 logger = logging.getLogger(__name__)
@@ -1596,6 +1602,7 @@ def query(
     include_receipt = limit is None and offset == 0
 
     return _query_tool_result(
+        instance,
         result,
         include_receipt=include_receipt,
         profile=profile,
@@ -1635,6 +1642,7 @@ def query_inline(
 
     include_receipt = limit is None
     return _query_tool_result(
+        instance,
         result,
         include_receipt=include_receipt,
         profile=profile,
@@ -1644,6 +1652,7 @@ def query_inline(
 
 
 def _query_tool_result(
+    instance: Any,
     result: QueryServiceResult,
     *,
     include_receipt: bool,
@@ -1655,6 +1664,7 @@ def _query_tool_result(
         dump_query_row(row, include_source=True, mode="json", profile=profile)
         for row in result.items
     ]
+    attach_corroboration_summaries(instance, items)
     if layout == "graph":
         # Normalize the ALREADY-BUILT row payloads (post-filter, post-paginate,
         # post-profile); every envelope field below is verbatim rows-layout
@@ -2094,6 +2104,7 @@ def list_resources(
     else:
         items = result.items
     # Item-level trimming only: the list envelope below is never profiled.
+    # service_list already joined edge summaries through one batched query.
     items = profile_list_items(items, resource_type, profile)
 
     continuation_token: str | None = None
@@ -2806,6 +2817,20 @@ def inspect_entity(
             {"properties": result.properties, "metadata": result.metadata},
             profile,
         )
+        neighborhood_edges = [
+            {
+                "relationship_type": edge.relationship_type,
+                "from_type": edge.from_type,
+                "from_id": edge.from_id,
+                "to_type": edge.to_type,
+                "to_id": edge.to_id,
+                "edge_key": edge.edge_key,
+                "properties": edge.properties,
+                "metadata": edge.metadata,
+            }
+            for edge in result.edges
+        ]
+        attach_corroboration_summaries(instance, neighborhood_edges)
         return contracts.InspectNeighborhoodResult(
             found=result.found,
             entity_type=result.entity_type,
@@ -2827,21 +2852,9 @@ def inspect_entity(
             ],
             edges=[
                 contracts.NeighborhoodEdgeResult.model_validate(
-                    neighborhood_edge_payload(
-                        {
-                            "relationship_type": edge.relationship_type,
-                            "from_type": edge.from_type,
-                            "from_id": edge.from_id,
-                            "to_type": edge.to_type,
-                            "to_id": edge.to_id,
-                            "edge_key": edge.edge_key,
-                            "properties": edge.properties,
-                            "metadata": edge.metadata,
-                        },
-                        profile,
-                    )
+                    neighborhood_edge_payload(edge, profile)
                 )
-                for edge in result.edges
+                for edge in neighborhood_edges
             ],
             truncated=result.truncated,
             truncation_reasons=list(result.truncation_reasons),
@@ -2855,6 +2868,24 @@ def inspect_entity(
         {"properties": result.properties, "metadata": result.metadata},
         profile,
     )
+    neighbor_payloads = []
+    for neighbor in result.neighbors:
+        other = neighbor.entity
+        assert other is not None
+        payload = {
+            "relationship_type": neighbor.relationship_type,
+            "from_type": entity_type if neighbor.direction == "outgoing" else other.entity_type,
+            "from_id": entity_id if neighbor.direction == "outgoing" else other.entity_id,
+            "to_type": other.entity_type if neighbor.direction == "outgoing" else entity_type,
+            "to_id": other.entity_id if neighbor.direction == "outgoing" else entity_id,
+            "edge_key": neighbor.edge_key,
+            "properties": neighbor.properties,
+            "metadata": neighbor.metadata,
+            "direction": neighbor.direction,
+            "entity": other.model_dump(mode="json"),
+        }
+        neighbor_payloads.append(payload)
+    attach_corroboration_summaries(instance, neighbor_payloads)
     return contracts.InspectEntityResult(
         found=result.found,
         entity_type=result.entity_type,
@@ -2863,21 +2894,9 @@ def inspect_entity(
         metadata=entity_payload["metadata"],
         neighbors=[
             contracts.InspectNeighborResult.model_validate(
-                profile_inspect_neighbor(
-                    {
-                        "direction": neighbor.direction,
-                        "relationship_type": neighbor.relationship_type,
-                        "edge_key": neighbor.edge_key,
-                        "properties": neighbor.properties,
-                        "metadata": neighbor.metadata,
-                        "entity": (
-                            neighbor.entity.model_dump(mode="json") if neighbor.entity else {}
-                        ),
-                    },
-                    profile,
-                )
+                profile_inspect_neighbor(neighbor, profile)
             )
-            for neighbor in result.neighbors
+            for neighbor in neighbor_payloads
         ],
         total_neighbors=result.total_neighbors,
         read_revision=read_revision,
@@ -3517,6 +3536,18 @@ def get_relationship(
             to_type=to_type,
             to_id=to_id,
         )
+    relationship_payload = {
+        "relationship_type": relationship.relationship_type,
+        "from_type": relationship.from_type,
+        "from_id": relationship.from_id,
+        "to_type": relationship.to_type,
+        "to_id": relationship.to_id,
+        "edge_key": relationship.edge_key,
+        "properties": relationship.properties,
+        "metadata": relationship.metadata.model_dump(mode="json", exclude_none=True),
+    }
+    attach_corroboration_summaries(instance, [relationship_payload])
+    corroboration = relationship_payload.get("corroboration")
     return contracts.GetRelationshipResult(
         found=True,
         from_type=relationship.from_type,
@@ -3527,6 +3558,7 @@ def get_relationship(
         edge_key=relationship.edge_key,
         properties=relationship.properties,
         metadata=relationship.metadata.model_dump(mode="json", exclude_none=True),
+        corroboration=corroboration if isinstance(corroboration, dict) else None,
     )
 
 
@@ -3551,11 +3583,14 @@ def get_relationship_lineage(
         to_id=to_id,
         edge_key=edge_key,
     )
+    relationship_payload = (
+        result.relationship.model_dump(mode="json") if result.relationship is not None else None
+    )
+    if relationship_payload is not None:
+        attach_corroboration_summaries(instance, [relationship_payload])
     return contracts.RelationshipLineageResult(
         found=result.found,
-        relationship=(
-            result.relationship.model_dump(mode="json") if result.relationship is not None else None
-        ),
+        relationship=(relationship_payload),
         provenance=result.provenance,
         group=result.group.model_dump(mode="json") if result.group is not None else None,
         resolution=(
@@ -3577,6 +3612,171 @@ def _procedure_transition_payload(result: ProcedureTransitionResult) -> dict[str
         "procedure": _procedure_record_payload(result.procedure),
         "receipt_id": result.receipt_id,
     }
+
+
+def attest(
+    instance_id: str,
+    *,
+    relationship_type: str,
+    from_type: str,
+    from_id: str,
+    to_type: str,
+    to_id: str,
+    stance: contracts.AttestationStance,
+    evidence_refs: Sequence[contracts.EvidenceRef | dict[str, Any]],
+    observed_at: str | datetime,
+    edge_key: int | None = None,
+    properties: dict[str, Any] | None = None,
+    note: str | None = None,
+    idempotency_key: str | None = None,
+    actor_context: Any | None = None,
+) -> contracts.AttestationRecordResult:
+    """Record one attributed observation against a tuple-first claim."""
+    check_permission("cruxible_attest", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
+    parsed_observed_at = parse_datetime(observed_at)
+    if parsed_observed_at is None:
+        raise ConfigError("observed_at is required")
+    parsed_evidence = [
+        ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
+        for ref in evidence_refs
+    ]
+    result = service_attest(
+        get_manager().get(instance_id),
+        relationship_type=relationship_type,
+        from_type=from_type,
+        from_id=from_id,
+        to_type=to_type,
+        to_id=to_id,
+        stance=stance,
+        evidence_refs=parsed_evidence,
+        observed_at=parsed_observed_at,
+        actor_context=actor,
+        edge_key=edge_key,
+        properties=properties,
+        note=note,
+        idempotency_key=idempotency_key,
+    )
+    return contracts.AttestationRecordResult(
+        attestation=result.attestation.model_dump(mode="json", exclude_none=True),
+        created_claim=result.created_claim,
+        idempotent_replay=result.idempotent_replay,
+        warnings=result.warnings,
+        receipt_id=result.receipt_id,
+    )
+
+
+def list_attestations(
+    instance_id: str,
+    *,
+    relationship_type: str | None = None,
+    from_type: str | None = None,
+    from_id: str | None = None,
+    to_type: str | None = None,
+    to_id: str | None = None,
+    stance: contracts.AttestationStance | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.ListResult:
+    """List attestation history with current tuple-resolution markers."""
+    check_permission("cruxible_list_attestations", instance_id=instance_id)
+    claim_key = _optional_attestation_claim_key(
+        relationship_type=relationship_type,
+        from_type=from_type,
+        from_id=from_id,
+        to_type=to_type,
+        to_id=to_id,
+    )
+    instance = get_manager().get(instance_id)
+    result = service_list_attestations(
+        instance,
+        claim_key=claim_key,
+        stance=stance,
+        limit=limit,
+        offset=offset,
+    )
+    return contracts.ListResult(
+        items=[item.model_dump(mode="json", exclude_none=True) for item in result.items],
+        total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        truncated=result.truncated,
+        read_revision=result.read_revision,
+    )
+
+
+def attestation_queue(
+    instance_id: str,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.ListResult:
+    """List live claims with open current-content contradictions."""
+    check_permission("cruxible_attestation_queue", instance_id=instance_id)
+    result = service_attestation_queue(
+        get_manager().get(instance_id),
+        limit=limit,
+        offset=offset,
+    )
+    return contracts.ListResult(
+        items=[item.model_dump(mode="json", exclude_none=True) for item in result.items],
+        total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        truncated=result.truncated,
+        read_revision=result.read_revision,
+    )
+
+
+def resolve_attestation(
+    instance_id: str,
+    attestation_id: str,
+    *,
+    verdict: contracts.AttestationVerdict,
+    note: str | None = None,
+    follow_up_receipt_id: str | None = None,
+    actor_context: Any | None = None,
+) -> contracts.AttestationDispositionResult:
+    """Append an attributed reviewer disposition."""
+    check_permission("cruxible_resolve_attestation", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
+    result = service_resolve_attestation(
+        get_manager().get(instance_id),
+        attestation_id,
+        verdict=verdict,
+        actor_context=actor,
+        note=note,
+        follow_up_receipt_id=follow_up_receipt_id,
+    )
+    return contracts.AttestationDispositionResult(
+        disposition=result.disposition.model_dump(mode="json", exclude_none=True),
+        receipt_id=result.receipt_id,
+    )
+
+
+def _optional_attestation_claim_key(
+    *,
+    relationship_type: str | None,
+    from_type: str | None,
+    from_id: str | None,
+    to_type: str | None,
+    to_id: str | None,
+) -> tuple[str, str, str, str, str] | None:
+    values = (relationship_type, from_type, from_id, to_type, to_id)
+    if all(value is None for value in values):
+        return None
+    if any(value is None or not value.strip() for value in values):
+        raise ConfigError(
+            "attestation claim filter requires relationship_type, from_type, "
+            "from_id, to_type, and to_id together"
+        )
+    return (
+        cast(str, relationship_type),
+        cast(str, from_type),
+        cast(str, from_id),
+        cast(str, to_type),
+        cast(str, to_id),
+    )
 
 
 def propose_procedure(
@@ -3649,7 +3849,7 @@ def resolve_procedure(
     reason: str | None = None,
     actor_context: Any | None = None,
 ) -> dict[str, Any]:
-    """Promote or reject one pending procedure after attributed review."""
+    """Accept or reject one pending procedure after attributed review."""
     check_permission("cruxible_resolve_procedure", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
@@ -3716,6 +3916,7 @@ def run_procedure(
         "output": result.output,
         "receipt": result.receipt.model_dump(mode="json"),
         "step_outputs": result.step_outputs,
+        "evidence_refs": [ref.model_dump(mode="json") for ref in result.evidence_refs],
     }
 
 
