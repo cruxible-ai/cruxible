@@ -471,6 +471,10 @@ QUERY_RUN_STANDARD = {
         "duration_ms": "<varies>",
         "operation_type": "query",
         "head_snapshot_id": None,
+        # read_revision joined Receipt as a top-level field with the
+        # negative-experience-fidelity change (stamped on mutation receipts;
+        # None on query receipts, whose envelope carries its own read_revision).
+        "read_revision": None,
         "workflow_mode": None,
         "committed": False,
         "actor_context": None,
