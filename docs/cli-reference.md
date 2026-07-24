@@ -13,6 +13,21 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - `run` rejects proposal workflows; use `propose` for workflows that return governed relationship proposals.
 - `explain` and `export edges` are direct-local file/rendering utilities. Use receipts and list/query tools for daemon/MCP flows.
 
+## Global Options
+
+Options on the `cruxible` root group itself. They precede the command name
+(`cruxible --instance-id inst_... list entities`) and apply to every subcommand.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--version` | no | `False` | boolean | Show the version and exit. |
+| `--server-url` | no | `` | text | Remote Cruxible server base URL. |
+| `--server-socket` | no | `` | text | Local Cruxible server Unix socket path. |
+| `--instance-id` | no | `` | text | Opaque server-mode instance ID. Defaults to remembered CLI context. |
+| `--json-compact` | no | `` | boolean | Emit all CLI JSON as compact single-line output (also `CRUXIBLE_JSON_COMPACT=1`). |
+
 ## Command Word Order
 
 Operations on a specific named resource instance are noun-first:
@@ -205,6 +220,8 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 | `--props` | no | `` | text | JSON object of properties. |
 | `--set` | no | `` | text | String property assignment FIELD=VALUE. Repeat for multiple properties. |
 | `--set-json` | no | `` | text | Typed JSON property assignment FIELD=JSON. Repeat for multiple properties. |
+| `--lifecycle-status` | no | `` | choice | Typed entity lifecycle status (live, superseded, retired). |
+| `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
@@ -235,6 +252,8 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 | `--props` | no | `` | text | JSON object of properties. |
 | `--set` | no | `` | text | String property assignment FIELD=VALUE. Repeat for multiple properties. |
 | `--set-json` | no | `` | text | Typed JSON property assignment FIELD=JSON. Repeat for multiple properties. |
+| `--lifecycle-status` | no | `` | choice | Typed entity lifecycle status (live, superseded, retired). |
+| `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
@@ -399,7 +418,7 @@ table output groups nodes by depth.
 | `TO_ID` | no | `` | argument | Target entity ID. |
 | `--from-type` | no | `` | text | Source entity type, for compatibility with older noun command usage. |
 | `--from-id` | no | `` | text | Source entity ID, for compatibility with older noun command usage. |
-| `--relationship` | no | `` | text | Relationship type, for compatibility with older noun command usage. |
+| `--relationship` / `--type` | no | `` | text | Relationship type, for compatibility with older noun command usage. |
 | `--to-type` | no | `` | text | Target entity type, for compatibility with older noun command usage. |
 | `--to-id` | no | `` | text | Target entity ID, for compatibility with older noun command usage. |
 | `--props` | no | `` | text | JSON object of edge properties. |
@@ -408,6 +427,9 @@ table output groups nodes by depth.
 | `--evidence-ref` | no | `` | text | JSON evidence ref object. Repeat to attach multiple refs. |
 | `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
 | `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
+| `--pending` | no | `False` | boolean | Create the relationship as pending review instead of live state. |
+| `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status (active, inactive, superseded, retracted). Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
+| `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
@@ -452,7 +474,7 @@ cruxible relationship add \
 | `TO_ID` | no | `` | argument | Target entity ID. |
 | `--from-type` | no | `` | text | Source entity type, for compatibility with older noun command usage. |
 | `--from-id` | no | `` | text | Source entity ID, for compatibility with older noun command usage. |
-| `--relationship` | no | `` | text | Relationship type, for compatibility with older noun command usage. |
+| `--relationship` / `--type` | no | `` | text | Relationship type, for compatibility with older noun command usage. |
 | `--to-type` | no | `` | text | Target entity type, for compatibility with older noun command usage. |
 | `--to-id` | no | `` | text | Target entity ID, for compatibility with older noun command usage. |
 | `--props` | no | `` | text | JSON object of edge properties. |
@@ -461,6 +483,8 @@ cruxible relationship add \
 | `--evidence-ref` | no | `` | text | JSON evidence ref object. Repeat to attach multiple refs. |
 | `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
 | `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
+| `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status (active, inactive, superseded, retracted) -- e.g. retract a live edge. Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
+| `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
@@ -491,6 +515,7 @@ cruxible relationship add \
 | `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
 | `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
 | `--edge-key` | no | `` | integer | Edge key (multi-edge disambiguation). |
+| `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -535,6 +560,14 @@ Noun-first read of a relationship's lineage.
 
 **Purpose:** Validate or apply one structured direct graph write payload containing
 entities, relationships, and optional payload-local shared evidence.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--payload-file` | yes | `Sentinel.UNSET` | file | JSON or YAML payload containing entities, relationships, and shared_evidence. Use `-` to read stdin. |
+| `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
+| `--json` | no | `False` | boolean | Output as JSON. |
 
 **Payload Shape:**
 
@@ -694,6 +727,7 @@ shared_evidence:
 | `--bare` | no | `False` | boolean | Emit the raw selected view without Markdown wrapping. |
 | `--update-readme` | no | `Sentinel.UNSET` | file | Replace matching CRUXIBLE marker blocks in a README. |
 | `--runtime` | no | `False` | boolean | Compose extends overlays as a runtime composed view. This includes inherited ontology/query surfaces but strips upstream build-only workflows. |
+| `--composed-ontology` | no | `False` | boolean | With `--runtime` on an extends config: render the full composed ontology instead of the overlay-scoped view. |
 
 **Output And Side Effects:**
 - Produces documentation or file output; graph state is not changed.
@@ -1023,6 +1057,7 @@ shared_evidence:
 | `--trace` | no | `` | text | Trace ID. |
 | `--status` | no | `` | choice |  |
 | `--limit` | no | `100` | integer range |  |
+| `--offset` | no | `0` | integer range | Rows to skip. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1094,6 +1129,7 @@ shared_evidence:
 | `--subject-id` | no | `` | text |  |
 | `--decision-class` | no | `` | choice |  |
 | `--limit` | no | `100` | integer range |  |
+| `--offset` | no | `0` | integer range | Rows to skip. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1317,6 +1353,7 @@ findings.
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
+| `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
@@ -1869,6 +1906,7 @@ Text output labels an interrupted record as
 | --- | --- | --- | --- | --- |
 | `--config` | no | `` | text | Path to config YAML file. |
 | `--kit` | no | `` | text | Kit alias or ref to materialize; repeatable. Order is composition order: a standalone base kit first, overlay kits after. |
+| `--bare` | no | `False` | boolean | Do not compose the configured default base kit during kit init. |
 | `--root-dir` | no | `` | text | Workspace root for config/artifact provenance (defaults to current directory). |
 | `--data-dir` | no | `` | text | Directory for data files. |
 | `--bootstrap` | no | `False` | boolean | Use hosted kit init authorized by the runtime bootstrap bearer. Requires `--kit`. |
@@ -2333,6 +2371,7 @@ Text output labels an interrupted record as
 | `--workflow` | no | `` | text | Workflow name. |
 | `--surface-type` | no | `` | choice | Receipt surface type. |
 | `--surface-name` | no | `` | text | Receipt surface name. |
+| `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
@@ -2556,6 +2595,13 @@ cruxible query inline \
 **Purpose:** Distinguish authored-source drift from out-of-band edits to the active
 materialized config.
 
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | no | `` | text | Authored root config to compare with the active materialization. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
 Pass the same authored root used for reload:
 
 ```bash
@@ -2683,6 +2729,7 @@ drift exits nonzero so the command can be used by hooks and CI. Omitting
 | `--port` | no | `CRUXIBLE_PORT` or `8100` | integer | Bind port. Ignored when `--socket` is set. |
 | `--state-dir` | no | `CRUXIBLE_SERVER_STATE_DIR` or `~/.cruxible/server` | text | Server-owned state directory. |
 | `--socket` | no | `CRUXIBLE_SERVER_SOCKET` | text | Listen on this Unix socket path instead of host/port. |
+| `--capability-ceiling` | no | `CRUXIBLE_MODE` or `admin` | choice | Immutable daemon capability ceiling. Bearer credentials cannot exceed it. |
 | `--bootstrap-secret-file` | no | `` | file | Write an auto-generated runtime bootstrap secret to this file with mode 0600. |
 
 **Output And Side Effects:**
@@ -2887,7 +2934,7 @@ evidence locators.
 
 ## cruxible source get
 
-**Usage:** `cruxible source get [OPTIONS] ARTIFACT_ID`
+**Usage:** `cruxible source get [OPTIONS] SOURCE_ARTIFACT_ID`
 
 **Purpose:** Read a registered source artifact's metadata and chunk map.
 
@@ -2895,7 +2942,7 @@ evidence locators.
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
-| `ARTIFACT_ID` | yes | `Sentinel.UNSET` | text | Source artifact ID returned by `source register`. |
+| `SOURCE_ARTIFACT_ID` | yes | `Sentinel.UNSET` | text | Source artifact ID returned by `source register`. |
 | `--chunks / --no-chunks` | no | `True` | boolean | Show or hide the chunk metadata table in human output. |
 | `--json` | no | `False` | boolean | Output the full read contract payload as JSON, including chunk text when available. |
 

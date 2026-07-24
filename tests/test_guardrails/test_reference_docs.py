@@ -6,6 +6,7 @@ import asyncio
 import re
 from pathlib import Path
 
+import click
 import pytest
 
 from cruxible_core.cli.main import cli
@@ -65,6 +66,124 @@ def test_cli_reference_lists_every_click_command() -> None:
     )
     assert missing == []
     assert stale == []
+
+
+def _walk_cli_command_objects(
+    command: click.Command,
+    prefix: tuple[str, ...] = (),
+) -> list[tuple[str, click.Command]]:
+    rows: list[tuple[str, click.Command]] = []
+    if isinstance(command, click.Group):
+        for name, subcommand in sorted(command.commands.items()):
+            path = prefix + (name,)
+            rows.append(("cruxible " + " ".join(path), subcommand))
+            rows.extend(_walk_cli_command_objects(subcommand, path))
+    return rows
+
+
+_LONG_OPTION = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*")
+
+
+def _documented_params(body: str) -> tuple[set[str], list[str]] | None:
+    """Split an ``Options And Arguments`` table into (long options, arguments).
+
+    Returns ``None`` when the section has no table at all. The first column is
+    a back-ticked name cell: option cells hold one or more long flags (aliases
+    and ``--flag`` / ``--no-flag`` pairs share one row), argument cells hold a
+    bare metavar. Only names are read here — the Required/Default/Type/
+    Description columns are prose and deliberately unpinned.
+    """
+    table = re.search(
+        r"^\*\*Options And Arguments:\*\*\s*$\n(?P<body>.*?)(?=^\*\*|\Z)",
+        body,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if table is None:
+        return None
+    options: set[str] = set()
+    arguments: list[str] = []
+    for line in table.group("body").splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cell = line.split("|")[1].strip()
+        if not cell.startswith("`"):
+            continue
+        flags = _LONG_OPTION.findall(cell)
+        if flags:
+            options.update(flags)
+        else:
+            arguments.append(cell.strip("`").strip())
+    return options, arguments
+
+
+def _click_params(command: click.Command) -> tuple[set[str], set[str], list[str]]:
+    """Return (visible long options, hidden long options, argument names)."""
+    visible: set[str] = set()
+    hidden: set[str] = set()
+    arguments: list[str] = []
+    for param in command.params:
+        if isinstance(param, click.Argument):
+            arguments.append(param.name or "")
+            continue
+        flags = set(_LONG_OPTION.findall(" ".join([*param.opts, *param.secondary_opts])))
+        if getattr(param, "hidden", False):
+            hidden |= flags
+        else:
+            visible |= flags
+    return visible, hidden, arguments
+
+
+def test_cli_reference_documents_every_click_option_and_argument() -> None:
+    """Every click option/argument has a row in its ``cruxible ...`` section.
+
+    Granularity is deliberately name-only: long option flags are compared as a
+    set and positional arguments as an ordered, case-insensitive list against
+    the click parameter names. Help strings, defaults, types, and the Required
+    column are NOT pinned, so tweaking help text stays a one-file change while
+    adding, renaming, or removing a flag stays a two-file change.
+
+    Hidden options may be documented but are not required to be; every visible
+    one must be. A command that grows its first option also has to grow an
+    ``**Options And Arguments:**`` table.
+    """
+    text = Path("docs/cli-reference.md").read_text()
+    problems: list[str] = []
+
+    root_options, _, _ = _click_params(cli)
+    documented_root = _documented_params(_section(text, "Global Options"))
+    assert documented_root is not None, (
+        "docs/cli-reference.md Global Options section has no options table"
+    )
+    if documented_root[0] != root_options:
+        problems.append(
+            f"cruxible (root group): undocumented {sorted(root_options - documented_root[0])}, "
+            f"documented-but-absent {sorted(documented_root[0] - root_options)}"
+        )
+
+    for heading, command in _walk_cli_command_objects(cli):
+        visible, hidden, arguments = _click_params(command)
+        documented = _documented_params(_section(text, heading))
+        if documented is None:
+            if visible or arguments:
+                problems.append(f"{heading}: has parameters but no Options And Arguments table")
+            continue
+        documented_options, documented_arguments = documented
+        undocumented = sorted(visible - documented_options)
+        unknown = sorted(documented_options - visible - hidden)
+        if undocumented:
+            problems.append(f"{heading}: options in click, not in the doc: {undocumented}")
+        if unknown:
+            problems.append(f"{heading}: options in the doc, not in click: {unknown}")
+        if [name.lower() for name in documented_arguments] != arguments:
+            problems.append(
+                f"{heading}: argument rows {documented_arguments} do not match "
+                f"click arguments {[name.upper() for name in arguments]}"
+            )
+
+    assert problems == [], "docs/cli-reference.md drifted from the click CLI:\n" + "\n".join(
+        problems
+    )
 
 
 def test_mcp_reference_lists_every_registered_tool_and_input_property() -> None:

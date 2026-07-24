@@ -40,6 +40,24 @@ from cruxible_core.storage.sqlite import (
     SQLiteGraphRepository,
 )
 
+# Modules permitted to ``import sqlite3`` directly. Everything else must go
+# through the storage backend. Store modules are the common addition here;
+# ``tests/test_guardrails/test_store_registration.py`` reads this same set so a
+# new ``<domain>/store.py`` cannot silently skip it.
+DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
+    {
+        Path("src/cruxible_core/storage/sqlite.py"),
+        Path("src/cruxible_core/receipt/store.py"),
+        Path("src/cruxible_core/feedback/store.py"),
+        Path("src/cruxible_core/group/store.py"),
+        Path("src/cruxible_core/procedure/store.py"),
+        Path("src/cruxible_core/attestation/store.py"),
+        Path("src/cruxible_core/decision/store.py"),
+        Path("src/cruxible_core/server/registry.py"),
+        Path("src/cruxible_core/server/credentials.py"),
+    }
+)
+
 
 @pytest.fixture
 def initialized_instance(tmp_path: Path) -> CruxibleInstance:
@@ -666,17 +684,7 @@ def test_instance_store_getters_are_not_used_for_direct_writes() -> None:
 
 
 def test_no_direct_sqlite_imports_outside_storage_implementation() -> None:
-    allowed = {
-        Path("src/cruxible_core/storage/sqlite.py"),
-        Path("src/cruxible_core/receipt/store.py"),
-        Path("src/cruxible_core/feedback/store.py"),
-        Path("src/cruxible_core/group/store.py"),
-        Path("src/cruxible_core/procedure/store.py"),
-        Path("src/cruxible_core/attestation/store.py"),
-        Path("src/cruxible_core/decision/store.py"),
-        Path("src/cruxible_core/server/registry.py"),
-        Path("src/cruxible_core/server/credentials.py"),
-    }
+    allowed = DIRECT_SQLITE_IMPORT_ALLOWLIST
     offenders: list[str] = []
     for path in Path("src/cruxible_core").rglob("*.py"):
         tree = ast.parse(path.read_text())
