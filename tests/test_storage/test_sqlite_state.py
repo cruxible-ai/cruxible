@@ -44,6 +44,8 @@ from cruxible_core.storage.sqlite import (
 # through the storage backend. Store modules are the common addition here;
 # ``tests/test_guardrails/test_store_registration.py`` reads this same set so a
 # new ``<domain>/store.py`` cannot silently skip it.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
     {
         Path("src/cruxible_core/storage/sqlite.py"),
@@ -686,14 +688,16 @@ def test_instance_store_getters_are_not_used_for_direct_writes() -> None:
 def test_no_direct_sqlite_imports_outside_storage_implementation() -> None:
     allowed = DIRECT_SQLITE_IMPORT_ALLOWLIST
     offenders: list[str] = []
-    for path in Path("src/cruxible_core").rglob("*.py"):
+    scanned = sorted((_REPO_ROOT / "src" / "cruxible_core").rglob("*.py"))
+    assert len(scanned) > 100, f"source scan found only {len(scanned)} files - glob root is wrong"
+    for path in scanned:
         tree = ast.parse(path.read_text())
         has_sqlite_import = any(
             (isinstance(node, ast.Import) and any(alias.name == "sqlite3" for alias in node.names))
             or (isinstance(node, ast.ImportFrom) and node.module == "sqlite3")
             for node in ast.walk(tree)
         )
-        if has_sqlite_import and path not in allowed:
+        if has_sqlite_import and path.relative_to(_REPO_ROOT) not in allowed:
             offenders.append(str(path))
 
     assert offenders == []

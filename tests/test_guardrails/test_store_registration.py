@@ -20,7 +20,8 @@ from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.storage import sqlite as sqlite_backend
 from cruxible_core.storage.protocols import UnitOfWorkProtocol
 
-SRC_ROOT = Path("src/cruxible_core")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SRC_ROOT = REPO_ROOT / "src" / "cruxible_core"
 SQLITE_BACKEND_PATH = SRC_ROOT / "storage" / "sqlite.py"
 RUNTIME_INSTANCE_PATH = SRC_ROOT / "runtime" / "instance.py"
 
@@ -49,7 +50,11 @@ Offending modules and the step they missed:"""
 
 
 def _store_modules() -> list[Path]:
-    return sorted(SRC_ROOT.glob("*/store.py"))
+    modules = sorted(SRC_ROOT.glob("*/store.py"))
+    # Non-vacuity floor: discovery finding fewer modules than the known set
+    # means the glob root is wrong, not that stores disappeared.
+    assert len(modules) >= 7, f"store discovery found only {len(modules)} modules under {SRC_ROOT}"
+    return modules
 
 
 def _imports_sqlite3(path: Path) -> bool:
@@ -157,7 +162,10 @@ def test_every_store_module_completes_the_registration_checklist() -> None:
             problems.append(f"{path}: (1) defines no *Store/*StoreProtocol type")
             continue
 
-        if _imports_sqlite3(path) and path not in DIRECT_SQLITE_IMPORT_ALLOWLIST:
+        if (
+            _imports_sqlite3(path)
+            and path.relative_to(REPO_ROOT) not in DIRECT_SQLITE_IMPORT_ALLOWLIST
+        ):
             problems.append(f"{path}: (2) imports sqlite3 but is not in the allowlist")
 
         # A slot belongs to this module when either the protocol it is typed as
@@ -214,7 +222,7 @@ def test_direct_sqlite_import_allowlist_has_no_stale_entries() -> None:
     """Every allowlisted path exists and still imports sqlite3 directly."""
     stale = sorted(
         str(path)
-        for path in DIRECT_SQLITE_IMPORT_ALLOWLIST
+        for path in (REPO_ROOT / entry for entry in DIRECT_SQLITE_IMPORT_ALLOWLIST)
         if not path.exists() or not _imports_sqlite3(path)
     )
     assert stale == [], (
