@@ -21,6 +21,11 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.receipt.builder import ReceiptBuilder
+from cruxible_core.receipt.mutation_payloads import (
+    MAX_RETAINED_PAYLOAD_BYTES,
+    RETAINED_PAYLOAD_HEAD_BYTES,
+    retain_mutation_payload,
+)
 from cruxible_core.receipt.types import Receipt, ReceiptNode
 from cruxible_core.service import (
     BatchDirectWriteInput,
@@ -91,6 +96,58 @@ mutation_guards:
 """
 
 
+GUARD_ERROR_CONFIG_YAML = """\
+version: "1.0"
+name: negative_experience_guard_errors
+
+entity_types:
+  WorkItem:
+    properties:
+      work_item_id:
+        type: string
+        primary_key: true
+      status:
+        type: string
+  Review:
+    properties:
+      review_id:
+        type: string
+        primary_key: true
+      status:
+        type: string
+
+relationships:
+  - name: review_approves_work_item
+    from: Review
+    to: WorkItem
+
+named_queries:
+  approved_review_for_work_item:
+    mode: traversal
+    entry_point: WorkItem
+    traversal:
+      - relationship: review_approves_work_item
+        direction: incoming
+        where:
+          candidate.properties.status:
+            eq: approved
+    returns: list[Review]
+    result_shape: entity
+
+mutation_guards:
+  - name: closed_requires_prior_state_lookup
+    entity_type: WorkItem
+    property: status
+    new_value: closed
+    condition:
+      type: query
+      query_name: approved_review_for_work_item
+      params:
+        work_item_id: "$current.properties.work_item_id"
+      min_count: 1
+"""
+
+
 @pytest.fixture
 def instance(tmp_path: Path) -> CruxibleInstance:
     (tmp_path / "config.yaml").write_text(dedent(GUARD_CONFIG_YAML))
@@ -152,6 +209,18 @@ def _guard_refusal_nodes(receipt: Receipt) -> list[ReceiptNode]:
 
 def _guard_pass_nodes(receipt: Receipt) -> list[ReceiptNode]:
     return [node for node in receipt.nodes if "guard_passed" in node.detail]
+
+
+def _proposal_node(receipt: Receipt) -> ReceiptNode:
+    nodes = [node for node in receipt.nodes if node.node_type == "proposal"]
+    assert len(nodes) == 1
+    return nodes[0]
+
+
+def _proposal_body(receipt: Receipt) -> dict[str, Any]:
+    body = _proposal_node(receipt).detail["proposal"]
+    assert isinstance(body, dict)
+    return body
 
 
 class TestStructuredGuardRefusalNodes:
@@ -279,6 +348,71 @@ class TestRelationshipGuardRefusalCoordinates:
             store.close()
 
 
+class TestGuardEvaluatorErrorRefusals:
+    """A refusal nobody can attribute must still be joinable to its subject.
+
+    Guard-EVALUATION errors (an unresolvable ``$current`` reference on a create,
+    say) are routed through ``GuardEvaluation.from_messages``: there is no guard
+    to name and no coordinates to lift off the condition, so the refusal nodes
+    are deliberately unattributed. Fabricating a guard name would be a lie; what
+    makes the receipt findable instead is the PROPOSAL node's subjects.
+    """
+
+    @pytest.fixture
+    def guard_error_instance(self, tmp_path: Path) -> CruxibleInstance:
+        (tmp_path / "config.yaml").write_text(dedent(GUARD_ERROR_CONFIG_YAML))
+        return CruxibleInstance.init(tmp_path, "config.yaml")
+
+    def _refuse_born_closed(self, instance: CruxibleInstance) -> str:
+        with pytest.raises(
+            DataValidationError, match="Missing mutation guard param reference"
+        ) as excinfo:
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-born-closed",
+                        properties={"work_item_id": "wi-born-closed", "status": "closed"},
+                    )
+                ],
+            )
+        receipt_id = excinfo.value.mutation_receipt_id
+        assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
+        assert receipt_id is not None
+        return receipt_id
+
+    def test_evaluator_error_refusal_is_joinable_from_its_subject(
+        self, guard_error_instance: CruxibleInstance
+    ) -> None:
+        receipt_id = self._refuse_born_closed(guard_error_instance)
+        store = guard_error_instance.get_receipt_store()
+        try:
+            found = store.get_receipts_for_entity("WorkItem", "wi-born-closed")
+        finally:
+            store.close()
+        assert receipt_id in found
+
+    def test_evaluator_error_refusal_names_no_guard_but_keeps_the_proposal(
+        self, guard_error_instance: CruxibleInstance
+    ) -> None:
+        receipt = _load_receipt(
+            guard_error_instance, self._refuse_born_closed(guard_error_instance)
+        )
+        assert receipt.committed is False
+        refusals = _guard_refusal_nodes(receipt)
+        assert refusals
+        # Honest: no guard is attributed, because none can be.
+        assert all("guard_name" not in node.detail for node in refusals)
+        assert all(node.entity_type is None for node in refusals)
+        # The proposal carries the coordinates and the body instead.
+        body = _proposal_body(receipt)
+        assert body["entities"][0]["properties"]["status"] == "closed"
+        assert _proposal_node(receipt).detail["subjects"] == [
+            {"entity_type": "WorkItem", "entity_id": "wi-born-closed"}
+        ]
+
+
 class TestSuccessSideGuardAnnotation:
     def test_permitting_guard_is_recorded_with_coordinates(
         self, instance: CruxibleInstance
@@ -348,24 +482,170 @@ class TestSuccessSideGuardAnnotation:
         assert _guard_pass_nodes(receipt) == []
 
 
-class TestRefusalRetentionFloor:
-    def test_refused_proposal_body_survives_metadata_retention(
+class TestRefusedProposalBody:
+    """What a refusal retains must be the thing that was refused.
+
+    The receipt's ``parameters`` are a SUMMARY the call site opens the receipt
+    with (``{"count": 1}``), and the nodes carrying proposed properties are
+    recorded only after the guards pass. Retaining the summary in full retains
+    nothing: the proposal itself has to be on the receipt before any guard runs.
+    """
+
+    def test_refused_proposal_equals_the_submitted_payload(
         self, instance: CruxibleInstance
     ) -> None:
         assert instance.load_config().runtime.mutation_payloads == "metadata"
         receipt = _load_receipt(instance, _refuse_head_change(instance))
 
-        # The refused proposal body is intact, not reduced to a digest marker.
+        submitted = EntityInstance(
+            entity_type="Review",
+            entity_id="rev-1",
+            properties={"review_id": "rev-1", "status": "approved", "head": "sha-b"},
+        )
+        assert _proposal_body(receipt) == {
+            "operation": "add_entity",
+            "entities": [
+                {
+                    "entity_type": "Review",
+                    "entity_id": "rev-1",
+                    "properties": submitted.properties,
+                    "metadata": submitted.metadata.model_dump(mode="json"),
+                }
+            ],
+        }
+
+    def test_refused_proposal_survives_metadata_retention(self, instance: CruxibleInstance) -> None:
+        """The refusal floor covers the proposal, not only the summary parameters."""
+        receipt = _load_receipt(instance, _refuse_head_change(instance))
+        node = _proposal_node(receipt)
+        assert "_cruxible_payload_omitted" not in node.detail["proposal"]
+        assert node.payload_metadata is not None
+        assert node.payload_metadata.retention == "full"
+        assert node.payload_metadata.stored_inline is True
+        assert node.payload_metadata.truncated is False
+        # The digest is still stamped, exactly as under every other mode.
+        assert node.payload_metadata.payload_digest.startswith("sha256:")
+
+        # The summary parameters keep their own floor.
         assert "_cruxible_payload_omitted" not in receipt.parameters
         assert receipt.parameters == {"count": 1}
-        root = receipt.nodes[0]
-        assert root.node_type == "mutation"
-        assert root.detail["parameters"] == {"count": 1}
-        assert root.payload_metadata is not None
-        assert root.payload_metadata.retention == "full"
-        assert root.payload_metadata.stored_inline is True
-        # The digest is still stamped, exactly as under every other mode.
-        assert root.payload_metadata.payload_digest.startswith("sha256:")
+
+    def test_proposal_records_every_batch_member(self, instance: CruxibleInstance) -> None:
+        """A refusal on one member must not shed the members it travelled with."""
+        _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-a"})
+        with pytest.raises(DataValidationError) as excinfo:
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="Review",
+                        entity_id="rev-1",
+                        properties={"review_id": "rev-1", "status": "approved", "head": "sha-b"},
+                    ),
+                    EntityWriteInput(
+                        entity_type="Review",
+                        entity_id="rev-2",
+                        properties={"review_id": "rev-2", "status": "requested"},
+                    ),
+                ],
+            )
+        receipt_id = excinfo.value.mutation_receipt_id
+        assert receipt_id is not None
+        body = _proposal_body(_load_receipt(instance, receipt_id))
+        assert [member["entity_id"] for member in body["entities"]] == ["rev-1", "rev-2"]
+        assert body["entities"][1]["properties"] == {
+            "review_id": "rev-2",
+            "status": "requested",
+        }
+
+    def test_edge_proposal_carries_endpoints_and_evidence(
+        self, edge_guard_instance: CruxibleInstance
+    ) -> None:
+        with pytest.raises(DataValidationError) as excinfo:
+            service_add_relationship_inputs(
+                edge_guard_instance,
+                [
+                    RelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-1",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        properties={"note": "hand-checked"},
+                        evidence_rationale="looks right",
+                    )
+                ],
+                source="test",
+                source_ref="negative_experience_edge_refusal",
+            )
+        receipt_id = excinfo.value.mutation_receipt_id
+        assert receipt_id is not None
+        body = _proposal_body(_load_receipt(edge_guard_instance, receipt_id))
+        assert body["operation"] == "add_relationship"
+        assert body["source"] == "test"
+        assert body["source_ref"] == "negative_experience_edge_refusal"
+        member = body["relationships"][0]
+        assert member["from_type"] == "Part"
+        assert member["from_id"] == "BP-1"
+        assert member["to_type"] == "Vehicle"
+        assert member["to_id"] == "V-1"
+        assert member["relationship"] == "fits"
+        assert member["properties"] == {"note": "hand-checked"}
+        # The evidence that FAILED the guard is exactly what the refusal is about.
+        assert member["metadata"]["evidence"]["rationale"] == "looks right"
+
+    def test_batch_direct_write_proposal_carries_both_kinds(
+        self, edge_guard_instance: CruxibleInstance
+    ) -> None:
+        with pytest.raises(DataValidationError) as excinfo:
+            service_batch_direct_write(
+                edge_guard_instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        EntityWriteInput(
+                            entity_type="Part",
+                            entity_id="BP-2",
+                            properties={"part_number": "BP-2"},
+                        )
+                    ],
+                    relationships=[
+                        BatchRelationshipWriteInput(
+                            from_type="Part",
+                            from_id="BP-1",
+                            relationship_type="fits",
+                            to_type="Vehicle",
+                            to_id="V-1",
+                            evidence_rationale="looks right",
+                        )
+                    ],
+                ),
+            )
+        receipt_id = excinfo.value.mutation_receipt_id
+        assert receipt_id is not None
+        body = _proposal_body(_load_receipt(edge_guard_instance, receipt_id))
+        assert body["operation"] == "batch_direct_write"
+        assert [member["entity_id"] for member in body["entities"]] == ["BP-2"]
+        assert body["relationships"][0]["evidence_rationale"] == "looks right"
+
+    def test_validation_refusal_before_any_guard_still_retains_the_proposal(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """The proposal is attached before validation, not just before the guards."""
+        with pytest.raises(DataValidationError) as excinfo:
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="Review",
+                        entity_id="rev-3",
+                        properties={"review_id": "rev-3", "status": "open", "nonsense": 1},
+                    )
+                ],
+            )
+        receipt_id = excinfo.value.mutation_receipt_id
+        assert receipt_id is not None
+        body = _proposal_body(_load_receipt(instance, receipt_id))
+        assert body["entities"][0]["properties"]["nonsense"] == 1
 
     def test_accepted_path_still_sheds_under_metadata_retention(
         self, instance: CruxibleInstance
@@ -389,6 +669,61 @@ class TestRefusalRetentionFloor:
         assert root.payload_metadata is not None
         assert root.payload_metadata.retention == "metadata"
         assert root.payload_metadata.stored_inline is False
+
+        # The proposal sheds with it: a committed write IS its own record.
+        node = _proposal_node(receipt)
+        assert "_cruxible_payload_omitted" in node.detail["proposal"]
+        assert node.payload_metadata is not None
+        assert node.payload_metadata.retention == "metadata"
+        # Coordinates are join keys, never body: they survive every mode.
+        assert node.detail["subjects"] == [{"entity_type": "Review", "entity_id": "rev-9"}]
+
+
+class TestRetainedProposalCeiling:
+    """The refusal floor is bounded. Unbounded retention is not a floor."""
+
+    def test_oversized_refused_proposal_is_capped_with_a_truncation_marker(
+        self, instance: CruxibleInstance
+    ) -> None:
+        oversized = "x" * (MAX_RETAINED_PAYLOAD_BYTES + 1)
+        _write_review(instance, {"review_id": "rev-1", "status": "approved", "head": "sha-a"})
+        with pytest.raises(DataValidationError) as excinfo:
+            _write_review(
+                instance,
+                {"review_id": "rev-1", "status": "approved", "head": oversized},
+            )
+        receipt_id = excinfo.value.mutation_receipt_id
+        assert receipt_id is not None
+        node = _proposal_node(_load_receipt(instance, receipt_id))
+
+        marker = node.detail["proposal"]["_cruxible_payload_truncated"]
+        assert marker["truncated"] is True
+        assert marker["max_retained_bytes"] == MAX_RETAINED_PAYLOAD_BYTES
+        assert marker["byte_count"] > MAX_RETAINED_PAYLOAD_BYTES
+        assert marker["payload_digest"].startswith("sha256:")
+        # A bounded head, not a silent truncation of the body in place.
+        assert len(marker["head"].encode("utf-8")) <= RETAINED_PAYLOAD_HEAD_BYTES
+        assert marker["head"].startswith('{"entities":')
+
+        assert node.payload_metadata is not None
+        assert node.payload_metadata.truncated is True
+        assert node.payload_metadata.stored_inline is False
+        assert node.payload_metadata.byte_count == marker["byte_count"]
+
+    def test_under_the_ceiling_is_retained_verbatim(self, instance: CruxibleInstance) -> None:
+        receipt = _load_receipt(instance, _refuse_head_change(instance))
+        node = _proposal_node(receipt)
+        assert "_cruxible_payload_truncated" not in node.detail["proposal"]
+        assert node.payload_metadata is not None
+        assert node.payload_metadata.byte_count <= MAX_RETAINED_PAYLOAD_BYTES
+
+    def test_configured_full_retention_is_unchanged(self) -> None:
+        """The ceiling is scoped to the policy-imposed floor, not to ``full`` mode."""
+        big = {"body": "x" * (MAX_RETAINED_PAYLOAD_BYTES + 1)}
+        retained, metadata = retain_mutation_payload(big, retention="full")
+        assert retained == big
+        assert metadata.stored_inline is True
+        assert metadata.truncated is False
 
 
 class TestMutationReceiptStateCoordinates:

@@ -42,6 +42,12 @@ from cruxible_core.service.mutation_guards import (
     receipt_creation_actor_resolver,
     record_guard_evaluation,
 )
+from cruxible_core.service.mutation_proposals import (
+    batch_direct_write_proposal,
+    build_proposal,
+    entity_instance_member,
+    relationship_instance_member,
+)
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.property_diffs import property_value_changes
 from cruxible_core.service.types import (
@@ -848,6 +854,9 @@ def service_batch_direct_write(
         actor_context=actor_context,
     ) as ctx:
         builder = ctx.builder
+        if builder:
+            proposal, subjects = batch_direct_write_proposal(payload, source=source)
+            builder.record_proposal(proposal, subjects=subjects)
         prepared = _prepare_batch_direct_write(
             instance,
             payload,
@@ -1005,6 +1014,12 @@ def service_add_entities(
         actor_context=actor_context,
     ) as ctx:
         builder = ctx.builder
+        if builder:
+            proposal, subjects = build_proposal(
+                operation="add_entity",
+                entities=[entity_instance_member(entity) for entity in entities],
+            )
+            builder.record_proposal(proposal, subjects=subjects)
         errors: list[str] = []
         batch_seen: set[tuple[str, str]] = set()
         pending = []
@@ -1187,6 +1202,20 @@ def service_add_relationships(
         actor_context=actor_context,
     ) as ctx:
         builder = ctx.builder
+        if builder:
+            proposal, subjects = build_proposal(
+                operation="add_relationship",
+                relationships=[
+                    relationship_instance_member(relationship) for relationship in relationships
+                ],
+                extra={
+                    "source": source,
+                    "source_ref": source_ref,
+                    "pending": pending,
+                    "lifecycle": lifecycle,
+                },
+            )
+            builder.record_proposal(proposal, subjects=subjects)
         errors: list[str] = []
         batch_seen: set[tuple[str, str, str, str, str]] = set()
         prepared_relationships = []

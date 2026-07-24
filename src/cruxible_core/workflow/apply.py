@@ -571,6 +571,17 @@ def _enforce_entity_mutation_guards(
         receipt_creation_actor_resolver,
         record_guard_evaluation,
     )
+    from cruxible_core.service.mutation_proposals import build_proposal, entity_instance_member
+
+    # The proposal lands before the guard runs, so a refused workflow apply
+    # retains what it refused. Recorded only when guards are configured: with no
+    # guards this path cannot refuse, and the applied writes are on the receipt.
+    proposal, subjects = build_proposal(
+        operation="workflow_apply_entities",
+        entities=[entity_instance_member(validated.entity) for validated in validated_entities],
+        extra={"step_id": step_id},
+    )
+    receipt_builder.record_proposal(proposal, subjects=subjects)
 
     proposed_graph = EntityGraph.from_dict(deepcopy(graph.to_dict()))
     for validated in validated_entities:
@@ -618,6 +629,20 @@ def _enforce_relationship_mutation_guards(
         evaluate_relationship_mutation_guards,
         record_guard_evaluation,
     )
+    from cruxible_core.service.mutation_proposals import (
+        build_proposal,
+        relationship_instance_member,
+    )
+
+    proposal, subjects = build_proposal(
+        operation="workflow_apply_relationships",
+        relationships=[
+            relationship_instance_member(validated.relationship)
+            for validated in validated_relationships
+        ],
+        extra={"step_id": step_id},
+    )
+    receipt_builder.record_proposal(proposal, subjects=subjects)
 
     evaluation = evaluate_relationship_mutation_guards(
         instance,

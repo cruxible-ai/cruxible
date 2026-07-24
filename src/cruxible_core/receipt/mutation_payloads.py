@@ -26,6 +26,14 @@ Modes (option "b": metadata means metadata, preview means preview):
 
 The digest and byte_count are always computed over the ORIGINAL full canonical
 payload (before any reduction), so replay-drift detection still works.
+
+``full`` retention accepts an optional ``max_inline_bytes`` ceiling. Retention
+that is unbounded by construction is a liability wherever it is applied by
+policy rather than by operator choice -- the refusal retention floor is exactly
+that case. Above the ceiling the body is replaced by the Stage D convention
+(:data:`cruxible_core.procedure.types.MAX_PROCEDURE_EVIDENCE_BYTES`): digest +
+byte_count + a bounded UTF-8 head + an explicit truncation marker. Never a
+silent truncation, never an unbounded retention.
 """
 
 from __future__ import annotations
@@ -39,8 +47,27 @@ from cruxible_core.primitives import canonical_json, json_type_name
 
 MutationPayloadRetention = Literal["full", "preview", "metadata"]
 
+MAX_RETAINED_PAYLOAD_BYTES = 256 * 1024
+"""Ceiling on the canonical JSON bytes any ONE payload may retain inline.
+
+Matches the Stage D artifact cap (``MAX_PROCEDURE_EVIDENCE_BYTES``) so the two
+"how much of a body does a receipt keep" answers in the system are the same
+number. Applies only where ``full`` retention is imposed by policy rather than
+chosen by the operator -- today that is the refusal retention floor, whose
+payload is attacker-influenceable in size and which no configured mode can
+shrink.
+"""
+
+RETAINED_PAYLOAD_HEAD_BYTES = 4096
+"""Bounded UTF-8 head retained for a payload that exceeds the ceiling.
+
+Mirrors ``PROCEDURE_EVIDENCE_HEAD_BYTES``: enough to identify what was proposed,
+far short of retaining the proposal.
+"""
+
 _PREVIEW_KEY = "_cruxible_payload_preview"
 _OMITTED_KEY = "_cruxible_payload_omitted"
+_TRUNCATED_KEY = "_cruxible_payload_truncated"
 _MAX_PREVIEW_DEPTH = 3
 _MAX_PREVIEW_ITEMS = 8
 _MAX_PREVIEW_STRING_CHARS = 256
@@ -80,6 +107,8 @@ def retain_mutation_payload(
     payload: dict[str, Any],
     *,
     retention: MutationPayloadRetention = "metadata",
+    max_inline_bytes: int | None = None,
+    head_byte_limit: int = RETAINED_PAYLOAD_HEAD_BYTES,
 ) -> tuple[dict[str, Any], MutationPayloadMetadata]:
     """Build the retained payload representation and its metadata.
 
@@ -91,7 +120,11 @@ def retain_mutation_payload(
 
     Semantics (option "b"), applied regardless of payload size:
 
-    * ``full``     -- the complete body, retained inline verbatim.
+    * ``full``     -- the complete body, retained inline verbatim, unless
+      ``max_inline_bytes`` is supplied and the canonical encoding exceeds it:
+      then digest + byte_count + a bounded head + an explicit truncation
+      marker. ``None`` (the default) keeps the historical unbounded behaviour
+      for operator-configured ``full`` retention.
     * ``preview``  -- a bounded structural preview ONLY; never the full body.
     * ``metadata`` -- a compact omitted marker (digest + byte_count) ONLY;
       never any body.
@@ -101,9 +134,33 @@ def retain_mutation_payload(
 
     # Digest + byte_count are always computed over the original full payload,
     # before any reduction, so replay-drift detection stays accurate.
-    digest, byte_count = compute_payload_digest(payload)
+    encoded = canonical_json(payload).encode("utf-8")
+    digest = f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+    byte_count = len(encoded)
 
     if retention == "full":
+        if max_inline_bytes is not None and byte_count > max_inline_bytes:
+            truncated = {
+                _TRUNCATED_KEY: {
+                    "retention": retention,
+                    "payload_digest": digest,
+                    "byte_count": byte_count,
+                    "max_retained_bytes": max_inline_bytes,
+                    "truncated": True,
+                    "head": encoded[:head_byte_limit].decode("utf-8", errors="replace"),
+                }
+            }
+            return (
+                truncated,
+                MutationPayloadMetadata(
+                    retention=retention,
+                    stored_inline=False,
+                    byte_count=byte_count,
+                    payload_digest=digest,
+                    truncated=True,
+                    preview=dict(truncated[_TRUNCATED_KEY]),
+                ),
+            )
         return (
             payload,
             MutationPayloadMetadata(

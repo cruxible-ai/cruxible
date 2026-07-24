@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError, GroupNotFoundError
+from cruxible_core.errors import ConfigError, DataValidationError, GroupNotFoundError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
@@ -790,6 +790,74 @@ class TestResolutionReceiptId:
         assert receipt is not None
         assert receipt.operation_type == "group_resolve"
 
+    def _stage_applying_group(
+        self,
+        instance: CruxibleInstance,
+        *,
+        first_attempt_receipt_id: str | None,
+    ) -> tuple[str, str]:
+        """Leave a proposed group in the ``applying`` state a prior approve entered.
+
+        Crash recovery is only reachable from a group whose approve wrote its
+        unconfirmed resolution and flipped the group to ``applying`` without
+        confirming, so the state is staged directly rather than by interrupting
+        a live approve.
+        """
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        with instance.write_transaction() as uow:
+            group = uow.groups.get_group(group_id)
+            assert group is not None
+            resolution_id = uow.groups.save_resolution(
+                group.relationship_type,
+                group.signature,
+                "approve",
+                "",
+                group.thesis_text,
+                group.thesis_facts,
+                group.analysis_state,
+                "human",
+                confirmed=False,
+                receipt_id=first_attempt_receipt_id,
+            )
+            uow.groups.update_group_status(group_id, "applying", resolution_id=resolution_id)
+        return group_id, resolution_id
+
+    def test_retry_of_an_applying_group_keeps_the_first_receipt_id(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """Recovery must not re-point the resolution at the recovery receipt.
+
+        The resolution was created by the FIRST attempt; that act is what it
+        names. The retry has its own group_resolve receipt regardless.
+        """
+        group_id, resolution_id = self._stage_applying_group(
+            instance,
+            first_attempt_receipt_id="RCP-first-attempt",
+        )
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
+        resolution = self._resolution(instance, group_id)
+        assert resolution.resolution_id == resolution_id
+        assert resolution.receipt_id == "RCP-first-attempt"
+        assert resolution.confirmed is True
+        # The recovery attempt is still receipted in its own right.
+        assert result.receipt_id is not None
+        assert result.receipt_id != "RCP-first-attempt"
+
+    def test_retry_backfills_a_resolution_that_has_no_receipt_id(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """Rows predating the column would otherwise stay permanently unjoinable."""
+        group_id, _resolution_id = self._stage_applying_group(
+            instance,
+            first_attempt_receipt_id=None,
+        )
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
+        resolution = self._resolution(instance, group_id)
+        assert resolution.receipt_id is not None
+        assert resolution.receipt_id == result.receipt_id
+
     def test_receipt_id_defaults_to_none_when_unstamped(self, instance: CruxibleInstance) -> None:
         """Resolutions written before the field existed still load."""
         resolution_id = _save_resolution(
@@ -810,6 +878,117 @@ class TestResolutionReceiptId:
             store.close()
         assert resolution is not None
         assert resolution.receipt_id is None
+
+
+GUARDED_RESOLVE_CONFIG_YAML = (
+    RESOLVE_CONFIG_YAML
+    + """
+mutation_guards:
+  - name: fits_requires_source_evidence
+    relationship_type: fits
+    condition:
+      type: evidence
+      require_evidence: source_evidence
+    message: "Fitment edges require source evidence."
+"""
+)
+
+
+class TestApproveGuardRefusalEvidence:
+    """A refused APPROVAL is negative experience about a whole staged group.
+
+    The group is the only place the staged edges exist as a proposal; the
+    approve receipt must therefore carry them and the structured guard refusal,
+    or the rejection of the group's thesis is unauditable.
+    """
+
+    @pytest.fixture
+    def guarded_instance(self, tmp_path: Path) -> CruxibleInstance:
+        (tmp_path / "config.yaml").write_text(GUARDED_RESOLVE_CONFIG_YAML)
+        inst = CruxibleInstance.init(tmp_path, "config.yaml")
+        graph = inst.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id="BP-1",
+                properties={"part_number": "BP-1", "name": "Pads", "category": "brakes"},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-1",
+                properties={
+                    "vehicle_id": "V-1",
+                    "year": 2024,
+                    "make": "Honda",
+                    "model": "Civic",
+                },
+            )
+        )
+        inst.save_graph(graph)
+        return inst
+
+    def _refuse_approve(self, instance: CruxibleInstance) -> Any:
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        with pytest.raises(DataValidationError) as excinfo:
+            service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        receipt_id = excinfo.value.mutation_receipt_id
+        assert receipt_id is not None
+        store = instance.get_receipt_store()
+        try:
+            receipt = store.get_receipt(receipt_id)
+        finally:
+            store.close()
+        assert receipt is not None
+        return receipt
+
+    def test_refusal_node_carries_both_endpoints(self, guarded_instance: CruxibleInstance) -> None:
+        receipt = self._refuse_approve(guarded_instance)
+        assert receipt.committed is False
+        refusals = [node for node in receipt.nodes if "guard_error" in node.detail]
+        assert len(refusals) == 1
+        detail = refusals[0].detail
+        assert detail["guard_name"] == "fits_requires_source_evidence"
+        assert detail["from_type"] == "Part"
+        assert detail["from_id"] == "BP-1"
+        assert detail["to_type"] == "Vehicle"
+        assert detail["to_id"] == "V-1"
+        assert detail["relationship"] == "fits"
+
+    def test_refused_approval_retains_the_staged_edges(
+        self, guarded_instance: CruxibleInstance
+    ) -> None:
+        receipt = self._refuse_approve(guarded_instance)
+        proposals = [node for node in receipt.nodes if node.node_type == "proposal"]
+        assert len(proposals) == 1
+        body = proposals[0].detail["proposal"]
+        assert body["operation"] == "group_approve"
+        assert body["relationship_type"] == "fits"
+        member = body["relationships"][0]
+        assert member["from_id"] == "BP-1"
+        assert member["to_id"] == "V-1"
+        assert member["relationship"] == "fits"
+        assert proposals[0].detail["subjects"] == [
+            {
+                "from_type": "Part",
+                "from_id": "BP-1",
+                "to_type": "Vehicle",
+                "to_id": "V-1",
+                "relationship": "fits",
+            }
+        ]
+
+    def test_refused_approval_is_joinable_from_both_endpoints(
+        self, guarded_instance: CruxibleInstance
+    ) -> None:
+        receipt = self._refuse_approve(guarded_instance)
+        store = guarded_instance.get_receipt_store()
+        try:
+            assert receipt.receipt_id in store.get_receipts_for_entity("Part", "BP-1")
+            assert receipt.receipt_id in store.get_receipts_for_entity("Vehicle", "V-1")
+        finally:
+            store.close()
 
 
 # ---------------------------------------------------------------------------

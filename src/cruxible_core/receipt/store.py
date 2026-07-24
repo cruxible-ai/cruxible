@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from cruxible_core.errors import DataValidationError
 from cruxible_core.instance_protocol import ReceiptStoreProtocol
 from cruxible_core.provider.trace_payloads import (
     DEFAULT_TRACE_PAYLOAD_INLINE_BYTES,
@@ -16,7 +17,31 @@ from cruxible_core.provider.trace_payloads import (
 )
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt, ReceiptNode
-from cruxible_core.temporal import format_datetime
+from cruxible_core.temporal import format_datetime, parse_datetime
+
+
+def _normalized_window_bound(value: str, *, field: str) -> str:
+    """Normalize a ``since``/``until`` bound into the stored ``created_at`` format.
+
+    ``created_at`` is compared LEXICOGRAPHICALLY in SQLite, so a caller-supplied
+    bound only orders correctly against it when it is spelled the same way the
+    column is (``format_datetime``: ISO-8601 UTC with a ``+00:00`` offset). A
+    ``Z`` suffix or a non-UTC offset sorts as a different string and would
+    silently select the wrong window, so every bound round-trips through
+    parse -> format. An unparseable bound is a caller error, not an empty
+    window: it refuses loudly.
+    """
+    try:
+        parsed = parse_datetime(value)
+    except (ValueError, TypeError) as exc:
+        raise DataValidationError(
+            f"Invalid receipt window bound for '{field}': {value!r} is not an ISO-8601 datetime"
+        ) from exc
+    normalized = format_datetime(parsed)
+    if normalized is None:
+        raise DataValidationError(f"Invalid receipt window bound for '{field}': value is empty")
+    return normalized
+
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS receipts (
@@ -129,17 +154,40 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         the edge write touched both endpoints. validation nodes for edge-scoped guard
         results follow the same convention, so a refused edge write is reachable from
         both of its endpoints.
+
+        proposal nodes carry the coordinates of every member of the submitted
+        proposal under ``detail["subjects"]``. Indexing them is what makes EVERY
+        refusal entity-joinable, not just the ones a named guard attributed: a
+        guard-evaluation error (an unresolvable ``$current`` reference, say)
+        refuses with no attributable guard and therefore no guard coordinates,
+        and would otherwise index zero rows.
         """
         endpoints: list[tuple[str, str]] = []
         if node.entity_type and node.entity_id:
             endpoints.append((node.entity_type, node.entity_id))
         if node.node_type in ("relationship_write", "validation"):
-            detail = node.detail
-            for type_key, id_key in (("from_type", "from_id"), ("to_type", "to_id")):
-                end_type = detail.get(type_key)
-                end_id = detail.get(id_key)
-                if isinstance(end_type, str) and end_type and isinstance(end_id, str) and end_id:
-                    endpoints.append((end_type, end_id))
+            endpoints.extend(SQLiteReceiptStore._detail_endpoints(node.detail))
+        if node.node_type == "proposal":
+            subjects = node.detail.get("subjects")
+            if isinstance(subjects, list):
+                for subject in subjects:
+                    if isinstance(subject, dict):
+                        endpoints.extend(SQLiteReceiptStore._detail_endpoints(subject))
+        return endpoints
+
+    @staticmethod
+    def _detail_endpoints(detail: dict[str, Any]) -> list[tuple[str, str]]:
+        """Entity coordinates carried in a node/subject detail mapping."""
+        endpoints: list[tuple[str, str]] = []
+        for type_key, id_key in (
+            ("entity_type", "entity_id"),
+            ("from_type", "from_id"),
+            ("to_type", "to_id"),
+        ):
+            end_type = detail.get(type_key)
+            end_id = detail.get(id_key)
+            if isinstance(end_type, str) and end_type and isinstance(end_id, str) and end_id:
+                endpoints.append((end_type, end_id))
         return endpoints
 
     def get_receipt(self, receipt_id: str) -> Receipt | None:
@@ -244,10 +292,10 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
 
         ``since``/``until`` bound ``created_at`` as the half-open window
         ``[since, until)`` — since inclusive, until exclusive — so adjacent
-        windows tile without double-counting a boundary receipt. Both are
-        ISO-8601 UTC strings in the stored format (see
-        :func:`cruxible_core.temporal.format_datetime`); the column sorts
-        lexicographically in that format. ``before`` and the window compose.
+        windows tile without double-counting a boundary receipt. Both accept any
+        ISO-8601 datetime (``Z`` suffix, non-UTC offset, naive) and are
+        normalized to the stored format before comparison; an unparseable bound
+        raises :class:`DataValidationError`. ``before`` and the window compose.
         """
         conditions, params = self._receipt_filters(
             query_name=query_name,
@@ -375,10 +423,10 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
             params.extend(before)
         if since is not None:
             conditions.append("created_at >= ?")
-            params.append(since)
+            params.append(_normalized_window_bound(since, field="since"))
         if until is not None:
             conditions.append("created_at < ?")
-            params.append(until)
+            params.append(_normalized_window_bound(until, field="until"))
         return conditions, params
 
     def count_receipts(
@@ -412,7 +460,23 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         return int(row["count"]) if row else 0
 
     def get_receipts_for_entity(self, entity_type: str, entity_id: str) -> list[str]:
-        """List receipt IDs where the entity appears in receipt nodes."""
+        """List receipt IDs where the entity appears in receipt nodes, newest first.
+
+        This is NOT a write history. It answers "which recorded acts named this
+        entity", which since ``wi-negative-experience-fidelity`` deliberately
+        includes acts that changed nothing:
+
+        * REFUSED mutations — guard refusals index their subject coordinates,
+          and every proposal indexes its members' coordinates, so a refusal is
+          reachable from the entity it was refused on. These receipts have
+          ``committed=False``.
+        * Non-write acts that consulted the entity (query ``entity_lookup`` /
+          ``edge_traversal`` nodes), which were always indexed.
+
+        Callers that mean "writes" must filter on ``committed`` plus the node
+        types they care about (``entity_write`` / ``relationship_write``) —
+        see ``receipt_creation_actor_resolver`` for the canonical example.
+        """
         rows = self._conn.execute(
             "SELECT re.receipt_id FROM receipt_entities re "
             "JOIN receipts r ON r.receipt_id = re.receipt_id "

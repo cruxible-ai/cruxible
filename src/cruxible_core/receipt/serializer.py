@@ -41,6 +41,7 @@ def to_markdown(receipt: Receipt) -> str:
         lines.append("**Committed:** No")
     lines.append("")
 
+    proposals = [n for n in receipt.nodes if n.node_type == "proposal"]
     lookups = [n for n in receipt.nodes if n.node_type == "entity_lookup"]
     traversals = [n for n in receipt.nodes if n.node_type == "edge_traversal"]
     filters = [n for n in receipt.nodes if n.node_type == "filter_applied"]
@@ -49,6 +50,23 @@ def to_markdown(receipt: Receipt) -> str:
     plan_steps = [n for n in receipt.nodes if n.node_type == "plan_step"]
     writes = [n for n in receipt.nodes if n.node_type in ("entity_write", "relationship_write")]
     feedback_nodes = [n for n in receipt.nodes if n.node_type == "feedback_applied"]
+
+    if proposals:
+        lines.append("## Proposed")
+        for n in proposals:
+            subjects = n.detail.get("subjects")
+            for subject in subjects if isinstance(subjects, list) else []:
+                if not isinstance(subject, dict):
+                    continue
+                if "entity_type" in subject:
+                    lines.append(f"- {subject['entity_type']}:{subject['entity_id']}")
+                else:
+                    lines.append(
+                        f"- {subject.get('from_id', '?')} "
+                        f"--{subject.get('relationship', '?')}--> "
+                        f"{subject.get('to_id', '?')}"
+                    )
+        lines.append("")
 
     if lookups:
         lines.append("## Entry Points")
@@ -157,6 +175,11 @@ def _node_label(node: ReceiptNode) -> str:
         step_id = node.detail.get("step_id", "?")
         kind = node.detail.get("kind", "?")
         return f"Step {step_id} ({kind})"
+
+    if node.node_type == "proposal":
+        subjects = node.detail.get("subjects")
+        count = len(subjects) if isinstance(subjects, list) else 0
+        return f"Proposal: {count} subject(s)"
 
     if node.node_type == "validation":
         status = "PASS" if node.detail.get("passed") else "FAIL"

@@ -612,6 +612,19 @@ class GroupStore(GroupStoreProtocol):
                 (resolution_id,),
             )
 
+    def stamp_resolution_receipt_id(self, resolution_id: str, receipt_id: str) -> None:
+        """Fill a resolution's receipt_id if it has none. Does NOT commit.
+
+        Backfill only: a resolution already naming a receipt keeps it, because
+        that receipt is the act that created the resolution. Used by approve
+        crash-recovery to repair rows written before the column existed.
+        """
+        self._conn.execute(
+            "UPDATE group_resolutions SET receipt_id = ? "
+            "WHERE resolution_id = ? AND receipt_id IS NULL",
+            (receipt_id, resolution_id),
+        )
+
     def get_resolution(self, resolution_id: str) -> GroupResolution | None:
         """Load a resolution by ID."""
         row = self._conn.execute(

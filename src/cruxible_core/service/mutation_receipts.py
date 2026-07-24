@@ -16,7 +16,10 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.receipt.mutation_payloads import MutationPayloadRetention
+from cruxible_core.receipt.mutation_payloads import (
+    MAX_RETAINED_PAYLOAD_BYTES,
+    MutationPayloadRetention,
+)
 from cruxible_core.receipt.types import OperationType, Receipt
 
 logger = structlog.get_logger()
@@ -31,6 +34,17 @@ instance produces. Shedding it to a digest under the default
 so there is no state to reconstruct it from. Accepted-path retention is
 untouched by this floor — a committed write's payload is recoverable from the
 state it produced, so the operator's configured mode still governs there.
+"""
+
+REFUSAL_PAYLOAD_MAX_BYTES: int = MAX_RETAINED_PAYLOAD_BYTES
+"""Per-payload ceiling on what the refusal floor retains.
+
+The floor above is imposed by policy, not chosen by the operator, and its input
+size is caller-controlled — so it must be bounded or a refused write becomes an
+unbounded write to the receipt store. Above the ceiling each payload keeps its
+digest, byte count, and a bounded head, with an explicit truncation marker
+(the Stage D convention): never a silent truncation, never unbounded retention.
+Redaction, quotas, and expiry are separate concerns and are NOT handled here.
 """
 
 
@@ -72,9 +86,14 @@ def _resolve_mutation_payload_retention(
 def _build_retained_receipt(
     builder: ReceiptBuilder,
     retention: MutationPayloadRetention,
+    *,
+    max_inline_bytes: int | None = None,
 ) -> Receipt:
     """Stamp payload retention on the mutation node, then build the receipt."""
-    builder.apply_mutation_payload_retention(retention=retention)
+    builder.apply_mutation_payload_retention(
+        retention=retention,
+        max_inline_bytes=max_inline_bytes,
+    )
     return builder.build()
 
 
@@ -162,9 +181,10 @@ def mutation_receipt(
     * Decision-time coordinates (``head_snapshot_id`` + ``read_revision``) are
       stamped once the write boundary opens, so every mutation receipt states
       the state it was decided against.
-    * Refusal receipts retain their payload in full
-      (:data:`REFUSAL_PAYLOAD_RETENTION`); only committed receipts follow the
-      configured ``runtime.mutation_payloads`` mode.
+    * Refusal receipts retain their payload — parameters AND any recorded
+      proposal — in full (:data:`REFUSAL_PAYLOAD_RETENTION`), bounded per
+      payload by :data:`REFUSAL_PAYLOAD_MAX_BYTES`. Only committed receipts
+      follow the configured ``runtime.mutation_payloads`` mode.
     """
     builder = (
         ReceiptBuilder(
@@ -194,7 +214,11 @@ def mutation_receipt(
         tx_closed = True
         instance.invalidate_graph_cache()
         if builder is not None:
-            receipt = _build_retained_receipt(builder, REFUSAL_PAYLOAD_RETENTION)
+            receipt = _build_retained_receipt(
+                builder,
+                REFUSAL_PAYLOAD_RETENTION,
+                max_inline_bytes=REFUSAL_PAYLOAD_MAX_BYTES,
+            )
             if _persist_receipt(instance, receipt):
                 exc_to_tag.mutation_receipt_id = receipt.receipt_id
         raise
@@ -205,7 +229,11 @@ def mutation_receipt(
         tx_closed = True
         instance.invalidate_graph_cache()
         if builder is not None:
-            receipt = _build_retained_receipt(builder, REFUSAL_PAYLOAD_RETENTION)
+            receipt = _build_retained_receipt(
+                builder,
+                REFUSAL_PAYLOAD_RETENTION,
+                max_inline_bytes=REFUSAL_PAYLOAD_MAX_BYTES,
+            )
             if _persist_receipt(instance, receipt):
                 exc_to_tag.mutation_receipt_id = receipt.receipt_id
         raise wrapped from exc
