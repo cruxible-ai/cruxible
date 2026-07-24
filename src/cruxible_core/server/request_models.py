@@ -205,7 +205,7 @@ class ProposeProcedureRequest(BaseModel):
 
 
 class ResolveProcedureRequest(BaseModel):
-    action: Literal["promote", "reject"]
+    action: Literal["accept", "reject"]
     expected_version: int = Field(ge=1)
     reason: str | None = None
     actor_context: contracts.GovernedActorContext | None = None

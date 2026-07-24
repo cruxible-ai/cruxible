@@ -390,8 +390,8 @@ class ProcedureStoreProtocol(ABC):
         retired_actor_context: GovernedActorContext | None = None,
         retired_at: str | None = None,
         reason: str | None = None,
-        promoted_config_digest: str | None = None,
-        promoted_lock_digest: str | None = None,
+        acceptance_config_digest: str | None = None,
+        acceptance_lock_digest: str | None = None,
     ) -> bool: ...
     @abstractmethod
     def save_run(self, run: ProcedureRun) -> str: ...

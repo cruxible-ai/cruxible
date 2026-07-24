@@ -31,7 +31,7 @@ def test_procedure_tools_are_registered_once_with_expected_schemas() -> None:
     status_values = next(item["enum"] for item in status["anyOf"] if "enum" in item)
     assert status_values == ["pending", "live", "rejected", "retired"]
     action = tools["cruxible_resolve_procedure"].inputSchema["properties"]["action"]
-    assert action["enum"] == ["promote", "reject"]
+    assert action["enum"] == ["accept", "reject"]
     assert set(tools["cruxible_list_procedures"].outputSchema["properties"]) == {
         "items",
         "total",
@@ -110,7 +110,7 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
     handlers.handle_resolve_procedure(
         "inst_1",
         "PRC-1",
-        action="promote",
+        action="accept",
         expected_version=1,
     )
     handlers.handle_retire_procedure(

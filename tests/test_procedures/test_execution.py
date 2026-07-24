@@ -22,8 +22,8 @@ from cruxible_core.procedure.types import ProcedureDefinition, ProcedureRun
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
 from cruxible_core.service import (
+    service_accept_procedure,
     service_lock,
-    service_promote_procedure,
     service_propose_procedure,
     service_retire_procedure,
     service_run_procedure,
@@ -31,7 +31,7 @@ from cruxible_core.service import (
 from tests.test_procedures.conftest import actor, provider_definition
 
 
-def _promote(
+def _accept(
     instance: CruxibleInstance,
     definition: ProcedureDefinition,
 ) -> str:
@@ -40,13 +40,13 @@ def _promote(
         definition,
         actor_context=actor("proposer"),
     )
-    promoted = service_promote_procedure(
+    accepted = service_accept_procedure(
         instance,
         proposed.procedure.procedure_id,
         expected_version=1,
         actor_context=actor("reviewer"),
     )
-    return promoted.procedure.procedure_id
+    return accepted.procedure.procedure_id
 
 
 def _run(instance: CruxibleInstance, run_id: str) -> ProcedureRun:
@@ -159,7 +159,7 @@ def test_precondition_refusal_finalizes_started_run_and_receipts_revision(
             "condition": {"status": "ready"},
         },
     )
-    procedure_id = _promote(procedure_instance, definition)
+    procedure_id = _accept(procedure_instance, definition)
     _stub_provider(monkeypatch, lambda payload: payload)
 
     with pytest.raises(ConfigError, match="precondition was unsatisfied") as exc_info:
@@ -200,7 +200,7 @@ def test_precondition_matches_only_named_type_and_records_typed_satisfiers(
             "condition": {"status": "ready"},
         },
     )
-    procedure_id = _promote(procedure_instance, definition)
+    procedure_id = _accept(procedure_instance, definition)
     _stub_provider(monkeypatch, lambda payload: payload)
 
     result = service_run_procedure(
@@ -226,7 +226,7 @@ def test_empty_precondition_is_always_eligible(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
         provider_definition("always_eligible"),
     )
@@ -256,7 +256,7 @@ def test_started_run_exists_before_precondition_evaluation(
             "condition": {"status": "ready"},
         },
     )
-    procedure_id = _promote(procedure_instance, definition)
+    procedure_id = _accept(procedure_instance, definition)
     observed: list[ProcedureRun] = []
 
     def inspect_started(*args: Any, **kwargs: Any) -> list[tuple[str, str]]:
@@ -291,7 +291,7 @@ def test_retirement_between_started_run_and_authorization_is_receipted_refusal(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
         provider_definition("retired_before_authorization"),
     )
@@ -360,7 +360,7 @@ def test_provider_runs_after_precondition_transaction_closes(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
         provider_definition("short_authorization_transaction"),
     )
@@ -400,7 +400,7 @@ def test_repeat_until_satisfaction_uses_final_attempt_outputs_and_attempt_count(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
         _repeat_definition("repeat_until_satisfied"),
     )
@@ -436,7 +436,7 @@ def test_repeat_exhaustion_finalizes_failed_run_with_annotation(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
         _repeat_definition("repeat_exhausted", max_attempts=2),
     )
@@ -479,7 +479,7 @@ def test_repeat_nested_assert_aborts_without_another_attempt(
             },
         },
     ]
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
         _repeat_definition(
             "repeat_invariant_abort",
@@ -530,7 +530,7 @@ def test_repeat_attempt_aliases_are_rebuilt_from_current_attempt(
         max_attempts=2,
         nested_steps=nested_steps,
     )
-    procedure_id = _promote(procedure_instance, definition)
+    procedure_id = _accept(procedure_instance, definition)
     provider_inputs: list[int] = []
     outputs = iter([{"value": 1}, {"value": 1}, {"value": 3}, {"value": 3}])
 
@@ -558,9 +558,9 @@ def test_repeat_attempt_aliases_are_rebuilt_from_current_attempt(
 def test_run_fails_closed_when_live_provider_is_deexported(
     procedure_instance: CruxibleInstance,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
-        provider_definition("deexported_after_promotion"),
+        provider_definition("deexported_after_acceptance"),
     )
     config = procedure_instance.load_config()
     config.providers["exported_action"].procedure_access = "disabled"
@@ -586,9 +586,9 @@ def test_run_fails_closed_when_live_provider_is_deexported(
 def test_run_fails_closed_when_live_provider_is_removed(
     procedure_instance: CruxibleInstance,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
-        provider_definition("missing_after_promotion"),
+        provider_definition("missing_after_acceptance"),
     )
     config = procedure_instance.load_config()
     del config.providers["exported_action"]
@@ -612,7 +612,7 @@ def test_run_fails_closed_when_live_provider_is_removed(
 def test_run_rederives_and_enforces_effective_tier(
     procedure_instance: CruxibleInstance,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
         provider_definition("tier_checked_at_run"),
     )
@@ -635,7 +635,7 @@ def test_input_contract_is_validated_before_provider_execution(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
         provider_definition("input_contract_checked"),
     )
@@ -666,11 +666,11 @@ def test_input_contract_is_validated_before_provider_execution(
     )
 
 
-def test_run_receipt_records_promoted_and_drifted_execution_digests(
+def test_run_receipt_records_accepted_and_drifted_execution_digests(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
         provider_definition("drift_visible"),
     )
@@ -688,8 +688,8 @@ def test_run_receipt_records_promoted_and_drifted_execution_digests(
     )
 
     root = result.receipt.nodes[0].detail
-    assert root["promoted_against"]["config_digest"] != root["executed_against"]["config_digest"]
-    assert root["promoted_against"]["lock_digest"] != root["executed_against"]["lock_digest"]
+    assert root["accepted_against"]["config_digest"] != root["executed_against"]["config_digest"]
+    assert root["accepted_against"]["lock_digest"] != root["executed_against"]["lock_digest"]
     assert result.receipt.operation_type == "procedure"
     assert root["procedure_id"] == procedure_id
     assert root["definition_digest"] == result.procedure.definition_digest

@@ -132,8 +132,8 @@ def test_optimistic_transition_checks_status_and_version(store: ProcedureStore) 
         to_status="live",
         expected_version=2,
         resolved_actor_context=actor("reviewer"),
-        promoted_config_digest="sha256:config",
-        promoted_lock_digest="sha256:lock",
+        acceptance_config_digest="sha256:config",
+        acceptance_lock_digest="sha256:lock",
     )
     assert store.transition_procedure(
         record.procedure_id,
@@ -142,16 +142,16 @@ def test_optimistic_transition_checks_status_and_version(store: ProcedureStore) 
         expected_version=1,
         resolved_actor_context=actor("reviewer"),
         resolved_at="2026-07-22T13:00:00Z",
-        promoted_config_digest="sha256:config",
-        promoted_lock_digest="sha256:lock",
+        acceptance_config_digest="sha256:config",
+        acceptance_lock_digest="sha256:lock",
     )
 
     loaded = store.get_procedure(record.procedure_id)
     assert loaded is not None
     assert loaded.status == "live"
     assert loaded.version == 2
-    assert loaded.promoted_config_digest == "sha256:config"
-    assert loaded.promoted_lock_digest == "sha256:lock"
+    assert loaded.acceptance_config_digest == "sha256:config"
+    assert loaded.acceptance_lock_digest == "sha256:lock"
     assert loaded.resolved_actor_context == actor("reviewer")
 
 
@@ -170,7 +170,7 @@ def test_store_rejects_invalid_lifecycle_edges_and_missing_transition_fields(
             reason="skip review",
             retired_actor_context=actor("reviewer"),
         )
-    with pytest.raises(ValueError, match="promotion requires reviewer attribution"):
+    with pytest.raises(ValueError, match="acceptance requires reviewer attribution"):
         store.transition_procedure(
             record.procedure_id,
             from_status="pending",

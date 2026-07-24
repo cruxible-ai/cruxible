@@ -251,7 +251,7 @@ def compile_plan_definition(
     """Compile a supplied plan definition without resolving it from config.
 
     ``input_payload=None`` is the definition-time mode used when procedures are
-    proposed or promoted. It validates contract references and step-reference
+    proposed or accepted. It validates contract references and step-reference
     structure while preserving unresolved ``$input`` references. Configured
     workflows always pass a concrete payload through :func:`compile_workflow`,
     retaining their existing validation and compiled output byte-for-byte.

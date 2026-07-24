@@ -194,18 +194,18 @@ def service_propose_procedure(
     return result
 
 
-def service_promote_procedure(
+def service_accept_procedure(
     instance: InstanceProtocol,
     procedure_id: str,
     *,
     expected_version: int | None,
     actor_context: GovernedActorContext | None,
 ) -> ProcedureTransitionResult:
-    """Promote a pending definition after independent review and recompilation."""
+    """Accept a pending definition after independent review and recompilation."""
     return _transition_pending_procedure(
         instance,
         procedure_id,
-        action="promote",
+        action="accept",
         expected_version=expected_version,
         actor_context=actor_context,
         reason=None,
@@ -418,7 +418,7 @@ def service_run_procedure(
         current_definition_digest = compute_procedure_definition_digest(procedure.definition)
         if current_definition_digest != procedure.definition_digest:
             raise ConfigError(
-                "Procedure definition digest changed since promotion: "
+                "Procedure definition digest changed since acceptance: "
                 f"stored={procedure.definition_digest}, computed={current_definition_digest}"
             )
 
@@ -469,8 +469,8 @@ def service_run_procedure(
             verdict="refused",
             budget=budget,
             precondition_detail=precondition_detail,
-            promoted_config_digest=procedure.promoted_config_digest,
-            promoted_lock_digest=procedure.promoted_lock_digest,
+            acceptance_config_digest=procedure.acceptance_config_digest,
+            acceptance_lock_digest=procedure.acceptance_lock_digest,
             executed_config_digest=executed_config_digest,
             executed_lock_digest=executed_lock_digest,
             error=refusal_error,
@@ -566,8 +566,8 @@ def service_run_procedure(
                 verdict="refused",
                 budget=budget,
                 precondition_detail=precondition_detail,
-                promoted_config_digest=procedure.promoted_config_digest,
-                promoted_lock_digest=procedure.promoted_lock_digest,
+                acceptance_config_digest=procedure.acceptance_config_digest,
+                acceptance_lock_digest=procedure.acceptance_lock_digest,
                 executed_config_digest=plan.config_digest,
                 executed_lock_digest=plan.lock_digest,
                 error=refusal,
@@ -623,8 +623,8 @@ def service_run_procedure(
             verdict=verdict,
             budget=budget,
             precondition_detail=precondition_detail,
-            promoted_config_digest=procedure.promoted_config_digest,
-            promoted_lock_digest=procedure.promoted_lock_digest,
+            acceptance_config_digest=procedure.acceptance_config_digest,
+            acceptance_lock_digest=procedure.acceptance_lock_digest,
             executed_config_digest=plan.config_digest,
             executed_lock_digest=plan.lock_digest,
             error=failure,
@@ -642,8 +642,8 @@ def service_run_procedure(
         verdict="succeeded",
         budget=budget,
         precondition_detail=precondition_detail,
-        promoted_config_digest=procedure.promoted_config_digest,
-        promoted_lock_digest=procedure.promoted_lock_digest,
+        acceptance_config_digest=procedure.acceptance_config_digest,
+        acceptance_lock_digest=procedure.acceptance_lock_digest,
         executed_config_digest=plan.config_digest,
         executed_lock_digest=plan.lock_digest,
         error=None,
@@ -708,8 +708,8 @@ def _finalize_procedure_invocation(
     verdict: ProcedureRunVerdict,
     budget: ProcedureExecutionBudget,
     precondition_detail: dict[str, Any],
-    promoted_config_digest: str | None,
-    promoted_lock_digest: str | None,
+    acceptance_config_digest: str | None,
+    acceptance_lock_digest: str | None,
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
@@ -723,8 +723,8 @@ def _finalize_procedure_invocation(
             verdict=verdict,
             budget=budget,
             precondition_detail=precondition_detail,
-            promoted_config_digest=promoted_config_digest,
-            promoted_lock_digest=promoted_lock_digest,
+            acceptance_config_digest=acceptance_config_digest,
+            acceptance_lock_digest=acceptance_lock_digest,
             executed_config_digest=executed_config_digest,
             executed_lock_digest=executed_lock_digest,
             error=error,
@@ -740,8 +740,8 @@ def _finalize_procedure_invocation_in_uow(
     verdict: ProcedureRunVerdict,
     budget: ProcedureExecutionBudget,
     precondition_detail: dict[str, Any],
-    promoted_config_digest: str | None,
-    promoted_lock_digest: str | None,
+    acceptance_config_digest: str | None,
+    acceptance_lock_digest: str | None,
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
@@ -757,8 +757,8 @@ def _finalize_procedure_invocation_in_uow(
         verdict=verdict,
         budget=budget,
         precondition_detail=precondition_detail,
-        promoted_config_digest=promoted_config_digest,
-        promoted_lock_digest=promoted_lock_digest,
+        acceptance_config_digest=acceptance_config_digest,
+        acceptance_lock_digest=acceptance_lock_digest,
         executed_config_digest=executed_config_digest,
         executed_lock_digest=executed_lock_digest,
         error=error,
@@ -774,8 +774,8 @@ def _persist_built_procedure_receipt(
     verdict: ProcedureRunVerdict,
     budget: ProcedureExecutionBudget,
     precondition_detail: dict[str, Any],
-    promoted_config_digest: str | None,
-    promoted_lock_digest: str | None,
+    acceptance_config_digest: str | None,
+    acceptance_lock_digest: str | None,
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
@@ -789,8 +789,8 @@ def _persist_built_procedure_receipt(
             verdict=verdict,
             budget=budget,
             precondition_detail=precondition_detail,
-            promoted_config_digest=promoted_config_digest,
-            promoted_lock_digest=promoted_lock_digest,
+            acceptance_config_digest=acceptance_config_digest,
+            acceptance_lock_digest=acceptance_lock_digest,
             executed_config_digest=executed_config_digest,
             executed_lock_digest=executed_lock_digest,
             error=error,
@@ -806,8 +806,8 @@ def _persist_built_procedure_receipt_in_uow(
     verdict: ProcedureRunVerdict,
     budget: ProcedureExecutionBudget,
     precondition_detail: dict[str, Any],
-    promoted_config_digest: str | None,
-    promoted_lock_digest: str | None,
+    acceptance_config_digest: str | None,
+    acceptance_lock_digest: str | None,
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
@@ -818,9 +818,9 @@ def _persist_built_procedure_receipt_in_uow(
         {
             "procedure_id": procedure.procedure_id,
             "definition_digest": procedure.definition_digest,
-            "promoted_against": {
-                "config_digest": promoted_config_digest,
-                "lock_digest": promoted_lock_digest,
+            "accepted_against": {
+                "config_digest": acceptance_config_digest,
+                "lock_digest": acceptance_lock_digest,
             },
             "executed_against": {
                 "config_digest": executed_config_digest,
@@ -882,7 +882,7 @@ def _transition_pending_procedure(
     instance: InstanceProtocol,
     procedure_id: str,
     *,
-    action: Literal["promote", "reject"],
+    action: Literal["accept", "reject"],
     expected_version: int | None,
     actor_context: GovernedActorContext | None,
     reason: str | None,
@@ -908,7 +908,7 @@ def _transition_pending_procedure(
             expected_version=expected_version,
             builder=ctx.builder,
         )
-        if action == "promote":
+        if action == "accept":
             _validate_reviewer_independence(procedure, reviewer, builder=ctx.builder)
         normalized_reason = None
         if action == "reject":
@@ -925,7 +925,7 @@ def _transition_pending_procedure(
         now = utc_now()
         config_digest: str | None = None
         lock_digest: str | None = None
-        if action == "promote":
+        if action == "accept":
             try:
                 plan = compile_procedure_definition(instance, procedure.definition)
             except ConfigError as exc:
@@ -955,18 +955,18 @@ def _transition_pending_procedure(
         updated = ctx.uow.procedures.transition_procedure(
             procedure_id,
             from_status="pending",
-            to_status="live" if action == "promote" else "rejected",
+            to_status="live" if action == "accept" else "rejected",
             expected_version=procedure.version,
             resolved_actor_context=reviewer,
             resolved_at=format_datetime(now),
             reason=normalized_reason,
-            promoted_config_digest=config_digest,
-            promoted_lock_digest=lock_digest,
+            acceptance_config_digest=config_digest,
+            acceptance_lock_digest=lock_digest,
         )
         if not updated:
             _refuse(ctx.builder, "procedure changed during review")
 
-        if action == "promote" and procedure.supersedes_procedure_id is not None:
+        if action == "accept" and procedure.supersedes_procedure_id is not None:
             _retire_superseded_procedure(
                 ctx.uow.procedures,
                 procedure.supersedes_procedure_id,
@@ -984,8 +984,8 @@ def _transition_pending_procedure(
                 "from_version": procedure.version,
                 "to_version": transitioned.version,
                 "definition_digest": procedure.definition_digest,
-                "promoted_config_digest": config_digest,
-                "promoted_lock_digest": lock_digest,
+                "acceptance_config_digest": config_digest,
+                "acceptance_lock_digest": lock_digest,
                 "reason": normalized_reason,
             },
         )
@@ -1023,7 +1023,7 @@ def _retire_superseded_procedure(
         reason=reason,
     )
     if not updated:
-        _refuse(builder, f"superseded procedure '{superseded_id}' changed during promotion")
+        _refuse(builder, f"superseded procedure '{superseded_id}' changed during acceptance")
 
 
 def _get_procedure(
@@ -1141,7 +1141,7 @@ __all__ = [
     "service_get_procedure",
     "service_list_procedure_runs",
     "service_list_procedures",
-    "service_promote_procedure",
+    "service_accept_procedure",
     "service_propose_procedure",
     "service_reject_procedure",
     "service_retire_procedure",

@@ -16,26 +16,26 @@ from cruxible_core.procedure.types import ProcedureDefinition
 from cruxible_core.provider.registry import resolve_provider
 from cruxible_core.provider.types import ProviderContext
 from cruxible_core.service import (
-    service_promote_procedure,
+    service_accept_procedure,
     service_propose_procedure,
     service_run_procedure,
 )
 from tests.test_procedures.conftest import actor
 
 
-def _promote(instance: CruxibleInstance, definition: ProcedureDefinition) -> str:
+def _accept(instance: CruxibleInstance, definition: ProcedureDefinition) -> str:
     proposed = service_propose_procedure(
         instance,
         definition,
         actor_context=actor("proposer"),
     )
-    promoted = service_promote_procedure(
+    accepted = service_accept_procedure(
         instance,
         proposed.procedure.procedure_id,
         expected_version=1,
         actor_context=actor("reviewer"),
     )
-    return promoted.procedure.procedure_id
+    return accepted.procedure.procedure_id
 
 
 def _repeat_definition(name: str, *, wall_clock_s: float = 30) -> ProcedureDefinition:
@@ -81,7 +81,7 @@ def test_provider_call_budget_counts_every_repeat_invocation_exactly(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
         _repeat_definition("exact_provider_call_accounting"),
     )
@@ -206,7 +206,7 @@ def test_wall_clock_breach_finalizes_budget_exceeded_with_annotation(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    procedure_id = _promote(
+    procedure_id = _accept(
         procedure_instance,
         _repeat_definition("wall_clock_exceeded", wall_clock_s=0.1),
     )

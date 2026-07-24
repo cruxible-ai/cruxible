@@ -258,7 +258,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need one procedure's definition, budget, precondition, and lifecycle."
     ),
     "cruxible_resolve_procedure": (
-        "Use when an independent reviewer needs to promote or reject a pending procedure."
+        "Use when an independent reviewer needs to accept or reject a pending procedure."
     ),
     "cruxible_retire_procedure": (
         "Use when a reviewer needs to retire a live immutable procedure."

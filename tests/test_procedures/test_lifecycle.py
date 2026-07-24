@@ -12,9 +12,9 @@ from cruxible_core.procedure.types import (
 )
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
+    service_accept_procedure,
     service_get_procedure,
     service_lock,
-    service_promote_procedure,
     service_propose_procedure,
     service_reject_procedure,
     service_retire_procedure,
@@ -38,7 +38,7 @@ def _receipt(instance: CruxibleInstance, receipt_id: str) -> Receipt:
         store.close()
 
 
-def test_propose_and_promote_pin_definition_config_and_lock_digests(
+def test_propose_and_accept_pin_definition_config_and_lock_digests(
     procedure_instance: CruxibleInstance,
 ) -> None:
     definition = provider_definition()
@@ -56,7 +56,7 @@ def test_propose_and_promote_pin_definition_config_and_lock_digests(
     assert proposal_receipt.operation_type == "procedure_transition"
     assert proposal_receipt.committed is True
 
-    promoted = service_promote_procedure(
+    accepted = service_accept_procedure(
         procedure_instance,
         proposed.procedure.procedure_id,
         expected_version=1,
@@ -65,14 +65,14 @@ def test_propose_and_promote_pin_definition_config_and_lock_digests(
 
     config = procedure_instance.load_config()
     lock = load_lock(resolve_lock_path(procedure_instance))
-    assert promoted.procedure.status == "live"
-    assert promoted.procedure.version == 2
-    assert promoted.procedure.definition_digest == proposed.procedure.definition_digest
-    assert promoted.procedure.promoted_config_digest == compute_lock_config_digest(config)
-    assert promoted.procedure.promoted_lock_digest == compute_lock_digest(lock)
-    assert promoted.procedure.resolved_actor_context == actor("reviewer")
-    assert promoted.receipt_id is not None
-    assert _receipt(procedure_instance, promoted.receipt_id).committed is True
+    assert accepted.procedure.status == "live"
+    assert accepted.procedure.version == 2
+    assert accepted.procedure.definition_digest == proposed.procedure.definition_digest
+    assert accepted.procedure.acceptance_config_digest == compute_lock_config_digest(config)
+    assert accepted.procedure.acceptance_lock_digest == compute_lock_digest(lock)
+    assert accepted.procedure.resolved_actor_context == actor("reviewer")
+    assert accepted.receipt_id is not None
+    assert _receipt(procedure_instance, accepted.receipt_id).committed is True
 
 
 def test_proposal_refuses_unknown_precondition_entity_type_with_receipt(
@@ -106,7 +106,7 @@ def test_proposal_refuses_unknown_precondition_entity_type_with_receipt(
     )
 
 
-def test_promotion_refuses_precondition_entity_type_removed_after_proposal(
+def test_acceptance_refuses_precondition_entity_type_removed_after_proposal(
     procedure_instance: CruxibleInstance,
 ) -> None:
     definition = provider_definition(
@@ -129,7 +129,7 @@ def test_promotion_refuses_precondition_entity_type_removed_after_proposal(
         ConfigError,
         match="precondition references unknown entity type 'Task'",
     ) as exc_info:
-        service_promote_procedure(
+        service_accept_procedure(
             procedure_instance,
             proposed.procedure.procedure_id,
             expected_version=1,
@@ -150,7 +150,7 @@ def test_promotion_refuses_precondition_entity_type_removed_after_proposal(
     )
 
 
-def test_promotion_refuses_same_actor_and_receipts_the_refusal(
+def test_acceptance_refuses_same_actor_and_receipts_the_refusal(
     procedure_instance: CruxibleInstance,
 ) -> None:
     proposed = service_propose_procedure(
@@ -160,7 +160,7 @@ def test_promotion_refuses_same_actor_and_receipts_the_refusal(
     )
 
     with pytest.raises(ConfigError, match="independent from the proposer") as exc_info:
-        service_promote_procedure(
+        service_accept_procedure(
             procedure_instance,
             proposed.procedure.procedure_id,
             expected_version=1,
@@ -194,7 +194,7 @@ def test_missing_proposer_or_reviewer_attribution_is_refused_and_receipted(
         actor_context=actor("proposer"),
     )
     with pytest.raises(ConfigError, match="reviewer actor context is required") as review_exc:
-        service_promote_procedure(
+        service_accept_procedure(
             procedure_instance,
             proposed.procedure.procedure_id,
             expected_version=1,
@@ -211,7 +211,7 @@ def test_missing_proposer_or_reviewer_attribution_is_refused_and_receipted(
     with procedure_instance.write_transaction() as uow:
         uow.procedures.save_procedure(malformed)
     with pytest.raises(ConfigError, match="proposer actor context is missing/null") as null_exc:
-        service_promote_procedure(
+        service_accept_procedure(
             procedure_instance,
             malformed.procedure_id,
             expected_version=1,
@@ -230,7 +230,7 @@ def test_version_conflict_refuses_without_transition(
     )
 
     with pytest.raises(ConfigError, match="expected version 2, found 1") as exc_info:
-        service_promote_procedure(
+        service_accept_procedure(
             procedure_instance,
             proposed.procedure.procedure_id,
             expected_version=2,
@@ -273,7 +273,7 @@ def test_reject_and_retire_require_reasons(
         provider_definition("retire_me"),
         actor_context=actor("proposer-b"),
     )
-    live = service_promote_procedure(
+    live = service_accept_procedure(
         procedure_instance,
         live_candidate.procedure.procedure_id,
         expected_version=1,
@@ -300,7 +300,7 @@ def test_reject_and_retire_require_reasons(
     assert retired.procedure.retired_actor_context == actor("retirer")
 
 
-def test_live_change_is_new_superseding_proposal_and_promotion_retires_old(
+def test_live_change_is_new_superseding_proposal_and_acceptance_retires_old(
     procedure_instance: CruxibleInstance,
 ) -> None:
     first_pending = service_propose_procedure(
@@ -308,7 +308,7 @@ def test_live_change_is_new_superseding_proposal_and_promotion_retires_old(
         provider_definition("versioned_action"),
         actor_context=actor("first-proposer"),
     )
-    first_live = service_promote_procedure(
+    first_live = service_accept_procedure(
         procedure_instance,
         first_pending.procedure.procedure_id,
         expected_version=1,
@@ -331,7 +331,7 @@ def test_live_change_is_new_superseding_proposal_and_promotion_retires_old(
         == "live"
     )
 
-    second_live = service_promote_procedure(
+    second_live = service_accept_procedure(
         procedure_instance,
         second_pending.procedure.procedure_id,
         expected_version=1,
@@ -371,7 +371,7 @@ def test_provider_export_and_declared_tier_are_revalidated_at_proposal(
         )
 
 
-def test_promotion_recompiles_and_refuses_a_provider_deexported_after_proposal(
+def test_acceptance_recompiles_and_refuses_a_provider_deexported_after_proposal(
     procedure_instance: CruxibleInstance,
 ) -> None:
     proposed = service_propose_procedure(
@@ -385,7 +385,7 @@ def test_promotion_recompiles_and_refuses_a_provider_deexported_after_proposal(
     service_lock(procedure_instance)
 
     with pytest.raises(ConfigError, match="not exported to procedures") as exc_info:
-        service_promote_procedure(
+        service_accept_procedure(
             procedure_instance,
             proposed.procedure.procedure_id,
             expected_version=1,
@@ -418,7 +418,7 @@ def test_proposer_may_reject_own_proposal_as_withdrawal(
     assert withdrawn.procedure.reason == "withdrawing my own proposal"
 
 
-def test_promotion_refuses_second_live_procedure_with_same_name(
+def test_acceptance_refuses_second_live_procedure_with_same_name(
     procedure_instance: CruxibleInstance,
 ) -> None:
     first = service_propose_procedure(
@@ -426,7 +426,7 @@ def test_promotion_refuses_second_live_procedure_with_same_name(
         provider_definition("unique_name"),
         actor_context=actor("proposer-a"),
     )
-    service_promote_procedure(
+    service_accept_procedure(
         procedure_instance,
         first.procedure.procedure_id,
         expected_version=1,
@@ -438,7 +438,7 @@ def test_promotion_refuses_second_live_procedure_with_same_name(
         actor_context=actor("proposer-b"),
     )
     with pytest.raises(ConfigError, match="one live version per name") as exc_info:
-        service_promote_procedure(
+        service_accept_procedure(
             procedure_instance,
             second.procedure.procedure_id,
             expected_version=1,
@@ -450,7 +450,7 @@ def test_promotion_refuses_second_live_procedure_with_same_name(
     )
 
 
-def test_supersede_race_second_promotion_refused(
+def test_supersede_race_second_acceptance_refused(
     procedure_instance: CruxibleInstance,
 ) -> None:
     v1 = service_propose_procedure(
@@ -458,7 +458,7 @@ def test_supersede_race_second_promotion_refused(
         provider_definition("raced_name"),
         actor_context=actor("proposer-a"),
     )
-    v1_live = service_promote_procedure(
+    v1_live = service_accept_procedure(
         procedure_instance,
         v1.procedure.procedure_id,
         expected_version=1,
@@ -476,14 +476,14 @@ def test_supersede_race_second_promotion_refused(
         actor_context=actor("proposer-c"),
         supersedes_procedure_id=v1_live.procedure.procedure_id,
     )
-    service_promote_procedure(
+    service_accept_procedure(
         procedure_instance,
         v2a.procedure.procedure_id,
         expected_version=1,
         actor_context=actor("reviewer-b"),
     )
     with pytest.raises(ConfigError, match="one live version per name"):
-        service_promote_procedure(
+        service_accept_procedure(
             procedure_instance,
             v2b.procedure.procedure_id,
             expected_version=1,

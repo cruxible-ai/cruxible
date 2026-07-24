@@ -8,7 +8,7 @@ from pathlib import Path
 from cruxible_core.procedure.types import ProcedureRun
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import (
-    service_promote_procedure,
+    service_accept_procedure,
     service_propose_procedure,
     service_retire_procedure,
 )
@@ -25,7 +25,7 @@ def test_clone_restores_snapshot_time_procedures_but_excludes_runs(
         actor_context=actor("snapshot-proposer"),
     )
     procedure_id = proposed.procedure.procedure_id
-    promoted = service_promote_procedure(
+    accepted = service_accept_procedure(
         procedure_instance,
         procedure_id,
         expected_version=1,
@@ -36,7 +36,7 @@ def test_clone_restores_snapshot_time_procedures_but_excludes_runs(
         uow.procedures.save_run(
             ProcedureRun(
                 procedure_id=procedure_id,
-                definition_digest=promoted.procedure.definition_digest,
+                definition_digest=accepted.procedure.definition_digest,
             )
         )
 

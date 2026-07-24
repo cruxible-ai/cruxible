@@ -45,8 +45,8 @@ CREATE TABLE IF NOT EXISTS procedures (
     retired_actor_context TEXT,
     retired_at TEXT,
     reason TEXT,
-    promoted_config_digest TEXT,
-    promoted_lock_digest TEXT
+    acceptance_config_digest TEXT,
+    acceptance_lock_digest TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_procedures_name ON procedures(name);
 CREATE INDEX IF NOT EXISTS idx_procedures_status ON procedures(status);
@@ -101,7 +101,7 @@ class ProcedureStore(ProcedureStoreProtocol):
             "(procedure_id, name, definition_json, definition_digest, status, version, "
             "supersedes_procedure_id, evidence_refs_json, proposed_actor_context, "
             "proposed_at, resolved_actor_context, resolved_at, retired_actor_context, "
-            "retired_at, reason, promoted_config_digest, promoted_lock_digest) "
+            "retired_at, reason, acceptance_config_digest, acceptance_lock_digest) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 procedure.procedure_id,
@@ -125,8 +125,8 @@ class ProcedureStore(ProcedureStoreProtocol):
                 _dump_optional_actor(procedure.retired_actor_context),
                 _format_optional_datetime(procedure.retired_at),
                 procedure.reason,
-                procedure.promoted_config_digest,
-                procedure.promoted_lock_digest,
+                procedure.acceptance_config_digest,
+                procedure.acceptance_lock_digest,
             ),
         )
         return procedure.procedure_id
@@ -198,8 +198,8 @@ class ProcedureStore(ProcedureStoreProtocol):
         retired_actor_context: GovernedActorContext | None = None,
         retired_at: str | None = None,
         reason: str | None = None,
-        promoted_config_digest: str | None = None,
-        promoted_lock_digest: str | None = None,
+        acceptance_config_digest: str | None = None,
+        acceptance_lock_digest: str | None = None,
     ) -> bool:
         """Apply one optimistic lifecycle transition without changing definition data."""
         allowed_transitions = {
@@ -213,11 +213,11 @@ class ProcedureStore(ProcedureStoreProtocol):
             raise ValueError(f"procedure transition to '{to_status}' requires a reason")
         if to_status == "live" and (
             resolved_actor_context is None
-            or promoted_config_digest is None
-            or promoted_lock_digest is None
+            or acceptance_config_digest is None
+            or acceptance_lock_digest is None
         ):
             raise ValueError(
-                "procedure promotion requires reviewer attribution plus config and lock digests"
+                "procedure acceptance requires reviewer attribution plus config and lock digests"
             )
         if to_status == "rejected" and resolved_actor_context is None:
             raise ValueError("procedure rejection requires reviewer attribution")
@@ -241,12 +241,12 @@ class ProcedureStore(ProcedureStoreProtocol):
         if reason is not None:
             assignments.append("reason = ?")
             params.append(reason)
-        if promoted_config_digest is not None:
-            assignments.append("promoted_config_digest = ?")
-            params.append(promoted_config_digest)
-        if promoted_lock_digest is not None:
-            assignments.append("promoted_lock_digest = ?")
-            params.append(promoted_lock_digest)
+        if acceptance_config_digest is not None:
+            assignments.append("acceptance_config_digest = ?")
+            params.append(acceptance_config_digest)
+        if acceptance_lock_digest is not None:
+            assignments.append("acceptance_lock_digest = ?")
+            params.append(acceptance_lock_digest)
         params.extend((procedure_id, from_status, expected_version))
         cursor = self._conn.execute(
             f"UPDATE procedures SET {', '.join(assignments)} "
@@ -376,8 +376,8 @@ class ProcedureStore(ProcedureStoreProtocol):
             retired_actor_context=_load_optional_actor(row["retired_actor_context"]),
             retired_at=row["retired_at"],
             reason=row["reason"],
-            promoted_config_digest=row["promoted_config_digest"],
-            promoted_lock_digest=row["promoted_lock_digest"],
+            acceptance_config_digest=row["acceptance_config_digest"],
+            acceptance_lock_digest=row["acceptance_lock_digest"],
         )
 
     @staticmethod

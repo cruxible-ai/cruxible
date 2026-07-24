@@ -362,7 +362,7 @@ The cache is NON-AUTHORITATIVE and its files are same-user-writable by design: a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need a one-off bounded graph query without adding it to the config. Inline definitions use the configured named-query JSON shape plus a required name; promote repeated or workflow-critical queries into config. Items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context. Pass layout='graph' to receive deduplicated nodes/edges with results as ordered references instead of per-row items.
+**Purpose:** Use when you need a one-off bounded graph query without adding it to the config. Inline definitions use the configured named-query JSON shape plus a required name; accept repeated or workflow-critical queries into config. Items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context. Pass layout='graph' to receive deduplicated nodes/edges with results as ordered references instead of per-row items.
 
 **Arguments:**
 
@@ -1472,7 +1472,7 @@ without it, only the active materialized digest is checked.
 
 **Permission:** `GRAPH_WRITE`
 
-**Purpose:** Use when an independent reviewer needs to promote or reject a pending procedure.
+**Purpose:** Use when an independent reviewer needs to accept or reject a pending procedure.
 
 **Arguments:**
 
@@ -1480,13 +1480,13 @@ without it, only the active materialized digest is checked.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string | Governed instance ID. |
 | `procedure_id` | yes | string | Procedure ID. |
-| `action` | yes | string | `promote` or `reject`. |
+| `action` | yes | string | `accept` or `reject`. |
 | `expected_version` | yes | integer | Optimistic lifecycle version. |
 | `reason` | no | string or null | Required when rejecting. |
 
 **Returns:** The transitioned procedure and receipt ID.
 
-**Side Effects:** Promotes or rejects a pending procedure and writes a receipt.
+**Side Effects:** Accepts or rejects a pending procedure and writes a receipt.
 
 ## cruxible_retire_procedure
 

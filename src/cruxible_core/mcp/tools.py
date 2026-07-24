@@ -1111,7 +1111,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
     def cruxible_resolve_procedure(
         instance_id: str,
         procedure_id: str,
-        action: Literal["promote", "reject"],
+        action: Literal["accept", "reject"],
         expected_version: int,
         reason: str | None = None,
     ) -> dict[str, Any]:

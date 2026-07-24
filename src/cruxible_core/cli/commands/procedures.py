@@ -28,10 +28,10 @@ from cruxible_core.procedure.types import (
     ProcedureTransitionResult,
 )
 from cruxible_core.service import (
+    service_accept_procedure,
     service_get_procedure,
     service_list_procedure_runs,
     service_list_procedures,
-    service_promote_procedure,
     service_propose_procedure,
     service_reject_procedure,
     service_retire_procedure,
@@ -260,7 +260,7 @@ def procedure_show(procedure_id: str, output_json: bool) -> None:
 @click.argument("procedure_id")
 @click.option(
     "--action",
-    type=click.Choice(["promote", "reject"]),
+    type=click.Choice(["accept", "reject"]),
     required=True,
 )
 @click.option("--expected-version", required=True, type=click.IntRange(min=1))
@@ -272,7 +272,7 @@ def procedure_resolve(
     expected_version: int,
     reason: str | None,
 ) -> None:
-    """Promote or reject one pending procedure."""
+    """Accept or reject one pending procedure."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.resolve_procedure(
             instance_id,
@@ -282,13 +282,13 @@ def procedure_resolve(
             reason=reason,
         ),
         lambda instance: (
-            service_promote_procedure(
+            service_accept_procedure(
                 instance,
                 procedure_id,
                 expected_version=expected_version,
                 actor_context=None,
             )
-            if action == "promote"
+            if action == "accept"
             else service_reject_procedure(
                 instance,
                 procedure_id,

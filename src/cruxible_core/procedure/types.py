@@ -286,8 +286,8 @@ class ProcedureRecord(BaseModel):
     retired_actor_context: GovernedActorContext | None = None
     retired_at: datetime | None = None
     reason: str | None = None
-    promoted_config_digest: str | None = None
-    promoted_lock_digest: str | None = None
+    acceptance_config_digest: str | None = None
+    acceptance_lock_digest: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -328,7 +328,7 @@ class ProcedureRun(BaseModel):
 class ProcedureTransitionResult(BaseModel):
     """Service result for one receipted procedure lifecycle transition."""
 
-    action: Literal["propose", "promote", "reject", "retire"]
+    action: Literal["propose", "accept", "reject", "retire"]
     procedure: ProcedureRecord
     receipt_id: str | None = None
 

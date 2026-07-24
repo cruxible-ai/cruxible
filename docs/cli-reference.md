@@ -1430,7 +1430,7 @@ Workflows are designed; procedures are learned.
 - `cruxible procedure propose` - Propose a definition from a JSON or YAML file.
 - `cruxible procedure list` - List definitions and lifecycle state.
 - `cruxible procedure show` - Show one definition and lifecycle record.
-- `cruxible procedure resolve` - Promote or reject a pending definition.
+- `cruxible procedure resolve` - Accept or reject a pending definition.
 - `cruxible procedure retire` - Retire a live definition.
 - `cruxible procedure run` - Execute a live definition.
 - `cruxible procedure runs` - List invocation records.
@@ -1488,18 +1488,18 @@ The JSON result contains `items`, `total`, `limit`, `offset`, `truncated`, and
 
 **Usage:** `cruxible procedure resolve [OPTIONS] PROCEDURE_ID`
 
-**Purpose:** Promote or reject one pending procedure.
+**Purpose:** Accept or reject one pending procedure.
 
 **Options And Arguments:**
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `PROCEDURE_ID` | yes |  | argument | Procedure ID. |
-| `--action` | yes |  | choice | `promote` or `reject`. |
+| `--action` | yes |  | choice | `accept` or `reject`. |
 | `--expected-version` | yes |  | integer | Optimistic lifecycle version. |
 | `--reason` | no |  | text | Required by the service when rejecting. |
 
-Promotion requires an independently identified reviewer. This command requires
+Acceptance requires an independently identified reviewer. This command requires
 daemon transport and `graph_write`.
 
 ## cruxible procedure retire
@@ -2361,7 +2361,7 @@ cruxible query inline \
 - Provide exactly one of `--definition-json` or `--definition-file`.
 - Inline query definitions use the same shape as configured named queries plus
   required `name`; repeated or workflow-critical inline queries should be
-  promoted into config as named queries.
+  accepted into config as named queries.
 
 ## cruxible query describe
 
@@ -3190,7 +3190,7 @@ cruxible source dereference \
 
 **Purpose:** Agent-local working set: opt-in, NON-AUTHORITATIVE read cache.
 
-An opt-in prototype (promotion is gated on the RuneBench pilot). When enabled
+An opt-in prototype (acceptance is gated on the RuneBench pilot). When enabled
 — `CRUXIBLE_WORKING_SET=1` in the environment, or `--ws` on a supported
 `--json` read (`query run`, `entity get`, `entity inspect`,
 `relationship get`, `list entities`, `list edges`, `sample`) — every entity

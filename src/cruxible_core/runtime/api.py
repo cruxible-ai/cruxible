@@ -76,6 +76,7 @@ from cruxible_core.service import (
     query_definition_summary_payload,
     resolve_contained_source_path,
     service_abandon_decision_record,
+    service_accept_procedure,
     service_add_constraint,
     service_add_decision_policy,
     service_add_entity_inputs,
@@ -132,7 +133,6 @@ from cruxible_core.service import (
     service_lock,
     service_outcome,
     service_plan,
-    service_promote_procedure,
     service_propose_group_inputs,
     service_propose_procedure,
     service_propose_workflow,
@@ -3644,7 +3644,7 @@ def resolve_procedure(
     instance_id: str,
     procedure_id: str,
     *,
-    action: Literal["promote", "reject"],
+    action: Literal["accept", "reject"],
     expected_version: int,
     reason: str | None = None,
     actor_context: Any | None = None,
@@ -3653,8 +3653,8 @@ def resolve_procedure(
     check_permission("cruxible_resolve_procedure", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
-    if action == "promote":
-        result = service_promote_procedure(
+    if action == "accept":
+        result = service_accept_procedure(
             instance,
             procedure_id,
             expected_version=expected_version,
