@@ -672,6 +672,7 @@ def test_no_direct_sqlite_imports_outside_storage_implementation() -> None:
         Path("src/cruxible_core/feedback/store.py"),
         Path("src/cruxible_core/group/store.py"),
         Path("src/cruxible_core/procedure/store.py"),
+        Path("src/cruxible_core/attestation/store.py"),
         Path("src/cruxible_core/decision/store.py"),
         Path("src/cruxible_core/server/registry.py"),
         Path("src/cruxible_core/server/credentials.py"),
