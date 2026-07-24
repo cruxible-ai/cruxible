@@ -104,6 +104,20 @@ def service_attest(
                 actor_id=actor.actor_id,
             )
             if original is not None:
+                divergences: list[str] = []
+                if original.stance != stance:
+                    divergences.append(f"stance (original '{original.stance}', request '{stance}')")
+                original_evidence = [ref.model_dump(mode="json") for ref in original.evidence_refs]
+                request_evidence = [ref.model_dump(mode="json") for ref in normalized_evidence]
+                if original_evidence != request_evidence:
+                    divergences.append("evidence_refs")
+                if divergences:
+                    _refuse(
+                        ctx.builder,
+                        "idempotency key replay diverges from the original attestation "
+                        f"on {', '.join(divergences)}; a reused key must carry an "
+                        "identical request",
+                    )
                 result = AttestationRecordResult(
                     attestation=original,
                     idempotent_replay=True,
@@ -137,9 +151,17 @@ def service_attest(
                     receipt_id=ctx.builder.receipt_id,
                 )
             except DataValidationError as exc:
-                # The create path may discover that another writer won the tuple.
-                # Retry tuple-first against the transaction's current graph image;
-                # if the tuple is still absent, preserve the original refusal.
+                # Under the current SQLite backend, BEGIN IMMEDIATE serializes
+                # writers, so a concurrent create-loser race cannot actually
+                # reach this handler; the tuple-exists case returns via
+                # is_update rather than raising. This catch therefore wraps
+                # genuine validation failures (missing endpoints, required
+                # properties) into a receipted refusal, and the tuple-first
+                # re-read below is a best-effort attach for any backend whose
+                # conflict surfaces as an in-transaction validation error.
+                # Real conflict-at-commit handling (MVCC backends surface the
+                # loser AFTER this scope) is deferred to backend-abstraction
+                # work.
                 retry_graph = ctx.uow.graph.load_graph()
                 raced_relationship = _resolve_claim(retry_graph, claim_key)
                 if raced_relationship is None:
@@ -358,6 +380,15 @@ def service_resolve_attestation(
         reviewer = _require_actor(actor_context, role="reviewer", builder=ctx.builder)
         if ctx.uow.attestations.get_attestation(attestation_id) is None:
             _refuse(ctx.builder, f"attestation '{attestation_id}' not found")
+        if (
+            follow_up_receipt_id is not None
+            and ctx.uow.receipts.get_receipt(follow_up_receipt_id) is None
+        ):
+            _refuse(
+                ctx.builder,
+                f"follow_up_receipt_id '{follow_up_receipt_id}' does not resolve "
+                "to a receipt in this instance",
+            )
         disposition = AttestationDisposition(
             attestation_id=attestation_id,
             verdict=verdict,
@@ -402,7 +433,15 @@ def attach_corroboration_summaries(
     instance: InstanceProtocol,
     payloads: Sequence[dict[str, Any]],
 ) -> None:
-    """Mutate serialized claim payloads with universally zero-elided summaries."""
+    """Mutate serialized claim payloads with universally zero-elided summaries.
+
+    Payload detection is structural: any dict carrying the six claim-identity
+    fields is treated as a claim row. A future payload shape that
+    coincidentally carries those keys would get a ``corroboration`` key
+    injected — callers introducing new envelope shapes should keep that in
+    mind. When one tuple appears multiple times in a batch with divergent
+    properties, the latest occurrence's digest wins for staleness bucketing.
+    """
     claims: dict[ClaimKey, list[dict[str, Any]]] = defaultdict(list)
     digests: dict[ClaimKey, str] = {}
     for payload in payloads:
@@ -580,6 +619,11 @@ def _refuse_oversized_procedure_evidence(
     *,
     builder: ReceiptBuilder,
 ) -> None:
+    # Deliberate asymmetry, on the record: an oversized procedure-evidence
+    # artifact refuses (attesting to a payload nobody can dereference is
+    # misleading), while a hand-constructed procedure_run ref whose artifact
+    # does not exist passes silently — consistent with the general
+    # no-existence-validation precedent for evidence refs.
     for ref in refs:
         if ref.source != "procedure_run" or ref.artifact_id is None:
             continue

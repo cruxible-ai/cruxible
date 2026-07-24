@@ -125,3 +125,25 @@ def test_hidden_attestation_routes_cover_record_queue_list_and_resolve(
 def test_attestation_routes_are_hidden_from_frozen_openapi() -> None:
     spec = create_app().openapi()
     assert all("/attestations" not in path for path in spec["paths"])
+
+
+def test_daemon_refusal_parity_contradict_on_absent_claim(
+    attestation_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init(attestation_client, tmp_path / "workspace")
+    refused = attestation_client.post(
+        f"/api/v1/{instance_id}/attestations/record",
+        json={
+            "relationship_type": "protected_by",
+            "from_type": "Service",
+            "from_id": "svc-absent",
+            "to_type": "Control",
+            "to_id": "ctl-absent",
+            "stance": "contradict",
+            "observed_at": "2020-01-01T00:00:00Z",
+            "evidence_refs": [{"source": "test", "source_record_id": "record-absent"}],
+        },
+    )
+    assert 400 <= refused.status_code < 500, refused.text
+    assert "only support" in refused.text

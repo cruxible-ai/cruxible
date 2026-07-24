@@ -1,5 +1,19 @@
 {
   "literal_aliases": {
+    "AttestationStance": {
+      "values": [
+        "support",
+        "contradict",
+        "unsure"
+      ]
+    },
+    "AttestationVerdict": {
+      "values": [
+        "upheld",
+        "corrected",
+        "invalidated"
+      ]
+    },
     "ConstraintSeverity": {
       "values": [
         "warning",
@@ -1974,6 +1988,192 @@
       "required_fields": [
         "anchor_type",
         "outcome_count"
+      ]
+    },
+    "AttestationDispositionResult": {
+      "fields": {
+        "disposition": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "disposition",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Disposition",
+            "type": "object"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Appended reviewer disposition and receipt.",
+        "properties": {
+          "disposition": {
+            "additionalProperties": true,
+            "title": "Disposition",
+            "type": "object"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "required": [
+          "disposition"
+        ],
+        "title": "AttestationDispositionResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "disposition"
+      ]
+    },
+    "AttestationRecordResult": {
+      "fields": {
+        "attestation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "attestation",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Attestation",
+            "type": "object"
+          }
+        },
+        "created_claim": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "created_claim",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Created Claim",
+            "type": "boolean"
+          }
+        },
+        "idempotent_replay": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "idempotent_replay",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Idempotent Replay",
+            "type": "boolean"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Recorded immutable observation plus D2 routing outcome.",
+        "properties": {
+          "attestation": {
+            "additionalProperties": true,
+            "title": "Attestation",
+            "type": "object"
+          },
+          "created_claim": {
+            "default": false,
+            "title": "Created Claim",
+            "type": "boolean"
+          },
+          "idempotent_replay": {
+            "default": false,
+            "title": "Idempotent Replay",
+            "type": "boolean"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "attestation"
+        ],
+        "title": "AttestationRecordResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "attestation"
       ]
     },
     "BatchDirectWritePayload": {
@@ -8569,6 +8769,27 @@
     },
     "GetRelationshipResult": {
       "fields": {
+        "corroboration": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "corroboration",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
+          }
+        },
         "edge_key": {
           "default": null,
           "default_json_serializable": true,
@@ -8674,6 +8895,19 @@
       },
       "json_schema": {
         "properties": {
+          "corroboration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
+          },
           "edge_key": {
             "anyOf": [
               {
@@ -10432,6 +10666,19 @@
         "$defs": {
           "InspectNeighborResult": {
             "properties": {
+              "corroboration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corroboration"
+              },
               "direction": {
                 "enum": [
                   "incoming",
@@ -10545,6 +10792,27 @@
     },
     "InspectNeighborResult": {
       "fields": {
+        "corroboration": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "corroboration",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
+          }
+        },
         "direction": {
           "has_default": false,
           "has_default_factory": false,
@@ -10625,6 +10893,19 @@
       },
       "json_schema": {
         "properties": {
+          "corroboration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
+          },
           "direction": {
             "enum": [
               "incoming",
@@ -10909,6 +11190,19 @@
           "NeighborhoodEdgeResult": {
             "description": "One returned edge of a bounded neighborhood read.\n\n``metadata`` keeps the assertion review/lifecycle markers so\npending/live/rejected/superseded edges never flatten together.",
             "properties": {
+              "corroboration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corroboration"
+              },
               "edge_key": {
                 "anyOf": [
                   {
@@ -14636,6 +14930,27 @@
     },
     "NeighborhoodEdgeResult": {
       "fields": {
+        "corroboration": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "corroboration",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
+          }
+        },
         "edge_key": {
           "default": null,
           "default_json_serializable": true,
@@ -14732,6 +15047,19 @@
       "json_schema": {
         "description": "One returned edge of a bounded neighborhood read.\n\n``metadata`` keeps the assertion review/lifecycle markers so\npending/live/rejected/superseded edges never flatten together.",
         "properties": {
+          "corroboration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
+          },
           "edge_key": {
             "anyOf": [
               {
@@ -16654,6 +16982,27 @@
     },
     "QueryGraphEdgeItem": {
       "fields": {
+        "corroboration": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "corroboration",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
+          }
+        },
         "edge_key": {
           "default": null,
           "default_json_serializable": true,
@@ -16750,6 +17099,19 @@
       "json_schema": {
         "description": "One PHYSICAL relationship card in the shared graph-layout `edges` array.\n\nExactly the serialized edge payload minus the per-occurrence traversal\n`alias`: aliases are reference-level metadata (path step refs, include\nitem refs), so one physical edge is always one card even when visited\nunder several step aliases.",
         "properties": {
+          "corroboration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
+          },
           "edge_key": {
             "anyOf": [
               {
@@ -18321,6 +18683,19 @@
           "QueryGraphEdgeItem": {
             "description": "One PHYSICAL relationship card in the shared graph-layout `edges` array.\n\nExactly the serialized edge payload minus the per-occurrence traversal\n`alias`: aliases are reference-level metadata (path step refs, include\nitem refs), so one physical edge is always one card even when visited\nunder several step aliases.",
             "properties": {
+              "corroboration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corroboration"
+              },
               "edge_key": {
                 "anyOf": [
                   {
@@ -19000,6 +19375,19 @@
                 "default": null,
                 "title": "Alias"
               },
+              "corroboration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corroboration"
+              },
               "edge_key": {
                 "anyOf": [
                   {
@@ -19246,6 +19634,19 @@
                 ],
                 "default": null,
                 "title": "Alias"
+              },
+              "corroboration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corroboration"
               },
               "edge_key": {
                 "anyOf": [
@@ -20265,6 +20666,19 @@
                 "default": null,
                 "title": "Alias"
               },
+              "corroboration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corroboration"
+              },
               "edge_key": {
                 "anyOf": [
                   {
@@ -20387,6 +20801,27 @@
             "title": "Alias"
           }
         },
+        "corroboration": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "corroboration",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
+          }
+        },
         "edge_key": {
           "default": null,
           "default_json_serializable": true,
@@ -20494,6 +20929,19 @@
             ],
             "default": null,
             "title": "Alias"
+          },
+          "corroboration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
           },
           "edge_key": {
             "anyOf": [
@@ -20856,6 +21304,19 @@
                 "default": null,
                 "title": "Alias"
               },
+              "corroboration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corroboration"
+              },
               "edge_key": {
                 "anyOf": [
                   {
@@ -20912,6 +21373,19 @@
           "QueryRelationshipItem": {
             "description": "Relationship-shaped row returned by relationship result queries.",
             "properties": {
+              "corroboration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corroboration"
+              },
               "edge_key": {
                 "anyOf": [
                   {
@@ -21037,6 +21511,27 @@
     },
     "QueryRelationshipItem": {
       "fields": {
+        "corroboration": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "corroboration",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
+          }
+        },
         "edge_key": {
           "default": null,
           "default_json_serializable": true,
@@ -21312,6 +21807,19 @@
                 "default": null,
                 "title": "Alias"
               },
+              "corroboration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corroboration"
+              },
               "edge_key": {
                 "anyOf": [
                   {
@@ -21368,6 +21876,19 @@
         },
         "description": "Relationship-shaped row returned by relationship result queries.",
         "properties": {
+          "corroboration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corroboration"
+          },
           "edge_key": {
             "anyOf": [
               {
@@ -22029,6 +22550,19 @@
                 "default": null,
                 "title": "Alias"
               },
+              "corroboration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corroboration"
+              },
               "edge_key": {
                 "anyOf": [
                   {
@@ -22118,6 +22652,19 @@
           "QueryRelationshipItem": {
             "description": "Relationship-shaped row returned by relationship result queries.",
             "properties": {
+              "corroboration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corroboration"
+              },
               "edge_key": {
                 "anyOf": [
                   {

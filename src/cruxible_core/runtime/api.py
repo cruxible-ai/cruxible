@@ -3634,7 +3634,10 @@ def attest(
     """Record one attributed observation against a tuple-first claim."""
     check_permission("cruxible_attest", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
-    parsed_observed_at = parse_datetime(observed_at)
+    try:
+        parsed_observed_at = parse_datetime(observed_at)
+    except ValueError as exc:
+        raise ConfigError("observed_at must be an ISO-8601 datetime") from exc
     if parsed_observed_at is None:
         raise ConfigError("observed_at is required")
     parsed_evidence = [

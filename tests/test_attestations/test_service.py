@@ -326,7 +326,7 @@ def test_queue_and_disposition_lifecycle_with_latest_wins(
         attestation_instance,
         second_id,
         verdict="corrected",
-        follow_up_receipt_id="RCP-follow-up",
+        follow_up_receipt_id=first.receipt_id,
         actor_context=actor("reviewer", "op-review-second"),
     )
     assert service_attestation_queue(attestation_instance).total == 0
@@ -369,4 +369,67 @@ def test_actor_is_required_at_service_boundary(
             evidence_refs=[evidence()],
             observed_at=OBSERVED_AT,
             actor_context=None,
+        )
+
+
+def test_refusals_persist_mutation_receipts(
+    attestation_instance: CruxibleInstance,
+) -> None:
+    with pytest.raises(ConfigError, match="only support") as excinfo:
+        _attest(attestation_instance, "contradict")
+    receipt_id = getattr(excinfo.value, "mutation_receipt_id", None)
+    assert receipt_id is not None
+    store = attestation_instance.get_receipt_store()
+    try:
+        assert store.get_receipt(receipt_id) is not None
+    finally:
+        store.close()
+
+
+def test_idempotency_key_is_scoped_per_actor(
+    attestation_instance: CruxibleInstance,
+) -> None:
+    add_live_claim(attestation_instance)
+    first = _attest(
+        attestation_instance, "support", observer="observer-a", idempotency_key="shared-key"
+    )
+    second = _attest(
+        attestation_instance, "support", observer="observer-b", idempotency_key="shared-key"
+    )
+    assert first.attestation.attestation_id != second.attestation.attestation_id
+    assert second.idempotent_replay is False
+    assert service_list_attestations(attestation_instance).total == 2
+
+
+def test_idempotent_replay_refuses_divergent_request(
+    attestation_instance: CruxibleInstance,
+) -> None:
+    add_live_claim(attestation_instance)
+    original = _attest(attestation_instance, "support", idempotency_key="diverge-key")
+    with pytest.raises(ConfigError, match="diverges from the original"):
+        _attest(attestation_instance, "contradict", idempotency_key="diverge-key")
+    with pytest.raises(ConfigError, match="diverges from the original"):
+        _attest(
+            attestation_instance,
+            "support",
+            evidence_refs=[evidence("different")],
+            idempotency_key="diverge-key",
+        )
+    replay = _attest(attestation_instance, "support", idempotency_key="diverge-key")
+    assert replay.idempotent_replay is True
+    assert replay.attestation.attestation_id == original.attestation.attestation_id
+
+
+def test_corrected_disposition_refuses_fabricated_follow_up_receipt(
+    attestation_instance: CruxibleInstance,
+) -> None:
+    add_live_claim(attestation_instance)
+    recorded = _attest(attestation_instance, "contradict")
+    with pytest.raises(ConfigError, match="does not resolve"):
+        service_resolve_attestation(
+            attestation_instance,
+            recorded.attestation.attestation_id,
+            verdict="corrected",
+            actor_context=actor("reviewer"),
+            follow_up_receipt_id="RCP-fabricated",
         )

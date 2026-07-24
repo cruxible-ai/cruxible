@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import time
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, NoReturn
@@ -57,6 +58,8 @@ from cruxible_core.workflow.executor import (
     execute_procedure_plan,
 )
 from cruxible_core.workflow.types import CompiledPlan
+
+_logger = logging.getLogger(__name__)
 
 _TIER_RANK = {"governed_write": 2, "graph_write": 3, "admin": 4}
 _PERMISSION_BY_TIER = {
@@ -639,28 +642,43 @@ def service_run_procedure(
             raise
         raise failure from original_exc
 
-    receipt, finalized_run = _persist_built_procedure_receipt(
-        instance,
-        procedure=procedure,
-        started_run=started_run,
-        receipt=execution.receipt,
-        verdict="succeeded",
-        budget=budget,
-        precondition_detail=precondition_detail,
-        acceptance_config_digest=procedure.acceptance_config_digest,
-        acceptance_lock_digest=procedure.acceptance_lock_digest,
-        executed_config_digest=plan.config_digest,
-        executed_lock_digest=plan.lock_digest,
-        error=None,
-    )
-    evidence_refs = _persist_procedure_evidence_outputs(
-        instance,
-        procedure=procedure,
-        run=finalized_run,
-        receipt=receipt,
-        output=execution.output,
-        step_outputs=execution.step_outputs,
-    )
+    with instance.write_transaction() as uow:
+        receipt, finalized_run = _persist_built_procedure_receipt_in_uow(
+            uow,
+            procedure=procedure,
+            started_run=started_run,
+            receipt=execution.receipt,
+            verdict="succeeded",
+            budget=budget,
+            precondition_detail=precondition_detail,
+            acceptance_config_digest=procedure.acceptance_config_digest,
+            acceptance_lock_digest=procedure.acceptance_lock_digest,
+            executed_config_digest=plan.config_digest,
+            executed_lock_digest=plan.lock_digest,
+            error=None,
+        )
+        # Evidence rows commit atomically with the run finalize: a crash here
+        # rolls back both, leaving the run 'started' (crash-visible) instead of
+        # a succeeded run with silently absent declared evidence. A
+        # deterministic persistence failure must not fail a run that already
+        # succeeded, so it degrades to no auto-refs with a logged warning.
+        try:
+            evidence_refs = _persist_procedure_evidence_outputs_in_uow(
+                uow,
+                procedure=procedure,
+                run=finalized_run,
+                receipt=receipt,
+                output=execution.output,
+                step_outputs=execution.step_outputs,
+            )
+        except Exception:
+            _logger.warning(
+                "procedure evidence persistence failed for run %s; "
+                "the run succeeded but returns no auto evidence refs",
+                finalized_run.run_id,
+                exc_info=True,
+            )
+            evidence_refs = []
     return ProcedureExecutionResult(
         procedure=procedure,
         run=finalized_run,
@@ -671,8 +689,8 @@ def service_run_procedure(
     )
 
 
-def _persist_procedure_evidence_outputs(
-    instance: InstanceProtocol,
+def _persist_procedure_evidence_outputs_in_uow(
+    uow: Any,
     *,
     procedure: ProcedureRecord,
     run: ProcedureRun,
@@ -689,17 +707,17 @@ def _persist_procedure_evidence_outputs(
     )
     if not selected:
         return []
-    with instance.write_transaction() as uow:
-        for output_alias, value in selected:
-            artifact = _procedure_evidence_artifact(value)
-            uow.procedures.save_evidence_artifact(artifact)
-            uow.procedures.link_run_evidence(
-                run_id=run.run_id,
-                output_alias=output_alias,
-                artifact_id=artifact.artifact_id,
-                receipt_id=receipt.receipt_id,
-            )
-        return uow.procedures.list_run_evidence_refs(run.run_id)
+    for output_alias, value in selected:
+        artifact = _procedure_evidence_artifact(value)
+        uow.procedures.save_evidence_artifact(artifact)
+        uow.procedures.link_run_evidence(
+            run_id=run.run_id,
+            output_alias=output_alias,
+            artifact_id=artifact.artifact_id,
+            receipt_id=receipt.receipt_id,
+        )
+    refs: list[EvidenceRef] = uow.procedures.list_run_evidence_refs(run.run_id)
+    return refs
 
 
 def _procedure_evidence_artifact(value: Any) -> ProcedureEvidenceArtifact:

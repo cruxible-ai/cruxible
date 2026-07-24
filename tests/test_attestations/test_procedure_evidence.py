@@ -153,3 +153,19 @@ def test_oversized_artifact_keeps_digest_head_and_refuses_attestation(
             observed_at=datetime(2026, 7, 24, 11, 0, tzinfo=timezone.utc),
             actor_context=actor("observer"),
         )
+
+
+def test_evidence_persistence_failure_does_not_fail_a_succeeded_run(
+    attestation_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import cruxible_core.service.procedures as procedures_service
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated evidence persistence failure")
+
+    monkeypatch.setattr(procedures_service, "_persist_procedure_evidence_outputs_in_uow", boom)
+    result = _run(attestation_instance, _definition("evidence-degrades"))
+    assert result.run.status == "finalized"
+    assert result.run.verdict == "succeeded"
+    assert result.evidence_refs == []
