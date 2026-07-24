@@ -93,16 +93,16 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     assert shown.status_code == 200, shown.text
     assert shown.json()["procedure"]["procedure_id"] == procedure_id
 
-    promoted = app_client.post(
+    accepted = app_client.post(
         f"/api/v1/{instance_id}/procedures/{procedure_id}/resolve",
         json={
-            "action": "promote",
+            "action": "accept",
             "expected_version": 1,
             "actor_context": actor("http-reviewer").model_dump(mode="json"),
         },
     )
-    assert promoted.status_code == 200, promoted.text
-    assert promoted.json()["procedure"]["status"] == "live"
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["procedure"]["status"] == "live"
 
     executed = app_client.post(
         f"/api/v1/{instance_id}/procedures/{procedure_id}/run",
