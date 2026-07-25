@@ -23,9 +23,17 @@ from cruxible_core.graph.assertion_state import (
 )
 from cruxible_core.service import service_list
 from cruxible_core.service.lifecycle_inputs import relationship_lifecycle_state
-from cruxible_core.service.mutations import service_batch_direct_write
+from cruxible_core.service.mutations import (
+    service_add_relationship_inputs,
+    service_batch_direct_write,
+)
 from cruxible_core.service.queries import service_get_relationship
-from cruxible_core.service.types import BatchDirectWriteInput, BatchRelationshipWriteInput
+from cruxible_core.service.types import (
+    BatchDirectWriteInput,
+    BatchRelationshipWriteInput,
+    RelationshipWriteInput,
+)
+from tests.support.terminal_lifecycle import seed_relationship_lifecycle
 
 _FITS = dict(
     from_type="Part",
@@ -42,6 +50,11 @@ def _retract_fits_via_batch(
     status: str = "retracted",
     reason: str | None = "superseded by newer fitment",
 ) -> None:
+    """Drive the FREE-write batch path with a lifecycle status.
+
+    Terminal statuses are refused here (that is the point of the tests below);
+    non-terminal ones still write.
+    """
     service_batch_direct_write(
         instance,
         BatchDirectWriteInput(
@@ -53,6 +66,28 @@ def _retract_fits_via_batch(
                 )
             ]
         ),
+    )
+
+
+def _seed_retracted_fits(
+    instance: CruxibleInstance,
+    *,
+    status: str = "retracted",
+    reason: str | None = "superseded by newer fitment",
+) -> None:
+    """Seed a TERMINAL edge lifecycle through the trusted chokepoint capability.
+
+    ``retracted``/``superseded`` are refused on every free-write path. The
+    read-gating and shape-preservation properties below still need a retracted
+    edge to exist, so they seed it the way the dedicated receipted verbs will:
+    ``apply_relationship(..., trusted_lifecycle_transition=True)``.
+    """
+    seed_relationship_lifecycle(
+        instance,
+        **_FITS,
+        status=status,
+        reason=reason,
+        properties={"verified": True, "source": "catalog"},
     )
 
 
@@ -75,18 +110,38 @@ def _get_fits(instance: CruxibleInstance):
 def test_relationship_lifecycle_write_sets_only_lifecycle(
     populated_instance: CruxibleInstance,
 ) -> None:
+    """A NON-terminal lifecycle write through the free batch path sets only lifecycle."""
     before = _get_fits(populated_instance)
     assert before is not None
     assert before.metadata.assertion.lifecycle.status == "active"
 
-    _retract_fits_via_batch(populated_instance)
+    _retract_fits_via_batch(populated_instance, status="inactive", reason="paused for audit")
 
     after = _get_fits(populated_instance)
     assert after is not None
     # Lifecycle slice is updated and round-trips through storage.
+    assert after.metadata.assertion.lifecycle.status == "inactive"
+    assert after.metadata.assertion.lifecycle.reason == "paused for audit"
+    # Edge properties are untouched.
+    assert after.properties["verified"] is True
+    assert after.properties["source"] == "catalog"
+
+
+def test_trusted_lifecycle_transition_sets_only_lifecycle(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """The trusted capability writes a TERMINAL status with the same shape guarantee.
+
+    The free-write path refuses ``retracted`` (asserted below); the chokepoint stays
+    open to machinery that has earned the transition, and when it writes, it writes
+    only the lifecycle slice.
+    """
+    _seed_retracted_fits(populated_instance)
+
+    after = _get_fits(populated_instance)
+    assert after is not None
     assert after.metadata.assertion.lifecycle.status == "retracted"
     assert after.metadata.assertion.lifecycle.reason == "superseded by newer fitment"
-    # Edge properties are untouched.
     assert after.properties["verified"] is True
     assert after.properties["source"] == "catalog"
 
@@ -94,7 +149,7 @@ def test_relationship_lifecycle_write_sets_only_lifecycle(
 def test_retracted_edge_is_gated_out_of_live_reads(
     populated_instance: CruxibleInstance,
 ) -> None:
-    _retract_fits_via_batch(populated_instance)
+    _seed_retracted_fits(populated_instance)
 
     def _edge_ids(state: str) -> set[tuple[str, str]]:
         result = service_list(
@@ -160,8 +215,8 @@ def test_lifecycle_write_cannot_mutate_review_state(
     assert review_before["status"] == "approved"
     assert override_before is True
 
-    # Now retract via the typed lifecycle write.
-    _retract_fits_via_batch(populated_instance)
+    # Now retract via the trusted lifecycle transition (the free path refuses it).
+    _seed_retracted_fits(populated_instance)
 
     after = _get_fits(populated_instance)
     assert after is not None
@@ -231,6 +286,107 @@ def test_non_terminal_relationship_lifecycle_stays_writable(status: str) -> None
     )
     assert state is not None
     assert state.status == status
+
+
+# ---------------------------------------------------------------------------
+# The refusal at the CHOKEPOINT, not just the contract mapper
+# ---------------------------------------------------------------------------
+#
+# The mapper refusal above only covers payloads shaped as contract inputs. These
+# tests drive the EXPORTED SERVICE FUNCTIONS with typed core models -- the channel
+# the local CLI uses, which never passes through a mapper -- and prove the graph
+# chokepoint refuses them too. Before this fix these same calls succeeded.
+
+
+@pytest.mark.parametrize("status", ["retracted", "superseded"])
+def test_batch_direct_write_service_refuses_terminal_lifecycle(
+    populated_instance: CruxibleInstance,
+    status: str,
+) -> None:
+    """The BATCH shape is refused at the chokepoint, and nothing is persisted."""
+    with pytest.raises(
+        TerminalLifecycleWriteRefusedError,
+        match="terminal lifecycle transitions require",
+    ):
+        _retract_fits_via_batch(populated_instance, status=status)
+
+    after = _get_fits(populated_instance)
+    assert after is not None
+    assert after.metadata.assertion.lifecycle.status == "active"
+
+
+def test_batch_direct_write_dry_run_refuses_terminal_lifecycle(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """A preview refuses identically — a dry run must not report the write as valid."""
+    with pytest.raises(TerminalLifecycleWriteRefusedError):
+        service_batch_direct_write(
+            populated_instance,
+            BatchDirectWriteInput(
+                relationships=[
+                    BatchRelationshipWriteInput(
+                        **_FITS,
+                        properties={"verified": True, "source": "catalog"},
+                        lifecycle=RelationshipLifecycleState(status="retracted"),  # type: ignore[arg-type]
+                    )
+                ]
+            ),
+            dry_run=True,
+        )
+
+
+@pytest.mark.parametrize("status", ["retracted", "superseded"])
+def test_service_add_relationship_inputs_refuses_terminal_lifecycle(
+    populated_instance: CruxibleInstance,
+    status: str,
+) -> None:
+    """``service_add_relationship_inputs`` is refused at the chokepoint too."""
+    with pytest.raises(TerminalLifecycleWriteRefusedError):
+        service_add_relationship_inputs(
+            populated_instance,
+            [
+                RelationshipWriteInput(
+                    **_FITS,
+                    properties={"verified": True, "source": "catalog"},
+                    lifecycle=RelationshipLifecycleState(status=status),  # type: ignore[arg-type]
+                )
+            ],
+            source="add_relationship",
+            source_ref="add_relationship",
+        )
+
+    after = _get_fits(populated_instance)
+    assert after is not None
+    assert after.metadata.assertion.lifecycle.status == "active"
+
+
+def test_terminal_lifecycle_refused_on_a_NEW_edge_too(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """The refusal covers creates, not just updates.
+
+    ``apply_relationship``'s add branch builds a fresh assertion and overlays the
+    supplied lifecycle onto it, so a create could otherwise be born retracted --
+    live state that never existed, with no reviewer and no receipted judgement.
+    """
+    with pytest.raises(TerminalLifecycleWriteRefusedError):
+        service_batch_direct_write(
+            populated_instance,
+            BatchDirectWriteInput(
+                relationships=[
+                    BatchRelationshipWriteInput(
+                        # The one Part/Vehicle pair the fixture leaves unlinked.
+                        from_type="Part",
+                        from_id="BP-1002",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-2024-ACCORD-SPORT",
+                        properties={"verified": True, "source": "catalog"},
+                        lifecycle=RelationshipLifecycleState(status="retracted"),  # type: ignore[arg-type]
+                    )
+                ]
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------

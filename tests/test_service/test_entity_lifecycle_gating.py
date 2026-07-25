@@ -11,12 +11,21 @@ from __future__ import annotations
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.errors import TerminalLifecycleWriteRefusedError
 from cruxible_core.graph.assertion_state import EntityLifecycleState
 from cruxible_core.graph.types import EntityMetadata
 from cruxible_core.service import service_list, service_query_surface
-from cruxible_core.service.mutations import service_add_entities, service_batch_direct_write
+from cruxible_core.service.mutations import (
+    service_add_entities,
+    service_add_entity_inputs,
+    service_batch_direct_write,
+)
 from cruxible_core.service.queries import service_get_entity
 from cruxible_core.service.types import BatchDirectWriteInput, EntityWriteInput
+from tests.support.terminal_lifecycle import (
+    seed_entity_lifecycle,
+    seed_relationship_lifecycle,
+)
 
 
 def _lifecycle_metadata(status: str) -> dict:
@@ -36,33 +45,23 @@ def _entity_lifecycle_status(metadata) -> str:
     return EntityMetadata.from_metadata(metadata).lifecycle_status()
 
 
-def _retire_entity_via_batch(
+def _retire_entity(
     instance: CruxibleInstance, entity_type: str, entity_id: str, status: str
 ) -> None:
-    """Set the typed entity lifecycle on an entity through the batch write path.
+    """Seed a TERMINAL entity lifecycle through the trusted chokepoint capability.
 
-    Builds the lifecycle via the typed constructor (validated against the entity
-    status Literal) and stores its serialized form -- the production write path,
-    not a hand-authored ``{"lifecycle": {...}}`` blob.
+    Terminal statuses (``retired``/``superseded``) are refused on every free-write
+    path, including the exported service functions and the local CLI -- that
+    refusal is asserted in the dedicated tests below. These gating tests are about
+    READS, so they seed through ``trusted_lifecycle_transition=True``, the internal
+    capability the dedicated receipted verbs will carry.
     """
-    service_batch_direct_write(
-        instance,
-        BatchDirectWriteInput(
-            entities=[
-                EntityWriteInput(
-                    entity_type=entity_type,
-                    entity_id=entity_id,
-                    properties={},
-                    metadata=_lifecycle_metadata(status),
-                )
-            ]
-        ),
-    )
+    seed_entity_lifecycle(instance, entity_type, entity_id, status)
 
 
-def _retire_part_via_batch(instance: CruxibleInstance, part_id: str, status: str) -> None:
-    """Set the typed entity lifecycle on a Part through the batch write path."""
-    _retire_entity_via_batch(instance, "Part", part_id, status)
+def _retire_part(instance: CruxibleInstance, part_id: str, status: str) -> None:
+    """Seed the typed entity lifecycle on a Part."""
+    _retire_entity(instance, "Part", part_id, status)
 
 
 def _list_part_ids(instance: CruxibleInstance, state: str | None) -> set[str]:
@@ -153,8 +152,16 @@ def test_lifecycle_status_defaults_to_live(populated_instance: CruxibleInstance)
     assert _entity_lifecycle_status(entity.metadata) == "live"
 
 
-def test_batch_direct_write_sets_lifecycle_status(populated_instance: CruxibleInstance) -> None:
-    _retire_part_via_batch(populated_instance, "BP-1001", "retired")
+def test_trusted_lifecycle_transition_sets_and_round_trips_terminal_status(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """The trusted capability CAN write a terminal status, and it round-trips.
+
+    This is the other half of the refusal: the chokepoint refuses the free-write
+    path but stays open to machinery that has earned the transition, so the
+    dedicated receipted verbs of ``wi-lifecycle-verbs`` have a seam to land on.
+    """
+    _retire_part(populated_instance, "BP-1001", "retired")
     entity = service_get_entity(populated_instance, "Part", "BP-1001")
     assert entity is not None
     assert entity.metadata.lifecycle is not None
@@ -165,12 +172,93 @@ def test_batch_direct_write_sets_lifecycle_status(populated_instance: CruxibleIn
     assert _entity_lifecycle_status(reloaded.metadata) == "retired"
 
 
-def test_entity_update_sets_lifecycle_status_preserving_metadata(
+def test_batch_direct_write_service_refuses_terminal_lifecycle(
     populated_instance: CruxibleInstance,
 ) -> None:
+    """``service_batch_direct_write`` refuses terminal lifecycle in the BATCH shape.
+
+    The exported service function is the free-write channel the local CLI calls
+    directly — it never passes through a contract mapper, so this refusal has to
+    come from the graph chokepoint. Nothing is persisted.
+    """
+    with pytest.raises(
+        TerminalLifecycleWriteRefusedError,
+        match="terminal lifecycle transitions require",
+    ):
+        service_batch_direct_write(
+            populated_instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="Part",
+                        entity_id="BP-1001",
+                        properties={},
+                        metadata=_lifecycle_metadata("retired"),
+                    )
+                ]
+            ),
+        )
+    entity = service_get_entity(populated_instance, "Part", "BP-1001")
+    assert entity is not None
+    assert _entity_lifecycle_status(entity.metadata) == "live"
+
+
+def test_batch_direct_write_dry_run_refuses_terminal_lifecycle(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """A preview refuses identically — a dry run must not report a write as valid."""
+    with pytest.raises(TerminalLifecycleWriteRefusedError):
+        service_batch_direct_write(
+            populated_instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="Part",
+                        entity_id="BP-1001",
+                        properties={},
+                        metadata=_lifecycle_metadata("superseded"),
+                    )
+                ]
+            ),
+            dry_run=True,
+        )
+
+
+@pytest.mark.parametrize("status", ["retired", "superseded"])
+def test_service_add_entity_inputs_refuses_terminal_lifecycle(
+    populated_instance: CruxibleInstance,
+    status: str,
+) -> None:
+    """``service_add_entity_inputs`` refuses terminal lifecycle too."""
+    with pytest.raises(TerminalLifecycleWriteRefusedError):
+        service_add_entity_inputs(
+            populated_instance,
+            [
+                EntityWriteInput(
+                    entity_type="Part",
+                    entity_id="BP-1001",
+                    properties={},
+                    metadata=_lifecycle_metadata(status),
+                )
+            ],
+        )
+    entity = service_get_entity(populated_instance, "Part", "BP-1001")
+    assert entity is not None
+    assert _entity_lifecycle_status(entity.metadata) == "live"
+
+
+def test_entity_update_refuses_terminal_lifecycle_and_preserves_metadata(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """A generic entity UPDATE cannot terminate the entity, and changes nothing.
+
+    Previously this exercised the bypass: ``service_add_entities`` accepted and
+    persisted a hand-built ``EntityMetadata`` carrying ``superseded``. It is now
+    refused at the chokepoint, and the entity's earlier metadata is untouched.
+    """
     from cruxible_core.graph.types import EntityInstance
 
-    # Seed an unrelated metadata key, then set lifecycle via the generic update.
+    # Seed an unrelated metadata key through the still-permitted write path.
     service_add_entities(
         populated_instance,
         [
@@ -182,26 +270,47 @@ def test_entity_update_sets_lifecycle_status_preserving_metadata(
             )
         ],
     )
-    service_add_entities(
+    with pytest.raises(TerminalLifecycleWriteRefusedError):
+        service_add_entities(
+            populated_instance,
+            [
+                EntityInstance(
+                    entity_type="Part",
+                    entity_id="BP-1002",
+                    properties={},
+                    metadata=_lifecycle_metadata("superseded"),
+                )
+            ],
+        )
+    entity = service_get_entity(populated_instance, "Part", "BP-1002")
+    assert entity is not None
+    # Still live, and the free-form sibling key from the earlier write survives in
+    # the typed envelope's `extra` slot.
+    assert _entity_lifecycle_status(entity.metadata) == "live"
+    assert entity.metadata.extra["note"] == "keep-me"
+
+
+def test_non_terminal_entity_lifecycle_stays_writable_through_the_service(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """``live`` is a reversible state, not a termination — it stays freely writable."""
+    _retire_part(populated_instance, "BP-1002", "retired")
+    service_batch_direct_write(
         populated_instance,
-        [
-            EntityInstance(
-                entity_type="Part",
-                entity_id="BP-1002",
-                properties={},
-                metadata=_lifecycle_metadata("superseded"),
-            )
-        ],
+        BatchDirectWriteInput(
+            entities=[
+                EntityWriteInput(
+                    entity_type="Part",
+                    entity_id="BP-1002",
+                    properties={},
+                    metadata=_lifecycle_metadata("live"),
+                )
+            ]
+        ),
     )
     entity = service_get_entity(populated_instance, "Part", "BP-1002")
     assert entity is not None
-    # Lifecycle decodes as the typed model with the written status.
-    assert _entity_lifecycle_status(entity.metadata) == "superseded"
-    assert entity.metadata.lifecycle is not None
-    assert entity.metadata.lifecycle.status == "superseded"
-    # The free-form sibling key is preserved in the typed envelope's `extra` slot,
-    # walled off from the typed lifecycle (it can never be mistaken for lifecycle).
-    assert entity.metadata.extra["note"] == "keep-me"
+    assert _entity_lifecycle_status(entity.metadata) == "live"
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +321,7 @@ def test_entity_update_sets_lifecycle_status_preserving_metadata(
 def test_retired_entity_hidden_from_live_reads_consistently(
     populated_instance: CruxibleInstance,
 ) -> None:
-    _retire_part_via_batch(populated_instance, "BP-1001", "retired")
+    _retire_part(populated_instance, "BP-1001", "retired")
 
     # list entities (default live) hides it.
     assert "BP-1001" not in _list_part_ids(populated_instance, None)
@@ -232,7 +341,7 @@ def test_retired_entity_hidden_from_live_reads_consistently(
 def test_not_live_surfaces_exactly_the_gated_out_set(
     populated_instance: CruxibleInstance,
 ) -> None:
-    _retire_part_via_batch(populated_instance, "BP-1001", "retired")
+    _retire_part(populated_instance, "BP-1001", "retired")
 
     not_live = _list_part_ids(populated_instance, "not-live")
     assert not_live == {"BP-1001"}
@@ -241,7 +350,7 @@ def test_not_live_surfaces_exactly_the_gated_out_set(
 
 
 def test_all_returns_everything(populated_instance: CruxibleInstance) -> None:
-    _retire_part_via_batch(populated_instance, "BP-1001", "retired")
+    _retire_part(populated_instance, "BP-1001", "retired")
 
     all_parts = _list_part_ids(populated_instance, "all")
     assert all_parts == {"BP-1001", "BP-1002"}
@@ -249,7 +358,7 @@ def test_all_returns_everything(populated_instance: CruxibleInstance) -> None:
 
 
 def test_live_is_default_for_list_entities(populated_instance: CruxibleInstance) -> None:
-    _retire_part_via_batch(populated_instance, "BP-1001", "retired")
+    _retire_part(populated_instance, "BP-1001", "retired")
     # Passing no state defaults to live (gated), matching explicit "live".
     assert _list_part_ids(populated_instance, None) == _list_part_ids(populated_instance, "live")
 
@@ -259,7 +368,7 @@ def test_review_only_states_resolve_to_live_for_entities(
     populated_instance: CruxibleInstance,
     review_value: str,
 ) -> None:
-    _retire_part_via_batch(populated_instance, "BP-1001", "retired")
+    _retire_part(populated_instance, "BP-1001", "retired")
     # Entities have no review axis: review-only selectors behave like `live`.
     assert _list_part_ids(populated_instance, review_value) == _list_part_ids(
         populated_instance, "live"
@@ -285,7 +394,7 @@ def test_retired_traversal_entry_yields_no_live_rows(
     retired -- leaking the retired entry. The result Parts here are all live, so
     the only thing gating the rows is the (previously ungated) entry.
     """
-    _retire_entity_via_batch(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
+    _retire_entity(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
 
     # Default (None -> live) returns ZERO rows -- not an error.
     assert _traversal_part_ids(populated_instance, None) == set()
@@ -306,7 +415,7 @@ def test_retired_traversal_entry_does_not_block_under_all(
     *result* under not-live/all is a separate expansion concern, orthogonal to the
     entry-anchor gate this fix adds.)
     """
-    _retire_entity_via_batch(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
+    _retire_entity(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
 
     # `live`: the retired entry gates the whole traversal out.
     assert _inline_traversal_part_ids(populated_instance, "live") == set()
@@ -323,7 +432,7 @@ def test_retired_entry_does_not_raise_entity_not_found(
     An entry that EXISTS but is gated out by lifecycle must read like `list` does
     when everything is filtered: empty, no error, no existence leak.
     """
-    _retire_entity_via_batch(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
+    _retire_entity(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
 
     # No exception; just empty.
     res = service_query_surface(
@@ -356,7 +465,7 @@ def test_review_only_states_gate_traversal_entry_like_live(
     review_value: str,
 ) -> None:
     """Review-only selectors resolve to `live` for the entry, exactly like results."""
-    _retire_entity_via_batch(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
+    _retire_entity(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
     # Entities have no review axis: review-only selectors gate the entry like live.
     assert _inline_traversal_part_ids(
         populated_instance, review_value
@@ -371,7 +480,7 @@ def test_review_only_states_gate_traversal_entry_like_live(
 def test_entity_get_returns_retired_entity_and_shows_status(
     populated_instance: CruxibleInstance,
 ) -> None:
-    _retire_part_via_batch(populated_instance, "BP-1001", "retired")
+    _retire_part(populated_instance, "BP-1001", "retired")
     # Even though every query/list hides it, the explicit by-id get returns it.
     entity = service_get_entity(populated_instance, "Part", "BP-1001")
     assert entity is not None
@@ -390,7 +499,7 @@ def test_mcp_list_route_matches_service_gating(
     from cruxible_core.mcp import handlers
     from cruxible_core.runtime.instance_manager import get_manager
 
-    _retire_part_via_batch(populated_instance, "BP-1001", "retired")
+    _retire_part(populated_instance, "BP-1001", "retired")
 
     manager = get_manager()
     manager.clear()
@@ -603,37 +712,23 @@ def test_free_form_metadata_passes_through_contract_untouched() -> None:
 
 
 def _retract_fits_endpoints_live(instance: CruxibleInstance) -> None:
-    """Retract the `fits(BP-1001, V-2024-CIVIC-EX)` edge via the typed lifecycle
-    write, leaving BOTH endpoints LIVE.
+    """Retract the `fits(BP-1001, V-2024-CIVIC-EX)` edge, leaving BOTH endpoints LIVE.
 
-    Uses the same typed relationship-lifecycle channel exercised in
-    ``test_relationship_lifecycle_write.py`` (no entity lifecycle is touched, so
-    the Part and Vehicle endpoints remain live).
+    ``retracted`` is terminal, so it is seeded through the trusted chokepoint
+    capability (see :mod:`tests.support.terminal_lifecycle`) rather than the free
+    write path, which refuses it. No entity lifecycle is touched, so the Part and
+    Vehicle endpoints remain live -- which is the whole point of this fixture.
     """
-    from cruxible_core.graph.assertion_state import RelationshipLifecycleState
-    from cruxible_core.service.types import (
-        BatchDirectWriteInput,
-        BatchRelationshipWriteInput,
-    )
-
-    service_batch_direct_write(
+    seed_relationship_lifecycle(
         instance,
-        BatchDirectWriteInput(
-            relationships=[
-                BatchRelationshipWriteInput(
-                    from_type="Part",
-                    from_id="BP-1001",
-                    relationship_type="fits",
-                    to_type="Vehicle",
-                    to_id="V-2024-CIVIC-EX",
-                    properties={"verified": True, "source": "catalog"},
-                    lifecycle=RelationshipLifecycleState(  # type: ignore[arg-type]
-                        status="retracted",
-                        reason="superseded by newer fitment",
-                    ),
-                )
-            ]
-        ),
+        from_type="Part",
+        from_id="BP-1001",
+        relationship_type="fits",
+        to_type="Vehicle",
+        to_id="V-2024-CIVIC-EX",
+        status="retracted",
+        reason="superseded by newer fitment",
+        properties={"verified": True, "source": "catalog"},
     )
 
 

@@ -220,7 +220,7 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 | `--props` | no | `` | text | JSON object of properties. |
 | `--set` | no | `` | text | String property assignment FIELD=VALUE. Repeat for multiple properties. |
 | `--set-json` | no | `` | text | Typed JSON property assignment FIELD=JSON. Repeat for multiple properties. |
-| `--lifecycle-status` | no | `` | choice | Typed entity lifecycle status (live, superseded, retired). |
+| `--lifecycle-status` | no | `` | choice | Typed entity lifecycle status. Only `live` is writable here; the terminal statuses `retired`/`superseded` are refused on add/update pending the receipted lifecycle verbs (`wi-lifecycle-verbs`). |
 | `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |
@@ -252,7 +252,7 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 | `--props` | no | `` | text | JSON object of properties. |
 | `--set` | no | `` | text | String property assignment FIELD=VALUE. Repeat for multiple properties. |
 | `--set-json` | no | `` | text | Typed JSON property assignment FIELD=JSON. Repeat for multiple properties. |
-| `--lifecycle-status` | no | `` | choice | Typed entity lifecycle status (live, superseded, retired). |
+| `--lifecycle-status` | no | `` | choice | Typed entity lifecycle status. Only `live` is writable here; the terminal statuses `retired`/`superseded` are refused on add/update pending the receipted lifecycle verbs (`wi-lifecycle-verbs`). |
 | `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |
@@ -428,7 +428,7 @@ table output groups nodes by depth.
 | `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
 | `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
 | `--pending` | no | `False` | boolean | Create the relationship as pending review instead of live state. |
-| `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status (active, inactive, superseded, retracted). Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
+| `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status. Only `active`/`inactive` are writable here; the terminal statuses `retracted`/`superseded` are refused on add/update pending the receipted lifecycle verbs (`wi-lifecycle-verbs`). Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
 | `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |
@@ -483,7 +483,7 @@ cruxible relationship add \
 | `--evidence-ref` | no | `` | text | JSON evidence ref object. Repeat to attach multiple refs. |
 | `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
 | `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
-| `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status (active, inactive, superseded, retracted) -- e.g. retract a live edge. Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
+| `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status -- e.g. deactivate a live edge. Only `active`/`inactive` are writable here; the terminal statuses `retracted`/`superseded` are refused on add/update pending the receipted lifecycle verbs (`wi-lifecycle-verbs`). Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
 | `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |

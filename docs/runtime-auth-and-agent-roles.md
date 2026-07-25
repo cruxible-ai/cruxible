@@ -230,6 +230,9 @@ The deployment this implies:
 - if an agent can run `cruxible` locally, it holds operator tier, whatever
   `CRUXIBLE_MODE` says — because it can change `CRUXIBLE_MODE`.
 
+Reviewer-independence guarantees are provable only on auth-ON daemons; auth-off
+surfaces resolve all actors to the local operator.
+
 ## Local Boundary
 
 Local auth is a product boundary, not a hardened OS sandbox. A local machine

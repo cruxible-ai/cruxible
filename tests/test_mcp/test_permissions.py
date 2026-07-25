@@ -505,6 +505,111 @@ class TestAllowedRoots:
             init_permissions()
 
 
+class TestConfigPathConfinement:
+    """``config_path`` on the sibling entrypoints, not just ``validate``.
+
+    ``validate`` was confined in the preceding batch, but ``init_local`` and
+    ``reload_config`` take the same caller-supplied ``config_path`` and read (and
+    for reload, ACTIVATE) whatever it points at. Both were unconfined, so the
+    escape ``validate`` closed stayed open next door.
+    """
+
+    _CONFIG = (
+        "version: '1.0'\n"
+        "name: confinement\n"
+        "entity_types:\n"
+        "  Actor:\n"
+        "    properties:\n"
+        "      actor_id: {type: string, primary_key: true}\n"
+        "relationships: []\n"
+    )
+
+    @staticmethod
+    def _confine(monkeypatch, root):
+        monkeypatch.setenv("CRUXIBLE_ALLOWED_ROOTS", str(root.resolve()))
+        reset_permissions()
+        init_permissions()
+
+    def test_init_local_refuses_out_of_root_config_path(self, monkeypatch, tmp_path):
+        from cruxible_core.runtime import api
+
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        secret = outside / "config.yaml"
+        secret.write_text(self._CONFIG)
+
+        self._confine(monkeypatch, allowed)
+        with pytest.raises(ConfigError, match="not under any allowed root"):
+            api.init_local(str(allowed / "inst"), config_path=str(secret))
+
+    def test_init_local_refusal_is_identical_for_a_missing_config_path(self, monkeypatch, tmp_path):
+        """No oracle: the refusal does not reveal whether the file is there."""
+        from cruxible_core.runtime import api
+
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        present = outside / "config.yaml"
+        present.write_text(self._CONFIG)
+        absent = outside / "absent.yaml"
+
+        self._confine(monkeypatch, allowed)
+
+        def _message(path):
+            with pytest.raises(ConfigError) as excinfo:
+                api.init_local(str(allowed / "inst"), config_path=str(path))
+            return str(excinfo.value).replace(str(path), "<TARGET>")
+
+        assert _message(present) == _message(absent)
+
+    def test_init_local_accepts_an_in_root_config_path(self, monkeypatch, tmp_path):
+        """The confinement is a fence, not a wall."""
+        from cruxible_core.runtime import api
+        from cruxible_core.runtime.instance_manager import get_manager
+
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        config = allowed / "config.yaml"
+        config.write_text(self._CONFIG)
+
+        self._confine(monkeypatch, allowed)
+        get_manager().clear()
+        try:
+            result = api.init_local(str(allowed / "inst"), config_path=str(config))
+            assert result.status == "initialized"
+        finally:
+            get_manager().clear()
+
+    def test_reload_config_refuses_out_of_root_config_path(self, monkeypatch, tmp_path):
+        """Repointing the ACTIVE config is the same escape with a write behind it."""
+        from cruxible_core.runtime import api
+        from cruxible_core.runtime.instance_manager import get_manager
+
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        config = allowed / "config.yaml"
+        config.write_text(self._CONFIG)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        secret = outside / "config.yaml"
+        secret.write_text(self._CONFIG)
+
+        self._confine(monkeypatch, allowed)
+        get_manager().clear()
+        try:
+            instance = api.init_local(
+                str(allowed / "inst"),
+                config_path=str(config),
+            )
+            with pytest.raises(ConfigError, match="not under any allowed root"):
+                api.reload_config(instance.instance_id, config_path=str(secret))
+        finally:
+            get_manager().clear()
+
+
 # ── ContextVar isolation ──────────────────────────────────────────────
 
 

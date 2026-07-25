@@ -42,6 +42,24 @@ EntityLifecycleStatus = Literal[
     "retired",
 ]
 
+TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES: frozenset[str] = frozenset({"retracted", "superseded"})
+"""Relationship statuses a free-form write may not set.
+
+Terminating a claim is a governed judgement about its standing, not a property
+edit. These live next to the status vocabularies (rather than in the service
+layer) because the graph write chokepoint — the seam every free write shares —
+must be able to consult them without importing ``service``.
+"""
+
+TERMINAL_ENTITY_LIFECYCLE_STATUSES: frozenset[str] = frozenset({"retired", "superseded"})
+"""Entity statuses a free-form write may not set."""
+
+WRITABLE_RELATIONSHIP_LIFECYCLE_STATUSES = "active, inactive"
+"""Human-readable list of relationship statuses that stay freely writable."""
+
+WRITABLE_ENTITY_LIFECYCLE_STATUSES = "live"
+"""Human-readable list of entity statuses that stay freely writable."""
+
 # Per-kind status vocabularies stay DISTINCT (relationship vs entity); only the
 # surrounding lifecycle structure is shared. ``StatusT`` is the per-kind status
 # Literal a concrete lifecycle narrows the shared base to.
@@ -206,6 +224,10 @@ def relationship_is_live(assertion_or_metadata: Any = None) -> bool:
 
 
 __all__ = [
+    "TERMINAL_ENTITY_LIFECYCLE_STATUSES",
+    "TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES",
+    "WRITABLE_ENTITY_LIFECYCLE_STATUSES",
+    "WRITABLE_RELATIONSHIP_LIFECYCLE_STATUSES",
     "EntityLifecycleState",
     "EntityLifecycleStatus",
     "LifecycleState",

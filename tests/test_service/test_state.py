@@ -1175,6 +1175,88 @@ def test_pull_apply_merge_is_guard_exempt_for_local_overlay_state(
     assert note.properties["status"] == "published"
 
 
+def test_pull_apply_receipt_failure_rolls_back_the_state_replacement(
+    published_release_fixture: tuple[CruxibleInstance, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure-injection at the receipt boundary: state and receipt commit together.
+
+    The receipt used to be persisted in a SECOND transaction after the graph
+    replacement had already committed. A crash between them left the overlay
+    holding applied upstream state with NOTHING in its audit trail saying which
+    release put it there, while the caller saw an error and would reasonably
+    believe nothing happened.
+
+    This test injects exactly that failure — the receipt save raises — and
+    asserts the graph replacement rolled back with it: the new upstream entity is
+    absent, no ``state_pull_apply`` receipt exists, and the instance still tracks
+    the old release. Before the coupling, ``CASE-C`` was present after this
+    failure.
+    """
+    root_instance, release_dir = published_release_fixture
+    overlay_root = tmp_path / "cloned-model"
+
+    overlay_result = service_create_state_overlay(
+        transport_ref=f"file://{release_dir}",
+        root_dir=overlay_root,
+    )
+    overlay_instance = overlay_result.instance
+    _write_overlay_config(overlay_root)
+    service_reload_config(overlay_instance)
+
+    root_graph = root_instance.load_graph()
+    root_graph.add_entity(_case("CASE-C", "Gamma"))
+    root_instance.save_graph(root_graph)
+
+    successor_dir = tmp_path / "releases" / "successor"
+    service_publish_state(
+        root_instance,
+        transport_ref=f"file://{successor_dir}",
+        state_id="case-law",
+        release_id="v1.1.0",
+        compatibility="data_only",
+    )
+    _replace_release_dir(successor_dir, release_dir)
+
+    preview = service_pull_state_preview(overlay_instance)
+    assert preview.target_release_id == "v1.1.0"
+    assert preview.conflicts == []
+
+    boom = RuntimeError("receipt store unavailable")
+
+    def failing_receipt(*_args: object, **_kwargs: object) -> str:
+        raise boom
+
+    monkeypatch.setattr(state_service, "_record_state_pull_apply_receipt", failing_receipt)
+
+    with pytest.raises(RuntimeError, match="receipt store unavailable"):
+        service_pull_state_apply(
+            overlay_instance,
+            expected_apply_digest=preview.apply_digest,
+        )
+
+    # The graph replacement rolled back with the receipt: the new upstream entity
+    # never landed. Drop the in-process graph cache first so this reads committed
+    # on-disk state rather than the image the failed apply built.
+    overlay_instance.invalidate_graph_cache()
+    assert not overlay_instance.load_graph().has_entity("Case", "CASE-C")
+
+    # ...and no orphaned receipt claims an apply that did not survive.
+    store = overlay_instance.get_receipt_store()
+    try:
+        receipts = store.list_receipts(operation_type="state_pull_apply")
+    finally:
+        store.close()
+    assert receipts == []
+
+    # Upstream bookkeeping is untouched: it is written only after the commit, so
+    # the instance still tracks the release it actually holds.
+    status = service_state_status(overlay_instance)
+    assert status.upstream is not None
+    assert status.upstream.release_id == "v1.0.0"
+
+
 def _case(case_id: str, title: str) -> EntityInstance:
     return EntityInstance(
         entity_type="Case",

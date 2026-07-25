@@ -335,17 +335,48 @@ def _refuse_caller_asserted_actor(operation: str, actor_context: Any) -> None:
     so over HTTP the caller does not get to assert the REVIEWER identity.
 
     KNOWN RESIDUE (wi-sweep-quickfixes): the proposer half is still
-    caller-asserted. Refusing there as well would make procedure accept
-    impossible on an auth-off daemon (proposer and reviewer both resolve to the
-    single local operator, which the independence check correctly rejects) —
-    a product call, not a quick fix. Auth-on daemons are unaffected either way.
+    caller-asserted. ``propose_procedure`` does not call this helper, so on an
+    auth-off daemon the proposer identity recorded on the procedure is whatever
+    name the request body carried. ``tests/test_server/test_procedure_routes.py``
+    exercises exactly that shape: propose supplies an ``actor_context`` naming
+    ``http-proposer`` in org ``org-procedures``, accept must then OMIT
+    ``actor_context`` (supplying one is refused here with 401) and is attributed
+    to the local operator, and independence passes because those two
+    ``(org_id, actor_id)`` tuples differ. What that proves is that the reviewer
+    is the local operator and the proposer is *some other name the same caller
+    chose* — not that two separately credentialed actors were involved.
+    Refusing the proposer half as well would make procedure accept impossible on
+    an auth-off daemon (proposer and reviewer would both resolve to the single
+    local operator, which the independence check correctly rejects) — a product
+    call, not a quick fix. Auth-on daemons are unaffected either way: there the
+    runtime credential is authoritative on both halves.
+
+    The refusal fires on ``reject`` as well as ``accept``, even though
+    ``_validate_reviewer_independence`` runs only for ``accept``. That is
+    deliberate: one uniform refusal at the verb seam is cheaper to reason about
+    than a per-action carve-out, and refusing ``reject`` costs nothing — a
+    caller-asserted rejector is no more trustworthy than a caller-asserted
+    accepter, and ``reject`` is attributed on the transition receipt exactly as
+    ``accept`` is.
 
     Deliberately scoped to the HTTP surface with no runtime credential:
 
-    * auth ON -- the credential is authoritative and any supplied context is
-      already reconciled against it (mismatch raises), so nothing to refuse;
+    * auth ON with a runtime credential -- the credential is authoritative and
+      any supplied context is already reconciled against it (mismatch raises),
+      so nothing to refuse;
     * embedded/CLI callers -- the local process asserting an identity is not a
       remote assertion, and the local operator tier already holds.
+
+    BOOTSTRAP CREDENTIALS count as "no runtime credential" here. A bootstrap
+    token authenticates with ``credential_type == "runtime_bootstrap"``, which
+    ``_runtime_credential_actor_context`` does not translate into an actor, so
+    this guard treats a bootstrap-authenticated HTTP request the same as an
+    unauthenticated one: it may not name the reviewer. With auth ON and no
+    supplied ``actor_context`` the resolved actor is ``None``, which the service
+    layer then refuses ("procedure reviewer actor context is required"). The
+    guarantee that buys: procedure resolve is reachable only by a caller holding
+    a per-actor runtime credential — the bootstrap token can administer the
+    daemon but can neither accept nor reject a proposal.
     """
     if actor_context is None:
         return
@@ -477,7 +508,12 @@ def _validate_bare_kit_init(*, bare: bool, kits: list[str] | None) -> None:
         raise ConfigError("bare requires kit-backed init")
 
 
-def _check_init_permissions(root_dir: str, *, has_config: bool) -> None:
+def _check_init_permissions(
+    root_dir: str,
+    *,
+    has_config: bool,
+    config_path: str | None = None,
+) -> None:
     check_permission("cruxible_init")
     if has_config:
         check_permission(
@@ -486,6 +522,11 @@ def _check_init_permissions(root_dir: str, *, has_config: bool) -> None:
             enforce_instance_scope=False,
         )
     validate_root_dir(root_dir)
+    if config_path is not None:
+        # ``root_dir`` being in-root says nothing about ``config_path``: init
+        # reads that file (and composes its ``extends`` chain) from wherever the
+        # caller points. Confine it with the same check, and the same message.
+        validate_root_dir(config_path)
 
 
 def _load_or_initialize_instance(
@@ -534,7 +575,7 @@ def init_local(
     """Initialize a new cruxible instance, or reload an existing one."""
     _validate_bare_kit_init(bare=bare, kits=kits)
     has_config = _has_init_config(config_path, config_yaml, kits)
-    _check_init_permissions(root_dir, has_config=has_config)
+    _check_init_permissions(root_dir, has_config=has_config, config_path=config_path)
     root = Path(root_dir)
     return _load_or_initialize_instance(
         instance_root=root,
@@ -576,7 +617,7 @@ def init_governed(
         enforce_instance_scope=False,
     )
     has_config = _has_init_config(config_path, config_yaml, kits)
-    _check_init_permissions(root_dir, has_config=has_config)
+    _check_init_permissions(root_dir, has_config=has_config, config_path=config_path)
 
     registry = get_registry()
     existing = registry.get_governed_instance_by_workspace_root(root_dir)
@@ -3007,6 +3048,11 @@ def reload_config(
 ) -> contracts.ReloadConfigResult:
     """Validate the current config or repoint the instance to a new config path."""
     check_permission("cruxible_reload_config", instance_id=instance_id)
+    if config_path is not None:
+        # Repointing the ACTIVE config at an arbitrary host path is the same
+        # escape ``validate`` had, with a write behind it. Same check, same
+        # message; the composer confines the ``extends`` chain underneath.
+        validate_root_dir(config_path)
     config_base_dir: Path | None = None
     if config_yaml is not None:
         record = get_registry().get(instance_id)

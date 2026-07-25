@@ -20,9 +20,14 @@ from cruxible_core.errors import (
     DataValidationError,
     DirectWriteRefusedError,
     PendingEdgeWriteRefusedError,
+    TerminalLifecycleWriteRefusedError,
 )
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
+    TERMINAL_ENTITY_LIFECYCLE_STATUSES,
+    TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES,
+    WRITABLE_ENTITY_LIFECYCLE_STATUSES,
+    WRITABLE_RELATIONSHIP_LIFECYCLE_STATUSES,
     RelationshipAssertion,
     RelationshipLifecycleState,
     RelationshipReviewState,
@@ -172,12 +177,57 @@ def validate_relationship(
     return ValidatedRelationship(relationship=rel, is_update=is_update)
 
 
+def _refuse_terminal_lifecycle_write(
+    status: str | None,
+    *,
+    kind: str,
+    terminal: frozenset[str],
+    writable: str,
+    trusted_lifecycle_transition: bool,
+) -> None:
+    """Refuse a terminal lifecycle status arriving through a free graph write.
+
+    Retracting, superseding, or retiring is a governed judgement about a claim's
+    standing, not a property edit. Reachable from a plain add/update it is a
+    one-call, unreceipted way to make live state vanish from every live-gated
+    read with no reviewer, no required reason, and nothing recording who decided
+    it. Interim posture per Robert's 2026-07-25 ruling: refuse and teach, until
+    the dedicated receipted verbs land in ``wi-lifecycle-verbs``. ``writable``
+    statuses stay writable — those are reversible participation flips, not
+    terminations.
+
+    WHY HERE, and not only at the contract mappers: the contract mappers
+    (``service/lifecycle_inputs.py``) only cover payloads that arrive as
+    ``EntityInput.lifecycle`` / ``RelationshipInput.lifecycle`` over HTTP or MCP.
+    The exported service functions (``service_batch_direct_write``,
+    ``service_add_entity_inputs``, ``service_add_relationship_inputs``) take typed
+    core models directly, and the LOCAL CLI calls the service layer directly — so
+    mapper-only enforcement left the free-write channel open on the default
+    surface. ``apply_entity`` / ``apply_relationship`` are the single seam EVERY
+    free write shares, so the refusal belongs here. The mapper refusals stay as
+    earlier, friendlier errors.
+
+    ``trusted_lifecycle_transition`` is the escape hatch for machinery that has
+    EARNED the transition: it is an internal keyword argument, deliberately not
+    reachable from any contract payload (no ``EntityInput`` /
+    ``RelationshipInput`` / batch-input field maps to it), so no caller-supplied
+    JSON can set it. The dedicated receipted verbs of ``wi-lifecycle-verbs`` will
+    pass it; today no governed constructor needs it, because none of them writes
+    a terminal lifecycle status (see :func:`apply_relationship`).
+    """
+    if trusted_lifecycle_transition or status is None:
+        return
+    if status in terminal:
+        raise TerminalLifecycleWriteRefusedError(kind, status, writable)
+
+
 def apply_entity(
     graph: EntityGraph,
     validated: ValidatedEntity,
     *,
     config: CoreConfig,
     source: str,
+    trusted_lifecycle_transition: bool = False,
 ) -> None:
     """Apply a validated entity to the graph (add or update).
 
@@ -189,6 +239,13 @@ def apply_entity(
     resolved INSIDE the chokepoint (callers pass ``config`` + ``source``) so it
     stays a single funnel — a pre-resolved bool would re-scatter governance
     across call sites and let a future verb slip through.
+
+    The same chokepoint refuses a TERMINAL entity lifecycle status
+    (``retired`` / ``superseded``) carried on the typed
+    ``EntityMetadata.lifecycle`` envelope, unless the caller passes
+    ``trusted_lifecycle_transition=True``. Entity lifecycle can only arrive
+    through that typed field (a hand-authored ``metadata['lifecycle']`` lands
+    inert in ``extra``), so checking it here covers every write path.
     """
     # Deferred import: service/__init__ -> ... -> graph.operations, so a
     # top-level import would be circular. Importing the resolver module here
@@ -207,6 +264,19 @@ def apply_entity(
         raise DirectWriteRefusedError("entity", entity_type, source, policy=policy)
     if not is_governed_source(source) and policy == "proposal_only":
         raise DirectWriteRefusedError("entity", entity_type, source, policy=policy)
+
+    # Ordered AFTER the write-policy refusals on purpose: "you may not direct-write
+    # this type at all" is the coarser, harder answer, and reporting it first keeps
+    # a proposal_only type's refusal reason stable no matter what the payload asked
+    # for. The lifecycle refusal is what a caller hits once the type IS writable.
+    entity_lifecycle = validated.entity.metadata.lifecycle
+    _refuse_terminal_lifecycle_write(
+        entity_lifecycle.status if entity_lifecycle is not None else None,
+        kind="entity",
+        terminal=TERMINAL_ENTITY_LIFECYCLE_STATUSES,
+        writable=WRITABLE_ENTITY_LIFECYCLE_STATUSES,
+        trusted_lifecycle_transition=trusted_lifecycle_transition,
+    )
 
     if validated.is_update:
         graph.update_entity_properties(
@@ -323,6 +393,7 @@ def apply_relationship(
     actor_context: GovernedActorContext | None = None,
     pending: bool = False,
     lifecycle: RelationshipLifecycleState | None = None,
+    trusted_lifecycle_transition: bool = False,
 ) -> None:
     """Apply a validated relationship to the graph (add or update).
 
@@ -352,6 +423,20 @@ def apply_relationship(
     The same chokepoint refuses a non-pending write whose target edge is an
     unresolved PENDING proposal (:func:`_refuse_write_onto_pending_edge`), so no
     write path can replace a proposal's content while it awaits review.
+
+    It also refuses a TERMINAL lifecycle status (``retracted`` / ``superseded``)
+    unless the caller passes ``trusted_lifecycle_transition=True``
+    (see :func:`_refuse_terminal_lifecycle_write`). ``lifecycle`` is the ONLY
+    channel that can set a relationship's lifecycle through this function: the
+    add branch discards the incoming metadata's assertion entirely (it rebuilds
+    ``RelationshipMetadata`` from provenance + the freshly computed assertion),
+    and the update branch carries the EXISTING edge's assertion forward. So the
+    single ``lifecycle`` check below covers every terminal write, and the
+    governed constructors that never pass ``lifecycle`` — ``workflow_apply``
+    (``workflow/apply.py``), ``group_resolve`` (``service/group_transitions.py``),
+    ``attestation`` (``service/attestations.py``), and ``token_mint``
+    (``server/auth_managed_entities.py``) — are unaffected and need no trusted
+    capability today.
     """
     # Deferred import: service/__init__ -> ... -> graph.operations, so a
     # top-level import would be circular. Importing the resolver module here
@@ -365,6 +450,15 @@ def apply_relationship(
     policy = effective_relationship_write_policy(config, rel.relationship_type)
     if not is_governed_source(source) and not pending and policy == "proposal_only":
         raise DirectWriteRefusedError("relationship", rel.relationship_type, source, policy=policy)
+
+    # Ordered AFTER the write-policy refusal on purpose — see apply_entity.
+    _refuse_terminal_lifecycle_write(
+        lifecycle.status if lifecycle is not None else None,
+        kind="relationship",
+        terminal=TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES,
+        writable=WRITABLE_RELATIONSHIP_LIFECYCLE_STATUSES,
+        trusted_lifecycle_transition=trusted_lifecycle_transition,
+    )
     if validated.is_update:
         incoming_evidence = rel.metadata.evidence
         existing_rel = graph.get_relationship(

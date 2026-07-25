@@ -1242,18 +1242,23 @@ def _resolve_outcome_row_remediation_hint(
     if row.outcome_remediation_hint is not None:
         if row.outcome_profile_key is not None:
             profile = config.get_outcome_profile(row.outcome_profile_key)
-            if profile is not None and _profile_body_drifted(row.outcome_profile_digest, profile):
+            drift = (
+                None
+                if profile is None
+                else _profile_drift_evidence(
+                    row.outcome_profile_digest,
+                    row.outcome_profile_version,
+                    profile,
+                )
+            )
+            if drift is not None:
                 _append_warning_once(
                     warnings=warnings,
                     warning_keys=warning_keys,
-                    key=(
-                        "outcome-profile-drift:"
-                        f"{row.outcome_profile_key}:{row.outcome_profile_digest}"
-                    ),
+                    key=f"outcome-profile-drift:{row.outcome_profile_key}:{drift}",
                     message=(
                         f"Outcomes for profile '{row.outcome_profile_key}' were coded under a "
-                        f"different profile body (digest {row.outcome_profile_digest} vs current "
-                        f"{profile.body_digest()}); using stored remediation hints"
+                        f"different profile body ({drift}); using stored remediation hints"
                     ),
                 )
         return row.outcome_remediation_hint
@@ -1271,18 +1276,19 @@ def _resolve_outcome_row_remediation_hint(
         )
         return None
 
-    if _profile_body_drifted(row.outcome_profile_digest, profile):
+    drift = _profile_drift_evidence(
+        row.outcome_profile_digest,
+        row.outcome_profile_version,
+        profile,
+    )
+    if drift is not None:
         _append_warning_once(
             warnings=warnings,
             warning_keys=warning_keys,
-            key=(
-                f"outcome-profile-drift-nohint:{row.outcome_profile_key}:"
-                f"{row.outcome_profile_digest}"
-            ),
+            key=f"outcome-profile-drift-nohint:{row.outcome_profile_key}:{drift}",
             message=(
                 f"Outcome profile '{row.outcome_profile_key}' was coded under a different "
-                f"profile body (digest {row.outcome_profile_digest} vs current "
-                f"{profile.body_digest()}) and stores no remediation hint; "
+                f"profile body ({drift}) and stores no remediation hint; "
                 "automated suggestions for those rows were skipped"
             ),
         )
@@ -1586,21 +1592,34 @@ def _common_trace_patterns(rows: list[OutcomeRecord]) -> list[str]:
     ]
 
 
-def _profile_body_drifted(
+def _profile_drift_evidence(
     stored_digest: str | None,
+    stored_version: int | None,
     profile: FeedbackProfileSchema | OutcomeProfileSchema,
-) -> bool:
-    """Return whether a row was coded under a different profile BODY.
+) -> str | None:
+    """Return a description of PROVEN drift, or None when drift is not proven.
 
     Drift is bound to the profile's content digest, not its hand-declared
     ``version``: editing a reason code's remediation lane without bumping the
-    number used to reinterpret stored rows in silence. A row with no stored
-    digest predates the field — its authoring body is unrecoverable, so drift
-    is reported as unknown (False) rather than guessed at.
+    number used to reinterpret stored rows in silence.
+
+    A row with no stored digest predates that column. Its authoring body is
+    unrecoverable, so an unchanged version number leaves drift genuinely
+    unknown and this stays silent — but a stored version that DIFFERS from the
+    current one proves the profile moved, and that is reported on the version
+    evidence alone.
     """
-    if stored_digest is None:
-        return False
-    return stored_digest != profile.body_digest()
+    if stored_digest is not None:
+        current_digest = profile.body_digest()
+        if stored_digest == current_digest:
+            return None
+        return f"digest {stored_digest} vs current {current_digest}"
+    if stored_version is not None and stored_version != profile.version:
+        return (
+            f"version {stored_version} vs current {profile.version} "
+            "(row predates the digest column)"
+        )
+    return None
 
 
 def _resolve_row_remediation_hint(
@@ -1614,15 +1633,23 @@ def _resolve_row_remediation_hint(
 ) -> FeedbackRemediationHint | None:
     """Resolve one row's remediation hint from stored metadata first."""
     if row.reason_remediation_hint is not None:
-        if profile is not None and _profile_body_drifted(row.feedback_profile_digest, profile):
+        drift = (
+            None
+            if profile is None
+            else _profile_drift_evidence(
+                row.feedback_profile_digest,
+                row.feedback_profile_version,
+                profile,
+            )
+        )
+        if drift is not None:
             _append_warning_once(
                 warnings=warnings,
                 warning_keys=warning_keys,
-                key=f"profile-drift:{relationship_type}:{row.feedback_profile_digest}",
+                key=f"profile-drift:{relationship_type}:{drift}",
                 message=(
                     f"Feedback for relationship '{relationship_type}' was coded under a "
-                    f"different profile body (digest {row.feedback_profile_digest} vs "
-                    f"current {profile.body_digest()}); using stored remediation hints"
+                    f"different profile body ({drift}); using stored remediation hints"
                 ),
             )
         return row.reason_remediation_hint
@@ -1640,15 +1667,19 @@ def _resolve_row_remediation_hint(
             ),
         )
         return None
-    if _profile_body_drifted(row.feedback_profile_digest, profile):
+    drift = _profile_drift_evidence(
+        row.feedback_profile_digest,
+        row.feedback_profile_version,
+        profile,
+    )
+    if drift is not None:
         _append_warning_once(
             warnings=warnings,
             warning_keys=warning_keys,
-            key=f"profile-drift-nohint:{relationship_type}:{row.feedback_profile_digest}",
+            key=f"profile-drift-nohint:{relationship_type}:{drift}",
             message=(
                 f"Feedback for relationship '{relationship_type}' was coded under a different "
-                f"profile body (digest {row.feedback_profile_digest} vs current "
-                f"{profile.body_digest()}) and stores no remediation hint; "
+                f"profile body ({drift}) and stores no remediation hint; "
                 "automated suggestions for those rows were skipped"
             ),
         )

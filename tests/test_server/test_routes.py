@@ -3508,18 +3508,23 @@ def test_http_entity_lifecycle_gating_parity(
     selector reaches the HTTP ``GET /list/entities`` route, while the by-id
     ``GET /entities/{type}/{id}`` route is NOT gated and reveals lifecycle status.
     """
+    from cruxible_core.errors import TerminalLifecycleWriteRefusedError
     from cruxible_core.graph.assertion_state import EntityLifecycleState
     from cruxible_core.graph.types import EntityMetadata
     from cruxible_core.runtime.instance_manager import get_manager
     from cruxible_core.service.mutations import service_batch_direct_write
     from cruxible_core.service.types import BatchDirectWriteInput, EntityWriteInput
+    from tests.support.terminal_lifecycle import seed_entity_lifecycle
 
     instance_id = _init_instance(app_client, server_project)
     _seed_car_parts_state(app_client, instance_id)
 
-    # Terminal lifecycle is not free-writable over HTTP any more, so seed the
-    # retired state through the core write path the future receipted verbs will
-    # use. The gating assertions below are about READS, not the write channel.
+    # Terminal lifecycle is not free-writable ANYWHERE any more: the HTTP route
+    # refuses it (below), and so does the exported service function the local CLI
+    # calls -- the refusal moved to the graph chokepoint every write path shares.
+    # The retired state is therefore seeded through the trusted capability the
+    # future receipted verbs will carry. The gating assertions below are about
+    # READS, not the write channel.
     refused = app_client.post(
         f"/api/v1/{instance_id}/direct-writes/batch",
         json={
@@ -3539,21 +3544,29 @@ def test_http_entity_lifecycle_gating_parity(
     assert refused.status_code == 403, refused.text
     assert "terminal lifecycle transitions require" in refused.json()["message"]
 
-    service_batch_direct_write(
-        get_manager().get(instance_id),
-        BatchDirectWriteInput(
-            entities=[
-                EntityWriteInput(
-                    entity_type="Part",
-                    entity_id="BP-1001",
-                    properties={},
-                    metadata=EntityMetadata(
-                        lifecycle=EntityLifecycleState(status="retired")
-                    ).to_metadata_dict(),
-                )
-            ]
-        ),
-    )
+    instance = get_manager().get(instance_id)
+
+    # The service layer refuses the SAME write the route just refused — that is
+    # the hole this closes: the route was gated but the service function under it
+    # (the local CLI's channel) was not.
+    with pytest.raises(TerminalLifecycleWriteRefusedError):
+        service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="Part",
+                        entity_id="BP-1001",
+                        properties={},
+                        metadata=EntityMetadata(
+                            lifecycle=EntityLifecycleState(status="retired")
+                        ).to_metadata_dict(),
+                    )
+                ]
+            ),
+        )
+
+    seed_entity_lifecycle(instance, "Part", "BP-1001", "retired")
 
     def _ids(params: dict[str, str]) -> set[str]:
         resp = app_client.get(f"/api/v1/{instance_id}/list/entities", params=params)

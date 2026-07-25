@@ -13,6 +13,14 @@ state, and ``apply_relationship`` writes only ``assertion.lifecycle`` from it.
 Terminal statuses are NOT writable through this channel — see
 :data:`TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES` and
 :data:`TERMINAL_ENTITY_LIFECYCLE_STATUSES`.
+
+These mapper refusals are the EARLY, friendly ones: they fire on the contract
+payload, before any graph work, so an HTTP/MCP caller gets the teaching message
+attached to the field it supplied. They are NOT the guarantee. The guarantee
+lives at the graph write chokepoint (``graph/operations.py``:
+``apply_entity`` / ``apply_relationship``), which every free-write path shares
+including the exported service functions and the local CLI. Both refusals raise
+the same :class:`TerminalLifecycleWriteRefusedError`.
 """
 
 from __future__ import annotations
@@ -22,30 +30,24 @@ from typing import Any
 from cruxible_client import contracts
 from cruxible_core.errors import TerminalLifecycleWriteRefusedError
 from cruxible_core.graph.assertion_state import (
-    EntityLifecycleState as _EntityLifecycleState,
+    TERMINAL_ENTITY_LIFECYCLE_STATUSES,
+    TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES,
+    WRITABLE_ENTITY_LIFECYCLE_STATUSES,
+    WRITABLE_RELATIONSHIP_LIFECYCLE_STATUSES,
+    RelationshipLifecycleState,
 )
 from cruxible_core.graph.assertion_state import (
-    RelationshipLifecycleState,
+    EntityLifecycleState as _EntityLifecycleState,
 )
 from cruxible_core.graph.types import EntityMetadata
 
-TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES = frozenset({"retracted", "superseded"})
-"""Relationship statuses a free-form add/update may not write."""
-
-TERMINAL_ENTITY_LIFECYCLE_STATUSES = frozenset({"retired", "superseded"})
-"""Entity statuses a free-form add/update may not write."""
-
 
 def _refuse_terminal_lifecycle(status: str, *, kind: str, writable: str) -> None:
-    """Refuse a terminal lifecycle status arriving through a free-form write.
+    """Refuse a terminal lifecycle status arriving on a contract payload.
 
-    Retracting or superseding is a governed judgement about a claim's standing,
-    not a property edit. Reachable from a plain add/update it was a one-call,
-    unreceipted way to make live state disappear from every live-gated read with
-    no reviewer, no reason requirement, and nothing recording who decided it.
-    Interim posture per Robert's 2026-07-25 ruling: refuse and teach, until the
-    dedicated receipted verbs land in wi-lifecycle-verbs. ``writable`` statuses
-    stay writable — those are reversible participation flips, not terminations.
+    The early, friendly half of the refusal — see this module's docstring. The
+    binding one is at the graph chokepoint; this one only saves an HTTP/MCP
+    caller a round trip through validation to reach the same answer.
     """
     raise TerminalLifecycleWriteRefusedError(kind, status, writable)
 
@@ -67,7 +69,11 @@ def entity_metadata_with_lifecycle(
     """
     extra = dict(metadata or {})
     if lifecycle is not None and lifecycle.status in TERMINAL_ENTITY_LIFECYCLE_STATUSES:
-        _refuse_terminal_lifecycle(lifecycle.status, kind="entity", writable="live")
+        _refuse_terminal_lifecycle(
+            lifecycle.status,
+            kind="entity",
+            writable=WRITABLE_ENTITY_LIFECYCLE_STATUSES,
+        )
     typed_lifecycle = (
         _EntityLifecycleState(status=lifecycle.status, reason=lifecycle.reason)
         if lifecycle is not None
@@ -90,7 +96,7 @@ def relationship_lifecycle_state(
         _refuse_terminal_lifecycle(
             lifecycle.status,
             kind="relationship",
-            writable="active, inactive",
+            writable=WRITABLE_RELATIONSHIP_LIFECYCLE_STATUSES,
         )
     return RelationshipLifecycleState(status=lifecycle.status, reason=lifecycle.reason)
 
