@@ -34,6 +34,7 @@ errors (runtime data), making it easy to catch by category.
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
     ├── PermissionDeniedError (MCP permission mode)
     ├── DirectWriteRefusedError (governed proposal_only direct-write refusal)
+    │   └── GroupApprovedContentWriteRefusedError (content change to an approved edge)
     └── PendingEdgeWriteRefusedError (non-pending write onto a pending proposal)
 """
 
@@ -483,6 +484,68 @@ class DirectWriteRefusedError(CoreError):
         super().__init__(
             f"Direct write to {kind} '{type_name}' is refused "
             f"(write_policy=proposal_only). {forward}"
+        )
+
+
+class GroupApprovedContentWriteRefusedError(DirectWriteRefusedError):
+    """A direct write would change the CONTENT of a group-approved edge.
+
+    Acceptance binds content: when a group approval accepted an edge it accepted
+    that edge's properties, not merely its existence. For a ``proposal_only``
+    relationship type the only legitimate way to change those properties is to
+    re-propose them, so a content-changing direct write is refused here.
+
+    This is a strictly NARROWER refusal than the plain
+    :class:`DirectWriteRefusedError` at ``graph/operations.py``, and it exists
+    because that one has a hole: it exempts the governed sources
+    (``workflow_apply`` / ``group_resolve``), and ``source`` is caller-supplied
+    at the public direct-write API (``add_relationships_with_provenance``). An
+    actor could therefore name a governed source and rewrite a group-approved
+    ``proposal_only`` edge with no proposal at all. Subclassing keeps the HTTP
+    status (403) and the "refused direct write" taxonomy while carrying the
+    group identity the plain refusal cannot name.
+
+    Only raised where the plain chokepoint refusal would NOT fire; it never
+    shadows it.
+    """
+
+    error_code = "group_approved_content_write_refused"
+
+    def __init__(
+        self,
+        relationship_type: str,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        *,
+        group_id: str,
+        changed_properties: list[str],
+    ):
+        self.kind = "relationship"
+        self.type_name = relationship_type
+        self.source = "direct_write"
+        self.policy = "proposal_only"
+        self.relationship_type = relationship_type
+        self.from_type = from_type
+        self.from_id = from_id
+        self.to_type = to_type
+        self.to_id = to_id
+        self.group_id = group_id
+        self.changed_properties = list(changed_properties)
+        changed = ", ".join(self.changed_properties) or "(none)"
+        # Bypass DirectWriteRefusedError.__init__: it composes the generic
+        # policy message, and this refusal must TEACH — name the edge, name the
+        # approving group, and say what to do instead.
+        CoreError.__init__(
+            self,
+            f"Direct write to relationship '{relationship_type}' "
+            f"({from_type}:{from_id} -> {to_type}:{to_id}) is refused: group "
+            f"'{group_id}' approved this edge, and approval binds its CONTENT, "
+            f"not just its existence. This write changes {changed}, and "
+            f"'{relationship_type}' is a proposal_only type — the change must be "
+            "re-proposed and re-approved (group propose -> group resolve), not "
+            "written directly.",
         )
 
 

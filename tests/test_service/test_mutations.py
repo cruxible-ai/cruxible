@@ -10,8 +10,13 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.errors import (
+    ConfigError,
+    DataValidationError,
+    GroupApprovedContentWriteRefusedError,
+)
 from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.graph.assertion_state import GroupApprovalDrift
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.query.relationship_state import relationship_matches_query_state
@@ -35,6 +40,7 @@ from cruxible_core.service import (
     service_register_source_artifact,
     service_resolve_group,
 )
+from cruxible_core.service.mutations import _MAX_CONFLICT_RECORDS_PER_TUPLE
 from cruxible_core.storage.sqlite import SQLiteGraphRepository
 from cruxible_core.temporal import utc_now
 
@@ -561,6 +567,23 @@ relationships:
           role: required
       auto_resolve_when: all_support
       auto_resolve_requires_prior_trust: trusted_only
+  - name: fits_strict
+    from: Part
+    to: Vehicle
+    write_policy: proposal_only
+    properties:
+      verified:
+        type: bool
+        default: false
+      source:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        check_v1:
+          role: required
+      auto_resolve_when: all_support
+      auto_resolve_requires_prior_trust: trusted_only
 
 constraints: []
 """
@@ -578,15 +601,21 @@ def _group_write_instance(tmp_path: Path) -> CruxibleInstance:
     return instance
 
 
-def _candidate_member(from_id: str = "BP-1", to_id: str = "V-1") -> CandidateMember:
+def _candidate_member(
+    from_id: str = "BP-1",
+    to_id: str = "V-1",
+    *,
+    relationship_type: str = "fits",
+    properties: dict[str, object] | None = None,
+) -> CandidateMember:
     return CandidateMember(
         from_type="Part",
         from_id=from_id,
         to_type="Vehicle",
         to_id=to_id,
-        relationship_type="fits",
+        relationship_type=relationship_type,
         signals=[CandidateSignal(signal_source="check_v1", signal="support")],
-        properties={"verified": False},
+        properties={"verified": False} if properties is None else properties,
     )
 
 
@@ -595,12 +624,20 @@ def _propose_fits_group(
     *,
     from_id: str = "BP-1",
     to_id: str = "V-1",
+    relationship_type: str = "fits",
     members: list[CandidateMember] | None = None,
 ) -> str:
     result = service_propose_group(
         instance,
-        "fits",
-        members or [_candidate_member(from_id=from_id, to_id=to_id)],
+        relationship_type,
+        members
+        or [
+            _candidate_member(
+                from_id=from_id,
+                to_id=to_id,
+                relationship_type=relationship_type,
+            )
+        ],
         thesis_text="test proposal",
         thesis_facts={"source": "test"},
         source_workflow_name="test_group_flow",
@@ -2600,6 +2637,8 @@ class TestDirectWriteGroupInteractions:
             "coverage": "full",
             "last_receipt_id": result.receipt_id,
             "review_hint": "live_state_changed_since_proposal",
+            "record_count": 1,
+            "dropped_record_count": 0,
         }
 
         receipt = _receipt(instance, result.receipt_id)
@@ -2724,7 +2763,7 @@ class TestDirectWriteGroupInteractions:
         assert summary["member_count"] == 2
         assert summary["last_receipt_id"] == second.receipt_id
 
-    def test_repeated_direct_write_updates_existing_conflict_record(
+    def test_repeated_direct_write_appends_a_second_conflict_record(
         self,
         tmp_path: Path,
     ) -> None:
@@ -2761,12 +2800,126 @@ class TestDirectWriteGroupInteractions:
             source_ref="direct-second",
         )
 
+        assert first.receipt_id != second.receipt_id
+        conflicts = _direct_write_conflicts(instance, group_id)
+        # Append-only: the second conflict on the same tuple must NOT erase the
+        # first detection's receipt_id/detected_at.
+        assert len(conflicts) == 2
+        assert [record["source_ref"] for record in conflicts] == [
+            "direct-first",
+            "direct-second",
+        ]
+        assert [record["receipt_id"] for record in conflicts] == [
+            first.receipt_id,
+            second.receipt_id,
+        ]
+        assert all(record["detected_at"] for record in conflicts)
+        assert all(record["edge_key"] is not None for record in conflicts)
+
+        # Two records, ONE distinct conflicted tuple.
+        summary = _direct_write_conflict_summary(instance, group_id)
+        assert summary["conflicted_member_count"] == 1
+        assert summary["member_count"] == 1
+        assert summary["coverage"] == "full"
+        assert summary["record_count"] == 2
+        assert summary["dropped_record_count"] == 0
+        assert summary["last_receipt_id"] == second.receipt_id
+
+    def test_conflict_records_name_the_acting_actor(self, tmp_path: Path) -> None:
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(instance)
+
+        service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True},
+                )
+            ],
+            source="test",
+            source_ref="direct",
+            actor_context=_actor_context("agent-7"),
+        )
+
         conflicts = _direct_write_conflicts(instance, group_id)
         assert len(conflicts) == 1
-        assert conflicts[0]["receipt_id"] == second.receipt_id
-        assert conflicts[0]["source_ref"] == "direct-second"
-        assert conflicts[0]["edge_key"] is not None
-        assert first.receipt_id != second.receipt_id
+        actor = conflicts[0]["actor_context"]
+        assert isinstance(actor, dict)
+        assert actor["actor_id"] == "agent-7"
+        assert actor["actor_type"] == "human_user"
+
+    def test_conflict_log_is_bounded_per_tuple_without_losing_the_summary(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(instance)
+
+        writes = _MAX_CONFLICT_RECORDS_PER_TUPLE + 3
+        for index in range(writes):
+            service_add_relationships(
+                instance,
+                [
+                    RelationshipInstance(
+                        from_type="Part",
+                        from_id="BP-1",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        properties={"verified": True, "source": f"w{index}"},
+                    )
+                ],
+                source="test",
+                source_ref=f"direct-{index}",
+            )
+
+        conflicts = _direct_write_conflicts(instance, group_id)
+        assert len(conflicts) == _MAX_CONFLICT_RECORDS_PER_TUPLE
+        # The FIRST detection survives eviction — it is when live state first
+        # moved under the proposal — and so does the newest.
+        assert conflicts[0]["source_ref"] == "direct-0"
+        assert conflicts[-1]["source_ref"] == f"direct-{writes - 1}"
+
+        summary = _direct_write_conflict_summary(instance, group_id)
+        assert summary["record_count"] == _MAX_CONFLICT_RECORDS_PER_TUPLE
+        assert summary["dropped_record_count"] == writes - _MAX_CONFLICT_RECORDS_PER_TUPLE
+        # Eviction never distorts the DISTINCT-tuple counts the reviewer reads.
+        assert summary["conflicted_member_count"] == 1
+        assert summary["member_count"] == 1
+        assert summary["coverage"] == "full"
+
+    def test_annotating_a_live_proposal_bumps_pending_version(self, tmp_path: Path) -> None:
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(instance)
+        assert _stored_group(instance, group_id).pending_version == 1
+
+        service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True},
+                )
+            ],
+            source="test",
+            source_ref="direct",
+        )
+
+        assert _stored_group(instance, group_id).pending_version == 2
+        # The reviewer read the proposal at version 1; live state moved under
+        # them, so resolving at that version must be refused.
+        with pytest.raises(ConfigError):
+            service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=2)
 
     def test_direct_write_update_reports_group_backed_edge(
         self,
@@ -2898,6 +3051,290 @@ class TestDirectWriteGroupInteractions:
             )
 
         assert _direct_write_conflicts(instance, group_id) == []
+
+
+class TestGroupApprovedContentBinding:
+    """Acceptance binds CONTENT, not just existence (Robert, 2026-07-25)."""
+
+    def _approved_edge(
+        self,
+        tmp_path: Path,
+        *,
+        relationship_type: str,
+    ) -> tuple[CruxibleInstance, str]:
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(instance, relationship_type=relationship_type)
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        return instance, group_id
+
+    def _drift(
+        self,
+        instance: CruxibleInstance,
+        relationship_type: str,
+    ) -> GroupApprovalDrift | None:
+        edge = instance.load_graph().get_relationship(
+            "Part",
+            "BP-1",
+            "Vehicle",
+            "V-1",
+            relationship_type,
+        )
+        assert edge is not None
+        return edge.metadata.assertion.group_approval_drift
+
+    def test_proposal_only_content_change_is_refused_and_receipted(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance, group_id = self._approved_edge(tmp_path, relationship_type="fits_strict")
+        before = _receipt_count(instance)
+
+        with pytest.raises(GroupApprovedContentWriteRefusedError) as excinfo:
+            service_add_relationships(
+                instance,
+                [
+                    RelationshipInstance(
+                        from_type="Part",
+                        from_id="BP-1",
+                        relationship_type="fits_strict",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        properties={"verified": True},
+                    )
+                ],
+                # A governed source is exactly the hole the plain chokepoint
+                # refusal leaves open, and `source` is caller-supplied.
+                source="workflow_apply",
+                source_ref="spoofed-governed",
+            )
+
+        message = str(excinfo.value)
+        assert "fits_strict" in message
+        assert "Part:BP-1 -> Vehicle:V-1" in message
+        assert group_id in message
+        assert "verified" in message
+        assert "re-proposed" in message
+        assert excinfo.value.group_id == group_id
+        assert excinfo.value.changed_properties == ["verified"]
+
+        # Receipted refusal, rolled-back write.
+        assert excinfo.value.mutation_receipt_id is not None
+        assert _receipt_count(instance) == before + 1
+        edge = instance.load_graph().get_relationship(
+            "Part",
+            "BP-1",
+            "Vehicle",
+            "V-1",
+            "fits_strict",
+        )
+        assert edge is not None
+        assert edge.properties["verified"] is False
+        assert edge.metadata.assertion.group_approval_drift is None
+
+    def test_ordinary_type_content_change_succeeds_with_a_drift_marker(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance, group_id = self._approved_edge(tmp_path, relationship_type="fits")
+
+        result = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True, "source": "direct"},
+                )
+            ],
+            source="test",
+            source_ref="direct",
+        )
+        assert result.updated == 1
+
+        edge = instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+        assert edge is not None
+        drift = edge.metadata.assertion.group_approval_drift
+        assert drift is not None
+        assert drift.group_id == group_id
+        assert drift.changed_properties == ["source", "verified"]
+        assert drift.approved_values == {"verified": False}
+        assert drift.receipt_id == result.receipt_id
+        assert drift.detected_at is not None
+        assert drift.first_detected_at == drift.detected_at
+        # The edge stays live and stays approved: a fact legitimately changed.
+        assert edge.metadata.assertion.review.status == "approved"
+        assert edge.metadata.assertion.lifecycle.status == "active"
+
+        receipt_detail = _relationship_receipt_detail(_receipt(instance, result.receipt_id))
+        assert receipt_detail["group_approval_drift"] == {
+            "group_id": group_id,
+            "changed_properties": ["source", "verified"],
+            "approved_values": {"verified": False},
+        }
+
+    def test_second_drift_keeps_the_original_approved_values(self, tmp_path: Path) -> None:
+        instance, group_id = self._approved_edge(tmp_path, relationship_type="fits")
+
+        first = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True},
+                )
+            ],
+            source="test",
+            source_ref="drift-1",
+        )
+        second = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": False, "source": "later"},
+                )
+            ],
+            source="test",
+            source_ref="drift-2",
+        )
+        assert first.receipt_id != second.receipt_id
+
+        drift = self._drift(instance, "fits")
+        assert drift is not None
+        assert drift.group_id == group_id
+        assert drift.changed_properties == ["source", "verified"]
+        # `verified` was False at approval; the second write's "before" value was
+        # the FIRST drift's True, which must not overwrite the approved value.
+        assert drift.approved_values == {"verified": False}
+        assert drift.receipt_id == second.receipt_id
+        assert drift.first_detected_at is not None
+        assert drift.first_detected_at <= drift.detected_at
+
+    def test_content_identical_write_is_neither_refused_nor_marked(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance, _group_id = self._approved_edge(tmp_path, relationship_type="fits_strict")
+
+        # Same content the group approved, through the same governed source that
+        # the refusal test uses: a no-op is not drift.
+        result = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits_strict",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": False},
+                )
+            ],
+            source="workflow_apply",
+            source_ref="restate",
+        )
+        assert result.updated == 1
+        assert self._drift(instance, "fits_strict") is None
+
+    def test_property_less_touch_of_an_ordinary_approved_edge_is_not_drift(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance, _group_id = self._approved_edge(tmp_path, relationship_type="fits")
+
+        # Empty properties merge onto the persisted edge, so nothing changes —
+        # diffing the raw payload instead would report "removed everything".
+        service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={},
+                )
+            ],
+            source="test",
+            source_ref="touch",
+        )
+        assert self._drift(instance, "fits") is None
+
+    def test_batch_direct_write_marks_drift_on_an_ordinary_approved_edge(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance, group_id = self._approved_edge(tmp_path, relationship_type="fits")
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                relationships=[
+                    BatchRelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-1",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        properties={"verified": True},
+                    )
+                ],
+            ),
+        )
+
+        drift = self._drift(instance, "fits")
+        assert drift is not None
+        assert drift.group_id == group_id
+        assert drift.changed_properties == ["verified"]
+        assert drift.approved_values == {"verified": False}
+        receipt_detail = _relationship_receipt_detail(_receipt(instance, result.receipt_id))
+        assert receipt_detail["group_approval_drift"]["changed_properties"] == ["verified"]
+
+    def test_ungrouped_edge_is_never_marked(self, tmp_path: Path) -> None:
+        instance = _group_write_instance(tmp_path)
+        service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": False},
+                )
+            ],
+            source="test",
+            source_ref="create",
+        )
+        service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True},
+                )
+            ],
+            source="test",
+            source_ref="update",
+        )
+        assert self._drift(instance, "fits") is None
 
 
 # ---------------------------------------------------------------------------
