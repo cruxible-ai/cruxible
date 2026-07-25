@@ -15,6 +15,7 @@ from pydantic import (
     Field,
     field_serializer,
     field_validator,
+    model_validator,
 )
 
 from cruxible_core.governance.actors import GovernedActorContext
@@ -87,6 +88,53 @@ class RelationshipReviewState(BaseModel):
         return format_datetime(value)
 
 
+class SupersessionPointer(BaseModel):
+    """Open, typed reference to the other side of a supersession link.
+
+    Two shapes are named, one per subject kind:
+
+    * an EDGE (claim) is referenced by its minted ``claim_id`` -- the whole
+      point of edge identity is that a supersession pointer can name one
+      specific claim rather than a tuple that may have several live edges;
+    * an ENTITY is referenced by ``entity_type`` + ``entity_id``, its natural
+      key (entities already have stable identity).
+
+    The model is deliberately OPEN (``extra="allow"``) so a later pointer kind
+    can be introduced without a migration of stored lifecycle payloads, and so
+    already-persisted free-form pointers keep validating. What it refuses is the
+    three shapes that can only be mistakes: an empty pointer, a half entity
+    pair, and a pointer that names BOTH a claim and an entity.
+
+    Nothing writes these today. The dedicated receipted lifecycle verbs
+    (``wi-lifecycle-verbs``) are the first writer; this pass only gives the
+    field a shape those verbs can target.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    claim_id: str | None = None
+    entity_type: str | None = None
+    entity_id: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_pointer_shape(self) -> SupersessionPointer:
+        has_entity_type = bool(self.entity_type)
+        has_entity_id = bool(self.entity_id)
+        if has_entity_type != has_entity_id:
+            raise ValueError(
+                "supersession pointer entity reference requires both entity_type and entity_id"
+            )
+        if self.claim_id and has_entity_type:
+            raise ValueError(
+                "supersession pointer names either a claim_id or an entity, never both"
+            )
+        if not self.claim_id and not has_entity_type and not (self.model_extra or {}):
+            raise ValueError(
+                "supersession pointer must name a claim_id or an entity_type/entity_id pair"
+            )
+        return self
+
+
 class LifecycleState(BaseModel, Generic[StatusT]):
     """Shared lifecycle/actuality structure for entities and relationships.
 
@@ -115,8 +163,8 @@ class LifecycleState(BaseModel, Generic[StatusT]):
     effective_until: datetime | None = None
     closed_at: datetime | None = None
     closed_by: str | None = None
-    supersedes: dict[str, Any] | None = None
-    superseded_by: dict[str, Any] | None = None
+    supersedes: SupersessionPointer | None = None
+    superseded_by: SupersessionPointer | None = None
 
     @field_validator("effective_from", "effective_until", "closed_at")
     @classmethod
@@ -237,6 +285,7 @@ __all__ = [
     "RelationshipReviewSource",
     "RelationshipReviewState",
     "RelationshipReviewStatus",
+    "SupersessionPointer",
     "relationship_assertion_from_metadata",
     "relationship_is_live",
     "relationship_lifecycle_is_active",

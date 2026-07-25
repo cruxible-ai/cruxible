@@ -38,7 +38,21 @@ from cruxible_core.graph.provenance import (
     provenance_group_id,
     stamp_provenance_modified,
 )
+from cruxible_core.primitives import new_id
 from cruxible_core.temporal import is_effective
+
+CLAIM_ID_PREFIX = "CLM"
+"""Prefix for minted claim identities (``CLM-<16 hex>``)."""
+
+
+def mint_claim_id() -> str:
+    """Mint one opaque, immutable claim identity.
+
+    Random, never content-derived: an edge's properties mutate in place, so a
+    content-derived id would change under a property edit and stop being an
+    identity. Pinning a version is the attestation content digest's job.
+    """
+    return new_id(CLAIM_ID_PREFIX, length=16)
 
 
 def make_node_id(entity_type: str, entity_id: str) -> str:
@@ -222,6 +236,24 @@ class RelationshipInstance(BaseModel):
     Also used as the target reference in feedback records. The
     ``relationship_type`` field accepts ``"relationship"`` during
     validation so that legacy feedback JSON round-trips correctly.
+
+    ``claim_id`` is the minted, opaque, immutable global identity of the claim
+    this edge asserts. It is OPTIONAL AT CONSTRUCTION on purpose: reference,
+    candidate, wire, and dry-run instances legitimately describe a claim without
+    being one. The enforcement boundary is graph ADDITION and durable
+    persistence, not the model -- ``EntityGraph.add_relationship`` and the
+    storage upsert preserve-or-raise, so an id-less instance that reaches live
+    state is a loud programming error while an id-less instance that never
+    reaches the graph is normal life. The single mint site is
+    ``graph.operations.apply_relationship``'s create branch (plus the named
+    legacy-image backfill sites).
+
+    NOT to be confused with attestation's ``claim_key``: that is the
+    cross-instance natural key (the 5-tuple ``relationship_type`` + endpoints);
+    ``claim_id`` is authoritative WITHIN one instance. Tuple-first resolution
+    remains the cross-instance story. ``claim_id`` is never content-derived --
+    properties mutate in place, and pinning a version is the attestation content
+    digest's job; the two compose.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -234,6 +266,7 @@ class RelationshipInstance(BaseModel):
     to_type: str
     to_id: str
     edge_key: int | None = None
+    claim_id: str | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: RelationshipMetadata = Field(default_factory=RelationshipMetadata)
 
@@ -278,6 +311,7 @@ class RelationshipInstance(BaseModel):
 
 
 __all__ = [
+    "CLAIM_ID_PREFIX",
     "EntityInstance",
     "EntityLifecycleState",
     "EntityMetadata",
@@ -292,6 +326,7 @@ __all__ = [
     "load_provenance",
     "make_node_id",
     "make_provenance",
+    "mint_claim_id",
     "provenance_group_id",
     "relationship_assertion_from_metadata",
     "relationship_is_live",

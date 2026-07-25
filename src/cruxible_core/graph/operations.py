@@ -43,6 +43,7 @@ from cruxible_core.graph.types import (
     EntityMetadata,
     RelationshipInstance,
     RelationshipMetadata,
+    mint_claim_id,
 )
 from cruxible_core.temporal import utc_now
 
@@ -394,14 +395,25 @@ def apply_relationship(
     pending: bool = False,
     lifecycle: RelationshipLifecycleState | None = None,
     trusted_lifecycle_transition: bool = False,
-) -> None:
+) -> RelationshipInstance:
     """Apply a validated relationship to the graph (add or update).
+
+    RETURNS THE DURABLE RELATIONSHIP -- the edge as it now stands in the graph,
+    carrying its ``claim_id``. Callers that record write nodes, stamp receipts,
+    or persist deltas must take their values from this return, AFTER the apply,
+    never from the pre-validation input: an input never carries the id of an
+    edge that did not exist yet, so a create could never reliably stamp it.
 
     New edges get metadata provenance stamped via make_provenance(source, source_ref)
     and a default assertion, including the creating receipt_id / resolution_id /
     actor_context when supplied. Updated edges preserve existing metadata while
     stamping provenance modification fields when provenance exists; creation-time
     correlation fields are never rewritten.
+
+    This is the SINGLE mint site for ``claim_id`` outside the named
+    legacy-image backfill: the create branch mints one and hands it to
+    ``graph.add_relationship``, which preserves it. The update branch never
+    re-mints -- the id is immutable for the life of the claim.
 
     ``lifecycle`` is the typed, review-SAFE lifecycle write channel. When supplied,
     it sets ONLY ``assertion.lifecycle`` -- the review axis (``assertion.review``)
@@ -505,6 +517,7 @@ def apply_relationship(
             properties=replace_props,
             metadata=rel.metadata,
         )
+        return _durable_relationship(graph, rel)
     else:
         incoming_evidence = rel.metadata.evidence
         assertion = (
@@ -527,4 +540,40 @@ def apply_relationship(
             assertion=assertion,
             evidence=incoming_evidence,
         )
-        graph.add_relationship(rel)
+        # THE mint site. Preserve an id the caller already carries (re-applying
+        # an already-identified claim); otherwise mint one now, before the edge
+        # enters the graph, because add_relationship preserves-or-raises.
+        if rel.claim_id is None:
+            rel.claim_id = mint_claim_id()
+        edge_key = graph.add_relationship(rel)
+        return _durable_relationship(graph, rel, edge_key=edge_key)
+
+
+def _durable_relationship(
+    graph: EntityGraph,
+    rel: RelationshipInstance,
+    *,
+    edge_key: int | None = None,
+) -> RelationshipInstance:
+    """Re-read the just-applied edge so callers stamp from graph truth.
+
+    Re-reading (rather than returning the input) is what makes the return value
+    DURABLE: it carries the graph-assigned ``edge_key`` and the metadata the
+    graph actually holds, not the caller's pre-apply view of them.
+    """
+    persisted = graph.get_relationship(
+        rel.from_type,
+        rel.from_id,
+        rel.to_type,
+        rel.to_id,
+        rel.relationship_type,
+        # Creates address the brand-new sibling by its assigned key; updates
+        # re-resolve by first-match tuple, exactly as replace_relationship_state
+        # did, so the edge returned is always the edge written.
+        edge_key=edge_key,
+    )
+    if persisted is None:  # pragma: no cover - the apply above just wrote it
+        raise ValueError(
+            f"Applied relationship is not resolvable in the graph: {rel.relationship_label()}"
+        )
+    return persisted
