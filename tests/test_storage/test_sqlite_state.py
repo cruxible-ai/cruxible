@@ -49,6 +49,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
     {
         Path("src/cruxible_core/storage/sqlite.py"),
+        # The shared DDL executor: it exists precisely so store schemas can run
+        # inside the migration lock instead of through executescript, which
+        # would commit and drop the lock. It lives outside the storage package
+        # because every store imports it and storage/__init__ imports the stores.
+        Path("src/cruxible_core/sqlite_ddl.py"),
         Path("src/cruxible_core/receipt/store.py"),
         Path("src/cruxible_core/feedback/store.py"),
         Path("src/cruxible_core/group/store.py"),

@@ -16,7 +16,7 @@ from cruxible_core.decision.store import DecisionStore
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.governance.actors import dump_actor_context, load_actor_context
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.store import GroupStore
 from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.store import ProcedureStore
@@ -28,6 +28,7 @@ from cruxible_core.source_artifacts.types import (
     SourceArtifactChunk,
     SourceArtifactRecord,
 )
+from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.storage.protocols import (
     GraphRepositoryProtocol,
     SnapshotRepositoryProtocol,
@@ -57,8 +58,13 @@ CREATE TABLE IF NOT EXISTS graph_entities (
 );
 CREATE INDEX IF NOT EXISTS idx_graph_entities_type ON graph_entities(entity_type);
 
+"""
+
+# Split out so migration 0004 can recreate exactly this table + these indexes
+# during the rebuild without re-running the rest of the graph schema.
+_GRAPH_RELATIONSHIPS_SCHEMA = """\
 CREATE TABLE IF NOT EXISTS graph_relationships (
-    relationship_id TEXT PRIMARY KEY,
+    claim_id TEXT PRIMARY KEY,
     edge_key INTEGER NOT NULL UNIQUE,
     from_type TEXT NOT NULL,
     from_id TEXT NOT NULL,
@@ -81,6 +87,8 @@ CREATE INDEX IF NOT EXISTS idx_graph_relationships_identity
         from_type, from_id, to_type, to_id, relationship_type, edge_key
     );
 """
+
+_GRAPH_SCHEMA = _GRAPH_SCHEMA + _GRAPH_RELATIONSHIPS_SCHEMA
 
 _SNAPSHOT_SCHEMA = """\
 CREATE TABLE IF NOT EXISTS instance_state (
@@ -166,6 +174,17 @@ CREATE TABLE IF NOT EXISTS source_artifact_archives (
 _UNIFIED_STATE_MIGRATION = "0001_unified_sqlite_state"
 SNAPSHOT_SCHEMA_MIGRATION = "0002_snapshot_tables"
 READ_REVISION_MIGRATION = "0003_read_revision"
+CLAIM_IDENTITY_MIGRATION = "0004_claim_identity"
+
+# Per-instance reconcile map for LEGACY (pre-identity) upstream images, stored in
+# ``instance_state``. Keyed by the claim 5-tuple, valued by the id this instance
+# minted for it, so re-pulling the SAME pre-upgrade release reuses the ids
+# instead of silently re-minting every upstream identity -- which would stale
+# every record-time claim_id stamp while every recorded digest stayed identical.
+# It lives in the state DB (not on disk beside the bundle) because it is
+# per-instance reconciliation state and must be written in the SAME transaction
+# as the backfill it describes.
+LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY = "legacy_claim_identity_map"
 
 # Monotonic state counter, stored in instance_state and incremented in the SAME
 # transaction as every state-mutating commit. It is a freshness marker for read
@@ -233,13 +252,14 @@ class SQLiteGraphRepository:
 
         edges = []
         for row in self._conn.execute(
-            "SELECT edge_key, from_type, from_id, to_type, to_id, relationship_type, "
-            "properties_json, metadata_json "
+            "SELECT claim_id, edge_key, from_type, from_id, to_type, to_id, "
+            "relationship_type, properties_json, metadata_json "
             "FROM graph_relationships ORDER BY edge_key"
         ).fetchall():
             edges.append(
                 {
                     "relationship_type": row["relationship_type"],
+                    "claim_id": row["claim_id"],
                     "properties": json.loads(row["properties_json"]),
                     "metadata": json.loads(row["metadata_json"]),
                     "source": f"{row['from_type']}:{row['from_id']}",
@@ -259,12 +279,18 @@ class SQLiteGraphRepository:
         )
 
     def save_graph(self, graph: EntityGraph) -> None:
-        """Replace live graph rows with a full graph image."""
+        """Replace live graph rows with a full graph image.
+
+        Full replace uses a plain INSERT, not the incremental upsert: the table
+        was just emptied, so any conflict is a duplicate identity WITHIN the
+        image itself, and surfacing that as an IntegrityError is the second of
+        the three claim_id uniqueness layers.
+        """
         self._conn.execute("DELETE FROM graph_relationships")
         self._conn.execute("DELETE FROM graph_entities")
 
         self.upsert_entities(graph.iter_all_entities())
-        self.upsert_relationships(
+        self._insert_relationships(
             RelationshipInstance(
                 relationship_type=edge["relationship_type"],
                 from_type=edge["from_type"],
@@ -272,6 +298,7 @@ class SQLiteGraphRepository:
                 to_type=edge["to_type"],
                 to_id=edge["to_id"],
                 edge_key=edge["edge_key"],
+                claim_id=edge["claim_id"],
                 properties=dict(edge["properties"]),
                 metadata=edge["metadata"],
             )
@@ -298,44 +325,92 @@ class SQLiteGraphRepository:
                 ),
             )
 
-    def upsert_relationships(self, relationships: Iterable[RelationshipInstance]) -> None:
-        """Persist relationship rows touched by an incremental mutation."""
+    @staticmethod
+    def _relationship_row(relationship: RelationshipInstance) -> tuple[Any, ...]:
+        """Validate one relationship and render its durable row tuple."""
+        claim_id = relationship.claim_id
+        if not claim_id:
+            raise ValueError(
+                "Durable relationship writes require a claim_id "
+                f"({relationship.relationship_label()}); it is minted by "
+                "graph.operations.apply_relationship or by the legacy-image backfill"
+            )
+        edge_key = relationship.edge_key
+        if edge_key is None:
+            raise ValueError("Incremental relationship writes require a stable edge_key")
+        if not isinstance(edge_key, int):
+            try:
+                edge_key = int(edge_key)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Graph edge key {edge_key!r} is not stable") from exc
+        return (
+            claim_id,
+            edge_key,
+            relationship.from_type,
+            relationship.from_id,
+            relationship.to_type,
+            relationship.to_id,
+            relationship.relationship_type,
+            canonical_json(relationship.properties),
+            canonical_json(relationship.metadata.model_dump(mode="json", exclude_none=True)),
+        )
+
+    def _insert_relationships(self, relationships: Iterable[RelationshipInstance]) -> None:
+        """Insert relationship rows with no conflict handling (full-replace path)."""
         for relationship in relationships:
-            edge_key = relationship.edge_key
-            if edge_key is None:
-                raise ValueError("Incremental relationship writes require a stable edge_key")
-            if not isinstance(edge_key, int):
-                try:
-                    edge_key = int(edge_key)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(f"Graph edge key {edge_key!r} is not stable") from exc
             self._conn.execute(
                 "INSERT INTO graph_relationships "
-                "(relationship_id, edge_key, from_type, from_id, to_type, to_id, "
+                "(claim_id, edge_key, from_type, from_id, to_type, to_id, "
+                "relationship_type, properties_json, metadata_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                self._relationship_row(relationship),
+            )
+
+    def upsert_relationships(self, relationships: Iterable[RelationshipInstance]) -> None:
+        """Persist relationship rows touched by an incremental mutation.
+
+        Conflict-targets ``claim_id`` -- the durable identity -- but RETARGETING
+        is refused: on conflict the stored immutable tuple (endpoints +
+        relationship type) is compared with the incoming one and a mismatch
+        raises. Without that comparison, conflict-target-on-id would let a
+        miscopied id silently repoint an existing identity at different
+        endpoints while uniqueness stayed perfectly satisfied. On-conflict
+        updates therefore touch only the MUTABLE columns: properties, metadata,
+        and the per-load ``edge_key``.
+        """
+        for relationship in relationships:
+            row = self._relationship_row(relationship)
+            claim_id = row[0]
+            existing = self._conn.execute(
+                "SELECT from_type, from_id, to_type, to_id, relationship_type "
+                "FROM graph_relationships WHERE claim_id = ?",
+                (claim_id,),
+            ).fetchone()
+            if existing is not None:
+                stored = (
+                    existing["from_type"],
+                    existing["from_id"],
+                    existing["to_type"],
+                    existing["to_id"],
+                    existing["relationship_type"],
+                )
+                incoming = (row[2], row[3], row[4], row[5], row[6])
+                if stored != incoming:
+                    raise ValueError(
+                        f"Refusing to retarget claim '{claim_id}': stored identity "
+                        f"{stored} does not match the incoming identity {incoming}. "
+                        "claim_id is immutable and never moves between claims."
+                    )
+            self._conn.execute(
+                "INSERT INTO graph_relationships "
+                "(claim_id, edge_key, from_type, from_id, to_type, to_id, "
                 "relationship_type, properties_json, metadata_json) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(relationship_id) DO UPDATE SET "
+                "ON CONFLICT(claim_id) DO UPDATE SET "
                 "edge_key = excluded.edge_key, "
-                "from_type = excluded.from_type, "
-                "from_id = excluded.from_id, "
-                "to_type = excluded.to_type, "
-                "to_id = excluded.to_id, "
-                "relationship_type = excluded.relationship_type, "
                 "properties_json = excluded.properties_json, "
                 "metadata_json = excluded.metadata_json",
-                (
-                    f"edge:{int(edge_key)}",
-                    edge_key,
-                    relationship.from_type,
-                    relationship.from_id,
-                    relationship.to_type,
-                    relationship.to_id,
-                    relationship.relationship_type,
-                    canonical_json(relationship.properties),
-                    canonical_json(
-                        relationship.metadata.model_dump(mode="json", exclude_none=True)
-                    ),
-                ),
+                row,
             )
 
     def is_empty(self) -> bool:
@@ -481,7 +556,7 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
         self._conn.row_factory = sqlite3.Row
         if initialize_schema:
             self._conn.execute("PRAGMA foreign_keys = ON")
-            self._conn.executescript(_SOURCE_ARTIFACT_SCHEMA)
+            execute_schema_script(self._conn, _SOURCE_ARTIFACT_SCHEMA)
             self._ensure_actor_context_columns()
 
     def _ensure_actor_context_columns(self) -> None:
@@ -907,9 +982,30 @@ class SQLiteStorageBackend:
         )
 
     def _initialize_connection(self, conn: sqlite3.Connection) -> None:
+        """Create/upgrade every table under ONE migration lock.
+
+        THE LOCK: ``BEGIN IMMEDIATE`` takes SQLite's RESERVED write lock on the
+        connection that then performs the whole upgrade, and it is taken BEFORE
+        any schema statement runs. That closes the two-process race the previous
+        sequence permitted, where two initializers could interleave DDL and a
+        concurrent reader (a snapshot, say) could observe a half-upgraded
+        database. A second initializer blocks on the lock (``busy_timeout``) and,
+        when it wins it, sees the migration row already recorded and does
+        nothing. The migration is therefore observed as wholly-old or
+        wholly-new, never mid-upgrade.
+
+        The lock is why NOTHING here may call ``executescript``: it commits any
+        pending transaction, which would release the lock mid-upgrade. Every
+        store routes its DDL through ``storage.schema.execute_schema_script``
+        instead. ``_configure_connection`` runs BEFORE ``BEGIN`` because
+        ``PRAGMA journal_mode`` / ``foreign_keys`` are no-ops inside a
+        transaction.
+        """
         _configure_connection(conn)
-        conn.executescript(_GRAPH_SCHEMA)
-        conn.executescript(_SNAPSHOT_SCHEMA)
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        execute_schema_script(conn, _GRAPH_SCHEMA)
+        execute_schema_script(conn, _SNAPSHOT_SCHEMA)
         SQLiteReceiptStore(self.db_path, connection=conn)
         FeedbackStore(self.db_path, connection=conn)
         GroupStore(self.db_path, connection=conn)
@@ -936,3 +1032,65 @@ class SQLiteStorageBackend:
                 (READ_REVISION_STATE_KEY, format_datetime(utc_now())),
             )
             self.mark_migration_on_connection(conn, READ_REVISION_MIGRATION)
+        if not self.has_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION):
+            self._migrate_claim_identity(conn)
+            self.mark_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION)
+
+    @staticmethod
+    def _migrate_claim_identity(conn: sqlite3.Connection) -> None:
+        """Rebuild ``graph_relationships`` around ``claim_id`` (migration 0004).
+
+        ONE atomic table rebuild, inside the caller's migration lock/transaction:
+        the primary key moves from the derived ``relationship_id`` string
+        (``"edge:{key}"`` -- which silently repointed across pulls, because
+        ``edge_key`` is a per-load counter) to the minted, immutable
+        ``claim_id``, one id per existing row. The derived column is DELETED, not
+        kept alongside: a second, contradictory identity column is exactly the
+        legacy cruft this work removes.
+
+        Historical attestation, feedback, and group-conflict records need NO
+        value rewrite: they resolve tuple-first, so they keep resolving. The new
+        record-time stamp columns are additive and only new records carry them.
+
+        A database created fresh on this version already has the new shape (the
+        schema above declares it); this runs only for a database that still
+        carries the old PK.
+        """
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(graph_relationships)")}
+        if "claim_id" in columns:
+            return
+
+        rows = conn.execute(
+            "SELECT edge_key, from_type, from_id, to_type, to_id, relationship_type, "
+            "properties_json, metadata_json FROM graph_relationships ORDER BY edge_key"
+        ).fetchall()
+        conn.execute("ALTER TABLE graph_relationships RENAME TO graph_relationships_pre_0004")
+        # Indexes follow the table on RENAME, so drop them before recreating the
+        # canonical names on the rebuilt table.
+        for index_name in (
+            "idx_graph_relationships_from",
+            "idx_graph_relationships_to",
+            "idx_graph_relationships_type",
+            "idx_graph_relationships_identity",
+        ):
+            conn.execute(f"DROP INDEX IF EXISTS {index_name}")
+        execute_schema_script(conn, _GRAPH_RELATIONSHIPS_SCHEMA)
+        for row in rows:
+            conn.execute(
+                "INSERT INTO graph_relationships "
+                "(claim_id, edge_key, from_type, from_id, to_type, to_id, "
+                "relationship_type, properties_json, metadata_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    mint_claim_id(),
+                    row["edge_key"],
+                    row["from_type"],
+                    row["from_id"],
+                    row["to_type"],
+                    row["to_id"],
+                    row["relationship_type"],
+                    row["properties_json"],
+                    row["metadata_json"],
+                ),
+            )
+        conn.execute("DROP TABLE graph_relationships_pre_0004")

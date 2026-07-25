@@ -20,6 +20,7 @@ from cruxible_core.group.types import (
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol
 from cruxible_core.primitives import new_id
+from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.temporal import format_datetime, utc_now
 
 # group_resolutions FIRST (referenced by candidate_groups.resolution_id)
@@ -122,7 +123,7 @@ class GroupStore(GroupStoreProtocol):
         # PRAGMA must be set before executescript (separate statement)
         if initialize_schema:
             self._conn.execute("PRAGMA foreign_keys = ON")
-            self._conn.executescript(_SCHEMA)
+            execute_schema_script(self._conn, _SCHEMA)
             self._ensure_additive_columns()
 
     def _ensure_additive_columns(self) -> None:

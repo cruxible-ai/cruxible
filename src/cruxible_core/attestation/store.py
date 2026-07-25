@@ -18,6 +18,7 @@ from cruxible_core.attestation.types import (
 )
 from cruxible_core.governance.actors import dump_actor_context, load_actor_context
 from cruxible_core.instance_protocol import AttestationStoreProtocol
+from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.temporal import format_datetime
 
 _SCHEMA = """\
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS attestations (
     to_type TEXT NOT NULL,
     to_id TEXT NOT NULL,
     edge_key INTEGER,
+    claim_id TEXT,
     claim_content_digest TEXT NOT NULL,
     claim_state_at_record TEXT NOT NULL,
     stance TEXT NOT NULL CHECK (stance IN ('support', 'contradict', 'unsure')),
@@ -86,7 +88,19 @@ class AttestationStore(AttestationStoreProtocol):
         self._conn.row_factory = sqlite3.Row
         if initialize_schema:
             self._conn.execute("PRAGMA foreign_keys = ON")
-            self._conn.executescript(_SCHEMA)
+            execute_schema_script(self._conn, _SCHEMA)
+            self._ensure_claim_identity_column()
+
+    def _ensure_claim_identity_column(self) -> None:
+        """Add the record-time claim_id stamp to a pre-identity attestations table.
+
+        Additive and nullable: historical rows keep a NULL stamp and keep
+        resolving tuple-first, which is the whole point of tuple-first
+        resolution surviving the identity change.
+        """
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(attestations)")}
+        if "claim_id" not in columns:
+            self._conn.execute("ALTER TABLE attestations ADD COLUMN claim_id TEXT")
 
     def save_attestation(self, record: AttestationRecord) -> str:
         """Insert one attestation without committing."""
@@ -94,10 +108,10 @@ class AttestationStore(AttestationStoreProtocol):
         self._conn.execute(
             "INSERT INTO attestations "
             "(attestation_id, relationship_type, from_type, from_id, to_type, to_id, "
-            "edge_key, claim_content_digest, claim_state_at_record, stance, "
+            "edge_key, claim_id, claim_content_digest, claim_state_at_record, stance, "
             "evidence_refs_json, observed_at, recorded_at, actor_context_json, "
             "actor_org_id, actor_id, note, idempotency_key, receipt_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.attestation_id,
                 record.relationship_type,
@@ -106,6 +120,7 @@ class AttestationStore(AttestationStoreProtocol):
                 record.to_type,
                 record.to_id,
                 record.edge_key,
+                record.claim_id,
                 record.claim_content_digest,
                 record.claim_state_at_record,
                 record.stance,
@@ -405,6 +420,7 @@ class AttestationStore(AttestationStoreProtocol):
             to_type=row["to_type"],
             to_id=row["to_id"],
             edge_key=row["edge_key"],
+            claim_id=row["claim_id"] if "claim_id" in row.keys() else None,
             claim_content_digest=row["claim_content_digest"],
             claim_state_at_record=row["claim_state_at_record"],
             stance=row["stance"],

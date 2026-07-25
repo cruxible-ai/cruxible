@@ -10,6 +10,7 @@ from typing import Any
 from cruxible_core.decision.types import DecisionEvent, DecisionRecord
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import DecisionStoreProtocol
+from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.temporal import format_datetime, utc_now
 
 _SCHEMA = """\
@@ -83,7 +84,7 @@ class DecisionStore(DecisionStoreProtocol):
         self._conn.row_factory = sqlite3.Row
         if initialize_schema:
             self._conn.execute("PRAGMA foreign_keys = ON")
-            self._conn.executescript(_SCHEMA)
+            execute_schema_script(self._conn, _SCHEMA)
 
     def save_record(self, record: DecisionRecord) -> str:
         """Create or replace a decision record."""

@@ -17,6 +17,7 @@ from cruxible_core.resolution_contracts.types import (
     ResolutionContract,
     ResolutionDisposition,
 )
+from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.temporal import format_datetime
 
 _SCHEMA = """\
@@ -105,7 +106,7 @@ class ResolutionContractStore(ResolutionContractStoreProtocol):
         self._conn.row_factory = sqlite3.Row
         if initialize_schema:
             self._conn.execute("PRAGMA foreign_keys = ON")
-            self._conn.executescript(_SCHEMA)
+            execute_schema_script(self._conn, _SCHEMA)
 
     # -- contracts ---------------------------------------------------------
 
