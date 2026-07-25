@@ -156,6 +156,7 @@ def _source_artifact_list_result() -> contracts.SourceArtifactListResult:
 def _source_artifact_read_result() -> contracts.SourceArtifactReadResult:
     return contracts.SourceArtifactReadResult(
         source_artifact_id="SRC-1",
+        artifact_revision_id="SRC-1@1",
         kind="markdown",
         retention="archive",
         original_uri="https://example.test/source-1.md",

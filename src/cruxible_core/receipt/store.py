@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from cruxible_core.errors import MutationError
 from cruxible_core.instance_protocol import ReceiptStoreProtocol
 from cruxible_core.provider.trace_payloads import (
     DEFAULT_TRACE_PAYLOAD_INLINE_BYTES,
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS execution_traces (
     side_effects INTEGER NOT NULL,
     artifact_name TEXT,
     artifact_sha256 TEXT,
+    actor_id TEXT,
     trace_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
@@ -83,6 +85,16 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         self._conn.row_factory = sqlite3.Row
         if initialize_schema:
             self._conn.executescript(_SCHEMA)
+            self._ensure_additive_columns()
+
+    def _ensure_additive_columns(self) -> None:
+        """Backfill columns added after a state DB was first created."""
+        columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(execution_traces)").fetchall()
+        }
+        if "actor_id" not in columns:
+            self._conn.execute("ALTER TABLE execution_traces ADD COLUMN actor_id TEXT")
 
     def save_receipt(self, receipt: Receipt) -> str:
         """Persist a receipt. Returns the receipt_id."""
@@ -177,27 +189,44 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         return trace.trace_id
 
     def _insert_trace_row(self, trace: ExecutionTrace) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO execution_traces "
-            "(trace_id, workflow_name, step_id, provider_name, provider_version, provider_ref, "
-            "runtime, deterministic, side_effects, artifact_name, artifact_sha256, trace_json, "
-            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                trace.trace_id,
-                trace.workflow_name,
-                trace.step_id,
-                trace.provider_name,
-                trace.provider_version,
-                trace.provider_ref,
-                trace.runtime,
-                int(trace.deterministic),
-                int(trace.side_effects),
-                trace.artifact_name,
-                trace.artifact_digest,
-                trace.model_dump_json(),
-                format_datetime(trace.started_at),
-            ),
-        )
+        """Insert one trace row. Never replaces an existing trace_id.
+
+        A trace records that an execution HAPPENED. Replacing a row under the
+        same trace_id would silently rewrite the evidence of an earlier run
+        with the payloads, status, and actor of a different one, leaving no
+        sign that the earlier execution ever occurred. A collision is therefore
+        a hard error rather than an overwrite.
+        """
+        actor = trace.actor_context
+        try:
+            self._conn.execute(
+                "INSERT INTO execution_traces "
+                "(trace_id, workflow_name, step_id, provider_name, provider_version, "
+                "provider_ref, runtime, deterministic, side_effects, artifact_name, "
+                "artifact_sha256, actor_id, trace_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    trace.trace_id,
+                    trace.workflow_name,
+                    trace.step_id,
+                    trace.provider_name,
+                    trace.provider_version,
+                    trace.provider_ref,
+                    trace.runtime,
+                    int(trace.deterministic),
+                    int(trace.side_effects),
+                    trace.artifact_name,
+                    trace.artifact_digest,
+                    actor.actor_id if actor is not None else None,
+                    trace.model_dump_json(),
+                    format_datetime(trace.started_at),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise MutationError(
+                f"Execution trace '{trace.trace_id}' already exists; "
+                "traces are insert-only and are never replaced"
+            ) from exc
 
     def _retain_payload_field(
         self,

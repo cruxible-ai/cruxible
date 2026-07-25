@@ -32,6 +32,7 @@ OperationType = Literal[
     "group_clear",
     "group_resolve",
     "group_trust_update",
+    "source_artifact_register",
 ]
 """Coarse-grained category of operation that produced a receipt."""
 

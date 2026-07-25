@@ -7,6 +7,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.primitives import new_id
 from cruxible_core.provider.trace_payloads import TracePayloadMetadata
 
@@ -48,6 +49,12 @@ class ExecutionTrace(BaseModel):
     ``started_at`` and ``finished_at`` are required; callers must capture
     the real wall-clock start and end of execution rather than relying on
     construction-time defaults.
+
+    ``actor_context`` is the runtime actor that caused the execution. A trace
+    is the evidence that a possibly side-effecting provider ran; without an
+    actor it proves that something ran but not who ran it, which is the one
+    fact an audit of a side-effecting execution needs. It is nullable because
+    unauthenticated local execution has no credential-derived actor.
     """
 
     trace_id: str = Field(default_factory=lambda: new_id("TRC"))
@@ -68,6 +75,7 @@ class ExecutionTrace(BaseModel):
     output_payload_metadata: TracePayloadMetadata | None = None
     status: Literal["success", "error"] = "success"
     error: str | None = None
+    actor_context: GovernedActorContext | None = None
     started_at: datetime
     finished_at: datetime
     duration_ms: float

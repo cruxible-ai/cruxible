@@ -18,6 +18,7 @@ from cruxible_core.governance.actors import (
 from cruxible_core.graph.evidence import EvidenceRef, merge_evidence_ref_objects
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import new_id
+from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.source_artifacts.markdown import parse_markdown_chunks
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 from cruxible_core.source_artifacts.types import (
@@ -102,8 +103,13 @@ def service_get_source_artifact(
         chunks = store.list_chunks(source_artifact_id)
         content = _resolve_artifact_content(store, artifact)
         content_available = content.status == "available" and content.content is not None
+        # Re-read after resolution so a drift observation persisted by this read
+        # is reported by this read, not only by the next one.
+        observed = store.get_artifact_revision(artifact.artifact_revision_id) or artifact
         return SourceArtifactReadResult(
             **_artifact_list_item(artifact, chunk_count=len(chunks)).model_dump(mode="python"),
+            artifact_revision_id=artifact.artifact_revision_id,
+            revision=artifact.revision,
             parser_version=artifact.parser_version,
             archived=artifact.archived,
             archive_content_hash=artifact.archive_content_hash,
@@ -111,6 +117,8 @@ def service_get_source_artifact(
             content_unavailable_reason=None if content_available else content.reason,
             body_origin=content.body_origin,
             current_artifact_hash=content.current_artifact_hash,
+            drift_observed_hash=observed.drift_observed_hash,
+            drift_observed_at=observed.drift_observed_at,
             chunks=[
                 _read_chunk(chunk, content.content if content_available else None)
                 for chunk in chunks
@@ -145,6 +153,12 @@ def service_register_source_artifact(
 
     ``source_content`` is for callers that already hold source bytes in trusted
     workflow/service memory; it never resolves a path or reads local files.
+
+    Registration is insert-only. Re-registering an existing id with identical
+    content is a no-op that returns the stored revision unchanged; with changed
+    content it writes a NEW revision and marks the previous one superseded, so
+    the manifest that existing evidence refs pinned their content hash against
+    is never rewritten underneath them.
     """
     if source_kind != "markdown":
         raise ConfigError(f"Unsupported source_kind '{source_kind}'")
@@ -183,13 +197,6 @@ def service_register_source_artifact(
                 "source_artifact_id must be 3-64 chars of [A-Za-z0-9._-] "
                 "starting with an alphanumeric"
             )
-        store = instance.get_source_artifact_store()
-        try:
-            existing_artifact = store.get_artifact(source_artifact_id)
-        finally:
-            store.close()
-        if existing_artifact is not None:
-            raise ConfigError(f"Source artifact '{source_artifact_id}' is already registered")
     else:
         source_artifact_id = new_id("SRC")
     chunks = parse_markdown_chunks(
@@ -203,46 +210,109 @@ def service_register_source_artifact(
     archived = source_retention == "archive"
     created_at = format_datetime(utc_now())
     assert created_at is not None
-    record = SourceArtifactRecord(
-        source_artifact_id=source_artifact_id,
-        source_kind=source_kind,
-        source_retention=source_retention,
-        original_uri=(
-            _default_original_uri(instance, path, original_uri)
-            if path is not None
-            else original_uri
-        ),
-        label=label,
-        parser_version=parser_version,
-        content_hash=content_hash,
-        byte_count=len(content),
-        local_path=str(path) if path is not None else None,
-        archived=archived,
-        archive_content_hash=content_hash if archived else None,
-        created_at=created_at,
-        registered_actor_context=actor_context,
+    resolved_original_uri = (
+        _default_original_uri(instance, path, original_uri) if path is not None else original_uri
     )
-    if persist:
-        with instance.write_transaction() as uow:
-            uow.source_artifacts.save_artifact(
+
+    def _build_record(revision: int) -> SourceArtifactRecord:
+        return SourceArtifactRecord(
+            source_artifact_id=source_artifact_id,
+            revision=revision,
+            source_kind=source_kind,
+            source_retention=source_retention,
+            original_uri=resolved_original_uri,
+            label=label,
+            parser_version=parser_version,
+            content_hash=content_hash,
+            byte_count=len(content),
+            local_path=str(path) if path is not None else None,
+            archived=archived,
+            archive_content_hash=content_hash if archived else None,
+            created_at=created_at,
+            registered_actor_context=actor_context,
+        )
+
+    if not persist:
+        # Dry run: report the revision this registration would take without
+        # opening a write boundary, so a preview never mints a receipt.
+        preview_store = instance.get_source_artifact_store()
+        try:
+            head = preview_store.get_artifact(source_artifact_id)
+        finally:
+            preview_store.close()
+        if head is not None and head.content_hash == content_hash:
+            return _registration_result(head, chunks, already_registered=True)
+        return _registration_result(
+            _build_record(1 if head is None else head.revision + 1),
+            chunks,
+            supersedes=head.artifact_revision_id if head is not None else None,
+        )
+
+    with mutation_receipt(
+        instance,
+        "source_artifact_register",
+        {
+            "source_artifact_id": source_artifact_id,
+            "source_kind": source_kind,
+            "source_retention": source_retention,
+            "content_hash": content_hash,
+        },
+        actor_context=actor_context,
+    ) as ctx:
+        assert ctx.builder is not None
+        assert ctx.uow is not None
+        store = ctx.uow.source_artifacts
+        # The duplicate check runs on the unit-of-work connection that also
+        # performs the insert. Checking on a separate connection first left a
+        # window in which two registrations of the same id both saw "absent"
+        # and both wrote.
+        head = store.get_artifact(source_artifact_id)
+        if head is not None and head.content_hash == content_hash:
+            ctx.builder.record_validation(
+                True,
+                detail={
+                    "source_artifact_id": source_artifact_id,
+                    "artifact_revision_id": head.artifact_revision_id,
+                    "revision": head.revision,
+                    "content_hash": content_hash,
+                    "outcome": "already_registered",
+                    "reason": "content hash matches the current revision; nothing written",
+                },
+            )
+            ctx.set_result(_registration_result(head, chunks, already_registered=True))
+        else:
+            record = _build_record(1 if head is None else head.revision + 1)
+            store.save_artifact(
                 record,
                 chunks,
                 archive_content=content if archived else None,
             )
+            ctx.builder.record_validation(
+                True,
+                detail={
+                    "source_artifact_id": source_artifact_id,
+                    "artifact_revision_id": record.artifact_revision_id,
+                    "revision": record.revision,
+                    "content_hash": content_hash,
+                    "byte_count": len(content),
+                    "chunk_count": len(chunks),
+                    "archived": archived,
+                    "outcome": "registered",
+                    "supersedes": head.artifact_revision_id if head is not None else None,
+                    "superseded_content_hash": head.content_hash if head is not None else None,
+                },
+            )
+            ctx.set_result(
+                _registration_result(
+                    record,
+                    chunks,
+                    supersedes=head.artifact_revision_id if head is not None else None,
+                )
+            )
 
-    return RegisterSourceArtifactResult(
-        source_artifact_id=source_artifact_id,
-        source_kind=source_kind,
-        source_retention=source_retention,
-        original_uri=record.original_uri,
-        label=label,
-        content_hash=content_hash,
-        byte_count=len(content),
-        parser_version=parser_version,
-        archived=archived,
-        archive_content_hash=record.archive_content_hash,
-        chunks=chunks,
-    )
+    result = ctx.result
+    assert isinstance(result, RegisterSourceArtifactResult)
+    return result
 
 
 def service_dereference_source_evidence(
@@ -372,6 +442,32 @@ def resolve_source_evidence_refs(
         store.close()
 
 
+def _registration_result(
+    record: SourceArtifactRecord,
+    chunks: list[SourceArtifactChunk],
+    *,
+    supersedes: str | None = None,
+    already_registered: bool = False,
+) -> RegisterSourceArtifactResult:
+    return RegisterSourceArtifactResult(
+        source_artifact_id=record.source_artifact_id,
+        artifact_revision_id=record.artifact_revision_id,
+        revision=record.revision,
+        source_kind=record.source_kind,
+        source_retention=record.source_retention,
+        original_uri=record.original_uri,
+        label=record.label,
+        content_hash=record.content_hash,
+        byte_count=record.byte_count,
+        parser_version=record.parser_version,
+        archived=record.archived,
+        archive_content_hash=record.archive_content_hash,
+        chunks=chunks,
+        supersedes=supersedes,
+        already_registered=already_registered,
+    )
+
+
 def _artifact_list_item(
     artifact: SourceArtifactRecord,
     *,
@@ -441,11 +537,29 @@ def _resolve_artifact_content(
     content = path.read_bytes()
     current_hash = _sha256_bytes(content)
     if current_hash != artifact.content_hash:
+        # Persist the finding. Detecting drift and returning it only to the
+        # immediate caller meant the instance rediscovered — and forgot — that
+        # its evidence base had drifted on every single read. The store write
+        # is idempotent, so a repeatedly-read drifted artifact costs one write
+        # for the first observation and none afterwards; the read path stays a
+        # read once the observation is on record.
+        store.record_content_drift(
+            artifact.artifact_revision_id,
+            observed_hash=current_hash,
+            observed_at=format_datetime(utc_now()),
+        )
         return _SourceContentResolution(
             status="drifted",
             current_artifact_hash=current_hash,
             reason="local source content hash does not match registered manifest",
         )
+    # Symmetric clear: leaving a stale marker on a restored file would misreport
+    # the current state of the evidence base. Also idempotent.
+    store.record_content_drift(
+        artifact.artifact_revision_id,
+        observed_hash=None,
+        observed_at=None,
+    )
     return _SourceContentResolution(
         status="available",
         content=content,
@@ -584,22 +698,6 @@ def _chunk_body(content: bytes, chunk: SourceArtifactChunk) -> str:
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = normalized.splitlines()
     return "\n".join(lines[max(chunk.line_start - 1, 0) : max(chunk.line_end, 0)])
-
-
-def _unavailable_result(
-    artifact: SourceArtifactRecord,
-    chunk: SourceArtifactChunk,
-    reason: str,
-) -> DereferenceSourceEvidenceResult:
-    return DereferenceSourceEvidenceResult(
-        status="unavailable",
-        source_artifact_id=artifact.source_artifact_id,
-        chunk_id=chunk.chunk_id,
-        content_hash=chunk.content_hash,
-        expected_artifact_hash=artifact.content_hash,
-        reason=reason,
-        chunk=chunk,
-    )
 
 
 def _sha256_bytes(content: bytes) -> str:

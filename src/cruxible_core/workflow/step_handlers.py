@@ -127,6 +127,7 @@ def execute_provider_handler(
         workflow_name=context.workflow_name,
         persist_traces=context.persist_traces,
         config_base_path=context.config_base_path,
+        actor_context=context.actor_context,
     )
 
 

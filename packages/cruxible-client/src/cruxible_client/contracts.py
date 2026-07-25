@@ -373,6 +373,13 @@ class SourceArtifactChunk(BaseModel):
 
 class RegisterSourceArtifactResult(BaseModel):
     source_artifact_id: str
+    artifact_revision_id: str = Field(
+        description="Physical id of the immutable artifact revision this registration resolved to."
+    )
+    revision: int = Field(
+        default=1,
+        description="1-based registration count for this logical source_artifact_id.",
+    )
     source_kind: SourceKind
     source_retention: SourceRetention
     original_uri: str | None = None
@@ -383,6 +390,15 @@ class RegisterSourceArtifactResult(BaseModel):
     archived: bool = False
     archive_content_hash: str | None = None
     chunks: list[SourceArtifactChunk] = Field(default_factory=list)
+    supersedes: str | None = Field(
+        default=None,
+        description="Revision id this registration superseded, if it replaced an earlier one.",
+    )
+    already_registered: bool = Field(
+        default=False,
+        description="True when identical content was already the current revision (no write).",
+    )
+    receipt_id: str | None = None
 
 
 class DereferenceSourceEvidenceResult(BaseModel):
@@ -422,6 +438,8 @@ class SourceArtifactReadChunk(BaseModel):
 
 
 class SourceArtifactReadResult(SourceArtifactListItem):
+    artifact_revision_id: str
+    revision: int = 1
     parser_version: str
     archived: bool = False
     archive_content_hash: str | None = None
@@ -429,6 +447,13 @@ class SourceArtifactReadResult(SourceArtifactListItem):
     content_unavailable_reason: str | None = None
     body_origin: DereferenceBodyOrigin | None = None
     current_artifact_hash: str | None = None
+    drift_observed_hash: str | None = Field(
+        default=None,
+        description="Last observed local content hash that did not match the manifest.",
+    )
+    drift_observed_at: str | None = Field(
+        default=None, description="When the recorded content drift was last observed."
+    )
     chunks: list[SourceArtifactReadChunk] = Field(default_factory=list)
 
 
