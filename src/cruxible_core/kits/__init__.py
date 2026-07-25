@@ -692,8 +692,7 @@ def _verify_bundled_lock(root: Path) -> None:
     expected = compute_lock_digest(lock)
     if lock.lock_digest is None:
         cache_hint = (
-            f" This bundle is cached; deleting {lock_path.parent} re-fetches it "
-            "from source."
+            f" This bundle is cached; deleting {lock_path.parent} re-fetches it from source."
             if _kit_cache_dir() in lock_path.parents
             else ""
         )

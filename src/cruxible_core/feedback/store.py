@@ -7,7 +7,11 @@ import sqlite3
 from pathlib import Path
 
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
-from cruxible_core.governance.actors import dump_actor_context, load_actor_context
+from cruxible_core.governance.actors import (
+    derived_actor_kind,
+    dump_actor_context,
+    load_actor_context,
+)
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.instance_protocol import FeedbackStoreProtocol
 from cruxible_core.temporal import format_datetime
@@ -214,7 +218,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
                 json.dumps(record.context_snapshot),
                 decision_surface_type,
                 decision_surface_name,
-                record.source,
+                derived_actor_kind(record.actor_context),
                 record.model_id,
                 json.dumps(record.corrections),
                 json.dumps(dump_actor_context(record.actor_context)),
@@ -319,7 +323,6 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
             feedback_profile_version=row["feedback_profile_version"],
             decision_context=json.loads(row["decision_context"] or "{}"),
             context_snapshot=json.loads(row["context_snapshot"] or "{}"),
-            source=row["source"],
             model_id=row["model_id"],
             corrections=json.loads(row["corrections"]),
             actor_context=load_actor_context(
@@ -360,7 +363,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
                 record.relationship_type,
                 decision_surface_type,
                 decision_surface_name,
-                record.source,
+                derived_actor_kind(record.actor_context),
                 json.dumps(record.detail),
                 json.dumps(dump_actor_context(record.actor_context)),
                 format_datetime(record.created_at),
@@ -448,7 +451,6 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
             decision_context=json.loads(row["decision_context"] or "{}"),
             lineage_snapshot=json.loads(row["lineage_snapshot"] or "{}"),
             relationship_type=row["relationship_type"],
-            source=row["source"],
             detail=json.loads(row["detail"]),
             actor_context=load_actor_context(
                 json.loads(row["actor_context"]) if row["actor_context"] else None

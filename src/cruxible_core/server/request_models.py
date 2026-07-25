@@ -130,7 +130,6 @@ class BatchDirectWriteRequest(BaseModel):
 class FeedbackRequest(BaseModel):
     receipt_id: str | None = None
     action: contracts.FeedbackAction
-    source: contracts.FeedbackSource
     from_type: str
     from_id: str
     relationship_type: str
@@ -146,7 +145,6 @@ class FeedbackRequest(BaseModel):
 
 
 class FeedbackBatchRequest(BaseModel):
-    source: contracts.FeedbackSource
     items: list[contracts.FeedbackBatchItemInput]
     actor_context: contracts.GovernedActorContext | None = None
 
@@ -160,7 +158,6 @@ class OutcomeRequest(BaseModel):
     outcome: contracts.OutcomeValue
     anchor_type: contracts.OutcomeAnchorType = "receipt"
     anchor_id: str | None = None
-    source: contracts.FeedbackSource = "human"
     outcome_code: str | None = None
     scope_hints: dict[str, Any] | None = None
     outcome_profile_key: str | None = None

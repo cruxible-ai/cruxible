@@ -20,7 +20,16 @@ from cruxible_core.temporal import utc_now
 
 
 class FeedbackRecord(BaseModel):
-    """Human or AI feedback on a query result or specific relationship."""
+    """Feedback on a query result or specific relationship.
+
+    The caller-declared ``human``/``agent`` ``source`` axis is RETIRED. It was
+    never reconciled with ``actor_context.actor_type``, it defaulted to
+    ``"human"``, and it gated the reason-code requirement that exists precisely
+    to hold non-human writers to a structured, analyzable reason — so an agent
+    could opt out of the rule written for it by declaring itself a person.
+    Readers derive the kind from ``actor_context`` via
+    :func:`cruxible_core.governance.actors.derived_actor_kind`.
+    """
 
     feedback_id: str = Field(default_factory=lambda: new_id("FB"))
     receipt_id: str | None = None
@@ -34,7 +43,6 @@ class FeedbackRecord(BaseModel):
     feedback_profile_version: int | None = None
     decision_context: dict[str, Any] = Field(default_factory=dict)
     context_snapshot: dict[str, Any] = Field(default_factory=dict)
-    source: Literal["human", "agent"] = "human"
     model_id: str | None = None
     corrections: dict[str, Any] = Field(default_factory=dict)
     actor_context: GovernedActorContext | None = None
@@ -70,7 +78,6 @@ class OutcomeRecord(BaseModel):
     decision_context: dict[str, Any] = Field(default_factory=dict)
     lineage_snapshot: dict[str, Any] = Field(default_factory=dict)
     relationship_type: str | None = None
-    source: Literal["human", "agent"] = "human"
     detail: dict[str, Any] = Field(default_factory=dict)
     actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)

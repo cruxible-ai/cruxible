@@ -1820,7 +1820,6 @@ def list_traces(
 def feedback(
     instance_id: str,
     action: contracts.FeedbackAction,
-    source: contracts.FeedbackSource,
     from_type: str,
     from_id: str,
     relationship_type: str,
@@ -1863,7 +1862,6 @@ def feedback(
             corrections=corrections,
             group_override=group_override,
         ),
-        source=source,
         actor_context=actor,
     )
     return contracts.FeedbackResult(
@@ -1877,7 +1875,6 @@ def feedback_batch(
     instance_id: str,
     items: list[contracts.FeedbackBatchItemInput],
     *,
-    source: contracts.FeedbackSource,
     actor_context: Any | None = None,
 ) -> contracts.FeedbackBatchResult:
     """Record batch edge feedback tied to prior receipts."""
@@ -1909,7 +1906,6 @@ def feedback_batch(
             )
             for item in items
         ],
-        source=source,
         actor_context=actor,
     )
     return contracts.FeedbackBatchResult(
@@ -1926,7 +1922,6 @@ def feedback_from_query(
     receipt_id: str,
     result_index: int,
     action: contracts.FeedbackAction,
-    source: contracts.FeedbackSource = "human",
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
@@ -1948,7 +1943,6 @@ def feedback_from_query(
         receipt_id=receipt_id,
         result_index=result_index,
         action=action,
-        source=source,
         reason=reason,
         reason_code=reason_code,
         scope_hints=scope_hints,
@@ -1971,7 +1965,6 @@ def outcome(
     outcome: contracts.OutcomeValue,
     anchor_type: contracts.OutcomeAnchorType = "receipt",
     anchor_id: str | None = None,
-    source: contracts.FeedbackSource = "human",
     outcome_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     outcome_profile_key: str | None = None,
@@ -1988,7 +1981,6 @@ def outcome(
         outcome=outcome,
         anchor_type=anchor_type,
         anchor_id=anchor_id,
-        source=source,
         outcome_code=outcome_code,
         scope_hints=scope_hints,
         outcome_profile_key=outcome_profile_key,

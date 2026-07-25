@@ -93,12 +93,6 @@ def outcome_group() -> None:
     help="JSON object of edge property corrections (for action=correct).",
 )
 @click.option(
-    "--source",
-    type=click.Choice(["human", "agent"]),
-    default="human",
-    help="Who produced this feedback (default: human).",
-)
-@click.option(
     "--group-override",
     is_flag=True,
     default=False,
@@ -119,7 +113,6 @@ def feedback_cmd(
     reason_code: str | None,
     scope_hints: str | None,
     corrections: str | None,
-    source: str,
     group_override: bool,
     output_json: bool,
 ) -> None:
@@ -141,7 +134,6 @@ def feedback_cmd(
             instance_id,
             receipt_id=receipt_id,
             action=cast(contracts.FeedbackAction, action),
-            source=cast(contracts.FeedbackSource, source),
             from_type=from_type,
             from_id=from_id,
             relationship_type=relationship,
@@ -167,7 +159,6 @@ def feedback_cmd(
                 corrections=corrections_dict,
                 group_override=group_override,
             ),
-            source=cast(contracts.FeedbackSource, source),
         ),
         allow_local=False,
         command_name="feedback record",
@@ -198,12 +189,6 @@ def feedback_cmd(
     required=True,
     type=click.Choice(["approve", "reject", "correct", "flag"]),
     help="Feedback action.",
-)
-@click.option(
-    "--source",
-    type=click.Choice(["human", "agent"]),
-    default="human",
-    help="Who produced this feedback (default: human).",
 )
 @click.option("--reason", default="", help="Reason for feedback.")
 @click.option("--reason-code", default=None, help="Structured feedback reason code.")
@@ -236,7 +221,6 @@ def feedback_from_query_cmd(
     receipt_id: str,
     result_index: int,
     action: str,
-    source: str,
     reason: str,
     reason_code: str | None,
     scope_hints: str | None,
@@ -256,7 +240,6 @@ def feedback_from_query_cmd(
             receipt_id=receipt_id,
             result_index=result_index,
             action=cast(contracts.FeedbackAction, action),
-            source=cast(contracts.FeedbackSource, source),
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints_dict,
@@ -271,7 +254,6 @@ def feedback_from_query_cmd(
             receipt_id=receipt_id,
             result_index=result_index,
             action=cast(contracts.FeedbackAction, action),
-            source=cast(contracts.FeedbackSource, source),
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints_dict,
@@ -304,18 +286,11 @@ def feedback_from_query_cmd(
     help="JSON or YAML file with batch feedback items.",
 )
 @click.option("--items", "items_json", default=None, help="Inline JSON array of feedback items.")
-@click.option(
-    "--source",
-    type=click.Choice(["human", "agent"]),
-    default="human",
-    help="Who produced this feedback batch (default: human).",
-)
 @json_option
 @handle_errors
 def feedback_batch_cmd(
     items_file: str | None,
     items_json: str | None,
-    source: str,
     output_json: bool,
 ) -> None:
     """Submit a batch of edge feedback with one top-level receipt."""
@@ -351,7 +326,6 @@ def feedback_batch_cmd(
         lambda client, instance_id: client.feedback_batch(
             instance_id,
             items=batch_items,
-            source=cast(contracts.FeedbackSource, source),
         ),
         lambda instance: _call_service(
             "service_feedback_batch_inputs",
@@ -374,7 +348,6 @@ def feedback_batch_cmd(
                 )
                 for item in batch_items
             ],
-            source=cast(contracts.FeedbackSource, source),
         ),
         allow_local=False,
         command_name="feedback batch",

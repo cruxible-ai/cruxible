@@ -2123,7 +2123,6 @@ class ProposeRelationshipGroupSpec(BaseModel):
     pending_refresh_mode: Literal["replace", "retain_missing"] = "replace"
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     suggested_priority: Any | None = None
-    proposed_by: Literal["human", "agent"] = "agent"
 
     model_config = {"extra": "forbid"}
 

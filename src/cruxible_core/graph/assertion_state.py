@@ -27,7 +27,14 @@ RelationshipReviewStatus = Literal[
     "rejected",
 ]
 
-RelationshipReviewSource = Literal["system", "human", "agent", "group"]
+RelationshipReviewSource = Literal["system", "human", "agent", "group", "unknown"]
+"""Who moved an edge's review state.
+
+``unknown`` is the honest value for a review transition whose actor context did
+not resolve. It exists because the alternative — the retired caller-declared
+``source`` axis — defaulted such writes to ``human``, which is a claim the
+instance had no evidence for.
+"""
 
 RelationshipLifecycleStatus = Literal[
     "active",

@@ -353,7 +353,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
     def cruxible_feedback(
         instance_id: str,
         action: contracts.FeedbackAction,
-        source: contracts.FeedbackSource,
         from_type: str,
         from_id: str,
         relationship_type: str,
@@ -387,7 +386,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             instance_id=instance_id,
             receipt_id=receipt_id,
             action=action,
-            source=source,
             from_type=from_type,
             from_id=from_id,
             relationship_type=relationship_type,
@@ -405,10 +403,9 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
     def cruxible_feedback_batch(
         instance_id: str,
         items: list[contracts.FeedbackBatchItemInput],
-        source: contracts.FeedbackSource = "human",
     ) -> contracts.FeedbackBatchResult:
         """Record batch edge feedback under one top-level mutation receipt."""
-        return handlers.handle_feedback_batch(instance_id, items, source=source)
+        return handlers.handle_feedback_batch(instance_id, items)
 
     @_tool
     def cruxible_feedback_from_query(
@@ -416,7 +413,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         receipt_id: str,
         result_index: int,
         action: contracts.FeedbackAction,
-        source: contracts.FeedbackSource = "human",
         reason: str = "",
         reason_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
@@ -436,7 +432,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             receipt_id=receipt_id,
             result_index=result_index,
             action=action,
-            source=source,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,
@@ -453,7 +448,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         receipt_id: str | None = None,
         anchor_type: contracts.OutcomeAnchorType = "receipt",
         anchor_id: str | None = None,
-        source: contracts.FeedbackSource = "human",
         outcome_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
         outcome_profile_key: str | None = None,
@@ -466,7 +460,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             receipt_id=receipt_id,
             anchor_type=anchor_type,
             anchor_id=anchor_id,
-            source=source,
             outcome_code=outcome_code,
             scope_hints=scope_hints,
             outcome_profile_key=outcome_profile_key,

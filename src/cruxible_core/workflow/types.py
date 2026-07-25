@@ -260,7 +260,6 @@ class RelationshipGroupProposalArtifact(BaseModel):
     signal_sources_used: list[str] = Field(default_factory=list)
     query_receipt_ids: list[str] = Field(default_factory=list)
     suggested_priority: str | None = None
-    proposed_by: Literal["human", "agent"] = "agent"
 
 
 class EntitySet(_DuplicateTrackedCollection):

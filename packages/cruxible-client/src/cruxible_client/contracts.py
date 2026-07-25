@@ -44,7 +44,6 @@ GateEvaluationVerdict = Literal["satisfied", "unsatisfied", "error"]
 
 ConstraintSeverity = Literal["warning", "error"]
 FeedbackAction = Literal["approve", "reject", "correct", "flag"]
-FeedbackSource = Literal["human", "agent"]
 OutcomeValue = Literal["correct", "incorrect", "partial", "unknown"]
 OutcomeAnchorType = Literal["resolution", "receipt"]
 ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
@@ -588,9 +587,6 @@ class FeedbackFromQueryInput(BaseModel):
     result_index: int = Field(description="Zero-based index of the result row in the receipt.")
     action: FeedbackAction = Field(
         description="Adjudication: approve, reject, correct, or flag the edge."
-    )
-    source: FeedbackSource = Field(
-        default="human", description="Who produced the feedback: human or agent."
     )
     reason: str = Field(default="", description="Free-text reason for the feedback.")
     reason_code: str | None = Field(

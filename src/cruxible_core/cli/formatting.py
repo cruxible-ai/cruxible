@@ -151,7 +151,7 @@ def outcomes_table(records: list[OutcomeRecord]) -> Table:
             anchor,
             r.outcome,
             r.outcome_code or "",
-            r.source,
+            derived_actor_kind(r.actor_context),
             str(r.created_at),
         )
 

@@ -676,6 +676,5 @@ def build_relationship_group_proposal(
                 input_payload,
                 step_outputs,
             ),
-            "proposed_by": spec.proposed_by,
         }
     )

@@ -612,7 +612,6 @@ class CruxibleClient:
         instance_id: str,
         *,
         action: contracts.FeedbackAction,
-        source: contracts.FeedbackSource,
         from_type: str,
         from_id: str,
         relationship_type: str,
@@ -633,7 +632,6 @@ class CruxibleClient:
                 {
                     "receipt_id": receipt_id,
                     "action": action,
-                    "source": source,
                     "from_type": from_type,
                     "from_id": from_id,
                     "relationship_type": relationship_type,
@@ -656,14 +654,12 @@ class CruxibleClient:
         instance_id: str,
         *,
         items: list[contracts.FeedbackBatchItemInput],
-        source: contracts.FeedbackSource,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.FeedbackBatchResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/feedback/batch",
             json=self._with_actor_context(
                 {
-                    "source": source,
                     "items": [item.model_dump(mode="json") for item in items],
                 },
                 actor_context,
@@ -678,7 +674,6 @@ class CruxibleClient:
         receipt_id: str,
         result_index: int,
         action: contracts.FeedbackAction,
-        source: contracts.FeedbackSource = "human",
         reason: str = "",
         reason_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
@@ -695,7 +690,6 @@ class CruxibleClient:
                     "receipt_id": receipt_id,
                     "result_index": result_index,
                     "action": action,
-                    "source": source,
                     "reason": reason,
                     "reason_code": reason_code,
                     "scope_hints": scope_hints,
@@ -717,7 +711,6 @@ class CruxibleClient:
         outcome: contracts.OutcomeValue,
         anchor_type: contracts.OutcomeAnchorType = "receipt",
         anchor_id: str | None = None,
-        source: contracts.FeedbackSource = "human",
         outcome_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
         outcome_profile_key: str | None = None,
@@ -732,7 +725,6 @@ class CruxibleClient:
                     "anchor_type": anchor_type,
                     "anchor_id": anchor_id,
                     "outcome": outcome,
-                    "source": source,
                     "outcome_code": outcome_code,
                     "scope_hints": scope_hints,
                     "outcome_profile_key": outcome_profile_key,

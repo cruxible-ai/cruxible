@@ -16,6 +16,7 @@ from cruxible_core.config.schema import (
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.governance.actors import derived_actor_kind
 from cruxible_core.graph.provenance import (
     SOURCE_REF_ADD_RELATIONSHIP,
     SOURCE_REF_BATCH_DIRECT_WRITE,
@@ -473,7 +474,8 @@ def service_analyze_feedback(
 
     for row in feedback_rows:
         action_counts[row.action] = action_counts.get(row.action, 0) + 1
-        source_counts[row.source] = source_counts.get(row.source, 0) + 1
+        actor_kind = derived_actor_kind(row.actor_context)
+        source_counts[actor_kind] = source_counts.get(actor_kind, 0) + 1
         if row.reason_code:
             reason_code_counts[row.reason_code] = reason_code_counts.get(row.reason_code, 0) + 1
         if row.action != "reject":
