@@ -293,6 +293,11 @@ def _refuse_write_onto_pending_edge(
       via ``replace_relationship_state``, so it clobbers a proposal just as a
       plain property write does.
     """
+    # Multi-edge invariant: ``existing_rel`` is the FIRST match for the tuple,
+    # and the update branch below writes through the SAME first-match
+    # resolution — so the edge checked here is always the edge written. A
+    # sibling edge on the same tuple can never be silently clobbered in its
+    # place.
     if existing_rel is None or pending:
         return
     if relationship_assertion_from_metadata(existing_rel.metadata).review.status != "pending":

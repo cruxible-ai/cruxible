@@ -909,16 +909,21 @@ def _enforce_feedback_governance(records: Iterable[FeedbackRecord]) -> None:
        require GRAPH_WRITE (see ``FEEDBACK_ACTION_PERMISSIONS``). Without this,
        one GOVERNED_WRITE actor could attest an edge into ``pending`` and then
        approve their own proposal — a live approved claim on a proposal_only
-       type with no reviewer above them. ``flag`` and plain recording stay at
-       the tools' GOVERNED_WRITE floor, which the facades already checked.
+       type with no reviewer above them. ``action`` is a closed Literal with no
+       action-less variant, so ``flag`` is the ONLY action left at the tools'
+       GOVERNED_WRITE floor (which the facades already checked); recording is
+       the half of an action that a refusal here rolls back with it.
     2. **Kill-switch.** ``CRUXIBLE_REFUSE_DIRECT_WRITES`` refuses the actions
        that transition an edge INTO accepted state, so freezing live writes
        daemon-wide cannot be walked around through feedback approve.
 
     Called INSIDE the ``mutation_receipt`` block so a refusal is receipted (and
     the open write transaction rolls back), exactly like a chokepoint refusal.
-    A batch is gated at its strictest member: one adjudication action lifts the
-    whole batch's requirement, mirroring ``_feedback_correction_tier_gate``.
+    That receipted position is the whole reason this is the ONLY feedback tier
+    rail: the facade pre-gate it replaced could never bind more tightly than an
+    action-level GRAPH_WRITE floor, and its denials landed unreceipted. A batch
+    is gated at its strictest member: one adjudication action lifts the whole
+    batch's requirement, and the batch stays all-or-nothing.
     """
     materialized = list(records)
     required = max(
@@ -1010,35 +1015,6 @@ def service_feedback_input(
         group_override=item.group_override,
         actor_context=actor_context,
     )
-
-
-def service_resolve_feedback_query_target(
-    instance: InstanceProtocol,
-    *,
-    receipt_id: str,
-    result_index: int,
-    path_index: int | None = None,
-    path_alias: str | None = None,
-) -> RelationshipInstance:
-    """Resolve the relationship target a query-receipt feedback call selects.
-
-    Read-only companion to ``service_feedback_from_query_result`` so the
-    runtime facade can tier-gate ``correct`` property corrections against the
-    resolved relationship type BEFORE any mutation happens. Uses the same
-    receipt/result selection rules as the mutating path.
-    """
-    receipt = service_get_receipt(instance, receipt_id)
-    if receipt.operation_type != "query":
-        raise ConfigError(
-            f"Receipt '{receipt_id}' has operation_type '{receipt.operation_type}', not 'query'"
-        )
-    target, _ = _feedback_target_from_query_result(
-        receipt,
-        result_index=result_index,
-        path_index=path_index,
-        path_alias=path_alias,
-    )
-    return target
 
 
 def service_feedback_from_query_result(

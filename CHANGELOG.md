@@ -17,9 +17,11 @@ the project's own state instance.
   `governed_write` actor could stage an edge (attestation on an absent
   claim, or a `pending` write) and then approve its own proposal, reaching
   a live approved claim on a `proposal_only` type with no reviewer above
-  it. `flag` and plain feedback recording are unchanged at
-  `governed_write`. The refusal is a receipted `PermissionDeniedError`
-  (HTTP 403) naming the required tier.
+  it. `flag` is the only feedback action still available at
+  `governed_write` — it moves an edge *to* `pending`, i.e. it asks for
+  review rather than granting it — alongside persisting the
+  `FeedbackRecord` itself. The refusal is a receipted
+  `PermissionDeniedError` (HTTP 403) naming the required tier.
 
   **Migration:** any caller that approves/rejects/corrects with a
   `governed_write` credential must present a `graph_write` one. This also
@@ -27,6 +29,14 @@ the project's own state instance.
   those three actions — a type owner may lower who *direct-writes* their
   type, not who *adjudicates* claims on it. Auth-off local use is
   unaffected (the local default is `admin`).
+
+- **Group resolution is gated at the service seam too**: the exported
+  `service_resolve_group` now re-asserts `GRAPH_WRITE` inside its own
+  mutation-receipt scope, so a direct library caller cannot reach the
+  transition (and, with `stamp_existing`, bless a pending edge) below the
+  tier the `cruxible_resolve_group` tool has always required. No change for
+  MCP/HTTP callers; the refusal is a receipted `PermissionDeniedError`
+  (HTTP 403).
 
 - **`CRUXIBLE_REFUSE_DIRECT_WRITES` now spans the feedback channel**: while
   the kill-switch is set, the feedback actions that move an edge *into*
@@ -48,6 +58,11 @@ the project's own state instance.
   the pending path, or resolve the proposal through the review machinery
   first. Pending-onto-pending is unchanged (still the create-only rule),
   and post-acceptance updates work exactly as before.
+
+  **Preview boundary:** `dry_run` previews raise these refusals with
+  identical semantics but are excluded from the receipt guarantee — receipts
+  record what happened, not what was previewed, and a preview persists
+  nothing. This is the existing dry-run convention, unchanged here.
 
 ## 0.2.8 — 2026-07-21
 

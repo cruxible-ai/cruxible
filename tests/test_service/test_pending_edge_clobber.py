@@ -37,6 +37,7 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.server.errors import error_to_response
+from cruxible_core.service.execution import service_lock, service_run
 from cruxible_core.service.feedback import service_feedback
 from cruxible_core.service.mutations import (
     service_add_relationship_inputs,
@@ -69,6 +70,42 @@ relationships:
     properties:
       verified: {type: bool, default: false}
       note: {type: string, optional: true}
+
+named_queries:
+  all_parts:
+    mode: collection
+    returns: Part
+    result_shape: entity
+
+contracts:
+  EmptyInput:
+    fields: {}
+
+workflows:
+  clobber_fits:
+    type: canonical
+    contract_in: EmptyInput
+    returns: edges
+    steps:
+      - id: parts
+        query: all_parts
+        as: parts
+      - id: edges
+        make_relationships:
+          relationship_type: fits
+          items: $steps.parts.results
+          from_type: Part
+          from_id: $item.entity_id
+          to_type: Vehicle
+          to_id: V-1
+          properties:
+            verified: true
+            note: clobbered
+        as: edges
+      - id: apply_edges
+        apply_relationships:
+          relationships_from: edges
+        as: apply_edges
 
 constraints: []
 """
@@ -245,6 +282,25 @@ def test_workflow_apply_onto_pending_refused(
             persist_writes=True,
             parent_id=None,
         )
+    _assert_proposal_intact(pending_edge_instance)
+
+
+def test_workflow_service_facade_onto_pending_refused(
+    pending_edge_instance: CruxibleInstance,
+) -> None:
+    """The same refusal through the SERVICE facade an operator actually calls.
+
+    ``test_workflow_apply_onto_pending_refused`` above drives
+    ``apply_relationship_set`` directly, which proves the chokepoint but skips
+    the executor. Drive ``service_run`` (canonical preview) instead: the
+    refusal surfaces at PREVIEW, so a canonical workflow whose apply step would
+    clobber a staged proposal never even yields an apply digest — there is no
+    window in which an operator could confirm the clobber.
+    """
+    service_lock(pending_edge_instance)
+
+    with pytest.raises(PendingEdgeWriteRefusedError):
+        service_run(pending_edge_instance, "clobber_fits", {})
     _assert_proposal_intact(pending_edge_instance)
 
 

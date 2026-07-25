@@ -223,16 +223,21 @@ Semantics:
   directly.
 - **Creates and updates are one surface.** The tier declares who may
   direct-write the type, not which verb flavor they use.
-- **Feedback corrections honor the same tier.** A feedback `correct` with
-  property corrections applies edge `property_updates` — the same mutation a
-  direct relationship write performs — so it is gated at the corrected
-  relationship type's `write_tier` (default `graph_write`) across `feedback`,
-  `feedback_batch` (strictest corrected type in the batch), and
-  `feedback_from_query` (the receipt-selected edge is resolved before the
-  check). Review-state transitions themselves (`approve` / `reject` / `flag`
-  and a `correct` without corrections) stay at the tools' `governed_write`
-  tier; under server auth every feedback action must carry a resolved actor
-  identity — review state cannot be promoted *or* retracted anonymously.
+- **Adjudication sits above the tier, not inside it.** Feedback `approve`,
+  `reject`, and `correct` decide a claim's fate — they make a non-live edge
+  live, or retract one — so they require `graph_write` *whatever* the touched
+  type declares, across `feedback`, `feedback_batch` (one adjudication item
+  lifts the whole batch), and `feedback_from_query`. This holds for a `correct`
+  with property corrections and for one without: the floor is a property of the
+  ACTION, not of the properties it happens to touch. `write_tier` therefore
+  does **not** open `correct` — declaring `write_tier: governed_write` lowers
+  who may *direct-write* the type, never who may *adjudicate* claims on it.
+- **`flag` and plain recording stay governed.** `flag` moves an edge to
+  `pending` — it asks for review rather than granting it — so it stays at the
+  feedback tools' `governed_write` floor, as does persisting a
+  `FeedbackRecord` itself. Under server auth every feedback action must
+  additionally carry a resolved actor identity — review state cannot be
+  promoted *or* retracted anonymously.
 - **Everything downstream is unchanged.** Mutation guards, `write_policy`
   refusals, and validation all run after the tier check. Declaring
   `write_tier` together with an explicit `proposal_only`/`mint_only`
