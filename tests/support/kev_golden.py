@@ -976,7 +976,6 @@ def _seed_prior_resolution_for_workflow(
             "Golden fixture trusted prior resolution.",
             thesis_facts,
             {"golden_prior": True},
-            "human",
             trust_status=trust_status,
             confirmed=True,
         )

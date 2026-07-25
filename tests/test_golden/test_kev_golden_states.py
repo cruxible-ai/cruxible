@@ -195,7 +195,9 @@ def test_auto_resolve_branch_golden_pins_trust_and_unsure_paths(
     trusted_support = branches["trusted_all_support"]
     trusted_unsure = branches["trusted_unsure_always_review"]
 
-    assert trusted_support["group_status"] == "auto_resolved"
+    # Auto-resolution is a real approve now, not a status label: the group
+    # reaches "resolved" through the same rail a reviewer would use.
+    assert trusted_support["group_status"] == "resolved"
     assert trusted_support["prior_resolution"]["trust_status"] == "trusted"
     assert trusted_support["member_count"] == 1
 
