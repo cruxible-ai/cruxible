@@ -32,7 +32,7 @@ from cruxible_core.feedback.types import (
     FeedbackRecord,
     OutcomeRecord,
 )
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.governance.actors import GovernedActorContext, derived_actor_kind
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, GroupResolution
@@ -622,7 +622,8 @@ def _build_resolution_lineage_snapshot(
             "relationship_type": resolution.relationship_type,
             "action": resolution.action,
             "trust_status": resolution.trust_status,
-            "resolved_by": resolution.resolved_by,
+            "resolved_by": derived_actor_kind(resolution.resolved_actor_context),
+            "resolution_source": resolution.resolution_source,
         },
         "group": {
             "group_signature": resolution.group_signature,

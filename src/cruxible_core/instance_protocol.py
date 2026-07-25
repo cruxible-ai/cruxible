@@ -300,14 +300,16 @@ class GroupStoreProtocol(ABC):
         thesis_text: str,
         thesis_facts: dict[str, Any],
         analysis_state: dict[str, Any],
-        resolved_by: str,
         trust_status: str = "watch",
+        trust_reason: str = "",
+        trust_actor_context: GovernedActorContext | None = None,
         confirmed: bool = False,
         resolved_actor_context: GovernedActorContext | None = None,
         receipt_id: str | None = None,
+        resolution_source: str = "review",
     ) -> str: ...
     @abstractmethod
-    def confirm_resolution(self, resolution_id: str, trust_status: str | None = None) -> None: ...
+    def confirm_resolution(self, resolution_id: str) -> None: ...
     @abstractmethod
     def stamp_resolution_receipt_id(self, resolution_id: str, receipt_id: str) -> None: ...
     @abstractmethod

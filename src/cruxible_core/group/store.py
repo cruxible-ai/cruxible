@@ -11,7 +11,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Literal
 
-from cruxible_core.governance.actors import dump_actor_context, load_actor_context
+from cruxible_core.governance.actors import (
+    derived_actor_kind,
+    dump_actor_context,
+    load_actor_context,
+)
 from cruxible_core.group.types import (
     CandidateGroup,
     CandidateMember,
@@ -37,7 +41,11 @@ CREATE TABLE IF NOT EXISTS group_resolutions (
     trust_reason TEXT NOT NULL DEFAULT '',
     trust_actor_context TEXT,
     confirmed INTEGER NOT NULL DEFAULT 0,
+    -- Derived, never caller-declared: the coarse actor kind implied by
+    -- resolved_actor_context. Retained as a column for cheap filtering/display;
+    -- the model exposes it through governance.actors.derived_actor_kind.
     resolved_by TEXT NOT NULL,
+    resolution_source TEXT NOT NULL DEFAULT 'review',
     resolved_at TEXT NOT NULL,
     resolved_actor_context TEXT,
     receipt_id TEXT
@@ -57,6 +65,7 @@ CREATE TABLE IF NOT EXISTS candidate_groups (
     thesis_facts TEXT NOT NULL DEFAULT '{}',
     analysis_state TEXT NOT NULL DEFAULT '{}',
     signal_sources_used TEXT NOT NULL DEFAULT '[]',
+    -- Derived from proposed_actor_context; see resolved_by above.
     proposed_by TEXT NOT NULL,
     member_count INTEGER NOT NULL DEFAULT 0,
     pending_version INTEGER NOT NULL DEFAULT 1,
@@ -139,6 +148,11 @@ class GroupStore(GroupStoreProtocol):
             self._conn.execute("ALTER TABLE group_resolutions ADD COLUMN trust_actor_context TEXT")
         if "receipt_id" not in resolution_columns:
             self._conn.execute("ALTER TABLE group_resolutions ADD COLUMN receipt_id TEXT")
+        if "resolution_source" not in resolution_columns:
+            self._conn.execute(
+                "ALTER TABLE group_resolutions "
+                "ADD COLUMN resolution_source TEXT NOT NULL DEFAULT 'review'"
+            )
         group_columns = {
             row["name"]
             for row in self._conn.execute("PRAGMA table_info(candidate_groups)").fetchall()
@@ -195,7 +209,7 @@ class GroupStore(GroupStoreProtocol):
                 json.dumps(group.thesis_facts),
                 json.dumps(group.analysis_state),
                 json.dumps(group.signal_sources_used),
-                group.proposed_by,
+                derived_actor_kind(group.proposed_actor_context),
                 group.member_count,
                 group.pending_version,
                 group.review_priority,
@@ -322,9 +336,21 @@ class GroupStore(GroupStoreProtocol):
         group_id: str,
         analysis_state: dict[str, Any],
     ) -> bool:
-        """Update only group analysis_state. Does NOT commit."""
+        """Update group analysis_state and bump ``pending_version``. Does NOT commit.
+
+        The bump is the point. ``analysis_state`` is where a direct write records
+        that it changed live state underneath a pending proposal, and the whole
+        purpose of that record is to make the reviewer re-look. Leaving
+        ``pending_version`` untouched meant the reviewer's
+        ``expected_pending_version`` guard — the one mechanism that says "the
+        group changed during your review" — never tripped, so a resolve issued
+        against the pre-conflict view sailed through. Any change a reviewer must
+        see is a change to the version they reviewed against.
+        """
         cursor = self._conn.execute(
-            "UPDATE candidate_groups SET analysis_state = ? WHERE group_id = ?",
+            "UPDATE candidate_groups "
+            "SET analysis_state = ?, pending_version = pending_version + 1 "
+            "WHERE group_id = ?",
             (json.dumps(analysis_state), group_id),
         )
         return cursor.rowcount > 0
@@ -378,7 +404,6 @@ class GroupStore(GroupStoreProtocol):
             thesis_facts=json.loads(row["thesis_facts"]),
             analysis_state=json.loads(row["analysis_state"]),
             signal_sources_used=json.loads(row["signal_sources_used"]),
-            proposed_by=row["proposed_by"],
             member_count=row["member_count"],
             pending_version=row["pending_version"],
             review_priority=row["review_priority"],
@@ -556,25 +581,32 @@ class GroupStore(GroupStoreProtocol):
         thesis_text: str,
         thesis_facts: dict[str, Any],
         analysis_state: dict[str, Any],
-        resolved_by: str,
         trust_status: str = "watch",
+        trust_reason: str = "",
+        trust_actor_context: Any | None = None,
         confirmed: bool = False,
         resolved_actor_context: Any | None = None,
         receipt_id: str | None = None,
+        resolution_source: str = "review",
     ) -> str:
         """Persist a resolution. Does NOT commit. Returns resolution_id.
 
         ``receipt_id`` is the mutation receipt of the resolving act. It is the
         only join a REJECTION has: rejections write no edges, so there is no
         edge provenance to walk back from.
+
+        ``trust_status``/``trust_reason``/``trust_actor_context`` are CARRIED
+        FORWARD from the signature's previous confirmed approval by the caller,
+        never re-decided here: trust moves only through ``update_trust_status``.
         """
         resolution_id = new_id("RES")
         self._conn.execute(
             "INSERT INTO group_resolutions "
             "(resolution_id, relationship_type, group_signature, action, rationale, "
-            "thesis_text, thesis_facts, analysis_state, trust_status, confirmed, "
-            "resolved_by, resolved_at, resolved_actor_context, receipt_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "thesis_text, thesis_facts, analysis_state, trust_status, trust_reason, "
+            "trust_actor_context, confirmed, resolved_by, resolution_source, "
+            "resolved_at, resolved_actor_context, receipt_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 resolution_id,
                 relationship_type,
@@ -585,8 +617,11 @@ class GroupStore(GroupStoreProtocol):
                 json.dumps(thesis_facts),
                 json.dumps(analysis_state),
                 trust_status,
+                trust_reason,
+                json.dumps(dump_actor_context(trust_actor_context)),
                 1 if confirmed else 0,
-                resolved_by,
+                derived_actor_kind(resolved_actor_context),
+                resolution_source,
                 format_datetime(utc_now()),
                 json.dumps(dump_actor_context(resolved_actor_context)),
                 receipt_id,
@@ -594,23 +629,19 @@ class GroupStore(GroupStoreProtocol):
         )
         return resolution_id
 
-    def confirm_resolution(
-        self,
-        resolution_id: str,
-        trust_status: str | None = None,
-    ) -> None:
-        """Set confirmed=1 on a resolution. Optionally overwrite trust_status. Does NOT commit."""
-        if trust_status is not None:
-            self._conn.execute(
-                "UPDATE group_resolutions SET confirmed = 1, trust_status = ? "
-                "WHERE resolution_id = ?",
-                (trust_status, resolution_id),
-            )
-        else:
-            self._conn.execute(
-                "UPDATE group_resolutions SET confirmed = 1 WHERE resolution_id = ?",
-                (resolution_id,),
-            )
+    def confirm_resolution(self, resolution_id: str) -> None:
+        """Set confirmed=1 on a resolution. Does NOT commit.
+
+        Confirmation does NOT touch trust. It used to accept a ``trust_status``
+        override that the approve path used to rewrite a reviewer's receipted
+        ``invalidated`` back to ``watch`` — an unreceipted, unattributed trust
+        move performed by an unrelated verb. Trust changes only through
+        ``update_trust_status``.
+        """
+        self._conn.execute(
+            "UPDATE group_resolutions SET confirmed = 1 WHERE resolution_id = ?",
+            (resolution_id,),
+        )
 
     def stamp_resolution_receipt_id(self, resolution_id: str, receipt_id: str) -> None:
         """Fill a resolution's receipt_id if it has none. Does NOT commit.
@@ -797,7 +828,7 @@ class GroupStore(GroupStoreProtocol):
                 json.loads(row["trust_actor_context"]) if row["trust_actor_context"] else None
             ),
             confirmed=bool(row["confirmed"]),
-            resolved_by=row["resolved_by"],
+            resolution_source=row["resolution_source"],
             resolved_at=row["resolved_at"],
             resolved_actor_context=load_actor_context(
                 json.loads(row["resolved_actor_context"]) if row["resolved_actor_context"] else None

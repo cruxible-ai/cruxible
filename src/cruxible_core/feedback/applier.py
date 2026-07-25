@@ -63,14 +63,14 @@ def _apply_feedback_provenance(
     """Stamp the touched edge's provenance, backfilling it when null.
 
     A null-provenance edge would otherwise stay null forever; touching it via feedback
-    backfills a fresh provenance so the edge becomes auditable.
+    backfills a marker provenance so the edge becomes auditable. Feedback does not
+    claim authorship of an edge it merely adjudicated — see
+    :func:`backfill_provenance_on_touch`.
     """
     return metadata.model_copy(
         update={
             "provenance": backfill_provenance_on_touch(
                 prov,
-                _SOURCE_PREFIX[feedback.source],
-                f"feedback:{feedback.action}",
                 f"feedback:{feedback.action}",
                 actor_context=feedback.actor_context,
             ),

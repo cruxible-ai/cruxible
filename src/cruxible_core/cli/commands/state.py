@@ -205,7 +205,7 @@ def state_health_cmd(output_json: bool) -> None:
     click.echo("Groups:")
     click.echo(f"  pending_review: {groups['pending_review_count']}")
     click.echo(f"  applying:       {groups['applying_count']}")
-    click.echo(f"  auto_resolved:  {groups['auto_resolved_count']}")
+    click.echo(f"  withdrawn:      {groups['withdrawn_count']}")
     click.echo(f"  resolved:       {groups['resolved_count']}")
     click.echo(f"  total:          {groups['total_count']}")
     click.echo(

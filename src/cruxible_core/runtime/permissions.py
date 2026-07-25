@@ -151,9 +151,6 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_create_decision_record": PermissionMode.GOVERNED_WRITE,
     "cruxible_finalize_decision_record": PermissionMode.GOVERNED_WRITE,
     "cruxible_abandon_decision_record": PermissionMode.GOVERNED_WRITE,
-    "cruxible_add_constraint": PermissionMode.GOVERNED_WRITE,
-    "cruxible_add_decision_policy": PermissionMode.GOVERNED_WRITE,
-    "cruxible_create_snapshot": PermissionMode.GOVERNED_WRITE,
     "cruxible_state_pull_apply": PermissionMode.GOVERNED_WRITE,
     "cruxible_register_source_artifact": PermissionMode.GOVERNED_WRITE,
     # GRAPH_WRITE tools
@@ -167,9 +164,20 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_retire_procedure": PermissionMode.GRAPH_WRITE,
     "cruxible_resolve_attestation": PermissionMode.GRAPH_WRITE,
     "cruxible_dispose_outcome_resolution": PermissionMode.GRAPH_WRITE,
+    # Creating a snapshot MOVES the instance head. Every outstanding
+    # state-pull apply and every receipt coordinate that named the previous head
+    # is invalidated by it, which is the same class of authority as committing
+    # governed state -- not a governed-operator convenience. (wi-governance-narrows)
+    "cruxible_create_snapshot": PermissionMode.GRAPH_WRITE,
     # ADMIN tools
     "cruxible_lock_workflow": PermissionMode.ADMIN,
     "cruxible_reload_config": PermissionMode.ADMIN,
+    # Constraints and decision policies are ACTIVE CONFIG. They are persisted to
+    # the config file and change how every subsequent query/workflow is
+    # adjudicated, exactly like the config replacement ``cruxible_reload_config``
+    # performs -- so they sit at the same tier as it. (wi-governance-narrows)
+    "cruxible_add_constraint": PermissionMode.ADMIN,
+    "cruxible_add_decision_policy": PermissionMode.ADMIN,
     "cruxible_clone_snapshot": PermissionMode.ADMIN,
     "cruxible_instance_backup": PermissionMode.ADMIN,
     "cruxible_instance_restore": PermissionMode.ADMIN,

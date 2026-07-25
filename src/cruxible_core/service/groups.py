@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
+import structlog
+
 from cruxible_core.config.schema import ProposalPolicySchema
 from cruxible_core.errors import ConfigError
 from cruxible_core.governance.actors import GovernedActorContext
@@ -45,6 +47,10 @@ from cruxible_core.group.types import (
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.primitives import canonical_json, new_id, ordered_unique
+from cruxible_core.runtime.permissions import (
+    GROUP_RESOLUTION_PERMISSION,
+    get_current_mode,
+)
 from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.group_read_models import (
     get_group_read_model,
@@ -72,6 +78,13 @@ from cruxible_core.service.types import (
 from cruxible_core.storage import StorageIntegrityError
 from cruxible_core.temporal import utc_now
 
+logger = structlog.get_logger()
+
+_AUTO_RESOLVE_RATIONALE = (
+    "auto-resolved by proposal policy: prior trusted resolution for this thesis "
+    "signature and no contradicting signal on the delta"
+)
+
 
 @dataclass(frozen=True)
 class _ProposalMetadata:
@@ -79,7 +92,6 @@ class _ProposalMetadata:
     thesis_facts: dict[str, Any]
     analysis_state: dict[str, Any]
     signal_sources_used: list[str]
-    proposed_by: Literal["human", "agent"]
     suggested_priority: str | None
     source_workflow_name: str | None
     source_workflow_receipt_id: str | None
@@ -114,6 +126,32 @@ def _proposal_result(
     )
 
 
+def _validate_expected_pending_version(
+    *,
+    pending_group: CandidateGroup | None,
+    expected_pending_version: int | None,
+) -> None:
+    """Enforce the caller's optimistic-concurrency expectation for a re-propose.
+
+    A re-propose REWRITES the live pending bucket (or, under the default refresh
+    mode, withdraws it) — the same class of act ``resolve_group`` guards with
+    ``expected_pending_version``, and until now the only unguarded one. A caller
+    that read the bucket, computed a delta against it, and then re-proposed had
+    no way to notice that something moved in between. Supplying the expectation
+    is optional (an unconditional refresh is a legitimate ingest pattern);
+    supplying a WRONG one is refused.
+    """
+    if expected_pending_version is None:
+        return
+    found = pending_group.pending_version if pending_group is not None else None
+    if found != expected_pending_version:
+        found_label = str(found) if found is not None else "no pending group"
+        raise ConfigError(
+            "Pending group changed since it was read; expected pending_version "
+            f"{expected_pending_version}, found {found_label}"
+        )
+
+
 def _group_update_fields(
     metadata: _ProposalMetadata,
     *,
@@ -126,7 +164,6 @@ def _group_update_fields(
         "thesis_facts": metadata.thesis_facts,
         "analysis_state": metadata.analysis_state,
         "signal_sources_used": metadata.signal_sources_used,
-        "proposed_by": metadata.proposed_by,
         "member_count": member_count,
         "review_priority": review_priority,
         "suggested_priority": metadata.suggested_priority,
@@ -158,7 +195,6 @@ def _new_candidate_group(
         thesis_facts=metadata.thesis_facts,
         analysis_state=metadata.analysis_state,
         signal_sources_used=metadata.signal_sources_used,
-        proposed_by=metadata.proposed_by,
         member_count=member_count,
         pending_version=1,
         review_priority=review_priority,
@@ -173,7 +209,7 @@ def _new_candidate_group(
     )
 
 
-def _clear_pending_group(
+def _withdraw_pending_group(
     *,
     instance: InstanceProtocol,
     group_store: GroupStoreProtocol,
@@ -185,13 +221,25 @@ def _clear_pending_group(
     policy_summary: dict[str, int],
     actor_context: GovernedActorContext | None = None,
 ) -> ProposeGroupResult:
+    """Retire a pending group whose delta went empty, WITHOUT deleting it.
+
+    Under the default ``pending_refresh_mode="replace"``, a re-propose that
+    produces no delta used to DELETE the pending group and every one of its
+    members. That erased governance history: the group had been proposed, it
+    carried its proposer's thesis and evidence, and reviewers may already have
+    been looking at it — and a receipt pointing at a deleted group_id can no
+    longer be joined to anything. The group is now marked ``withdrawn`` with its
+    members intact. ``withdrawn`` sits outside the pending unique index, so the
+    signature is free for a later proposal, and the withdrawal is still one
+    receipted act.
+    """
     with mutation_receipt(
         instance,
-        "group_clear",
+        "group_withdraw",
         {
             "group_id": pending_group.group_id,
             "signature": signature,
-            "final_version_before_clear": pending_group.pending_version,
+            "final_version_before_withdraw": pending_group.pending_version,
         },
         actor_context=actor_context,
     ) as ctx:
@@ -203,18 +251,22 @@ def _clear_pending_group(
             detail={
                 "group_id": pending_group.group_id,
                 "signature": signature,
-                "final_version_before_clear": pending_group.pending_version,
-                "cleared_tuples": relationship_tuples_summary(old_members),
+                "final_version_before_withdraw": pending_group.pending_version,
+                "withdrawn_tuples": relationship_tuples_summary(old_members),
             },
         )
-        write_group_store.delete_group(pending_group.group_id)
+        write_group_store.update_group(
+            pending_group.group_id,
+            status="withdrawn",
+            pending_version=pending_group.pending_version + 1,
+        )
         ctx.set_result(
             _proposal_result(
-                group_id=None,
+                group_id=pending_group.group_id,
                 signature=signature,
-                status="suppressed",
-                review_priority="review",
-                member_count=0,
+                status="withdrawn",
+                review_priority=pending_group.review_priority,
+                member_count=len(old_members),
                 prior_resolution=prior_resolution,
                 suppressed=True,
                 suppressed_members=suppressed_members,
@@ -316,7 +368,6 @@ def _create_group_or_rewrite_concurrent(
     prior_resolution: GroupResolution | None,
     force_review: bool,
     has_override: bool,
-    status: GroupStatus,
     review_priority: ReviewPriority,
     suppressed_members: list[SuppressedProposalMember],
     policy_summary: dict[str, int],
@@ -410,7 +461,7 @@ def _create_group_or_rewrite_concurrent(
                 _proposal_result(
                     group_id=group.group_id,
                     signature=signature,
-                    status=status,
+                    status="pending_review",
                     review_priority=review_priority,
                     member_count=len(pending_members),
                     prior_resolution=prior_resolution,
@@ -516,13 +567,13 @@ def service_propose_group_inputs(
     pending_refresh_mode: Literal["replace", "retain_missing"] = "replace",
     analysis_state: dict[str, Any] | None = None,
     signal_sources_used: list[str] | None = None,
-    proposed_by: Literal["human", "agent"] = "agent",
     suggested_priority: str | None = None,
     source_workflow_name: str | None = None,
     source_workflow_receipt_id: str | None = None,
     source_query_receipt_ids: list[str] | None = None,
     source_trace_ids: list[str] | None = None,
     source_step_ids: list[str] | None = None,
+    expected_pending_version: int | None = None,
     actor_context: GovernedActorContext | None = None,
 ) -> ProposeGroupResult:
     """Normalize proposal input payloads, then propose a candidate group."""
@@ -542,13 +593,13 @@ def service_propose_group_inputs(
         pending_refresh_mode=pending_refresh_mode,
         analysis_state=analysis_state,
         signal_sources_used=signal_sources_used,
-        proposed_by=proposed_by,
         suggested_priority=suggested_priority,
         source_workflow_name=source_workflow_name,
         source_workflow_receipt_id=source_workflow_receipt_id,
         source_query_receipt_ids=source_query_receipt_ids,
         source_trace_ids=source_trace_ids,
         source_step_ids=source_step_ids,
+        expected_pending_version=expected_pending_version,
         actor_context=actor_context,
     )
 
@@ -562,13 +613,13 @@ def service_propose_group(
     pending_refresh_mode: Literal["replace", "retain_missing"] = "replace",
     analysis_state: dict[str, Any] | None = None,
     signal_sources_used: list[str] | None = None,
-    proposed_by: Literal["human", "agent"] = "agent",
     suggested_priority: str | None = None,
     source_workflow_name: str | None = None,
     source_workflow_receipt_id: str | None = None,
     source_query_receipt_ids: list[str] | None = None,
     source_trace_ids: list[str] | None = None,
     source_step_ids: list[str] | None = None,
+    expected_pending_version: int | None = None,
     actor_context: GovernedActorContext | None = None,
 ) -> ProposeGroupResult:
     """Propose a group of candidate edges for batch review/approval."""
@@ -615,7 +666,6 @@ def service_propose_group(
         thesis_facts=thesis_facts,
         analysis_state=analysis_state,
         signal_sources_used=signal_sources_used,
-        proposed_by=proposed_by,
         suggested_priority=suggested_priority,
         source_workflow_name=source_workflow_name,
         source_workflow_receipt_id=source_workflow_receipt_id,
@@ -655,6 +705,10 @@ def service_propose_group(
     group_store = instance.get_group_store()
     try:
         pending_group = group_store.find_pending_group(relationship_type, signature)
+        _validate_expected_pending_version(
+            pending_group=pending_group,
+            expected_pending_version=expected_pending_version,
+        )
         old_members = (
             group_store.get_members(pending_group.group_id) if pending_group is not None else []
         )
@@ -739,7 +793,7 @@ def service_propose_group(
                     policy_summary=policy_summary,
                 )
 
-            return _clear_pending_group(
+            return _withdraw_pending_group(
                 instance=instance,
                 group_store=group_store,
                 pending_group=pending_group,
@@ -766,10 +820,6 @@ def service_propose_group(
             force_review=force_review,
             has_override=has_override,
         )
-        if auto_resolve:
-            status: GroupStatus = "auto_resolved"
-        else:
-            status = "pending_review"
 
         if pending_group is not None:
             return _rewrite_pending_group(
@@ -795,12 +845,12 @@ def service_propose_group(
             group_id=group_id,
             relationship_type=relationship_type,
             signature=signature,
-            status=status,
+            status="pending_review",
             metadata=metadata,
             member_count=len(pending_members),
             review_priority=review_priority,
         )
-        return _create_group_or_rewrite_concurrent(
+        created = _create_group_or_rewrite_concurrent(
             instance=instance,
             graph=graph,
             group_store=group_store,
@@ -815,7 +865,6 @@ def service_propose_group(
             prior_resolution=prior,
             force_review=force_review,
             has_override=has_override,
-            status=status,
             review_priority=review_priority,
             suppressed_members=suppressed_members,
             policy_summary=policy_summary,
@@ -823,13 +872,79 @@ def service_propose_group(
     finally:
         group_store.close()
 
+    if not auto_resolve or created.group_id != group_id:
+        # A concurrent proposer won the insert race and this call became a
+        # rewrite of THEIR pending group. Auto-resolution was decided against a
+        # world with no pending bucket, so it no longer applies.
+        return created
+    return _auto_resolve_created_group(
+        instance,
+        created,
+        rationale=_AUTO_RESOLVE_RATIONALE,
+        actor_context=actor_context,
+    )
+
+
+def _auto_resolve_created_group(
+    instance: InstanceProtocol,
+    created: ProposeGroupResult,
+    *,
+    rationale: str,
+    actor_context: GovernedActorContext | None,
+) -> ProposeGroupResult:
+    """Run policy auto-resolution through the real approve transition.
+
+    ``auto_resolved`` used to be a terminal GROUP STATUS: propose stamped it and
+    stopped. Nothing transitioned a group out of it, no edges were created, no
+    resolution row existed, no receipt recorded an acceptance, and — because
+    ``find_pending_group`` and the pending unique index both key on
+    ``pending_review`` — the group was invisible to the next proposal of the same
+    signature, which therefore inserted a DUPLICATE row instead of rewriting it.
+
+    Auto-resolution is now an actual approve: same transition, same receipt, same
+    edge provenance, same resolution row as a reviewer-driven approve, marked
+    ``resolution_source="auto_resolved"`` so the acceptance honestly records that
+    policy, not a person, decided it.
+
+    Applying edges is a GRAPH_WRITE act while proposing is GOVERNED_WRITE, so a
+    proposer below that tier does NOT get to escalate itself: the group stays
+    pending review and the result says why. That is strictly safer than the old
+    behaviour, which produced no edges either — it just did not admit it.
+    """
+    if get_current_mode() < GROUP_RESOLUTION_PERMISSION:
+        logger.info(
+            "auto_resolve_deferred",
+            group_id=created.group_id,
+            reason="insufficient_permission_tier",
+            required=GROUP_RESOLUTION_PERMISSION.name,
+        )
+        return replace(
+            created,
+            auto_resolve_deferred_reason="insufficient_permission_tier",
+        )
+
+    assert created.group_id is not None
+    resolved = resolve_group_transition(
+        instance,
+        created.group_id,
+        "approve",
+        rationale=rationale,
+        expected_pending_version=1,
+        actor_context=actor_context,
+        resolution_source="auto_resolved",
+    )
+    return replace(
+        created,
+        status="resolved",
+        resolution_id=resolved.resolution_id,
+    )
+
 
 def service_resolve_group(
     instance: InstanceProtocol,
     group_id: str,
     action: Literal["approve", "reject"],
     rationale: str = "",
-    resolved_by: Literal["human", "agent"] = "human",
     expected_pending_version: int | None = None,
     actor_context: GovernedActorContext | None = None,
     stamp_existing: bool = False,
@@ -840,7 +955,6 @@ def service_resolve_group(
         group_id,
         action,
         rationale=rationale,
-        resolved_by=resolved_by,
         expected_pending_version=expected_pending_version,
         actor_context=actor_context,
         stamp_existing=stamp_existing,
@@ -868,7 +982,7 @@ def service_group_status(
 def service_list_groups(
     instance: InstanceProtocol,
     relationship_type: str | None = None,
-    status: (Literal["pending_review", "auto_resolved", "applying", "resolved"] | None) = None,
+    status: (Literal["pending_review", "applying", "resolved", "withdrawn"] | None) = None,
     limit: int = 50,
     offset: int = 0,
 ) -> ListGroupsResult:

@@ -1977,8 +1977,8 @@ class CruxibleClient:
         thesis_facts: dict[str, Any] | None = None,
         analysis_state: dict[str, Any] | None = None,
         signal_sources_used: builtins.list[str] | None = None,
-        proposed_by: contracts.GroupProposedBy = "agent",
         suggested_priority: str | None = None,
+        expected_pending_version: int | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.ProposeGroupToolResult:
         response = self._client.post(
@@ -1991,8 +1991,8 @@ class CruxibleClient:
                     "thesis_facts": thesis_facts,
                     "analysis_state": analysis_state,
                     "signal_sources_used": signal_sources_used,
-                    "proposed_by": proposed_by,
                     "suggested_priority": suggested_priority,
+                    "expected_pending_version": expected_pending_version,
                 },
                 actor_context,
             ),
@@ -2006,7 +2006,6 @@ class CruxibleClient:
         *,
         action: contracts.GroupAction,
         rationale: str = "",
-        resolved_by: contracts.GroupResolvedBy = "human",
         expected_pending_version: int,
         stamp_existing: bool = False,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
@@ -2017,7 +2016,6 @@ class CruxibleClient:
                 {
                     "action": action,
                     "rationale": rationale,
-                    "resolved_by": resolved_by,
                     "expected_pending_version": expected_pending_version,
                     "stamp_existing": stamp_existing,
                 },

@@ -50,8 +50,8 @@ def _group_status_filter(status: str | None) -> GroupStatus | None:
         return None
     if status == "pending_review":
         return "pending_review"
-    if status == "auto_resolved":
-        return "auto_resolved"
+    if status == "withdrawn":
+        return "withdrawn"
     if status == "applying":
         return "applying"
     if status == "resolved":
@@ -236,12 +236,6 @@ def group_propose(
 )
 @click.option("--rationale", default="", help="Rationale for this resolution.")
 @click.option(
-    "--source",
-    type=click.Choice(["human", "agent"]),
-    default="human",
-    help="Who resolved (default: human).",
-)
-@click.option(
     "--expected-pending-version",
     required=True,
     type=int,
@@ -262,7 +256,6 @@ def group_resolve(
     group_id: str,
     action: str,
     rationale: str,
-    source: str,
     expected_pending_version: int,
     stamp_existing: bool,
     output_json: bool,
@@ -274,7 +267,6 @@ def group_resolve(
             group_id,
             action=cast(contracts.GroupAction, action),
             rationale=rationale,
-            resolved_by=cast(contracts.GroupResolvedBy, source),
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
         ),
@@ -283,7 +275,6 @@ def group_resolve(
             group_id,
             action,  # type: ignore[arg-type]
             rationale=rationale,
-            resolved_by=source,  # type: ignore[arg-type]
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
         ),
@@ -421,7 +412,7 @@ def group_get(group_id: str, output_json: bool) -> None:
 @click.option(
     "--status",
     default=None,
-    type=click.Choice(["pending_review", "auto_resolved", "applying", "resolved"]),
+    type=click.Choice(["pending_review", "applying", "resolved", "withdrawn"]),
     help="Filter by status.",
 )
 @click.option("--limit", default=50, help="Max groups to show.")
@@ -575,6 +566,7 @@ def group_status(group_id: str | None, signature: str | None, output_json: bool)
                     "tuple_count": item.tuple_count,
                     "rationale": item.rationale,
                     "resolved_by": item.resolved_by,
+                    "resolution_source": item.resolution_source,
                     "resolved_actor": item.resolved_actor,
                 }
                 for item in result.approved_history

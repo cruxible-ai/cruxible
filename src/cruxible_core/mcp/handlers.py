@@ -2049,7 +2049,6 @@ def handle_propose_group(
     thesis_facts: dict[str, Any] | None = None,
     analysis_state: dict[str, Any] | None = None,
     signal_sources_used: list[str] | None = None,
-    proposed_by: contracts.GroupProposedBy = "agent",
     suggested_priority: str | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""
@@ -2062,7 +2061,6 @@ def handle_propose_group(
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
             signal_sources_used=signal_sources_used,
-            proposed_by=proposed_by,
             suggested_priority=suggested_priority,
         ),
         lambda: api.propose_group(
@@ -2073,7 +2071,6 @@ def handle_propose_group(
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
             signal_sources_used=signal_sources_used,
-            proposed_by=proposed_by,
             suggested_priority=suggested_priority,
         ),
         allow_local=False,
@@ -2086,7 +2083,6 @@ def handle_resolve_group(
     group_id: str,
     action: contracts.GroupAction,
     rationale: str = "",
-    resolved_by: contracts.GroupResolvedBy = "human",
     expected_pending_version: int | None = None,
     stamp_existing: bool = False,
 ) -> contracts.ResolveGroupToolResult:
@@ -2097,7 +2093,6 @@ def handle_resolve_group(
             group_id,
             action=action,
             rationale=rationale,
-            resolved_by=resolved_by,
             expected_pending_version=_required_pending_version(expected_pending_version),
             stamp_existing=stamp_existing,
         ),
@@ -2106,7 +2101,6 @@ def handle_resolve_group(
             group_id,
             action,
             rationale=rationale,
-            resolved_by=resolved_by,
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
         ),

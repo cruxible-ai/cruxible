@@ -158,8 +158,8 @@ def _state_health_groups(
     counts = {
         "pending_review": 0,
         "applying": 0,
-        "auto_resolved": 0,
         "resolved": 0,
+        "withdrawn": 0,
     }
     ages: list[float] = []
     group_store = instance.get_group_store()
@@ -186,8 +186,8 @@ def _state_health_groups(
     return StateHealthGroupsSection(
         pending_review_count=counts["pending_review"],
         applying_count=counts["applying"],
-        auto_resolved_count=counts["auto_resolved"],
         resolved_count=counts["resolved"],
+        withdrawn_count=counts["withdrawn"],
         total_count=sum(counts.values()),
         oldest_unresolved_age_seconds=max(ages) if ages else None,
         newest_unresolved_age_seconds=min(ages) if ages else None,

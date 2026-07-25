@@ -46,6 +46,13 @@ class RelationshipProvenance(BaseModel):
     # (which carries no receipts), recording the origin and the now-dangling
     # source receipt_id that was cleared. Null on natively-written edges.
     clone_origin: str | None = None
+    # Set only when an edge that carried NO provenance was touched by an
+    # update/feedback write. ``source``/``source_ref`` then read
+    # ``unknown_backfilled`` rather than the toucher's channel, and these two
+    # fields record what is actually known: which channel performed the backfill
+    # and when. Null on every edge whose origin is genuinely known.
+    touched_by: str | None = None
+    backfilled_at: str | None = None
     created_actor_context: GovernedActorContext | None = None
     last_modified_actor_context: GovernedActorContext | None = None
 
@@ -70,6 +77,14 @@ CANONICAL_SOURCE_REFS = frozenset({SOURCE_REF_ADD_RELATIONSHIP, SOURCE_REF_BATCH
 # receipt_id those edges carried points at a receipt in the SOURCE instance that
 # is absent here. We clear the dangling receipt_id and record this origin.
 CLONE_ORIGIN_UPSTREAM_SNAPSHOT = "upstream-snapshot"
+
+# Backfill marker for an edge that was touched while carrying NO provenance.
+# The touch cannot know where the edge came from, so the origin is recorded as
+# unknown-and-backfilled rather than borrowing the toucher's channel. The
+# touching channel is preserved separately (``touched_by``) so the backfill is
+# attributable without being mistaken for authorship.
+SOURCE_UNKNOWN_BACKFILLED = "unknown_backfilled"
+SOURCE_REF_UNKNOWN_BACKFILLED = "unknown_backfilled"
 
 
 def make_provenance(
@@ -126,8 +141,6 @@ def stamp_provenance_modified(
 
 def backfill_provenance_on_touch(
     provenance: RelationshipProvenance | None,
-    source: str,
-    source_ref: str,
     actor: str,
     *,
     actor_context: GovernedActorContext | None = None,
@@ -137,16 +150,27 @@ def backfill_provenance_on_touch(
     Edges written before provenance was tracked (or written without it) carry a null
     provenance that update/feedback paths historically left null forever. When an edge
     is touched we either stamp the existing provenance's modification fields, or — if it
-    has none — backfill a fresh provenance so the touch makes the edge auditable.
+    has none — backfill a marker provenance so the touch makes the edge auditable.
+
+    The backfilled ``source`` is deliberately :data:`SOURCE_UNKNOWN_BACKFILLED`, NOT
+    the touching channel. The toucher did not create this edge; stamping its own
+    channel as the origin asserts a provenance the edge never had, and turns "we do
+    not know where this came from" into a confident (and false) claim that it came
+    from whoever last happened to write to it. What we DO know is recorded: which
+    channel performed the backfill (``touched_by``/``touched_by_ref``), when, and
+    under which actor context.
     """
     if provenance is not None:
         return stamp_provenance_modified(provenance, actor, actor_context=actor_context)
+    now = utc_now()
     return RelationshipProvenance(
-        source=source,
-        source_ref=source_ref,
-        last_modified_at=utc_now(),
+        source=SOURCE_UNKNOWN_BACKFILLED,
+        source_ref=SOURCE_REF_UNKNOWN_BACKFILLED,
+        last_modified_at=now,
         last_modified_by=actor,
         last_modified_actor_context=actor_context,
+        touched_by=actor,
+        backfilled_at=format_datetime(now),
     )
 
 
@@ -198,6 +222,8 @@ __all__ = [
     "CLONE_ORIGIN_UPSTREAM_SNAPSHOT",
     "SOURCE_REF_ADD_RELATIONSHIP",
     "SOURCE_REF_BATCH_DIRECT_WRITE",
+    "SOURCE_REF_UNKNOWN_BACKFILLED",
+    "SOURCE_UNKNOWN_BACKFILLED",
     "RelationshipProvenance",
     "backfill_provenance_on_touch",
     "dump_provenance",

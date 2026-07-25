@@ -495,6 +495,7 @@ class AddConstraintServiceResult:
     added: bool
     config_updated: bool
     warnings: list[str] = field(default_factory=list)
+    receipt_id: str | None = None
 
 
 @dataclass
@@ -503,6 +504,7 @@ class AddDecisionPolicyServiceResult:
     added: bool
     config_updated: bool
     warnings: list[str] = field(default_factory=list)
+    receipt_id: str | None = None
 
 
 @dataclass
@@ -893,6 +895,7 @@ class ProposeWorkflowResult:
 @dataclass
 class SnapshotCreateResult:
     snapshot: StateSnapshot
+    receipt_id: str | None = None
 
 
 @dataclass
@@ -993,6 +996,16 @@ class ProposeGroupResult:
     suppressed_members: list[SuppressedProposalMember] = field(default_factory=list)
     policy_summary: dict[str, int] = field(default_factory=dict)
     receipt_id: str | None = None
+    resolution_id: str | None = None
+    """Set when proposal policy auto-resolved this group through the approve rail."""
+    auto_resolve_deferred_reason: str | None = None
+    """Why an otherwise-eligible auto-resolution did NOT run; null when it did.
+
+    Auto-resolution creates live edges, which is a GRAPH_WRITE act. A proposer
+    holding only GOVERNED_WRITE therefore leaves the group pending review rather
+    than escalating itself, and this field says so instead of leaving the caller
+    to infer it from the status.
+    """
 
 
 @dataclass
@@ -1106,6 +1119,7 @@ class GroupStatusHistoryItem:
     tuple_count: int
     rationale: str
     resolved_by: str
+    resolution_source: str
     resolved_actor: dict[str, Any] | None
 
 
@@ -1142,8 +1156,8 @@ class StateHealthGroupsSection:
 
     pending_review_count: int = 0
     applying_count: int = 0
-    auto_resolved_count: int = 0
     resolved_count: int = 0
+    withdrawn_count: int = 0
     total_count: int = 0
     oldest_unresolved_age_seconds: float | None = None
     newest_unresolved_age_seconds: float | None = None

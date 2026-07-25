@@ -30,7 +30,6 @@ async def propose_group(
         thesis_facts=req.thesis_facts,
         analysis_state=req.analysis_state,
         signal_sources_used=req.signal_sources_used,
-        proposed_by=req.proposed_by,
         suggested_priority=req.suggested_priority,
         actor_context=req.actor_context,
     )
@@ -51,7 +50,6 @@ async def resolve_group(
         group_id=group_id,
         action=req.action,
         rationale=req.rationale,
-        resolved_by=req.resolved_by,
         expected_pending_version=req.expected_pending_version,
         actor_context=req.actor_context,
         stamp_existing=req.stamp_existing,

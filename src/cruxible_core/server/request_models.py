@@ -175,7 +175,6 @@ class ProposeGroupRequest(BaseModel):
     thesis_facts: dict[str, Any] | None = None
     analysis_state: dict[str, Any] | None = None
     signal_sources_used: list[str] | None = None
-    proposed_by: contracts.GroupProposedBy = "agent"
     suggested_priority: str | None = None
     actor_context: contracts.GovernedActorContext | None = None
 
@@ -183,7 +182,6 @@ class ProposeGroupRequest(BaseModel):
 class ResolveGroupRequest(BaseModel):
     action: contracts.GroupAction
     rationale: str = ""
-    resolved_by: contracts.GroupResolvedBy = "human"
     expected_pending_version: int
     actor_context: contracts.GovernedActorContext | None = None
     # When approving, bless each surviving pre-existing edge (a member tuple

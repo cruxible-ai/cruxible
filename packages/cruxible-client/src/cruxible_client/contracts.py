@@ -49,9 +49,7 @@ OutcomeValue = Literal["correct", "incorrect", "partial", "unknown"]
 OutcomeAnchorType = Literal["resolution", "receipt"]
 ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
 GroupAction = Literal["approve", "reject"]
-GroupResolvedBy = Literal["human", "agent"]
-GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
-GroupProposedBy = Literal["human", "agent"]
+GroupStatus = Literal["pending_review", "applying", "resolved", "withdrawn"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
@@ -1152,8 +1150,8 @@ class StateHealthGroupsSection(BaseModel):
 
     pending_review_count: int = 0
     applying_count: int = 0
-    auto_resolved_count: int = 0
     resolved_count: int = 0
+    withdrawn_count: int = 0
     total_count: int = 0
     oldest_unresolved_age_seconds: float | None = None
     newest_unresolved_age_seconds: float | None = None
@@ -1273,6 +1271,7 @@ class AddConstraintResult(BaseModel):
     added: bool
     config_updated: bool
     warnings: list[str] = Field(default_factory=list)
+    receipt_id: str | None = None
 
 
 class GetEntityResult(BaseModel):
@@ -1656,6 +1655,7 @@ class SnapshotMetadata(BaseModel):
 
 class SnapshotCreateResult(BaseModel):
     snapshot: SnapshotMetadata
+    receipt_id: str | None = None
 
 
 class SnapshotListResult(ListEnvelopeFields):
@@ -1784,6 +1784,8 @@ class ProposeGroupToolResult(BaseModel):
     suppressed_members: list[SuppressedProposalMember] = Field(default_factory=list)
     policy_summary: dict[str, int] = Field(default_factory=dict)
     receipt_id: str | None = None
+    resolution_id: str | None = None
+    auto_resolve_deferred_reason: str | None = None
 
 
 class AddDecisionPolicyResult(BaseModel):
@@ -1791,6 +1793,7 @@ class AddDecisionPolicyResult(BaseModel):
     added: bool
     config_updated: bool
     warnings: list[str] = Field(default_factory=list)
+    receipt_id: str | None = None
 
 
 class FeedbackGroupSummary(BaseModel):
@@ -2022,6 +2025,7 @@ class GroupStatusHistoryItem(BaseModel):
     tuple_count: int
     rationale: str = ""
     resolved_by: str = ""
+    resolution_source: str = "review"
     resolved_actor: dict[str, Any] | None = None
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from cruxible_core.errors import ConfigError, GroupNotFoundError
-from cruxible_core.governance.actors import dump_actor_context
+from cruxible_core.governance.actors import derived_actor_kind, dump_actor_context
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
@@ -129,7 +129,8 @@ def group_status_read_model(
                     resolved_at=str(resolution.resolved_at),
                     tuple_count=tuple_count,
                     rationale=resolution.rationale,
-                    resolved_by=resolution.resolved_by,
+                    resolved_by=derived_actor_kind(resolution.resolved_actor_context),
+                    resolution_source=resolution.resolution_source,
                     resolved_actor=dump_actor_context(resolution.resolved_actor_context),
                 )
             )
@@ -169,12 +170,12 @@ def group_status_read_model(
 def list_groups_read_model(
     instance: InstanceProtocol,
     relationship_type: str | None = None,
-    status: (Literal["pending_review", "auto_resolved", "applying", "resolved"] | None) = None,
+    status: (Literal["pending_review", "applying", "resolved", "withdrawn"] | None) = None,
     limit: int = 50,
     offset: int = 0,
 ) -> ListGroupsResult:
     """List candidate groups with optional filters, sorted by review priority."""
-    valid_statuses = ("pending_review", "auto_resolved", "applying", "resolved")
+    valid_statuses = ("pending_review", "applying", "resolved", "withdrawn")
     if status is not None and status not in valid_statuses:
         raise ConfigError(f"Invalid status '{status}'. Use: {', '.join(valid_statuses)}")
 

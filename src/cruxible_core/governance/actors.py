@@ -19,6 +19,25 @@ from cruxible_core.temporal import ensure_utc, format_datetime
 
 ActorType = Literal["human_user", "service_account", "system"]
 
+DerivedActorKind = Literal["human", "agent", "system", "unknown"]
+"""Coarse actor kind DERIVED from the runtime actor context.
+
+Cruxible used to carry a parallel, caller-declared ``human``/``agent`` axis on
+feedback, outcomes, group proposals/resolutions, and decision records. It was
+never reconciled with :attr:`GovernedActorContext.actor_type`, so a service
+account could declare itself ``human`` and skip the reason-code requirement that
+exists precisely to hold agents to account. The declared axis is retired; every
+surface that used to read it now derives the value here, from the credential-
+derived (or declared-local-operator) actor context. ``unknown`` is the honest
+answer when there is no actor context at all — it is never claimed to be human.
+"""
+
+_ACTOR_KIND_BY_TYPE: dict[str, DerivedActorKind] = {
+    "human_user": "human",
+    "service_account": "agent",
+    "system": "system",
+}
+
 
 class GovernedActorContext(BaseModel):
     """Product actor context supplied by Cloud/API for hosted governed writes."""
@@ -75,6 +94,18 @@ def load_actor_context(value: Any) -> GovernedActorContext | None:
         return None
 
 
+def derived_actor_kind(actor: GovernedActorContext | None) -> DerivedActorKind:
+    """Return the coarse actor kind implied by *actor*, never a caller's claim.
+
+    ``None`` yields ``"unknown"`` rather than defaulting to ``"human"``: an
+    absent actor context is missing evidence, and treating it as a human is
+    exactly the unearned assumption the declared axis used to encode.
+    """
+    if actor is None:
+        return "unknown"
+    return _ACTOR_KIND_BY_TYPE.get(actor.actor_type, "unknown")
+
+
 def require_hosted_actor_context(value: Any) -> GovernedActorContext:
     """Return a validated hosted actor context or raise a safe config error."""
     if isinstance(value, GovernedActorContext):
@@ -89,7 +120,9 @@ def require_hosted_actor_context(value: Any) -> GovernedActorContext:
 
 __all__ = [
     "ActorType",
+    "DerivedActorKind",
     "GovernedActorContext",
+    "derived_actor_kind",
     "dump_actor_context",
     "load_actor_context",
     "require_hosted_actor_context",

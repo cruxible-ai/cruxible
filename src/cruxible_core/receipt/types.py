@@ -36,9 +36,16 @@ OperationType = Literal[
     "feedback_batch",
     "group_propose",
     "group_rewrite",
-    "group_clear",
+    "group_withdraw",
     "group_resolve",
     "group_trust_update",
+    "config_add_constraint",
+    "config_add_decision_policy",
+    "decision_record_open",
+    "decision_record_finalize",
+    "decision_record_abandon",
+    "source_artifact_register",
+    "snapshot_create",
 ]
 """Coarse-grained category of operation that produced a receipt."""
 

@@ -1359,7 +1359,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         thesis_facts: dict[str, Any] | None = None,
         analysis_state: dict[str, Any] | None = None,
         signal_sources_used: list[str] | None = None,
-        proposed_by: contracts.GroupProposedBy = "agent",
         suggested_priority: str | None = None,
     ) -> contracts.ProposeGroupToolResult:
         """Propose a candidate group of edges for batch review.
@@ -1372,8 +1371,13 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         hashed.
 
         If a prior trusted resolution exists for the same thesis signature and
-        all signals meet the auto-resolve policy, the group is auto-resolved.
-        Otherwise it enters pending_review with a Cruxible-derived review_priority.
+        all signals meet the auto-resolve policy, the group is approved
+        immediately through the normal resolve rail — real edges, a real
+        resolution row, a real receipt — and the result carries its
+        ``resolution_id``. Auto-resolution creates live edges, so a caller below
+        GRAPH_WRITE gets ``pending_review`` plus an
+        ``auto_resolve_deferred_reason`` instead. Otherwise the group enters
+        pending_review with a Cruxible-derived review_priority.
         """
         return handlers.handle_propose_group(
             instance_id,
@@ -1383,7 +1387,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
             signal_sources_used=signal_sources_used,
-            proposed_by=proposed_by,
             suggested_priority=suggested_priority,
         )
 
@@ -1394,7 +1397,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         action: contracts.GroupAction,
         expected_pending_version: int,
         rationale: str = "",
-        resolved_by: contracts.GroupResolvedBy = "human",
         stamp_existing: bool = False,
     ) -> contracts.ResolveGroupToolResult:
         """Resolve a candidate group by approving or rejecting it.
@@ -1411,7 +1413,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             group_id,
             action,
             rationale=rationale,
-            resolved_by=resolved_by,
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
         )
