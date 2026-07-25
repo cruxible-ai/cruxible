@@ -1081,7 +1081,6 @@ def test_decision_record_client_routes_round_trip():
         question="Should we act?",
         subject_type="Incident",
         subject_id="I-1",
-        opened_by="agent",
     )
     fetched = client.get_decision_record("inst_123", "DR-1", include_events=False)
     listed = client.list_decision_records("inst_123", status="open", subject_type="Incident")
@@ -1108,7 +1107,6 @@ def test_decision_record_client_routes_round_trip():
             "question": "Should we act?",
             "subject_type": "Incident",
             "subject_id": "I-1",
-            "opened_by": "agent",
         },
     )
     assert captured[1][0:2] == ("GET", "/api/v1/inst_123/decision-records/DR-1")

@@ -68,19 +68,12 @@ def decision_records_cmd() -> None:
 @click.option("--question", required=True, help="Question or decision being evaluated.")
 @click.option("--subject-type", default=None, help="Optional subject type.")
 @click.option("--subject-id", default=None, help="Optional subject identifier.")
-@click.option(
-    "--opened-by",
-    type=click.Choice(["human", "agent", "service"]),
-    default="human",
-    show_default=True,
-)
 @json_option
 @handle_errors
 def create_cmd(
     question: str,
     subject_type: str | None,
     subject_id: str | None,
-    opened_by: str,
     output_json: bool,
 ) -> None:
     """Create an open decision record."""
@@ -90,14 +83,12 @@ def create_cmd(
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         ),
         lambda instance: service_create_decision_record(
             instance,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         ),
     )
     payload = _result_record_payload(result)

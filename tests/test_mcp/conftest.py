@@ -208,14 +208,12 @@ class GovernedLocalClient:
         question: str,
         subject_type: str | None = None,
         subject_id: str | None = None,
-        opened_by: str = "human",
     ):
         return api.create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         )
 
     def get_decision_record(

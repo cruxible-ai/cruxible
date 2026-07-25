@@ -172,9 +172,16 @@ class DecisionStoreProtocol(ABC):
         final_decision: str,
         decision_class: str,
         rationale: str = "",
+        actor_context: GovernedActorContext | None = None,
     ) -> DecisionRecord: ...
     @abstractmethod
-    def abandon_record(self, decision_record_id: str, *, reason: str = "") -> DecisionRecord: ...
+    def abandon_record(
+        self,
+        decision_record_id: str,
+        *,
+        reason: str = "",
+        actor_context: GovernedActorContext | None = None,
+    ) -> DecisionRecord: ...
     @abstractmethod
     def close(self) -> None: ...
 

@@ -572,7 +572,7 @@ def test_receipt_then_graph_failure_rolls_back_both(
 def test_decision_then_outcome_failure_rolls_back_compound_write(
     initialized_instance: CruxibleInstance,
 ) -> None:
-    decision = DecisionRecord(question="Approve this change?", opened_by="agent")
+    decision = DecisionRecord(question="Approve this change?")
     outcome = OutcomeRecord(
         receipt_id="RCP-1",
         anchor_type="receipt",

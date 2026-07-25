@@ -23,7 +23,10 @@ from cruxible_core.service import (
     service_query,
     service_run,
 )
-from cruxible_core.service.decisions import digest_payload
+from cruxible_core.service.decisions import (
+    digest_payload,
+    record_decision_event_for_context,
+)
 
 
 @pytest.fixture
@@ -79,7 +82,6 @@ def test_decision_record_actor_context_round_trips_through_store(
         question="Should we investigate this vehicle impact?",
         subject_type="Vehicle",
         subject_id="V-2024-CIVIC-EX",
-        opened_by="agent",
         actor_context=opened_actor,
     ).record
 
@@ -185,7 +187,6 @@ def test_query_decision_record_context_records_audit_event(
         question="Should we investigate this vehicle impact?",
         subject_type="Vehicle",
         subject_id="V-2024-CIVIC-EX",
-        opened_by="agent",
     ).record
 
     query = service_query(
@@ -217,7 +218,6 @@ def test_query_without_decision_record_context_does_not_record_event(
         question="Should we investigate this vehicle impact?",
         subject_type="Vehicle",
         subject_id="V-2024-CIVIC-EX",
-        opened_by="agent",
     ).record
 
     query = service_query(
@@ -337,11 +337,12 @@ def test_closed_record_auto_log_race_is_best_effort(
         decision_class="deferred",
     )
 
+    context = OperationContext(decision_record_id=record.decision_record_id, surface="cli")
     query = service_query(
         populated_instance,
         "parts_for_vehicle",
         {"vehicle_id": "V-2024-CIVIC-EX"},
-        context=OperationContext(decision_record_id=record.decision_record_id, surface="cli"),
+        context=context,
     )
 
     events = service_list_decision_events(
@@ -349,7 +350,12 @@ def test_closed_record_auto_log_race_is_best_effort(
         decision_record_id=record.decision_record_id,
     ).items
     assert query.receipt_id is not None
-    assert events == []
+    # The finalize event is the only one on a closed record; the raced query
+    # event is refused, and the refusal is surfaced on the shared context.
+    assert [event.command for event in events] == ["decision_record:finalize"]
+    assert len(context.decision_event_failures) == 1
+    assert context.decision_event_failures[0].appended is False
+    assert "is not open" in (context.decision_event_failures[0].error or "")
 
     started_at = datetime.now(timezone.utc)
     finished_at = datetime.now(timezone.utc)
@@ -366,3 +372,186 @@ def test_closed_record_auto_log_race_is_best_effort(
                     finished_at=finished_at,
                 )
             )
+
+
+def _receipt(instance: CruxibleInstance, receipt_id: str):
+    store = instance.get_receipt_store()
+    try:
+        return store.get_receipt(receipt_id)
+    finally:
+        store.close()
+
+
+def test_create_decision_record_emits_an_open_receipt(
+    populated_instance: CruxibleInstance,
+) -> None:
+    result = service_create_decision_record(
+        populated_instance,
+        question="Should we investigate this vehicle impact?",
+        actor_context=_actor_context("usr_open", "op_open"),
+    )
+
+    assert result.receipt_id is not None
+    receipt = _receipt(populated_instance, result.receipt_id)
+    assert receipt is not None
+    assert receipt.operation_type == "decision_record_open"
+
+
+def test_finalize_decision_record_emits_a_receipt_and_its_terminal_event(
+    populated_instance: CruxibleInstance,
+) -> None:
+    record = service_create_decision_record(
+        populated_instance,
+        question="Should we investigate this vehicle impact?",
+    ).record
+
+    result = service_finalize_decision_record(
+        populated_instance,
+        record.decision_record_id,
+        final_decision="No action",
+        decision_class="deferred",
+        rationale="impact is cosmetic",
+        actor_context=_actor_context("usr_final", "op_final"),
+    )
+
+    assert result.receipt_id is not None
+    receipt = _receipt(populated_instance, result.receipt_id)
+    assert receipt is not None
+    assert receipt.operation_type == "decision_record_finalize"
+    assert [event.command for event in result.events] == ["decision_record:finalize"]
+    assert result.events[0].actor_context is not None
+    assert result.events[0].actor_context.actor_id == "usr_final"
+
+
+def test_abandon_decision_record_emits_a_receipt_and_its_terminal_event(
+    populated_instance: CruxibleInstance,
+) -> None:
+    record = service_create_decision_record(
+        populated_instance,
+        question="Should we investigate this vehicle impact?",
+    ).record
+
+    result = service_abandon_decision_record(
+        populated_instance,
+        record.decision_record_id,
+        reason="Superseded",
+    )
+
+    assert result.receipt_id is not None
+    receipt = _receipt(populated_instance, result.receipt_id)
+    assert receipt is not None
+    assert receipt.operation_type == "decision_record_abandon"
+    assert [event.command for event in result.events] == ["decision_record:abandon"]
+
+
+def test_finalized_decision_record_cannot_be_finalized_again(
+    populated_instance: CruxibleInstance,
+) -> None:
+    record = service_create_decision_record(
+        populated_instance,
+        question="Should we investigate this vehicle impact?",
+    ).record
+    service_finalize_decision_record(
+        populated_instance,
+        record.decision_record_id,
+        final_decision="No action",
+        decision_class="deferred",
+    )
+
+    with pytest.raises(ConfigError, match="is not open"):
+        service_finalize_decision_record(
+            populated_instance,
+            record.decision_record_id,
+            final_decision="Act after all",
+            decision_class="recommended",
+        )
+
+    loaded = service_get_decision_record(populated_instance, record.decision_record_id).record
+    assert loaded.final_decision == "No action"
+
+
+def test_event_append_failure_is_surfaced_not_swallowed(
+    populated_instance: CruxibleInstance,
+) -> None:
+    context = OperationContext(decision_record_id="DR-never-created", surface="cli")
+
+    outcome = record_decision_event_for_context(
+        populated_instance,
+        context,
+        command="manual",
+        status="success",
+        input_payload={"a": 1},
+        started_at=datetime.now(timezone.utc),
+    )
+
+    assert outcome.requested is True
+    assert outcome.appended is False
+    assert outcome.decision_record_id == "DR-never-created"
+    assert "not found" in (outcome.error or "")
+    assert context.decision_event_failures == [outcome]
+
+
+def test_successful_event_append_reports_the_event_id(
+    populated_instance: CruxibleInstance,
+) -> None:
+    record = service_create_decision_record(
+        populated_instance,
+        question="Should we investigate this vehicle impact?",
+    ).record
+    context = OperationContext(decision_record_id=record.decision_record_id, surface="cli")
+
+    outcome = record_decision_event_for_context(
+        populated_instance,
+        context,
+        command="manual",
+        status="success",
+        input_payload={"a": 1},
+        started_at=datetime.now(timezone.utc),
+    )
+
+    assert outcome.appended is True
+    assert outcome.decision_event_id is not None
+    assert context.decision_event_failures == []
+
+
+def test_no_decision_record_in_context_is_not_a_requested_append(
+    populated_instance: CruxibleInstance,
+) -> None:
+    outcome = record_decision_event_for_context(
+        populated_instance,
+        OperationContext(surface="cli"),
+        command="manual",
+        status="success",
+        input_payload={"a": 1},
+        started_at=datetime.now(timezone.utc),
+    )
+
+    assert outcome.requested is False
+    assert outcome.appended is False
+
+
+def test_create_decision_record_derives_opened_by_from_the_actor_context(
+    populated_instance: CruxibleInstance,
+) -> None:
+    service_account = GovernedActorContext(
+        actor_type="service_account",
+        actor_id="svc_agent",
+        org_id="org_1",
+        operation_id="op_1",
+        timestamp="2026-06-05T12:00:00Z",
+    )
+    record = service_create_decision_record(
+        populated_instance,
+        question="Should we investigate this vehicle impact?",
+        actor_context=service_account,
+    ).record
+
+    store = populated_instance.get_decision_store()
+    try:
+        row = store._conn.execute(
+            "SELECT opened_by FROM decision_records WHERE decision_record_id = ?",
+            (record.decision_record_id,),
+        ).fetchone()
+    finally:
+        store.close()
+    assert row["opened_by"] == "agent"

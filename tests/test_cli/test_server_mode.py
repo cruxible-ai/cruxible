@@ -1056,9 +1056,8 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
             question,
             subject_type=None,
             subject_id=None,
-            opened_by="human",
         ):
-            captured["create"] = (instance_id, question, subject_type, subject_id, opened_by)
+            captured["create"] = (instance_id, question, subject_type, subject_id)
             return contracts.DecisionRecordResult(
                 record={
                     "decision_record_id": "DR-1",
@@ -1172,8 +1171,6 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
             "Incident",
             "--subject-id",
             "I-1",
-            "--opened-by",
-            "agent",
             "--json",
         ],
     )
@@ -1263,7 +1260,6 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
         "Should we act?",
         "Incident",
         "I-1",
-        "agent",
     )
     assert captured["get"] == ("inst_123", "DR-1", True)
     assert captured["list"] == ("inst_123", "open", None, None, None, 5)
