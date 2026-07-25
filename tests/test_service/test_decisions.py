@@ -79,7 +79,6 @@ def test_decision_record_actor_context_round_trips_through_store(
         question="Should we investigate this vehicle impact?",
         subject_type="Vehicle",
         subject_id="V-2024-CIVIC-EX",
-        opened_by="agent",
         actor_context=opened_actor,
     ).record
 
@@ -185,7 +184,6 @@ def test_query_decision_record_context_records_audit_event(
         question="Should we investigate this vehicle impact?",
         subject_type="Vehicle",
         subject_id="V-2024-CIVIC-EX",
-        opened_by="agent",
     ).record
 
     query = service_query(
@@ -217,7 +215,6 @@ def test_query_without_decision_record_context_does_not_record_event(
         question="Should we investigate this vehicle impact?",
         subject_type="Vehicle",
         subject_id="V-2024-CIVIC-EX",
-        opened_by="agent",
     ).record
 
     query = service_query(

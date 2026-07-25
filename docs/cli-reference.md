@@ -1273,7 +1273,6 @@ findings.
 | `--reason-code` | no | `` | text | Structured feedback reason code. |
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
 | `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
-| `--source` | no | `human` | choice | Who produced this feedback (default: human). |
 | `--group-override` | no | `False` | boolean | Mark relationship assertion metadata as a group override (edge must exist). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
@@ -1298,7 +1297,6 @@ findings.
 | `--receipt` | yes | `Sentinel.UNSET` | text | Query receipt ID. |
 | `--result-index` | yes | `Sentinel.UNSET` | integer | Zero-based index of the query result row to adjudicate. |
 | `--action` | yes | `Sentinel.UNSET` | choice | Feedback action. |
-| `--source` | no | `human` | choice | Who produced this feedback (default: human). |
 | `--reason` | no | `` | text | Reason for feedback. |
 | `--reason-code` | no | `` | text | Structured feedback reason code. |
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
@@ -1331,7 +1329,6 @@ findings.
 | --- | --- | --- | --- | --- |
 | `--items-file` | no | `` | path | JSON or YAML file with batch feedback items. |
 | `--items` | no | `` | text | Inline JSON array of feedback items. |
-| `--source` | no | `human` | choice | Who produced this feedback batch (default: human). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1837,7 +1834,6 @@ Text output labels an interrupted record as
 | `--group` | yes | `Sentinel.UNSET` | text | Group ID to resolve. |
 | `--action` | yes | `Sentinel.UNSET` | choice | Resolution action. |
 | `--rationale` | no | `` | text | Rationale for this resolution. |
-| `--source` | no | `human` | choice | Who resolved (default: human). |
 | `--expected-pending-version` | yes | `Sentinel.UNSET` | integer | Pending version the reviewer saw when deciding. |
 | `--stamp-existing` | no | `False` | boolean | On approve, bless each surviving pre-existing edge with this group's review status and provenance instead of skipping it. |
 | `--json` | no | `False` | boolean | Output as JSON. |

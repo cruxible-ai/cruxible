@@ -350,12 +350,10 @@ class TestFeedbackActorContext:
             source_ref="add_relationship",
         )
         actor = make_actor()
-        source = "human" if expected_type == "human_user" else "agent"
         result = service_feedback(
             instance,
             None,
             "approve",
-            source,  # type: ignore[arg-type]
             RelationshipInstance(
                 relationship_type="fits",
                 from_type="Part",

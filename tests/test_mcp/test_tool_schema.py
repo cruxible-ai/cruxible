@@ -51,10 +51,15 @@ class TestInputSchema:
         action = schemas["cruxible_feedback"].inputSchema["properties"]["action"]
         assert action["enum"] == ["approve", "reject", "correct", "flag"]
 
-    def test_feedback_source_enum(self, server):
+    def test_feedback_has_no_declared_source_input(self, server):
+        """The caller does not get to declare whether it is a human.
+
+        The kind is derived from the runtime actor context, so exposing a
+        ``source`` input would just re-open the hole: the reason-code rule
+        keys off that kind.
+        """
         schemas = _get_tool_schemas(server)
-        source = schemas["cruxible_feedback"].inputSchema["properties"]["source"]
-        assert source["enum"] == ["human", "agent"]
+        assert "source" not in schemas["cruxible_feedback"].inputSchema["properties"]
 
     def test_feedback_receipt_is_optional_for_explicit_coordinates(self, server):
         schemas = _get_tool_schemas(server)
@@ -69,7 +74,7 @@ class TestInputSchema:
         required = set(schemas["cruxible_feedback_from_query"].inputSchema["required"])
         assert {"instance_id", "receipt_id", "result_index", "action"} <= required
         assert props["action"]["enum"] == ["approve", "reject", "correct", "flag"]
-        assert props["source"]["enum"] == ["human", "agent"]
+        assert "source" not in props
         assert "reason_code" in props
         assert "scope_hints" in props
         assert "path_index" in props
@@ -373,7 +378,10 @@ class TestOutputSchema:
                 },
             ),
             ("cruxible_add_entity", {"entities_added", "entities_updated", "receipt_id"}),
-            ("cruxible_add_constraint", {"name", "added", "config_updated", "warnings"}),
+            (
+                "cruxible_add_constraint",
+                {"name", "added", "config_updated", "warnings", "receipt_id"},
+            ),
             ("cruxible_get_feedback_profile", {"found", "relationship_type", "profile"}),
             (
                 "cruxible_analyze_feedback",
@@ -412,7 +420,10 @@ class TestOutputSchema:
                     "warnings",
                 },
             ),
-            ("cruxible_add_decision_policy", {"name", "added", "config_updated", "warnings"}),
+            (
+                "cruxible_add_decision_policy",
+                {"name", "added", "config_updated", "warnings", "receipt_id"},
+            ),
             (
                 "cruxible_lock_workflow",
                 {"lock_path", "config_digest", "providers_locked", "artifacts_locked"},
@@ -498,7 +509,7 @@ class TestOutputSchema:
                     "traces",
                 },
             ),
-            ("cruxible_create_snapshot", {"snapshot"}),
+            ("cruxible_create_snapshot", {"snapshot", "receipt_id"}),
             (
                 "cruxible_instance_backup",
                 {"instance_id", "artifact_path", "manifest"},

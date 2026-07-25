@@ -8,7 +8,7 @@ from typing import Any, Literal
 import structlog
 
 from cruxible_core.config.schema import ProposalPolicySchema
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.group.governance import (
@@ -924,15 +924,30 @@ def _auto_resolve_created_group(
         )
 
     assert created.group_id is not None
-    resolved = resolve_group_transition(
-        instance,
-        created.group_id,
-        "approve",
-        rationale=rationale,
-        expected_pending_version=1,
-        actor_context=actor_context,
-        resolution_source="auto_resolved",
-    )
+    try:
+        resolved = resolve_group_transition(
+            instance,
+            created.group_id,
+            "approve",
+            rationale=rationale,
+            expected_pending_version=1,
+            actor_context=actor_context,
+            resolution_source="auto_resolved",
+        )
+    except (ConfigError, DataValidationError) as exc:
+        # The accept did not hold — a member failed validation, a mutation guard
+        # refused it, or there was nothing creatable. Auto-resolution is an
+        # optimization over review, not a licence to fail the proposal: the
+        # group is already committed and stays in pending_review, so a reviewer
+        # resolving it by hand meets exactly this error at exactly this point.
+        # The reason travels on the result so the caller is not left inferring
+        # it from a status that looks like an ordinary pending proposal.
+        logger.warning(
+            "auto_resolve_refused",
+            group_id=created.group_id,
+            reason=str(exc),
+        )
+        return replace(created, auto_resolve_deferred_reason=f"approve_refused: {exc}")
     return replace(
         created,
         status="resolved",

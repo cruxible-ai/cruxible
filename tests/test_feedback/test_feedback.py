@@ -298,7 +298,6 @@ class TestApplier:
             receipt_id="RCP-test",
             action="approve",
             target=target,
-            source="agent",
             model_id="claude-opus-4-6",
         )
         assert apply_feedback(graph, fb) is True
@@ -314,7 +313,6 @@ class TestApplier:
             receipt_id="RCP-test",
             action="reject",
             target=target,
-            source="agent",
             reason="AI flagged wrong fitment",
         )
         assert apply_feedback(graph, fb) is True
@@ -555,7 +553,6 @@ class TestFeedbackStore:
             receipt_id="RCP-1",
             action="approve",
             target=target,
-            source="agent",
             model_id="claude-opus-4-6",
         )
         store.save_feedback(fb)
@@ -580,7 +577,6 @@ class TestFeedbackStore:
         fb = FeedbackRecord(
             receipt_id="RCP-1",
             action="reject",
-            source="agent",
             target=target,
             reason="Legacy unsupported",
             reason_code="legacy_unsupported",
@@ -672,7 +668,6 @@ class TestOutcomeStore:
                 "surface": {"type": "query", "name": "parts_for_vehicle"},
                 "trace_set": {"trace_ids": [], "provider_names": [], "trace_count": 0},
             },
-            source="agent",
             detail={"installed": True},
         )
         oid = store.save_outcome(out)
@@ -873,7 +868,6 @@ class TestFeedbackQueryIntegration:
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="reject",
-            source="agent",
             target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-2",

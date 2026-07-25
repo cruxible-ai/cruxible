@@ -1175,7 +1175,7 @@ class TestPendingBuckets:
             for node in validation_nodes
         )
 
-    def test_empty_delta_clears_pending_group_and_emits_receipt(
+    def test_empty_delta_withdraws_pending_group_and_emits_receipt(
         self, matching_instance: CruxibleInstance
     ) -> None:
         _seed_fitment_entities(matching_instance)
@@ -1202,7 +1202,7 @@ class TestPendingBuckets:
             ],
             thesis_facts=facts,
         )
-        cleared = service_propose_group(
+        withdrawn = service_propose_group(
             matching_instance,
             "fits",
             [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
@@ -1210,28 +1210,39 @@ class TestPendingBuckets:
         )
 
         assert pending.group_id is not None
-        assert cleared.group_id is None
-        assert cleared.status == "suppressed"
-        assert cleared.suppressed is True
-        assert cleared.receipt_id is not None
+        # The group is RETIRED IN PLACE, not erased: it was proposed, it carries
+        # its proposer's thesis and members, and a receipt naming a deleted
+        # group_id joins to nothing.
+        assert withdrawn.group_id == pending.group_id
+        assert withdrawn.status == "withdrawn"
+        assert withdrawn.suppressed is True
+        assert withdrawn.receipt_id is not None
 
         group_store = matching_instance.get_group_store()
         try:
-            assert group_store.get_group(pending.group_id) is None
+            surviving = group_store.get_group(pending.group_id)
+            assert surviving is not None
+            assert surviving.status == "withdrawn"
+            # The bucket only ever held the undelivered delta member, and it
+            # survives the withdrawal as the evidence it is.
+            members = group_store.get_members(pending.group_id)
+            assert [m.from_id for m in members] == ["BP-1002"]
+            # ...and it is out of the pending bucket, so the signature is free.
+            assert group_store.find_pending_group("fits", pending.signature) is None
         finally:
             group_store.close()
 
         receipt_store = matching_instance.get_receipt_store()
         try:
-            receipt = receipt_store.get_receipt(cleared.receipt_id)
+            receipt = receipt_store.get_receipt(withdrawn.receipt_id)
         finally:
             receipt_store.close()
 
         assert receipt is not None
-        assert receipt.operation_type == "group_clear"
+        assert receipt.operation_type == "group_withdraw"
         validation_nodes = [node for node in receipt.nodes if node.node_type == "validation"]
         assert any(
-            node.detail.get("cleared_tuples")
+            node.detail.get("withdrawn_tuples")
             == [
                 {
                     "from_type": "Part",
@@ -1773,7 +1784,6 @@ def _create_prior_resolution(
             "prior thesis",
             facts,
             {"prior_state": True},
-            "human",
             trust_status=trust_status,
             confirmed=confirmed,
         )
@@ -1783,13 +1793,41 @@ class TestAutoResolve:
     def test_prior_trusted_all_support_auto_resolved(
         self, matching_instance: CruxibleInstance
     ) -> None:
+        _seed_policy_graph(matching_instance)
         members = [_member(signals=_all_support_signals())]
         facts = _agent_signature_facts(matching_instance, "fits", members)
         _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
         result = service_propose_group(matching_instance, "fits", members)
-        assert result.status == "auto_resolved"
+        # Auto-resolution is a real approve, not a status label: the group is
+        # resolved, it names its resolution, and the edges exist.
+        assert result.status == "resolved"
+        assert result.resolution_id is not None
+        assert result.auto_resolve_deferred_reason is None
         assert result.prior_resolution is not None
         assert result.prior_resolution.trust_status == "trusted"
+
+        group_store = matching_instance.get_group_store()
+        try:
+            resolution = group_store.get_resolution(result.resolution_id)
+            assert resolution is not None
+            assert resolution.action == "approve"
+            assert resolution.confirmed is True
+            assert resolution.resolution_source == "auto_resolved"
+            assert resolution.receipt_id is not None
+        finally:
+            group_store.close()
+
+        graph = matching_instance.load_graph()
+        assert (
+            graph.relationship_count_between(
+                from_type="Part",
+                from_id="BP-1001",
+                to_type="Vehicle",
+                to_id="V-2024-CIVIC",
+                relationship_type="fits",
+            )
+            == 1
+        )
 
     def test_workflow_policy_require_review_blocks_auto_resolve(
         self, matching_instance: CruxibleInstance
@@ -2023,8 +2061,10 @@ constraints: []
         members = [_member(signals=sigs)]
         facts = _agent_signature_facts(permissive_instance, "fits", members)
         _create_prior_resolution(permissive_instance, thesis_facts=facts, trust_status="watch")
+        _seed_policy_graph(permissive_instance)
         result = service_propose_group(permissive_instance, "fits", members)
-        assert result.status == "auto_resolved"
+        assert result.status == "resolved"
+        assert result.resolution_id is not None
 
 
 class TestAutoResolveNoContradict:
@@ -2091,8 +2131,10 @@ constraints: []
         members = [_member(signals=sigs)]
         facts = _agent_signature_facts(nc_instance, "fits", members)
         _create_prior_resolution(nc_instance, thesis_facts=facts, trust_status="trusted")
+        _seed_policy_graph(nc_instance)
         result = service_propose_group(nc_instance, "fits", members)
-        assert result.status == "auto_resolved"
+        assert result.status == "resolved"
+        assert result.resolution_id is not None
 
     def test_contradict_on_blocking_fails_no_contradict(
         self, nc_instance: CruxibleInstance

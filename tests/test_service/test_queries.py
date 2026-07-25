@@ -235,7 +235,6 @@ def test_inline_query_records_decision_event(
     record = service_create_decision_record(
         populated_instance,
         question="Which brake parts should we inspect?",
-        opened_by="agent",
     ).record
 
     result = service_query_inline_surface(

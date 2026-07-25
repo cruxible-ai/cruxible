@@ -360,7 +360,6 @@ def test_write_after_acceptance_still_works(
         pending_edge_instance,
         receipt_id=None,
         action="approve",
-        source="human",
         target=RelationshipInstance(
             relationship_type="fits",
             from_type="Part",
@@ -394,7 +393,6 @@ def test_write_onto_a_rejected_edge_is_not_refused(
         pending_edge_instance,
         receipt_id=None,
         action="reject",
-        source="human",
         target=RelationshipInstance(
             relationship_type="fits",
             from_type="Part",

@@ -53,7 +53,6 @@ def test_service_feedback_batch_applies_atomically(populated_instance):
                 reason="bad fitment",
             ),
         ],
-        source="human",
     )
 
     assert result.total == 2
@@ -66,10 +65,10 @@ def test_service_feedback_batch_applies_atomically(populated_instance):
     rejected = graph.get_relationship("Part", "BP-1002", "Vehicle", "V-2024-CIVIC-EX", "fits")
     assert approved is not None
     assert approved.metadata.assertion.review.status == "approved"
-    assert approved.metadata.assertion.review.source == "human"
+    assert approved.metadata.assertion.review.source == "unknown"
     assert rejected is not None
     assert rejected.metadata.assertion.review.status == "rejected"
-    assert rejected.metadata.assertion.review.source == "human"
+    assert rejected.metadata.assertion.review.source == "unknown"
 
     feedback_store = populated_instance.get_feedback_store()
     try:
@@ -104,7 +103,6 @@ def test_service_feedback_batch_input_wrapper(populated_instance):
                 ),
             )
         ],
-        source="human",
     )
 
     assert result.total == 1
@@ -128,7 +126,6 @@ def test_service_feedback_batch_invalid_receipt_rolls_back(populated_instance):
                     ),
                 )
             ],
-            source="human",
         )
 
     feedback_store = populated_instance.get_feedback_store()
@@ -165,7 +162,6 @@ def test_service_feedback_ambiguous_edge_rolls_back_feedback_record(populated_in
             populated_instance,
             receipt_id=receipt_id,
             action="approve",
-            source="human",
             target=RelationshipInstance(
                 from_type="Part",
                 from_id="BP-1001",

@@ -2440,7 +2440,6 @@ class TestBatchDirectWrite:
                 action="approve",
                 target=_batch_fit_target(),
             ),
-            source="human",
         )
 
         assert result.applied is True
@@ -2456,7 +2455,7 @@ class TestBatchDirectWrite:
         relationship = graph.get_relationship("Part", "BP-BATCH", "Vehicle", "V-BATCH", "fits")
         assert relationship is not None
         assert relationship.metadata.assertion.review.status == "approved"
-        assert relationship.metadata.assertion.review.source == "human"
+        assert relationship.metadata.assertion.review.source == "unknown"
 
         live = service_query_inline_surface(
             initialized_instance,
@@ -2479,7 +2478,6 @@ class TestBatchDirectWrite:
                 action="reject",
                 target=_batch_fit_target(),
             ),
-            source="human",
         )
 
         assert result.applied is True

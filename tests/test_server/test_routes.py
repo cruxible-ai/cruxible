@@ -960,7 +960,6 @@ def test_decision_record_routes_and_query_context_round_trip(
             "question": "Should we investigate vehicle impact?",
             "subject_type": "Vehicle",
             "subject_id": "V-2024-CIVIC-EX",
-            "opened_by": "agent",
         },
     )
     assert created.status_code == 200
@@ -2637,7 +2636,6 @@ def test_feedback_batch_route(
             "receipt_id": receipt_id,
             "result_index": 0,
             "action": "approve",
-            "source": "human",
             "reason_code": "route_review",
             "scope_hints": {"route": "feedback-from-query"},
         },
@@ -2648,7 +2646,6 @@ def test_feedback_batch_route(
     batch = app_client.post(
         f"/api/v1/{instance_id}/feedback/batch",
         json={
-            "source": "human",
             "items": [
                 {
                     "receipt_id": receipt_id,
@@ -2734,7 +2731,6 @@ def test_feedback_route_approves_pending_relationship_without_source_receipt(
         f"/api/v1/{instance_id}/feedback",
         json={
             "action": "approve",
-            "source": "human",
             "from_type": "Part",
             "from_id": "BP-1",
             "relationship_type": "fits",
@@ -2818,7 +2814,6 @@ def test_workflow_propose_snapshot_and_overlay_round_trip(
         f"/api/v1/{instance_id}/groups/{group_id}/resolve",
         json={
             "action": "approve",
-            "resolved_by": "human",
             "rationale": "looks good",
             "expected_pending_version": 1,
             "actor_context": actor_context,
@@ -3184,7 +3179,6 @@ def _approve_workflow_group(client: TestClient, instance_id: str, workflow_name:
         f"/api/v1/{instance_id}/groups/{group_id}/resolve",
         json={
             "action": "approve",
-            "resolved_by": "human",
             "rationale": "smoke test",
             "expected_pending_version": 1,
         },

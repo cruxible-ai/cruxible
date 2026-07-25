@@ -264,7 +264,6 @@ relationships:
                     assertion=RelationshipAssertion(
                         review=RelationshipReviewState(
                             status="approved",
-                            source="human",
                         )
                     ),
                 ),

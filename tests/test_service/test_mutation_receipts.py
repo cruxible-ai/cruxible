@@ -280,7 +280,6 @@ class TestFeedbackReceipts:
             populated_instance,
             receipt_id=receipt_id,
             action="approve",
-            source="human",
             target=_edge_target(),
             reason="Confirmed fitment",
         )
@@ -304,7 +303,6 @@ class TestFeedbackReceipts:
             populated_instance,
             receipt_id=receipt_id,
             action="approve",
-            source="human",
             target=_edge_target(),
         )
         store = populated_instance.get_receipt_store()
@@ -324,7 +322,6 @@ class TestFeedbackReceipts:
                 populated_instance,
                 receipt_id="RCP-doesnotmatter",
                 action="invalid_action",  # type: ignore[arg-type]
-                source="human",
                 target=_edge_target(),
             )
 
@@ -348,7 +345,6 @@ class TestFeedbackReceipts:
                 populated_instance,
                 receipt_id=receipt_id,
                 action="reject",
-                source="human",
                 target=_edge_target(),
                 reason="not a fit",
             )

@@ -1515,7 +1515,6 @@ workflows:
           thesis_text: >
             Open incidents match suppliers via direct supplier or
             geography scope.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1590,7 +1589,6 @@ workflows:
           thesis_text: >
             Components are impacted via the supplier cascade,
             adjusted for alternate sourcing coverage.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1665,7 +1663,6 @@ workflows:
           thesis_text: >
             Directly supplied assemblies are impacted via the supplier
             cascade, adjusted for alternate sourcing coverage.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1784,7 +1781,6 @@ workflows:
           thesis_text: >
             Routed operational risks attach to suppliers with active incident
             and cascade evidence.
-          proposed_by: agent
         as: proposal
     returns: proposal
 

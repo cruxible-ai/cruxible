@@ -228,6 +228,8 @@ EDGE_PROVENANCE_FULL = {
     "receipt_id": "<varies>",
     "resolution_id": None,
     "clone_origin": None,
+    "touched_by": None,
+    "backfilled_at": None,
     "created_actor_context": NORMALIZED_ACTOR_CONTEXT_FULL,
     "last_modified_actor_context": None,
 }

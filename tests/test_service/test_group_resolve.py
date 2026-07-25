@@ -222,7 +222,6 @@ def _save_resolution(
     thesis_text: str,
     thesis_facts: dict[str, Any],
     outcome_state: dict[str, Any],
-    resolved_by: str,
     **kwargs: Any,
 ) -> str:
     with instance.write_transaction() as uow:
@@ -234,7 +233,6 @@ def _save_resolution(
             thesis_text,
             thesis_facts,
             outcome_state,
-            resolved_by,
             **kwargs,
         )
 
@@ -745,7 +743,6 @@ class TestReject:
             "",
             {},
             {},
-            "human",
         )
         _update_group_status(instance, group_id, "applying", resolution_id=res_id)
 
@@ -823,7 +820,6 @@ class TestResolutionReceiptId:
                 group.thesis_text,
                 group.thesis_facts,
                 group.analysis_state,
-                "human",
                 confirmed=False,
                 receipt_id=first_attempt_receipt_id,
             )
@@ -877,7 +873,6 @@ class TestResolutionReceiptId:
             "",
             {},
             {},
-            "human",
         )
         store = instance.get_group_store()
         try:
@@ -1039,7 +1034,7 @@ class TestStatusGuards:
                 expected_pending_version=1,
             )
 
-    def test_auto_resolved_accepts_resolution(self, instance: CruxibleInstance) -> None:
+    def test_pending_group_accepts_resolution(self, instance: CruxibleInstance) -> None:
         """Auto-resolved groups can be explicitly resolved."""
         facts = {"style": "casual"}
         sig = compute_group_signature("fits", facts)
@@ -1053,7 +1048,6 @@ class TestStatusGuards:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=True,
         )
@@ -1063,7 +1057,6 @@ class TestStatusGuards:
         # Instead, just test that a pending_review or auto_resolved group
         # can be resolved. Let's manually set status.
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
-        _update_group_status(instance, group_id, "auto_resolved")
 
         result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert result.edges_created == 1
@@ -1108,7 +1101,6 @@ class TestConfirmedFlag:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=False,
         )
@@ -1147,19 +1139,28 @@ class TestTrustInheritance:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=True,
         )
 
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
-        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        # A prior TRUSTED confirmed resolution plus all-support signals is
+        # exactly the auto-resolve precondition, so the proposal resolves itself
+        # through the approve rail rather than sitting in pending_review.
+        result = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="test",
+            thesis_facts=facts_scope,
+        )
+        assert result.status == "resolved"
+        assert result.resolution_id is not None
 
         store = instance.get_group_store()
         try:
-            group = store.get_group(group_id)
-            res = store.get_resolution(group.resolution_id)
+            res = store.get_resolution(result.resolution_id)
             assert res.trust_status == "trusted"
+            assert res.resolution_source == "auto_resolved"
         finally:
             store.close()
 
@@ -1180,7 +1181,6 @@ class TestTrustInheritance:
             "",
             facts,
             {},
-            "human",
             trust_status="watch",
             confirmed=True,
         )
@@ -1196,7 +1196,14 @@ class TestTrustInheritance:
         finally:
             store.close()
 
-    def test_invalidated_prior_starts_watch(self, instance: CruxibleInstance) -> None:
+    def test_invalidated_prior_is_carried_forward(self, instance: CruxibleInstance) -> None:
+        """Approve must not launder a reviewer's receipted ``invalidated``.
+
+        Trust is thesis-scoped and lives on the signature's latest confirmed
+        approval, so a new approval that reset it to ``watch`` was a trust MOVE
+        performed by a verb that has no business moving trust — and it discarded
+        the reviewer's judgement without a receipt, an actor, or a reason.
+        """
         facts_scope = {"style": "casual"}
         facts = _agent_signature_facts(
             instance,
@@ -1213,8 +1220,8 @@ class TestTrustInheritance:
             "",
             facts,
             {},
-            "human",
             trust_status="invalidated",
+            trust_reason="reviewer rejected this thesis",
             confirmed=True,
         )
 
@@ -1225,7 +1232,8 @@ class TestTrustInheritance:
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            assert res.trust_status == "watch"
+            assert res.trust_status == "invalidated"
+            assert res.trust_reason == "reviewer rejected this thesis"
         finally:
             store.close()
 
@@ -1258,7 +1266,6 @@ class TestTrustInheritance:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=False,  # unconfirmed
         )
@@ -1280,10 +1287,17 @@ class TestTrustInheritance:
 # ---------------------------------------------------------------------------
 
 
-class TestTrustRevalidation:
-    def test_prior_invalidated_while_applying(self, instance: CruxibleInstance) -> None:
-        """If prior was trusted at creation but invalidated while in applying,
-        trust revalidates to watch at confirmation."""
+class TestApproveNeverMovesTrust:
+    def test_prior_invalidated_before_resolve_is_carried_not_reset(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """A prior invalidated between propose and resolve is CARRIED, not reset.
+
+        Confirmation used to re-read the prior and rewrite ``invalidated`` to
+        ``watch`` — a second, quieter door to the same unattributed trust move
+        the creation path made. Re-approving a thesis is not evidence that the
+        thesis became trustworthy again.
+        """
         facts_scope = {"style": "casual"}
         facts = _agent_signature_facts(
             instance,
@@ -1293,7 +1307,7 @@ class TestTrustRevalidation:
         sig = compute_group_signature("fits", facts)
 
         # Create prior trusted confirmed resolution
-        prior_res_id = _save_resolution(
+        _save_resolution(
             instance,
             "fits",
             sig,
@@ -1302,26 +1316,37 @@ class TestTrustRevalidation:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=True,
         )
 
-        # Propose and start resolve (manually simulate applying state)
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
+        # The prior is trusted, so the proposal auto-resolves on the way in.
+        first = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="test",
+            thesis_facts=facts_scope,
+        )
+        assert first.status == "resolved"
+        assert first.resolution_id is not None
 
-        # Now invalidate the prior before resolve completes
-        _update_resolution_trust_status(instance, prior_res_id, "invalidated", "trust broken")
+        # A reviewer then invalidates the now-latest confirmed approval.
+        _update_resolution_trust_status(
+            instance, first.resolution_id, "invalidated", "trust broken"
+        )
 
-        # Resolve — should revalidate trust at confirmation
+        # A later approval of the same signature carries the invalidation
+        # forward instead of quietly revalidating it.
+        group_id = _propose(instance, [_member("BP-2", "V-2")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            # Prior was invalidated, so new resolution should be watch
-            assert res.trust_status == "watch"
+            assert res.trust_status == "invalidated"
+            assert res.trust_reason == "trust broken"
         finally:
             store.close()
 
@@ -1342,18 +1367,22 @@ class TestTrustRevalidation:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=True,
         )
 
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
-        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        result = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="test",
+            thesis_facts=facts_scope,
+        )
+        assert result.resolution_id is not None
 
         store = instance.get_group_store()
         try:
-            group = store.get_group(group_id)
-            res = store.get_resolution(group.resolution_id)
+            res = store.get_resolution(result.resolution_id)
             assert res.trust_status == "trusted"  # preserved
         finally:
             store.close()
@@ -1397,7 +1426,6 @@ class TestApplyingRetry:
             "",
             {},
             {},
-            "human",
             confirmed=False,
         )
         _update_group_status(instance, group_id, "applying", resolution_id=res_id)
@@ -1445,7 +1473,6 @@ class TestApplyingRetry:
             "",
             {},
             {},
-            "human",
             confirmed=False,
         )
         _update_group_status(instance, group_id, "applying", resolution_id=res_id)
@@ -1482,7 +1509,6 @@ class TestApplyingRetry:
             "",
             {},
             {},
-            "human",
             confirmed=False,
         )
         _update_group_status(instance, group_id, "applying", resolution_id=res_id)

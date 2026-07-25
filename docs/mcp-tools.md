@@ -528,7 +528,6 @@ happened; they never prove its inputs are still current.
 | `instance_id` | yes | string |  |
 | `receipt_id` | no | string |  |
 | `action` | yes | enum: approve, reject, correct, flag |  |
-| `source` | yes | enum: human, agent |  |
 | `from_type` | yes | string |  |
 | `from_id` | yes | string |  |
 | `relationship_type` | yes | string |  |
@@ -566,7 +565,6 @@ happened; they never prove its inputs are still current.
 | `receipt_id` | yes | string | Query receipt ID. |
 | `result_index` | yes | integer | Zero-based query result row index. |
 | `action` | yes | enum: approve, reject, correct, flag | Feedback action. |
-| `source` | no | enum: human, agent | Who produced this feedback. |
 | `reason` | no | string | Reason for feedback. |
 | `reason_code` | no | string | Structured feedback reason code. |
 | `scope_hints` | no | object | Structured feedback scope hints. |
@@ -599,7 +597,6 @@ happened; they never prove its inputs are still current.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `items` | yes | array |  |
-| `source` | no | enum: human, agent |  |
 
 **Returns:** Top-level fields: `feedback_ids`, `applied_count`, `total`, `receipt_id`
 
@@ -625,7 +622,6 @@ happened; they never prove its inputs are still current.
 | `receipt_id` | no | string | null |  |
 | `anchor_type` | no | enum: resolution, receipt |  |
 | `anchor_id` | no | string | null |  |
-| `source` | no | enum: human, agent |  |
 | `outcome_code` | no | string | null |  |
 | `scope_hints` | no | object | null |  |
 | `outcome_profile_key` | no | string | null |  |
@@ -1160,7 +1156,7 @@ error-level finding exists.
 
 ## cruxible_add_constraint
 
-**Permission:** `GOVERNED_WRITE`
+**Permission:** `ADMIN`
 
 **Purpose:** Use when you need to add a graph quality rule that future evaluations should check.
 
@@ -1185,7 +1181,7 @@ error-level finding exists.
 
 ## cruxible_add_decision_policy
 
-**Permission:** `GOVERNED_WRITE`
+**Permission:** `ADMIN`
 
 **Purpose:** Use when you need to record a policy that affects how a decision surface should be handled.
 
@@ -1769,7 +1765,6 @@ without it, only the active materialized digest is checked.
 | `thesis_facts` | no | object | null |  |
 | `analysis_state` | no | object | null |  |
 | `signal_sources_used` | no | array | null |  |
-| `proposed_by` | no | enum: human, agent |  |
 | `suggested_priority` | no | string | null |  |
 
 **Returns:** Top-level fields: `group_id`, `signature`, `status`, `review_priority`, `member_count`, `prior_resolution`, `suppressed`, `suppressed_members`, `policy_summary`, `receipt_id`
@@ -1796,7 +1791,6 @@ without it, only the active materialized digest is checked.
 | `action` | yes | enum: approve, reject |  |
 | `expected_pending_version` | yes | integer |  |
 | `rationale` | no | string |  |
-| `resolved_by` | no | enum: human, agent |  |
 | `stamp_existing` | no | boolean | On approve, bless each surviving pre-existing edge (member tuple already live) with this group's review status and provenance instead of skipping it. |
 
 **Returns:** Top-level fields: `group_id`, `action`, `edges_created`, `edges_skipped`, `resolution_id`, `receipt_id`, `skipped_members` (per-member skip explanations: identity plus `skip_kind`, `reason`, `stamped`), `edges_stamped`
@@ -1954,7 +1948,7 @@ without it, only the active materialized digest is checked.
 
 ## cruxible_create_snapshot
 
-**Permission:** `GOVERNED_WRITE`
+**Permission:** `GRAPH_WRITE`
 
 **Purpose:** Use when you need to mark the current state with a named snapshot.
 

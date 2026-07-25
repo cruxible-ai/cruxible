@@ -1334,7 +1334,6 @@ workflows:
             Fuzzy software-to-product matching from CMDB inventory
           analysis_state:
             match_summary: $steps.match_summary.items
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1619,7 +1618,6 @@ workflows:
             exposed asset posture requires action
           analysis_state:
             exposure_summary: $steps.exposure_summary.items
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1680,7 +1678,6 @@ workflows:
             Agent-selected operational vulnerability classification
           analysis_state:
             classification_summary: $steps.classification_summary.items
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1822,7 +1819,6 @@ workflows:
             product-derived affected evidence should be closed
           analysis_state:
             reconciliation_summary: $steps.reconciliation_summary.items
-          proposed_by: agent
         as: proposal
     returns: proposal
 

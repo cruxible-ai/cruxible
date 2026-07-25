@@ -81,7 +81,6 @@ def test_relationship_is_live_can_require_approved() -> None:
             RelationshipAssertion(
                 review=RelationshipReviewState(
                     status="approved",
-                    source="human",
                 )
             ),
             require_approved=True,

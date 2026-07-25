@@ -345,7 +345,6 @@ def workflow_instance_id(canonical_workflow_project: Path) -> str:
             {
                 "instance_id": "inst_123",
                 "action": "approve",
-                "source": "human",
                 "from_type": "Part",
                 "from_id": "BP-1",
                 "relationship_type": "fits",

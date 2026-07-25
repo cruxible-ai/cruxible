@@ -21,6 +21,7 @@ from cruxible_core.errors import (
     QueryNotFoundError,
     ReceiptNotFoundError,
 )
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.query.types import ProjectedQueryRow, QueryPathRow, QueryRelationshipRow
 from cruxible_core.receipt.builder import ReceiptBuilder
@@ -369,6 +370,17 @@ def _edge_target() -> RelationshipInstance:
     )
 
 
+def _human_actor() -> GovernedActorContext:
+    """A resolved human actor — the only kind exempt from the reason-code rule."""
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id="usr_reviewer",
+        org_id="org_1",
+        operation_id="op_feedback",
+        timestamp="2026-06-05T12:00:00Z",
+    )
+
+
 def _persist_receipt(instance: CruxibleInstance, receipt) -> str:
     with instance.write_transaction() as uow:
         return uow.receipts.save_receipt(receipt)
@@ -511,7 +523,6 @@ class TestFeedback:
             populated_instance,
             receipt_id=receipt_id,
             action="approve",
-            source="human",
             target=_edge_target(),
         )
         assert result.feedback_id.startswith("FB-")
@@ -521,7 +532,9 @@ class TestFeedback:
         rel = graph.get_relationship("Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits")
         assert rel is not None
         assert rel.metadata.assertion.review.status == "approved"
-        assert rel.metadata.assertion.review.source == "human"
+        # No actor context resolved, so the review honestly records
+        # "unknown" rather than claiming a human adjudicated it.
+        assert rel.metadata.assertion.review.source == "unknown"
 
     def test_input_wrapper(self, populated_instance: CruxibleInstance) -> None:
         receipt_id = self._run_query(populated_instance)
@@ -538,7 +551,6 @@ class TestFeedback:
                     to_id="V-2024-CIVIC-EX",
                 ),
             ),
-            source="human",
         )
 
         assert result.feedback_id.startswith("FB-")
@@ -553,7 +565,6 @@ class TestFeedback:
                 populated_instance,
                 receipt_id=receipt_id,
                 action="correct",
-                source="human",
                 target=_edge_target(),
                 corrections={"verified": "yes"},
             )
@@ -567,7 +578,6 @@ class TestFeedback:
                 populated_instance,
                 receipt_id=receipt_id,
                 action="correct",
-                source="human",
                 target=_edge_target(),
                 corrections={"_provenance": {"spoofed": True}, "source": "catalog"},
             )
@@ -578,7 +588,6 @@ class TestFeedback:
                 populated_instance,
                 receipt_id="nonexistent-receipt",
                 action="approve",
-                source="human",
                 target=_edge_target(),
             )
 
@@ -589,7 +598,6 @@ class TestFeedback:
                 populated_instance,
                 receipt_id="bad-id",
                 action="approve",
-                source="human",
                 target=_edge_target(),
             )
         # Should be able to open stores again without issues
@@ -602,17 +610,74 @@ class TestFeedback:
                 populated_instance,
                 receipt_id="any",
                 action="bogus",  # type: ignore[arg-type]
-                source="human",
                 target=_edge_target(),
             )
 
-    def test_invalid_source(self, populated_instance: CruxibleInstance) -> None:
-        with pytest.raises(ConfigError, match="Invalid source"):
+    def _install_fits_profile(self, instance: CruxibleInstance) -> None:
+        config = instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=1,
+            reason_codes={
+                "vendor_mismatch": FeedbackReasonCodeSchema(
+                    description="Vendor mismatch",
+                    remediation_hint="constraint",
+                )
+            },
+            scope_keys={},
+        )
+        instance.save_config(config)
+
+    def test_reason_code_rule_keys_off_the_derived_actor(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        """A service account cannot buy the human exemption by declaring itself one.
+
+        The rule used to read a caller-supplied ``source`` that defaulted to
+        ``"human"``, so the writers it exists for could opt out of it simply by
+        saying they were people. It now reads ``actor_context.actor_type``, which
+        the caller does not get to assert.
+        """
+        self._install_fits_profile(populated_instance)
+        receipt_id = self._run_query(populated_instance)
+
+        agent = GovernedActorContext(
+            actor_type="service_account",
+            actor_id="svc_triage",
+            org_id="org_1",
+            operation_id="op_agent_feedback",
+            timestamp="2026-06-05T12:00:00Z",
+        )
+        with pytest.raises(ConfigError, match="requires reason_code"):
             service_feedback(
                 populated_instance,
-                receipt_id="any",
-                action="approve",
-                source="bogus",  # type: ignore[arg-type]
+                receipt_id=receipt_id,
+                action="reject",
+                target=_edge_target(),
+                actor_context=agent,
+            )
+
+        # The same call from a resolved human is allowed to omit it.
+        result = service_feedback(
+            populated_instance,
+            receipt_id=receipt_id,
+            action="reject",
+            target=_edge_target(),
+            actor_context=_human_actor(),
+        )
+        assert result.applied is True
+
+    def test_unattributed_feedback_gets_no_human_exemption(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        """No actor context is absence of evidence, not evidence of a human."""
+        self._install_fits_profile(populated_instance)
+        receipt_id = self._run_query(populated_instance)
+
+        with pytest.raises(ConfigError, match="requires reason_code"):
+            service_feedback(
+                populated_instance,
+                receipt_id=receipt_id,
+                action="reject",
                 target=_edge_target(),
             )
 
@@ -622,7 +687,6 @@ class TestFeedback:
                 populated_instance,
                 receipt_id="any",
                 action="correct",
-                source="human",
                 target=_edge_target(),
                 corrections="not a dict",  # type: ignore[arg-type]
             )
@@ -649,7 +713,6 @@ class TestFeedback:
                 populated_instance,
                 receipt_id=receipt_id,
                 action="reject",
-                source="agent",
                 target=_edge_target(),
             )
 
@@ -692,7 +755,6 @@ class TestFeedbackFromQuery:
             receipt_id=query.receipt_id,
             result_index=0,
             action="approve",
-            source="human",
             reason="catalog evidence accepted",
         )
 
@@ -752,7 +814,6 @@ class TestFeedbackFromQuery:
             receipt_id=query.receipt_id,
             result_index=0,
             action="reject",
-            source="agent",
             reason_code="vendor_mismatch",
             scope_hints={},
         )
@@ -770,7 +831,7 @@ class TestFeedbackFromQuery:
         )
         assert rel is not None
         assert rel.metadata.assertion.review.status == "rejected"
-        assert rel.metadata.assertion.review.source == "agent"
+        assert rel.metadata.assertion.review.source == "unknown"
         assert result.receipt_id is not None
         feedback_receipt = _get_receipt(populated_instance, result.receipt_id)
         assert feedback_receipt is not None
@@ -1198,7 +1259,6 @@ class TestFeedbackFromQuery:
             receipt_id=query.receipt_id,
             result_index=0,
             action="approve",
-            source="human",
         )
 
         assert result.applied is True
@@ -1274,7 +1334,6 @@ class TestOutcome:
                 populated_instance,
                 receipt_id=receipt_id,
                 outcome="incorrect",
-                source="agent",
             )
 
     def test_human_receipt_outcome_may_omit_code(
@@ -1300,7 +1359,7 @@ class TestOutcome:
             populated_instance,
             receipt_id=receipt_id,
             outcome="partial",
-            source="human",
+            actor_context=_human_actor(),
         )
         assert result.outcome_id.startswith("OUT-")
 

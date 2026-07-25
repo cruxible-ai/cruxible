@@ -608,8 +608,8 @@ def test_read_only_runtime_credential_can_read_but_not_write(
     assert read.status_code == 200
 
     governed_write = client.post(
-        f"/api/v1/{instance_id}/snapshots",
-        json={"label": "read-only-denied"},
+        f"/api/v1/{instance_id}/decision-records",
+        json={"question": "read-only-denied"},
         headers=headers,
     )
     assert governed_write.status_code == 403
@@ -653,12 +653,12 @@ def test_governed_write_runtime_credential_cannot_graph_write_or_admin(
     assert read.status_code == 200
 
     governed_write = client.post(
-        f"/api/v1/{instance_id}/snapshots",
-        json={"label": "governed-write-allowed"},
+        f"/api/v1/{instance_id}/decision-records",
+        json={"question": "governed-write-allowed"},
         headers=headers,
     )
     assert governed_write.status_code == 200
-    assert governed_write.json()["snapshot"]["snapshot_id"]
+    assert governed_write.json()["record"]["decision_record_id"]
 
     graph_write = client.post(
         f"/api/v1/{instance_id}/entities",
@@ -751,7 +751,6 @@ def _approve_fit_edge(
         f"/api/v1/{instance_id}/feedback",
         json={
             "action": "approve",
-            "source": "human",
             "from_type": "Part",
             "from_id": "BP-PEND",
             "relationship_type": "fits",
@@ -993,7 +992,6 @@ def test_auth_off_approve_promotes_without_actor_context(
         f"/api/v1/{instance_id}/feedback",
         json={
             "action": "approve",
-            "source": "human",
             "from_type": "Part",
             "from_id": "BP-PEND",
             "relationship_type": "fits",
@@ -1026,8 +1024,8 @@ def test_runtime_credential_effective_permission_header_is_enforced(
     assert read.status_code == 200
 
     governed_write = client.post(
-        f"/api/v1/{instance_id}/snapshots",
-        json={"label": "denied", "actor_context": _actor_context()},
+        f"/api/v1/{instance_id}/decision-records",
+        json={"question": "denied", "actor_context": _actor_context()},
         headers=headers,
     )
     assert governed_write.status_code == 403
@@ -1090,13 +1088,13 @@ def test_runtime_credential_governed_write_derives_actor_context(
     )
 
     response = client.post(
-        f"/api/v1/{instance_id}/snapshots",
-        json={"label": "derived-actor"},
+        f"/api/v1/{instance_id}/decision-records",
+        json={"question": "derived-actor"},
         headers=headers,
     )
 
     assert response.status_code == 200
-    assert response.json()["snapshot"]["snapshot_id"]
+    assert response.json()["record"]["decision_record_id"]
 
 
 def test_runtime_credential_direct_write_derives_actor_context(
