@@ -7,9 +7,11 @@ from datetime import datetime, timezone
 import pytest
 
 from cruxible_core.graph.assertion_state import (
+    EntityLifecycleState,
     RelationshipAssertion,
     RelationshipLifecycleState,
     RelationshipReviewState,
+    SupersessionPointer,
     relationship_is_live,
 )
 from cruxible_core.graph.provenance import RelationshipProvenance
@@ -103,3 +105,56 @@ def test_invalid_assertion_timestamp_is_not_silently_downgraded() -> None:
                 },
             }
         )
+
+
+def test_supersession_pointer_types_the_two_named_shapes() -> None:
+    """Edges are named by claim_id, entities by their natural key."""
+    edge_pointer = RelationshipLifecycleState.model_validate(
+        {"status": "superseded", "superseded_by": {"claim_id": "CLM-abc"}}
+    )
+    assert edge_pointer.superseded_by is not None
+    assert edge_pointer.superseded_by.claim_id == "CLM-abc"
+
+    entity_pointer = EntityLifecycleState.model_validate(
+        {"status": "superseded", "superseded_by": {"entity_type": "Part", "entity_id": "BP-1"}}
+    )
+    assert entity_pointer.superseded_by is not None
+    assert entity_pointer.superseded_by.entity_id == "BP-1"
+
+
+def test_supersession_pointer_stays_open_for_future_kinds() -> None:
+    """extra='allow' is deliberate: a new pointer kind needs no data migration."""
+    pointer = SupersessionPointer.model_validate({"procedure_id": "PRC-1"})
+    assert pointer.claim_id is None
+    assert pointer.model_dump()["procedure_id"] == "PRC-1"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},  # names nothing at all
+        {"entity_type": "Part"},  # half an entity reference
+        {"entity_id": "BP-1"},
+        {"claim_id": "CLM-abc", "entity_type": "Part", "entity_id": "BP-1"},  # both kinds
+    ],
+)
+def test_supersession_pointer_refuses_incoherent_shapes(payload: dict) -> None:
+    with pytest.raises(ValueError):
+        SupersessionPointer.model_validate(payload)
+
+
+def test_lifecycle_serialization_is_unchanged_when_no_pointer_is_set() -> None:
+    """Typing the field must not move any bytes for the (universal) unset case."""
+    dumped = RelationshipLifecycleState().model_dump(mode="json")
+    assert dumped["supersedes"] is None
+    assert dumped["superseded_by"] is None
+    assert list(dumped) == [
+        "status",
+        "reason",
+        "effective_from",
+        "effective_until",
+        "closed_at",
+        "closed_by",
+        "supersedes",
+        "superseded_by",
+    ]
