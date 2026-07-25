@@ -531,19 +531,169 @@ def test_register_refuses_invalid_caller_supplied_id(tmp_path: Path) -> None:
             )
 
 
-def test_register_refuses_duplicate_caller_supplied_id(tmp_path: Path) -> None:
+def _revisions(instance: CruxibleInstance, source_artifact_id: str):
+    store = instance.get_source_artifact_store()
+    try:
+        return store.list_artifact_revisions(source_artifact_id)
+    finally:
+        store.close()
+
+
+def test_reregistering_changed_content_supersedes_instead_of_overwriting(
+    tmp_path: Path,
+) -> None:
+    """The manifest prior evidence refs pinned must survive a re-registration."""
     instance = _instance(tmp_path)
     source_path = tmp_path / "evidence.md"
-    source_path.write_text("# Doc\n\nBody.\n")
+    source_path.write_text("# Doc\n\nOriginal body.\n")
 
-    service_register_source_artifact(
+    first = service_register_source_artifact(
         instance,
         source_path=str(source_path),
         source_artifact_id="pinned_evidence",
     )
-    with pytest.raises(ConfigError, match="already registered"):
-        service_register_source_artifact(
-            instance,
-            source_path=str(source_path),
-            source_artifact_id="pinned_evidence",
+    original_paragraph = next(
+        chunk for chunk in first.chunks if chunk.block_selector == "paragraph:1"
+    )
+
+    source_path.write_text("# Doc\n\nRewritten body.\n")
+    second = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_artifact_id="pinned_evidence",
+    )
+
+    assert second.already_registered is False
+    assert second.revision == 2
+    assert second.artifact_revision_id == "pinned_evidence@2"
+    assert second.supersedes == first.artifact_revision_id
+    assert second.content_hash != first.content_hash
+
+    revisions = _revisions(instance, "pinned_evidence")
+    assert [record.revision for record in revisions] == [1, 2]
+    assert revisions[0].content_hash == first.content_hash
+    assert revisions[0].superseded_by == "pinned_evidence@2"
+    assert revisions[0].superseded_at is not None
+    assert revisions[1].superseded_by is None
+
+    store = instance.get_source_artifact_store()
+    try:
+        # The superseded revision keeps its own chunk index; it was not
+        # deleted and rebuilt against the new content.
+        stale_chunks = store.list_revision_chunks(first.artifact_revision_id)
+        assert {chunk.chunk_id for chunk in stale_chunks} >= {original_paragraph.chunk_id}
+        stale = next(
+            chunk for chunk in stale_chunks if chunk.chunk_id == original_paragraph.chunk_id
         )
+        assert stale.content_hash == original_paragraph.content_hash
+        assert store.get_artifact("pinned_evidence").artifact_revision_id == "pinned_evidence@2"
+    finally:
+        store.close()
+
+
+def test_reregistering_identical_content_is_a_noop(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Doc\n\nBody.\n")
+
+    first = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_artifact_id="pinned_evidence",
+    )
+    second = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_artifact_id="pinned_evidence",
+        label="ignored relabel",
+    )
+
+    assert second.already_registered is True
+    assert second.revision == 1
+    assert second.artifact_revision_id == first.artifact_revision_id
+    assert second.supersedes is None
+    # The stored manifest is untouched, so the ignored relabel is not applied.
+    assert second.label is None
+    assert [record.revision for record in _revisions(instance, "pinned_evidence")] == [1]
+
+
+def test_registration_mints_a_receipt(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Doc\n\nBody.\n")
+
+    registered = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_artifact_id="receipted_evidence",
+        actor_context=_actor(),
+    )
+
+    assert registered.receipt_id is not None
+    store = instance.get_receipt_store()
+    try:
+        receipt = store.get_receipt(registered.receipt_id)
+    finally:
+        store.close()
+    assert receipt is not None
+    assert receipt.operation_type == "source_artifact_register"
+    assert receipt.committed is True
+    assert receipt.actor_context is not None
+    assert receipt.actor_context.actor_id == "usr_source"
+    detail = next(node.detail for node in receipt.nodes if node.node_type == "validation")
+    assert detail["outcome"] == "registered"
+    assert detail["artifact_revision_id"] == "receipted_evidence@1"
+
+
+def test_dry_run_registration_mints_no_receipt(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+
+    registered = service_register_source_artifact(
+        instance,
+        source_content="# Doc\n\nDry run body.\n",
+        source_artifact_id="dry_run_receipt_check",
+        persist=False,
+    )
+
+    assert registered.receipt_id is None
+    assert registered.artifact_revision_id == "dry_run_receipt_check@1"
+    store = instance.get_receipt_store()
+    try:
+        assert store.count_receipts(operation_type="source_artifact_register") == 0
+    finally:
+        store.close()
+
+
+def test_detected_drift_is_persisted_and_visible_to_later_reads(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Doc\n\nOriginal body.\n")
+    registered = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_artifact_id="drifting_evidence",
+    )
+
+    clean = service_get_source_artifact(instance, source_artifact_id="drifting_evidence")
+    assert clean.drift_observed_hash is None
+
+    source_path.write_text("# Doc\n\nTampered body.\n")
+    drifted = service_get_source_artifact(instance, source_artifact_id="drifting_evidence")
+    assert drifted.content_available is False
+    assert drifted.drift_observed_hash is not None
+    assert drifted.drift_observed_hash != registered.content_hash
+    observed_at = drifted.drift_observed_at
+    assert observed_at is not None
+
+    # The finding survives the read that produced it: a later reader sees the
+    # recorded drift without recomputing it.
+    stored = _get_source_artifact(instance, "drifting_evidence")
+    assert stored is not None
+    assert stored.drift_observed_hash == drifted.drift_observed_hash
+    assert stored.drift_observed_at == observed_at
+
+    # Restoring the file clears the marker, so it never misreports current state.
+    source_path.write_text("# Doc\n\nOriginal body.\n")
+    restored = service_get_source_artifact(instance, source_artifact_id="drifting_evidence")
+    assert restored.content_available is True
+    assert restored.drift_observed_hash is None

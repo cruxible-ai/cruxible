@@ -157,6 +157,7 @@ def test_handle_register_source_artifact_omitted_id_preserves_client_call_shape(
             }
             return contracts.RegisterSourceArtifactResult(
                 source_artifact_id="SRC-generated",
+                artifact_revision_id="SRC-generated@1",
                 source_kind="markdown",
                 source_retention="manifest_only",
                 content_hash="sha256:generated",
@@ -408,11 +409,12 @@ def test_register_source_artifact_threads_caller_supplied_id(
     assert result["chunks"]
 
 
-def test_register_source_artifact_duplicate_id_surfaces_clean_mcp_error(
+def test_register_source_artifact_duplicate_id_is_a_noop_over_mcp(
     server,
     governed_client,
     tmp_project: Path,
 ) -> None:
+    """Re-registering identical content reports the stored revision, unchanged."""
     instance_id = _init_governed_source_instance(server, tmp_project)
     source_path = tmp_project / "wiki-source.md"
     source_path.write_text("# Wiki Source\n\nPinned source evidence.\n")
@@ -422,11 +424,14 @@ def test_register_source_artifact_duplicate_id_surfaces_clean_mcp_error(
         "source_artifact_id": "wiki_import_duplicate",
     }
 
-    call_tool(server, "cruxible_register_source_artifact", args)
-    error = call_tool_expect_error(server, "cruxible_register_source_artifact", args)
+    first = call_tool(server, "cruxible_register_source_artifact", args)
+    second = call_tool(server, "cruxible_register_source_artifact", args)
 
-    assert "Source artifact 'wiki_import_duplicate' is already registered" in error
-    assert "Traceback" not in error
+    assert first["already_registered"] is False
+    assert first["artifact_revision_id"] == "wiki_import_duplicate@1"
+    assert second["already_registered"] is True
+    assert second["artifact_revision_id"] == first["artifact_revision_id"]
+    assert second["revision"] == 1
 
 
 def test_validate_valid_config(server, tmp_project: Path) -> None:

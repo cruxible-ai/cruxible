@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from cruxible_core.errors import DataValidationError
+from cruxible_core.errors import DataValidationError, MutationError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.mutation_payloads import retain_mutation_payload
@@ -728,6 +729,70 @@ class TestSQLiteReceiptStore:
             "SELECT COUNT(*) AS count FROM execution_traces",
         ).fetchone()
         assert row["count"] == 0
+
+    def test_trace_round_trips_actor_context(self, store: SQLiteReceiptStore):
+        trace = ExecutionTrace(
+            workflow_name="wf",
+            step_id="side_effecting",
+            provider_name="provider",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.provider",
+            runtime="python",
+            deterministic=False,
+            side_effects=True,
+            actor_context=GovernedActorContext(
+                actor_type="service_account",
+                actor_id="agt_trace",
+                org_id="org_1",
+                operation_id="op_trace",
+                timestamp="2026-06-05T12:00:00Z",
+            ),
+            **_trace_timing(),
+        )
+
+        loaded = store.get_trace(store.save_trace(trace))
+
+        assert loaded is not None
+        assert loaded.actor_context is not None
+        assert loaded.actor_context.actor_id == "agt_trace"
+        assert loaded.actor_context.operation_id == "op_trace"
+        row = store._conn.execute(
+            "SELECT actor_id FROM execution_traces WHERE trace_id = ?",
+            (trace.trace_id,),
+        ).fetchone()
+        assert row["actor_id"] == "agt_trace"
+
+    def test_duplicate_trace_id_does_not_replace_the_recorded_execution(
+        self,
+        store: SQLiteReceiptStore,
+    ):
+        """A trace is evidence a run happened; a second run must not erase it."""
+        first = ExecutionTrace(
+            trace_id="TRC_collide",
+            workflow_name="wf",
+            step_id="step",
+            provider_name="provider",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.provider",
+            runtime="python",
+            deterministic=True,
+            side_effects=True,
+            output_payload={"run": "first"},
+            **_trace_timing(),
+        )
+        store.save_trace(first)
+
+        second = first.model_copy(update={"output_payload": {"run": "second"}}, deep=True)
+        with pytest.raises(MutationError, match="already exists"):
+            store.save_trace(second)
+
+        loaded = store.get_trace("TRC_collide")
+        assert loaded is not None
+        assert loaded.output_payload == {"run": "first"}
+        row = store._conn.execute(
+            "SELECT COUNT(*) AS count FROM execution_traces",
+        ).fetchone()
+        assert row["count"] == 1
 
     def test_list_traces(self, store: SQLiteReceiptStore):
         trace_a = ExecutionTrace(

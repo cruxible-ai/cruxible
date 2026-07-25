@@ -720,6 +720,7 @@ def test_source_artifact_methods_use_expected_routes_and_payloads():
                 200,
                 json={
                     "source_artifact_id": "SRC-1",
+                    "artifact_revision_id": "SRC-1@1",
                     "source_kind": "markdown",
                     "source_retention": "archive",
                     "content_hash": "sha256:abc",
@@ -823,6 +824,7 @@ def test_source_artifact_read_methods_use_expected_routes_and_params():
             200,
             json={
                 "source_artifact_id": "SRC-1",
+                "artifact_revision_id": "SRC-1@1",
                 "kind": "markdown",
                 "retention": "archive",
                 "original_uri": "docs/evidence.md",
@@ -2742,6 +2744,7 @@ def test_governed_write_clients_serialize_actor_context_when_supplied():
                 200,
                 json={
                     "source_artifact_id": "SRC-1",
+                    "artifact_revision_id": "SRC-1@1",
                     "source_kind": "markdown",
                     "source_retention": "manifest_only",
                     "content_hash": "sha256:abc",
@@ -2837,6 +2840,7 @@ def test_register_source_artifact_sends_caller_supplied_id():
             200,
             json={
                 "source_artifact_id": "opinion_text_op_loper_bright",
+                "artifact_revision_id": "opinion_text_op_loper_bright@1",
                 "source_kind": "markdown",
                 "source_retention": "manifest_only",
                 "original_uri": None,
