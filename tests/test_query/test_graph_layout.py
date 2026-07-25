@@ -266,6 +266,7 @@ def _fits(part: str, vehicle: str, **properties: Any) -> RelationshipInstance:
         from_id=part,
         to_type="Vehicle",
         to_id=vehicle,
+        claim_id=mint_claim_id(),
         properties=properties,
     )
 
