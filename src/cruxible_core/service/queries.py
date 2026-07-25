@@ -322,8 +322,7 @@ def _evaluate_query_result(
         params,
         relationship_state=relationship_state,
     )
-    if query_result.receipt:
-        query_result.receipt.head_snapshot_id = instance.get_head_snapshot_id()
+    _stamp_query_receipt_state_coordinates(instance, query_result)
     total = query_result.total_results or len(query_result.results)
     return QueryServiceResult(
         items=query_result.results,
@@ -348,6 +347,27 @@ def _evaluate_query_result(
     )
 
 
+def _stamp_query_receipt_state_coordinates(
+    instance: InstanceProtocol,
+    query_result: Any,
+) -> None:
+    """Stamp the decision-time state coordinates onto a built query receipt.
+
+    Mutation receipts get both coordinates from the mutation-receipt wrapper
+    once its write boundary opens. Query receipts own no write transaction, so
+    they are stamped here, at the service boundary that just read the graph —
+    the same place ``head_snapshot_id`` was already being pinned.
+
+    ``read_revision`` matters beyond symmetry: a resolution contract resolved
+    against a query receipt needs that receipt ALONE to prove which revision of
+    state was observed, without a live envelope alongside it.
+    """
+    if not query_result.receipt:
+        return
+    query_result.receipt.head_snapshot_id = instance.get_head_snapshot_id()
+    query_result.receipt.read_revision = instance.get_read_revision()
+
+
 def _evaluate_inline_query_result(
     instance: InstanceProtocol,
     query_name: str,
@@ -366,8 +386,7 @@ def _evaluate_inline_query_result(
         params,
         relationship_state=relationship_state,
     )
-    if query_result.receipt:
-        query_result.receipt.head_snapshot_id = instance.get_head_snapshot_id()
+    _stamp_query_receipt_state_coordinates(instance, query_result)
     total = query_result.total_results or len(query_result.results)
     return QueryServiceResult(
         items=query_result.results,
