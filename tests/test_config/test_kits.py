@@ -25,6 +25,14 @@ from cruxible_core.kits import (
     write_materialized_kit_metadata,
 )
 from cruxible_core.provider.registry import resolve_provider
+from tests.support.workflow_helpers import write_placeholder_kit_lock
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_kit_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate the kit bundle cache: the shared user cache can hold legacy
+    entries (e.g. pre-digest locks) that make these tests environment-dependent."""
+    monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "kit-cache"))
 
 
 def test_kit_manifest_validates_roles() -> None:
@@ -392,6 +400,4 @@ def _write_minimal_kit(
     root.joinpath("config.yaml").write_text(
         "version: '1.0'\nname: demo\nentity_types: {}\nrelationships: []\n"
     )
-    root.joinpath("cruxible.lock.yaml").write_text(
-        "version: '1'\nconfig_digest: test\nartifacts: {}\nproviders: {}\n"
-    )
+    write_placeholder_kit_lock(root)

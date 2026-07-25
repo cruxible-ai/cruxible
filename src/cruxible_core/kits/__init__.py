@@ -691,11 +691,17 @@ def _verify_bundled_lock(root: Path) -> None:
         ) from exc
     expected = compute_lock_digest(lock)
     if lock.lock_digest is None:
+        cache_hint = (
+            f" This bundle is cached; deleting {lock_path.parent} re-fetches it "
+            "from source."
+            if _kit_cache_dir() in lock_path.parents
+            else ""
+        )
         raise ConfigError(
             f"Kit bundle lock at {lock_path} records no lock_digest, so its pinned "
             f"providers and artifacts cannot be verified (its contents hash to "
             f"{expected}). Re-run `cruxible lock --kit-dir <kit>` upstream and "
-            "re-publish the kit."
+            f"re-publish the kit.{cache_hint}"
         )
     if lock.lock_digest != expected:
         raise ConfigError(
