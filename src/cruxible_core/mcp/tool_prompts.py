@@ -273,7 +273,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_attest": (
         "Use when you observed evidence supporting, contradicting, or leaving you "
         "unsure about one relationship claim. Supply evidence for support or "
-        "contradict; a note is optional but encouraged for unsure."
+        "contradict; a note is optional but encouraged for unsure. If the claim "
+        "does not exist yet, a 'support' stance CREATES it as a pending "
+        "(unreviewed) claim from 'properties' — 'contradict' and 'unsure' are "
+        "refused on an absent claim."
     ),
     "cruxible_list_attestations": (
         "Use when you need immutable observation history for one claim tuple or stance."

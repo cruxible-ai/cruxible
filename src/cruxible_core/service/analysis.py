@@ -10,6 +10,7 @@ from cruxible_core.config.schema import (
     CoreConfig,
     FeedbackProfileSchema,
     FeedbackRemediationHint,
+    OutcomeProfileSchema,
     OutcomeRemediationHint,
     SurfaceType,
 )
@@ -62,6 +63,14 @@ if TYPE_CHECKING:
 
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
+
+_ANALYSIS_PAGE_SIZE = 500
+"""Rows fetched per store round-trip when filling an analysis window.
+
+The caller's ``limit`` is the analysis window, not the read batch size. Paging
+it keeps a large window from becoming one unbounded row fetch, the same shape
+``_state_health_groups`` uses.
+"""
 
 
 def service_evaluate(
@@ -448,15 +457,34 @@ def service_analyze_feedback(
     if rel is None:
         raise ConfigError(f"Relationship type '{relationship_type}' not found in config")
 
+    if limit < 1:
+        raise ConfigError("limit must be a positive integer")
+
     profile = config.get_feedback_profile(relationship_type)
     store = instance.get_feedback_store()
     try:
-        feedback_rows = store.list_feedback(
+        population_count = store.count_feedback(
             relationship_type=relationship_type,
             decision_surface_type=decision_surface_type,
             decision_surface_name=decision_surface_name,
-            limit=limit,
         )
+        feedback_rows: list[FeedbackRecord] = []
+        offset = 0
+        while len(feedback_rows) < limit:
+            page = min(_ANALYSIS_PAGE_SIZE, limit - len(feedback_rows))
+            batch = store.list_feedback(
+                relationship_type=relationship_type,
+                decision_surface_type=decision_surface_type,
+                decision_surface_name=decision_surface_name,
+                limit=page,
+                offset=offset,
+            )
+            if not batch:
+                break
+            feedback_rows.extend(batch)
+            if len(batch) < page:
+                break
+            offset += page
     finally:
         store.close()
 
@@ -465,6 +493,17 @@ def service_analyze_feedback(
     reason_code_counts: dict[str, int] = {}
     warnings: list[str] = []
     warning_keys: set[str] = set()
+
+    # Say so when the window did not cover the population. Every count below is
+    # computed over the rows actually read; reporting them beside a silently
+    # truncated read let a sampled tally read as a census.
+    truncated = population_count > len(feedback_rows)
+    if truncated:
+        warnings.append(
+            f"Analyzed the {len(feedback_rows)} most recent feedback rows of "
+            f"{population_count} matching; every count below describes that sample, "
+            "not the population. Raise limit or narrow the filters for full coverage."
+        )
     coded_groups: dict[
         tuple[str, tuple[tuple[str, Any], ...], tuple[tuple[str, Any], ...]],
         list[FeedbackRecord],
@@ -589,6 +628,8 @@ def service_analyze_feedback(
     return AnalyzeFeedbackResult(
         relationship_type=relationship_type,
         feedback_count=len(feedback_rows),
+        feedback_population_count=population_count,
+        truncated=truncated,
         action_counts=action_counts,
         source_counts=source_counts,
         reason_code_counts=reason_code_counts,
@@ -630,16 +671,36 @@ def service_analyze_outcomes(
         surface_name=surface_name,
     )
 
+    if limit < 1:
+        raise ConfigError("limit must be a positive integer")
+
     config = instance.load_config()
     store = instance.get_feedback_store()
     try:
-        outcome_rows = store.list_outcomes(
+        population_count = store.count_outcomes(
             anchor_type=anchor_type,
             relationship_type=relationship_type,
             decision_surface_type=normalized_surface_type,
             decision_surface_name=normalized_surface_name,
-            limit=limit,
         )
+        outcome_rows: list[OutcomeRecord] = []
+        offset = 0
+        while len(outcome_rows) < limit:
+            page = min(_ANALYSIS_PAGE_SIZE, limit - len(outcome_rows))
+            batch = store.list_outcomes(
+                anchor_type=anchor_type,
+                relationship_type=relationship_type,
+                decision_surface_type=normalized_surface_type,
+                decision_surface_name=normalized_surface_name,
+                limit=page,
+                offset=offset,
+            )
+            if not batch:
+                break
+            outcome_rows.extend(batch)
+            if len(batch) < page:
+                break
+            offset += page
     finally:
         store.close()
 
@@ -647,6 +708,16 @@ def service_analyze_outcomes(
     outcome_code_counts: dict[str, int] = {}
     warnings: list[str] = []
     warning_keys: set[str] = set()
+
+    # Same honesty rule as analyze_feedback: a windowed read must not present
+    # its tallies as the population's.
+    truncated = population_count > len(outcome_rows)
+    if truncated:
+        warnings.append(
+            f"Analyzed the {len(outcome_rows)} most recent outcome rows of "
+            f"{population_count} matching; every count below describes that sample, "
+            "not the population. Raise limit or narrow the filters for full coverage."
+        )
     coded_groups: dict[
         tuple[str, tuple[tuple[str, Any], ...], tuple[tuple[str, Any], ...]],
         list[OutcomeRecord],
@@ -763,6 +834,8 @@ def service_analyze_outcomes(
     return AnalyzeOutcomesResult(
         anchor_type=anchor_type,
         outcome_count=len(outcome_rows),
+        outcome_population_count=population_count,
+        truncated=truncated,
         outcome_counts=outcome_counts,
         outcome_code_counts=outcome_code_counts,
         coded_groups=sorted(
@@ -1169,22 +1242,18 @@ def _resolve_outcome_row_remediation_hint(
     if row.outcome_remediation_hint is not None:
         if row.outcome_profile_key is not None:
             profile = config.get_outcome_profile(row.outcome_profile_key)
-            if (
-                profile is not None
-                and row.outcome_profile_version is not None
-                and row.outcome_profile_version != profile.version
-            ):
+            if profile is not None and _profile_body_drifted(row.outcome_profile_digest, profile):
                 _append_warning_once(
                     warnings=warnings,
                     warning_keys=warning_keys,
                     key=(
-                        "outcome-profile-version:"
-                        f"{row.outcome_profile_key}:{row.outcome_profile_version}:{profile.version}"
+                        "outcome-profile-drift:"
+                        f"{row.outcome_profile_key}:{row.outcome_profile_digest}"
                     ),
                     message=(
-                        f"Outcomes for profile '{row.outcome_profile_key}' reference version "
-                        f"{row.outcome_profile_version} while current config is version "
-                        f"{profile.version}; using stored remediation hints"
+                        f"Outcomes for profile '{row.outcome_profile_key}' were coded under a "
+                        f"different profile body (digest {row.outcome_profile_digest} vs current "
+                        f"{profile.body_digest()}); using stored remediation hints"
                     ),
                 )
         return row.outcome_remediation_hint
@@ -1202,17 +1271,18 @@ def _resolve_outcome_row_remediation_hint(
         )
         return None
 
-    if row.outcome_profile_version is not None and row.outcome_profile_version != profile.version:
+    if _profile_body_drifted(row.outcome_profile_digest, profile):
         _append_warning_once(
             warnings=warnings,
             warning_keys=warning_keys,
             key=(
-                f"outcome-profile-version-nohint:{row.outcome_profile_key}:"
-                f"{row.outcome_profile_version}:{profile.version}"
+                f"outcome-profile-drift-nohint:{row.outcome_profile_key}:"
+                f"{row.outcome_profile_digest}"
             ),
             message=(
-                f"Outcome profile '{row.outcome_profile_key}' references version "
-                f"{row.outcome_profile_version} but does not store a remediation hint; "
+                f"Outcome profile '{row.outcome_profile_key}' was coded under a different "
+                f"profile body (digest {row.outcome_profile_digest} vs current "
+                f"{profile.body_digest()}) and stores no remediation hint; "
                 "automated suggestions for those rows were skipped"
             ),
         )
@@ -1516,6 +1586,23 @@ def _common_trace_patterns(rows: list[OutcomeRecord]) -> list[str]:
     ]
 
 
+def _profile_body_drifted(
+    stored_digest: str | None,
+    profile: FeedbackProfileSchema | OutcomeProfileSchema,
+) -> bool:
+    """Return whether a row was coded under a different profile BODY.
+
+    Drift is bound to the profile's content digest, not its hand-declared
+    ``version``: editing a reason code's remediation lane without bumping the
+    number used to reinterpret stored rows in silence. A row with no stored
+    digest predates the field — its authoring body is unrecoverable, so drift
+    is reported as unknown (False) rather than guessed at.
+    """
+    if stored_digest is None:
+        return False
+    return stored_digest != profile.body_digest()
+
+
 def _resolve_row_remediation_hint(
     *,
     relationship_type: str,
@@ -1527,22 +1614,15 @@ def _resolve_row_remediation_hint(
 ) -> FeedbackRemediationHint | None:
     """Resolve one row's remediation hint from stored metadata first."""
     if row.reason_remediation_hint is not None:
-        if (
-            profile is not None
-            and row.feedback_profile_version is not None
-            and row.feedback_profile_version != profile.version
-        ):
+        if profile is not None and _profile_body_drifted(row.feedback_profile_digest, profile):
             _append_warning_once(
                 warnings=warnings,
                 warning_keys=warning_keys,
-                key=(
-                    f"profile-version:{relationship_type}:{row.feedback_profile_version}:"
-                    f"{profile.version}"
-                ),
+                key=f"profile-drift:{relationship_type}:{row.feedback_profile_digest}",
                 message=(
-                    f"Feedback for relationship '{relationship_type}' references profile "
-                    f"version {row.feedback_profile_version} while current config is "
-                    f"version {profile.version}; using stored remediation hints"
+                    f"Feedback for relationship '{relationship_type}' was coded under a "
+                    f"different profile body (digest {row.feedback_profile_digest} vs "
+                    f"current {profile.body_digest()}); using stored remediation hints"
                 ),
             )
         return row.reason_remediation_hint
@@ -1560,17 +1640,15 @@ def _resolve_row_remediation_hint(
             ),
         )
         return None
-    if row.feedback_profile_version is not None and row.feedback_profile_version != profile.version:
+    if _profile_body_drifted(row.feedback_profile_digest, profile):
         _append_warning_once(
             warnings=warnings,
             warning_keys=warning_keys,
-            key=(
-                f"profile-version-nohint:{relationship_type}:{row.feedback_profile_version}:"
-                f"{profile.version}"
-            ),
+            key=f"profile-drift-nohint:{relationship_type}:{row.feedback_profile_digest}",
             message=(
-                f"Feedback for relationship '{relationship_type}' references profile "
-                f"version {row.feedback_profile_version} but does not store a remediation hint; "
+                f"Feedback for relationship '{relationship_type}' was coded under a different "
+                f"profile body (digest {row.feedback_profile_digest} vs current "
+                f"{profile.body_digest()}) and stores no remediation hint; "
                 "automated suggestions for those rows were skipped"
             ),
         )

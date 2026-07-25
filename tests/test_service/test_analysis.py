@@ -477,6 +477,144 @@ class TestAnalyzeFeedback:
         assert result.constraint_suggestions == []
         assert any("using stored remediation hints" in warning for warning in result.warnings)
 
+    def _seed_two_coded_rejections(
+        self,
+        instance: CruxibleInstance,
+        *,
+        remediation_hint: str,
+        version: int = 1,
+    ) -> None:
+        config = instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=version,
+            reason_codes={
+                "legacy_unsupported": FeedbackReasonCodeSchema(
+                    description="Legacy environment is unsupported",
+                    remediation_hint=remediation_hint,  # type: ignore[arg-type]
+                    required_scope_keys=["category", "make"],
+                )
+            },
+            scope_keys={"category": "FROM.category", "make": "TO.make"},
+        )
+        instance.save_config(config)
+
+        for part_id in ("BP-1001", "BP-1002"):
+            query = service_query(
+                instance,
+                "parts_for_vehicle",
+                {"vehicle_id": "V-2024-CIVIC-EX"},
+            )
+            assert query.receipt_id is not None
+            service_feedback(
+                instance,
+                receipt_id=query.receipt_id,
+                action="reject",
+                source="agent",
+                target=_feedback_target(part_id),
+                reason="Legacy unsupported",
+                reason_code="legacy_unsupported",
+                scope_hints={"category": "brakes", "make": "Honda"},
+            )
+
+    def test_profile_drift_is_detected_when_the_version_number_does_not_move(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        """Editing the profile body without bumping ``version`` still warns.
+
+        The declared version is hand-maintained, so drift binds to a digest of
+        the profile BODY instead. Before this, changing a reason code's
+        remediation lane in place reinterpreted every stored row in silence.
+        """
+        self._seed_two_coded_rejections(
+            populated_instance,
+            remediation_hint="decision_policy",
+            version=1,
+        )
+
+        # Same declared version, different body.
+        config = populated_instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=1,
+            reason_codes={
+                "legacy_unsupported": FeedbackReasonCodeSchema(
+                    description="Legacy environment is unsupported",
+                    remediation_hint="constraint",
+                    required_scope_keys=["category", "make"],
+                )
+            },
+            scope_keys={"category": "FROM.category", "make": "TO.make"},
+        )
+        populated_instance.save_config(config)
+
+        result = service_analyze_feedback(
+            populated_instance,
+            "fits",
+            min_support=2,
+            decision_surface_type="query",
+            decision_surface_name="parts_for_vehicle",
+        )
+
+        assert any("different profile body" in warning for warning in result.warnings)
+        # The stored hint still governs; the edit does not retro-reinterpret.
+        assert len(result.decision_policy_suggestions) == 1
+        assert result.constraint_suggestions == []
+
+    def test_no_drift_warning_when_only_the_declared_version_moves(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        """Bumping ``version`` with an unchanged body is not drift."""
+        self._seed_two_coded_rejections(
+            populated_instance,
+            remediation_hint="decision_policy",
+            version=1,
+        )
+
+        config = populated_instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=7,
+            reason_codes={
+                "legacy_unsupported": FeedbackReasonCodeSchema(
+                    description="Legacy environment is unsupported",
+                    remediation_hint="decision_policy",
+                    required_scope_keys=["category", "make"],
+                )
+            },
+            scope_keys={"category": "FROM.category", "make": "TO.make"},
+        )
+        populated_instance.save_config(config)
+
+        result = service_analyze_feedback(
+            populated_instance,
+            "fits",
+            min_support=2,
+            decision_surface_type="query",
+            decision_surface_name="parts_for_vehicle",
+        )
+
+        assert not any("different profile body" in warning for warning in result.warnings)
+
+    def test_analysis_reports_population_and_flags_a_truncated_window(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        """A windowed read must not present its tallies as the population's."""
+        self._seed_two_coded_rejections(populated_instance, remediation_hint="decision_policy")
+
+        full = service_analyze_feedback(populated_instance, "fits", min_support=2)
+        assert full.feedback_count == 2
+        assert full.feedback_population_count == 2
+        assert full.truncated is False
+        assert not any("most recent feedback rows" in warning for warning in full.warnings)
+
+        sampled = service_analyze_feedback(populated_instance, "fits", min_support=2, limit=1)
+        assert sampled.feedback_count == 1
+        # The population is still reported honestly alongside the sample.
+        assert sampled.feedback_population_count == 2
+        assert sampled.truncated is True
+        assert any(
+            "Analyzed the 1 most recent feedback rows of 2 matching" in warning
+            for warning in sampled.warnings
+        )
+
     def test_constraint_suggestions_use_feedback_snapshot_not_current_graph(
         self, populated_instance: CruxibleInstance
     ) -> None:
@@ -606,10 +744,28 @@ class TestAnalyzeOutcomes:
         )
 
         assert result.outcome_count == 2
+        assert result.outcome_population_count == 2
+        assert result.truncated is False
         assert result.outcome_code_counts["bad_result"] == 2
         assert len(result.provider_fix_candidates) == 1
         assert result.provider_fix_candidates[0].surface_name == "parts_for_vehicle"
         assert len(result.workflow_debug_packages) == 1
+
+        # A narrowed window reports the population it did NOT cover.
+        sampled = service_analyze_outcomes(
+            populated_instance,
+            anchor_type="receipt",
+            query_name="parts_for_vehicle",
+            min_support=2,
+            limit=1,
+        )
+        assert sampled.outcome_count == 1
+        assert sampled.outcome_population_count == 2
+        assert sampled.truncated is True
+        assert any(
+            "Analyzed the 1 most recent outcome rows of 2 matching" in warning
+            for warning in sampled.warnings
+        )
 
     def test_outcome_analysis_uses_stored_hint_across_profile_versions(
         self, populated_instance: CruxibleInstance

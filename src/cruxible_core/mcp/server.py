@@ -56,12 +56,18 @@ Workflow guidance belongs client-side in agent skills or playbooks, not in MCP p
 
 The server runs in one of four cumulative permission modes controlled by
 the `CRUXIBLE_MODE` environment variable:
-- `READ_ONLY`: query, inspect, validate — no graph or config mutations
-- `GOVERNED_WRITE`: READ_ONLY + receipt-persisting workflow runs,
-  governed proposal, and feedback surfaces
+- `READ_ONLY`: query, inspect, validate — no graph or config mutations.
+  Reads are not side-effect-free: `cruxible_query` and gate checks persist
+  their receipt rows, which is how their evidence survives the call.
+- `GOVERNED_WRITE`: READ_ONLY + workflow runs, governed proposal and
+  feedback surfaces, snapshots, and governed config ADDITIONS
+  (`cruxible_add_constraint`, `cruxible_add_decision_policy`)
 - `GRAPH_WRITE`: GOVERNED_WRITE + raw graph mutation, canonical workflow
   apply, and proposal resolution
-- `ADMIN` (default): all tools available including ingest and config mutation
+- `ADMIN` (default): all tools, including instance lifecycle, backup and
+  restore, locks, replacing the ACTIVE config wholesale
+  (`cruxible_reload_config`, `cruxible_state_pull_apply`), and published-state
+  trust boundaries
 
 If a tool call is denied, the error message indicates the required mode.
 

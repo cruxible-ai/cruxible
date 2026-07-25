@@ -214,6 +214,28 @@ def test_publish_overlay_and_pull_apply_preserves_overlay_overlay(
     assert status.upstream is not None
     assert status.upstream.release_id == "v1.1.0"
 
+    # Pull-apply replaces the active config AND the whole graph, so it mints a
+    # receipt pinning the release identity on both sides plus every
+    # materialized member digest.
+    assert applied.receipt_id is not None
+    store = overlay_instance.get_receipt_store()
+    try:
+        receipt = store.get_receipt(applied.receipt_id)
+    finally:
+        store.close()
+    assert receipt is not None
+    assert receipt.operation_type == "state_pull_apply"
+    assert receipt.committed is True
+    assert receipt.parameters["previous_release_id"] == "v1.0.0"
+    assert receipt.parameters["release_id"] == "v1.1.0"
+    assert receipt.parameters["apply_digest"] == preview.apply_digest
+    assert receipt.parameters["pre_pull_snapshot_id"] == applied.pre_pull_snapshot_id
+    for digest_field in ("manifest_digest", "graph_digest", "upstream_config_digest"):
+        assert receipt.parameters[digest_field].startswith("sha256:")
+    # Absent members are pinned as null, not omitted — the receipt states the
+    # same thing upstream_verification will later compare against.
+    assert "upstream_lock_digest" in receipt.parameters
+
 
 def test_pull_apply_clears_dangling_upstream_receipt_and_stamps_clone_origin(
     published_release_fixture: tuple[CruxibleInstance, Path],

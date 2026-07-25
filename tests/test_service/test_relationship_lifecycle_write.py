@@ -16,11 +16,13 @@ import pytest
 
 from cruxible_client import contracts
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.errors import TerminalLifecycleWriteRefusedError
 from cruxible_core.graph.assertion_state import (
     RelationshipLifecycleState,
     RelationshipReviewState,
 )
 from cruxible_core.service import service_list
+from cruxible_core.service.lifecycle_inputs import relationship_lifecycle_state
 from cruxible_core.service.mutations import service_batch_direct_write
 from cruxible_core.service.queries import service_get_relationship
 from cruxible_core.service.types import BatchDirectWriteInput, BatchRelationshipWriteInput
@@ -203,6 +205,35 @@ def test_relationship_lifecycle_status_validated_against_relationship_vocab() ->
 
 
 # ---------------------------------------------------------------------------
+# Terminal statuses are NOT free-writable (interim, pending wi-lifecycle-verbs)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("status", ["retracted", "superseded"])
+def test_terminal_relationship_lifecycle_is_refused_on_the_free_write_path(
+    status: str,
+) -> None:
+    """Retracting/superseding a claim is a judgement, not a property edit."""
+    with pytest.raises(
+        TerminalLifecycleWriteRefusedError,
+        match="terminal lifecycle transitions require",
+    ):
+        relationship_lifecycle_state(
+            contracts.RelationshipLifecycleInput(status=status, reason="because")  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("status", ["active", "inactive"])
+def test_non_terminal_relationship_lifecycle_stays_writable(status: str) -> None:
+    """Participation flips are reversible and remain a plain write."""
+    state = relationship_lifecycle_state(
+        contracts.RelationshipLifecycleInput(status=status, reason="because")  # type: ignore[arg-type]
+    )
+    assert state is not None
+    assert state.status == status
+
+
+# ---------------------------------------------------------------------------
 # add_relationship path (MCP / HTTP): lifecycle is HONORED, not dropped
 # ---------------------------------------------------------------------------
 #
@@ -213,11 +244,11 @@ def test_relationship_lifecycle_status_validated_against_relationship_vocab() ->
 # the lifecycle is applied while review/group_override stay untouched.
 
 
-def _retract_fits_via_add_relationship(
+def _deactivate_fits_via_add_relationship(
     instance: CruxibleInstance,
     *,
-    status: str = "retracted",
-    reason: str | None = "superseded via add path",
+    status: str = "inactive",
+    reason: str | None = "paused via add path",
 ) -> None:
     """Retract the edge through the non-batch add_relationship path.
 
@@ -261,13 +292,13 @@ def test_add_relationship_path_applies_lifecycle(
     assert before is not None
     assert before.metadata.assertion.lifecycle.status == "active"
 
-    _retract_fits_via_add_relationship(populated_instance)
+    _deactivate_fits_via_add_relationship(populated_instance)
 
     after = _get_fits(populated_instance)
     assert after is not None
     # Lifecycle is HONORED (was a silent no-op before the fix).
-    assert after.metadata.assertion.lifecycle.status == "retracted"
-    assert after.metadata.assertion.lifecycle.reason == "superseded via add path"
+    assert after.metadata.assertion.lifecycle.status == "inactive"
+    assert after.metadata.assertion.lifecycle.reason == "paused via add path"
     # Edge properties untouched.
     assert after.properties["verified"] is True
 
@@ -312,12 +343,12 @@ def test_add_relationship_lifecycle_write_preserves_review_and_override(
     review_before = _get_fits(populated_instance).metadata.assertion.review.model_dump(mode="json")
     assert review_before["status"] == "approved"
 
-    _retract_fits_via_add_relationship(populated_instance)
+    _deactivate_fits_via_add_relationship(populated_instance)
 
     after = _get_fits(populated_instance)
     assert after is not None
     # Lifecycle changed via the typed channel...
-    assert after.metadata.assertion.lifecycle.status == "retracted"
+    assert after.metadata.assertion.lifecycle.status == "inactive"
     # ...but review state and group_override are byte-identical (review-safe).
     assert after.metadata.assertion.review.model_dump(mode="json") == review_before
     assert after.metadata.assertion.group_override is True

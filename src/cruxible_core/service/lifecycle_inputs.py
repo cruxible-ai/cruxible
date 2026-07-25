@@ -9,6 +9,10 @@ validated lifecycle and never hand-authors a metadata dict.
 Review safety: ``RelationshipLifecycleInput`` carries only ``status``/``reason``;
 mapping it to ``RelationshipLifecycleState`` cannot produce review/group_override
 state, and ``apply_relationship`` writes only ``assertion.lifecycle`` from it.
+
+Terminal statuses are NOT writable through this channel — see
+:data:`TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES` and
+:data:`TERMINAL_ENTITY_LIFECYCLE_STATUSES`.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from cruxible_client import contracts
+from cruxible_core.errors import TerminalLifecycleWriteRefusedError
 from cruxible_core.graph.assertion_state import (
     EntityLifecycleState as _EntityLifecycleState,
 )
@@ -23,6 +28,26 @@ from cruxible_core.graph.assertion_state import (
     RelationshipLifecycleState,
 )
 from cruxible_core.graph.types import EntityMetadata
+
+TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES = frozenset({"retracted", "superseded"})
+"""Relationship statuses a free-form add/update may not write."""
+
+TERMINAL_ENTITY_LIFECYCLE_STATUSES = frozenset({"retired", "superseded"})
+"""Entity statuses a free-form add/update may not write."""
+
+
+def _refuse_terminal_lifecycle(status: str, *, kind: str, writable: str) -> None:
+    """Refuse a terminal lifecycle status arriving through a free-form write.
+
+    Retracting or superseding is a governed judgement about a claim's standing,
+    not a property edit. Reachable from a plain add/update it was a one-call,
+    unreceipted way to make live state disappear from every live-gated read with
+    no reviewer, no reason requirement, and nothing recording who decided it.
+    Interim posture per Robert's 2026-07-25 ruling: refuse and teach, until the
+    dedicated receipted verbs land in wi-lifecycle-verbs. ``writable`` statuses
+    stay writable — those are reversible participation flips, not terminations.
+    """
+    raise TerminalLifecycleWriteRefusedError(kind, status, writable)
 
 
 def entity_metadata_with_lifecycle(
@@ -41,6 +66,8 @@ def entity_metadata_with_lifecycle(
     undecorated entity at its default ``live`` state.
     """
     extra = dict(metadata or {})
+    if lifecycle is not None and lifecycle.status in TERMINAL_ENTITY_LIFECYCLE_STATUSES:
+        _refuse_terminal_lifecycle(lifecycle.status, kind="entity", writable="live")
     typed_lifecycle = (
         _EntityLifecycleState(status=lifecycle.status, reason=lifecycle.reason)
         if lifecycle is not None
@@ -59,10 +86,18 @@ def relationship_lifecycle_state(
     """
     if lifecycle is None:
         return None
+    if lifecycle.status in TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES:
+        _refuse_terminal_lifecycle(
+            lifecycle.status,
+            kind="relationship",
+            writable="active, inactive",
+        )
     return RelationshipLifecycleState(status=lifecycle.status, reason=lifecycle.reason)
 
 
 __all__ = [
+    "TERMINAL_ENTITY_LIFECYCLE_STATUSES",
+    "TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES",
     "entity_metadata_with_lifecycle",
     "relationship_lifecycle_state",
 ]

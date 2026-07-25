@@ -239,9 +239,6 @@ def test_config_reload_and_environment_changes_cannot_alter_frozen_ceiling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _test_client_at_ceiling(monkeypatch, "graph_write")
-    before = client.get("/health")
-    assert before.status_code == 200
-    assert before.json()["capability_ceiling"] == "graph_write"
 
     # A different value appearing in os.environ after initialization models a
     # runtime mutation attempt. Reinitialization refuses it, and HTTP continues
@@ -254,21 +251,21 @@ def test_config_reload_and_environment_changes_cannot_alter_frozen_ceiling(
         f"/api/v1/{daemon_instance}/config/reload",
         json={"config_yaml": CAR_PARTS_YAML},
     )
-    after = client.get("/health")
 
     assert reload_response.status_code == 403
+    # The frozen ceiling is observable to an AUTHORIZED caller through the
+    # denial context; /health no longer publishes it to anonymous probes.
     assert reload_response.json()["context"]["ceiling_mode"] == "GRAPH_WRITE"
-    assert after.status_code == 200
-    assert after.json()["capability_ceiling"] == "graph_write"
 
 
-def test_health_discloses_effective_capability_ceiling(
+def test_health_does_not_disclose_the_capability_ceiling(
     daemon_instance: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """An unauthenticated prober learns liveness, not how much authority exists here."""
     client = _test_client_at_ceiling(monkeypatch, "read_only")
 
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json()["capability_ceiling"] == "read_only"
+    assert response.json() == {"status": "ok"}

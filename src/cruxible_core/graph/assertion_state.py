@@ -196,21 +196,13 @@ def relationship_lifecycle_is_active(assertion_or_metadata: Any = None) -> bool:
     return True
 
 
-def relationship_is_live(
-    assertion_or_metadata: Any = None,
-    *,
-    require_approved: bool = False,
-) -> bool:
+def relationship_is_live(assertion_or_metadata: Any = None) -> bool:
     """Return whether a relationship participates in live graph semantics."""
     assertion = relationship_assertion_from_metadata(assertion_or_metadata)
     if not relationship_lifecycle_is_active(assertion):
         return False
 
-    if assertion.review.status in {"pending", "rejected"}:
-        return False
-    if require_approved and assertion.review.status != "approved":
-        return False
-    return True
+    return assertion.review.status not in {"pending", "rejected"}
 
 
 __all__ = [

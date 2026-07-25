@@ -1,9 +1,22 @@
 """Runtime permission modes for Cruxible operations.
 
-Controls which operations a runtime session can invoke, enforced via the
-``CRUXIBLE_MODE`` environment variable. In a daemon process the initialized
-mode is also an immutable capability ceiling: request credentials may narrow it
-but can never raise it. Four cumulative tiers:
+Controls which operations a runtime session can invoke, resolved from the
+``CRUXIBLE_MODE`` environment variable of the process that owns the runtime.
+
+WHERE THIS IS A BOUNDARY. These tiers are a real boundary on the DAEMON and MCP
+surfaces: the daemon (or MCP server) process fixes its ceiling at startup, and
+nothing a caller sends afterwards can raise it — request credentials may narrow
+it, never lift it. That is the surface agents are given.
+
+WHERE IT IS NOT. The local CLI runs IN THE OPERATOR'S OWN PROCESS and reads
+``CRUXIBLE_MODE`` from the operator's own environment, so anyone who can run
+``cruxible`` can also set that variable. The local CLI is therefore an
+operator console at operator tier by design, not a sandbox against the person
+at the shell. Do not document or rely on ``CRUXIBLE_MODE`` as gating "all sessions".
+The intended deployment is: agents reach state through MCP or the daemon, and
+never get a shell on the state host.
+
+Four cumulative tiers:
 
 - ``READ_ONLY``: query, inspect, validate, and plan workflows
 - ``GOVERNED_WRITE``: execute governed operator actions such as feedback,
@@ -154,7 +167,6 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_add_constraint": PermissionMode.GOVERNED_WRITE,
     "cruxible_add_decision_policy": PermissionMode.GOVERNED_WRITE,
     "cruxible_create_snapshot": PermissionMode.GOVERNED_WRITE,
-    "cruxible_state_pull_apply": PermissionMode.GOVERNED_WRITE,
     "cruxible_register_source_artifact": PermissionMode.GOVERNED_WRITE,
     # GRAPH_WRITE tools
     "cruxible_add_entity": PermissionMode.GRAPH_WRITE,
@@ -176,6 +188,11 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_instance_relocate": PermissionMode.ADMIN,
     "cruxible_state_publish": PermissionMode.ADMIN,
     "cruxible_state_create_overlay": PermissionMode.ADMIN,
+    # Pull-apply REPLACES the active config and the whole graph with an upstream
+    # release. That is the same authority as reload_config plus a graph rewrite,
+    # not a governed operator action, so it sits with the other instance-
+    # lifecycle operations.
+    "cruxible_state_pull_apply": PermissionMode.ADMIN,
 }
 
 # Internal runtime operations that are not registered MCP tools but still need

@@ -495,14 +495,14 @@ def test_no_reserved_lifecycle_key_guard_exists() -> None:
     assert entity.metadata == {"note": "keep-me", "lifecycle": {"status": "retired"}}
 
 
-def test_typed_lifecycle_field_still_sets_status(
+def test_typed_lifecycle_field_still_sets_non_terminal_status(
     populated_instance: CruxibleInstance,
 ) -> None:
     """The typed ``lifecycle`` field remains the working channel after the fix.
 
     Drives the runtime batch direct-write entrypoint with a contract payload that
-    sets lifecycle via the typed field (the only allowed channel) and confirms the
-    entity is soft-deleted (retired) end to end.
+    sets lifecycle via the typed field (the only allowed channel) and confirms it
+    round-trips end to end, alongside free-form metadata.
     """
     from cruxible_client import contracts
     from cruxible_core.runtime import api
@@ -519,7 +519,7 @@ def test_typed_lifecycle_field_still_sets_status(
                     entity_type="Part",
                     entity_id="BP-1001",
                     metadata={"note": "still-here"},
-                    lifecycle=contracts.EntityLifecycleInput(status="retired"),
+                    lifecycle=contracts.EntityLifecycleInput(status="live", reason="reinstated"),
                 )
             ]
         )
@@ -528,10 +528,50 @@ def test_typed_lifecycle_field_still_sets_status(
         entity = service_get_entity(populated_instance, "Part", "BP-1001")
         assert entity is not None
         # Lifecycle set via the typed channel round-trips...
-        assert _entity_lifecycle_status(entity.metadata) == "retired"
+        assert _entity_lifecycle_status(entity.metadata) == "live"
+        assert entity.metadata.lifecycle is not None
+        assert entity.metadata.lifecycle.reason == "reinstated"
         # ...and the author's unrelated free-form metadata is preserved in `extra`,
         # walled off from the typed lifecycle slot.
         assert entity.metadata.extra["note"] == "still-here"
+    finally:
+        manager.clear()
+
+
+@pytest.mark.parametrize("status", ["retired", "superseded"])
+def test_terminal_entity_lifecycle_is_refused_on_the_free_write_path(
+    populated_instance: CruxibleInstance,
+    status: str,
+) -> None:
+    """Retiring an entity through a plain direct write is refused with a teaching message."""
+    from cruxible_client import contracts
+    from cruxible_core.errors import TerminalLifecycleWriteRefusedError
+    from cruxible_core.runtime import api
+    from cruxible_core.runtime.instance_manager import get_manager
+
+    manager = get_manager()
+    manager.clear()
+    instance_id = "inst-entity-lifecycle-terminal"
+    manager.register(instance_id, populated_instance)
+    try:
+        payload = contracts.BatchDirectWritePayload(
+            entities=[
+                contracts.EntityInput(
+                    entity_type="Part",
+                    entity_id="BP-1001",
+                    lifecycle=contracts.EntityLifecycleInput(status=status),  # type: ignore[arg-type]
+                )
+            ]
+        )
+        with pytest.raises(
+            TerminalLifecycleWriteRefusedError,
+            match="terminal lifecycle transitions require",
+        ):
+            api.batch_direct_write(instance_id, payload)
+
+        entity = service_get_entity(populated_instance, "Part", "BP-1001")
+        assert entity is not None
+        assert _entity_lifecycle_status(entity.metadata) == "live"
     finally:
         manager.clear()
 

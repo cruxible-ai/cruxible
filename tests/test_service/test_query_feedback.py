@@ -1125,7 +1125,11 @@ class TestFeedbackFromQuery:
         row = query.receipt.results[0]
         row["path"][0]["alias"] = "duplicate"
         row["path"][1]["alias"] = "duplicate"
-        receipt = query.receipt.model_copy(update={"results": [row]})
+        # Fresh id: receipts are immutable, so the doctored copy is a NEW
+        # receipt rather than an overwrite of the one the query already saved.
+        receipt = query.receipt.model_copy(
+            update={"results": [row], "receipt_id": "RCP-duplicate-alias"}
+        )
         receipt_id = _persist_receipt(populated_instance, receipt)
 
         with pytest.raises(ConfigError, match="duplicated"):

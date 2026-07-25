@@ -1183,7 +1183,14 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         note: str | None = None,
         idempotency_key: str | None = None,
     ) -> contracts.AttestationRecordResult:
-        """Record one observation against a tuple-first relationship claim."""
+        """Record one observation against a tuple-first relationship claim.
+
+        WRITES STATE when the claim does not exist yet: a ``support`` stance on
+        an absent tuple CREATES the relationship as a pending (unreviewed)
+        claim, using ``properties``. ``contradict`` and ``unsure`` are refused
+        on an absent claim. Attesting is therefore not a pure observation on
+        the create path — use it only when you mean to assert the claim exists.
+        """
         return handlers.handle_attest(
             instance_id,
             relationship_type=relationship_type,

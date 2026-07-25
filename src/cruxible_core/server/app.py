@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from cruxible_core import __version__
 from cruxible_core.errors import CoreError
 from cruxible_core.runtime.instance import CruxibleInstance, enforce_config_integrity
-from cruxible_core.runtime.permissions import get_capability_ceiling, init_permissions
+from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.config import (
     is_server_auth_enabled,
@@ -157,10 +157,12 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {
-            "status": "ok",
-            "capability_ceiling": get_capability_ceiling().name.lower(),
-        }
+        # Liveness only. /health is reachable without a credential, so it must
+        # not disclose the daemon's capability ceiling: that tells an
+        # unauthenticated prober exactly how much authority this daemon can
+        # ever grant. Authorized callers read the tier from the denial context
+        # of a refused operation instead.
+        return {"status": "ok"}
 
     @app.get("/version")
     async def version() -> dict[str, str]:

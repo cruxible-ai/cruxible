@@ -323,6 +323,49 @@ def _record_actor_operation(actor: GovernedActorContext) -> None:
     set_current_operation_id(actor.operation_id)
 
 
+def _refuse_caller_asserted_actor(operation: str, actor_context: Any) -> None:
+    """Refuse a request-body actor_context on verbs that gate on WHO is acting.
+
+    ``resolve_procedure`` (accept) refuses when the reviewer's
+    ``(org_id, actor_id)`` equals the proposer's. With auth OFF the runtime
+    honors a request-supplied ``actor_context`` verbatim, so an HTTP caller
+    could simply declare itself a different actor at review time and walk
+    through the independence check — the gate proved nothing about separation of
+    duties. Independence is only meaningful when identity is credential-derived,
+    so over HTTP the caller does not get to assert the REVIEWER identity.
+
+    KNOWN RESIDUE (wi-sweep-quickfixes): the proposer half is still
+    caller-asserted. Refusing there as well would make procedure accept
+    impossible on an auth-off daemon (proposer and reviewer both resolve to the
+    single local operator, which the independence check correctly rejects) —
+    a product call, not a quick fix. Auth-on daemons are unaffected either way.
+
+    Deliberately scoped to the HTTP surface with no runtime credential:
+
+    * auth ON -- the credential is authoritative and any supplied context is
+      already reconciled against it (mismatch raises), so nothing to refuse;
+    * embedded/CLI callers -- the local process asserting an identity is not a
+      remote assertion, and the local operator tier already holds.
+    """
+    if actor_context is None:
+        return
+    if _runtime_credential_actor_context() is not None:
+        return
+
+    from cruxible_core.server.auth import is_http_request_in_flight
+
+    if not is_http_request_in_flight():
+        return
+    raise AuthenticationError(
+        f"'{operation}' enforces reviewer independence, so it will not accept a "
+        "caller-supplied actor_context over HTTP: without a runtime credential the "
+        "daemon cannot verify the asserted identity, and a caller free to name the "
+        "reviewer can satisfy the independence check by itself. Omit actor_context "
+        "(the request is attributed to the local operator), or enable daemon auth "
+        "and present a runtime credential per actor."
+    )
+
+
 def _require_review_transition_actor(
     action: str,
     actor: GovernedActorContext | None,
@@ -900,6 +943,12 @@ def validate(
 ) -> contracts.ValidateResult:
     """Validate a config file or inline YAML string."""
     check_permission("cruxible_validate")
+
+    if config_path is not None:
+        # Confine file-backed validation to the allowed roots. Without this a
+        # READ_ONLY caller can probe arbitrary host paths for existence and
+        # coax fragments of unreadable YAML back out through error text.
+        validate_root_dir(config_path)
 
     result = service_validate(config_path=config_path, config_yaml=config_yaml)
     config = result.config
@@ -2445,6 +2494,8 @@ def _analyze_feedback_contract(result: AnalyzeFeedbackResult) -> contracts.Analy
     return contracts.AnalyzeFeedbackResult(
         relationship_type=result.relationship_type,
         feedback_count=result.feedback_count,
+        feedback_population_count=result.feedback_population_count,
+        truncated=result.truncated,
         action_counts=result.action_counts,
         source_counts=result.source_counts,
         reason_code_counts=result.reason_code_counts,
@@ -2560,6 +2611,8 @@ def _analyze_outcomes_contract(result: AnalyzeOutcomesResult) -> contracts.Analy
     return contracts.AnalyzeOutcomesResult(
         anchor_type=result.anchor_type,
         outcome_count=result.outcome_count,
+        outcome_population_count=result.outcome_population_count,
+        truncated=result.truncated,
         outcome_counts=result.outcome_counts,
         outcome_code_counts=result.outcome_code_counts,
         coded_groups=[
@@ -3238,21 +3291,21 @@ def batch_direct_write(
     actor_context: Any | None = None,
 ) -> contracts.BatchDirectWriteResult:
     """Validate or apply one direct entity/relationship write payload."""
+    # Gate under the operation the caller actually invoked. Checking
+    # add_entity/add_relationship here made every audit and denial record name
+    # an operation that was never called, while the registered
+    # ``cruxible_batch_direct_write`` entry was never exercised at all. The
+    # three sit at the same static tier, so this changes what the log SAYS, not
+    # who is allowed through.
     check_permission(
-        "cruxible_add_relationship",
-        instance_id=instance_id,
-        required_override=_DIRECT_WRITE_FLOOR,
-        audit_success=False,
-    )
-    check_permission(
-        "cruxible_add_entity",
+        "cruxible_batch_direct_write",
         instance_id=instance_id,
         required_override=_DIRECT_WRITE_FLOOR,
         audit_success=False,
     )
     actor = _hosted_actor_context(actor_context)
     instance = _direct_write_tier_gate(
-        ("cruxible_add_relationship", "cruxible_add_entity"),
+        ("cruxible_batch_direct_write",),
         instance_id,
         entity_types={entity.entity_type for entity in payload.entities},
         relationship_types={edge.relationship_type for edge in payload.relationships},
@@ -3937,6 +3990,7 @@ def resolve_procedure(
 ) -> dict[str, Any]:
     """Accept or reject one pending procedure after attributed review."""
     check_permission("cruxible_resolve_procedure", instance_id=instance_id)
+    _refuse_caller_asserted_actor("cruxible_resolve_procedure", actor_context)
     actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     if action == "accept":
@@ -4535,4 +4589,5 @@ def state_pull_apply(
         release_id=result.release_id,
         apply_digest=result.apply_digest,
         pre_pull_snapshot_id=result.pre_pull_snapshot_id,
+        receipt_id=result.receipt_id,
     )

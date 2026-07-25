@@ -33,6 +33,7 @@ from cruxible_core.errors import (
     RuntimeCredentialNotFoundError,
     SourceArtifactNotFoundError,
     StaleContinuationError,
+    TerminalLifecycleWriteRefusedError,
     TraceNotFoundError,
 )
 
@@ -69,7 +70,13 @@ def _status_for_error(exc: CoreError) -> int:
         return 400
     if isinstance(
         exc,
-        (PermissionDeniedError, OwnershipError, InstanceScopeError, DirectWriteRefusedError),
+        (
+            PermissionDeniedError,
+            OwnershipError,
+            InstanceScopeError,
+            DirectWriteRefusedError,
+            TerminalLifecycleWriteRefusedError,
+        ),
     ):
         return 403
     if isinstance(
@@ -125,6 +132,10 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["kind"] = exc.kind
         context["type_name"] = exc.type_name
         context["source"] = exc.source
+    if isinstance(exc, TerminalLifecycleWriteRefusedError):
+        context["kind"] = exc.kind
+        context["status"] = exc.status
+        context["writable"] = exc.writable
     if isinstance(exc, PendingEdgeWriteRefusedError):
         context["relationship_type"] = exc.relationship_type
         context["from_type"] = exc.from_type

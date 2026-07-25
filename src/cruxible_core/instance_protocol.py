@@ -207,7 +207,15 @@ class FeedbackStoreProtocol(ABC):
         limit: int = 100,
     ) -> list[FeedbackRecord]: ...
     @abstractmethod
-    def count_feedback(self, *, receipt_id: str | None = None) -> int: ...
+    def count_feedback(
+        self,
+        *,
+        receipt_id: str | None = None,
+        relationship_type: str | None = None,
+        action: str | None = None,
+        decision_surface_type: str | None = None,
+        decision_surface_name: str | None = None,
+    ) -> int: ...
     @abstractmethod
     def save_outcome(self, record: OutcomeRecord) -> str: ...
     @abstractmethod
@@ -226,7 +234,16 @@ class FeedbackStoreProtocol(ABC):
         offset: int = 0,
     ) -> list[OutcomeRecord]: ...
     @abstractmethod
-    def count_outcomes(self, *, receipt_id: str | None = None) -> int: ...
+    def count_outcomes(
+        self,
+        *,
+        receipt_id: str | None = None,
+        anchor_type: str | None = None,
+        anchor_id: str | None = None,
+        relationship_type: str | None = None,
+        decision_surface_type: str | None = None,
+        decision_surface_name: str | None = None,
+    ) -> int: ...
     @abstractmethod
     def close(self) -> None: ...
 

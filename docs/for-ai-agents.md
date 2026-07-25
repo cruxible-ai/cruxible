@@ -43,7 +43,13 @@ a `graph_write` actor can both direct-add and propose. There is no permission
 tier meaning "may propose but may not direct-add."
 
 - **Permission mode** — `CRUXIBLE_MODE` (`read_only` ⊂ `governed_write` ⊂
-  `graph_write` ⊂ `admin`), enforced at the daemon boundary.
+  `graph_write` ⊂ `admin`), enforced as a boundary on the **daemon and MCP
+  surfaces**, where the serving process fixes its ceiling at startup. The local
+  CLI reads the operator's own environment, so it is an operator console at
+  operator tier by design — not a sandbox against the person at the shell.
+  Agents should reach state through MCP or the daemon, not a shell on the state
+  host. See
+  [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md#where-permission-tiers-are-enforced).
 - **Direct-write policy** — `refuse_direct_writes`. A type marked
   `write_policy: proposal_only` (per-type, via the instance
   `runtime.default_write_policy`, or via the daemon `CRUXIBLE_REFUSE_DIRECT_WRITES`

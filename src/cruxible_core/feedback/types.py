@@ -32,6 +32,9 @@ class FeedbackRecord(BaseModel):
     scope_hints: dict[str, Any] = Field(default_factory=dict)
     feedback_profile_key: str | None = None
     feedback_profile_version: int | None = None
+    feedback_profile_digest: str | None = None
+    """Digest of the profile body this row was coded under; the drift signal."""
+
     decision_context: dict[str, Any] = Field(default_factory=dict)
     context_snapshot: dict[str, Any] = Field(default_factory=dict)
     source: Literal["human", "agent"] = "human"
@@ -67,6 +70,9 @@ class OutcomeRecord(BaseModel):
     scope_hints: dict[str, Any] = Field(default_factory=dict)
     outcome_profile_key: str | None = None
     outcome_profile_version: int | None = None
+    outcome_profile_digest: str | None = None
+    """Digest of the profile body this row was coded under; the drift signal."""
+
     decision_context: dict[str, Any] = Field(default_factory=dict)
     lineage_snapshot: dict[str, Any] = Field(default_factory=dict)
     relationship_type: str | None = None

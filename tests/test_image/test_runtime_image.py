@@ -74,7 +74,6 @@ def test_hosted_runtime_image_builds_starts_and_runs_non_root(
 
         assert _wait_for_health(host_port, container_name) == {
             "status": "ok",
-            "capability_ceiling": "admin",
         }
         assert _container_config_user(container_name) == "cruxible"
         assert _container_uid(container_name) != "0"
@@ -164,7 +163,6 @@ def test_hosted_runtime_state_mount_survives_container_replacement(
         )
         assert _wait_for_health(second_port, second_container) == {
             "status": "ok",
-            "capability_ceiling": "admin",
         }
         read_sentinel = (
             "from pathlib import Path; "
@@ -219,7 +217,6 @@ def test_hosted_runtime_private_network_has_no_published_ports(
         assert _container_private_ports(runtime_container).get("8100/tcp") is None
         assert _probe_runtime_health(network_name) == {
             "status": "ok",
-            "capability_ceiling": "admin",
         }
     finally:
         _docker(["rm", "-f", runtime_container], check=False, timeout=30)
@@ -285,7 +282,6 @@ def _start_runtime_container(
     )
     assert _wait_for_health(host_port, container_name) == {
         "status": "ok",
-        "capability_ceiling": "admin",
     }
 
 

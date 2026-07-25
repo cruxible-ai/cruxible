@@ -184,7 +184,6 @@ class TestCheckPermission:
         check_permission("cruxible_add_constraint")
         check_permission("cruxible_add_decision_policy")
         check_permission("cruxible_create_snapshot")
-        check_permission("cruxible_state_pull_apply")
 
     def test_graph_write_tools_denied_in_governed_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
@@ -196,6 +195,20 @@ class TestCheckPermission:
             check_permission("cruxible_resolve_group")
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_apply_workflow")
+
+    def test_state_pull_apply_requires_admin(self, monkeypatch):
+        """Pull-apply replaces the active config and the whole graph — ADMIN, not governed."""
+        for mode in ("governed_write", "graph_write"):
+            monkeypatch.setenv("CRUXIBLE_MODE", mode)
+            reset_permissions()
+            init_permissions()
+            with pytest.raises(PermissionDeniedError):
+                check_permission("cruxible_state_pull_apply")
+
+        monkeypatch.setenv("CRUXIBLE_MODE", "admin")
+        reset_permissions()
+        init_permissions()
+        check_permission("cruxible_state_pull_apply")
 
     def test_admin_tool_denied_in_graph_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
@@ -280,6 +293,29 @@ class TestAuditLogging:
         check_permission("cruxible_schema")
         output = self._log_buffer.getvalue()
         assert "mutation_allowed" not in output
+
+    def test_batch_direct_write_audits_the_operation_actually_invoked(self, monkeypatch):
+        """The audit record names batch_direct_write, not add_entity/add_relationship.
+
+        The facade used to gate on the two component tools, so every allow and
+        deny record described an operation the caller never called, while the
+        registered ``cruxible_batch_direct_write`` entry was never exercised.
+        """
+        from cruxible_client import contracts
+        from cruxible_core.runtime import api
+
+        monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+        reset_permissions()
+        init_permissions()
+
+        with pytest.raises(PermissionDeniedError) as denied:
+            api.batch_direct_write("inst-audit", contracts.BatchDirectWritePayload())
+
+        assert denied.value.tool_name == "cruxible_batch_direct_write"
+        output = self._log_buffer.getvalue()
+        assert "cruxible_batch_direct_write" in output
+        assert "cruxible_add_entity" not in output
+        assert "cruxible_add_relationship" not in output
 
     def test_denial_logged_as_warning(self, monkeypatch):
         """Blocked call emits warning-level log."""

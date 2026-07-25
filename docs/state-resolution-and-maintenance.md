@@ -150,6 +150,14 @@ adjusting trust all sit at `graph_write`. When `CRUXIBLE_MODE` is unset the
 local default is `admin` (deliberate, for local UX; set
 `CRUXIBLE_DEFAULT_READ_ONLY=1` or an explicit mode to change it).
 
+These tiers are enforced as a boundary on the **daemon and MCP surfaces**, where
+the serving process fixes its ceiling at startup and no request can raise it.
+The **local CLI runs in the operator's own process and reads the operator's own
+`CRUXIBLE_MODE`** — it is an operator console at operator tier by design, not a
+sandbox against the person at the shell. Agents are expected to reach state
+through MCP or the daemon, never through a shell on the state host. See
+[Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md#where-permission-tiers-are-enforced).
+
 ### Write policies are orthogonal to tiers
 
 Per-type `write_policy` is a hard governance constraint that no tier
