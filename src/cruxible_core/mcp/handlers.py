@@ -581,7 +581,6 @@ def handle_create_decision_record(
     question: str,
     subject_type: str | None = None,
     subject_id: str | None = None,
-    opened_by: str = "human",
 ) -> contracts.DecisionRecordResult:
     return _dispatch_remote_or_local(
         lambda client: client.create_decision_record(
@@ -589,14 +588,12 @@ def handle_create_decision_record(
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         ),
         lambda: api.create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         ),
         allow_local=False,
         operation_name="cruxible_create_decision_record",

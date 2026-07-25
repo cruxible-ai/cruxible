@@ -7,8 +7,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from cruxible_core.decision.types import DecisionEvent, DecisionRecord
+from cruxible_core.decision.types import DecisionEvent, DecisionRecord, digest_payload
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import GovernedActorContext, derived_actor_kind
 from cruxible_core.instance_protocol import DecisionStoreProtocol
 from cruxible_core.temporal import format_datetime, utc_now
 
@@ -66,6 +67,17 @@ CREATE INDEX IF NOT EXISTS idx_decision_events_trace_digest
 CREATE INDEX IF NOT EXISTS idx_decision_events_status ON decision_events(status);
 """
 
+# What opening a record asserted may never be rewritten afterwards: the question
+# a decision answered, its subject and who/when opened it are the claim the
+# record exists to attest. Only the closing fields are allowed to move.
+_IMMUTABLE_RECORD_FIELDS = (
+    "question",
+    "subject_type",
+    "subject_id",
+    "opened_at",
+    "opened_actor_context",
+)
+
 
 class DecisionStore(DecisionStoreProtocol):
     """Stores and retrieves decision records and append-only events."""
@@ -86,42 +98,41 @@ class DecisionStore(DecisionStoreProtocol):
             self._conn.executescript(_SCHEMA)
 
     def save_record(self, record: DecisionRecord) -> str:
-        """Create or replace a decision record."""
-        self._conn.execute(
-            "INSERT INTO decision_records "
-            "(decision_record_id, question, subject_type, subject_id, status, opened_by, "
-            "opened_at, finalized_at, final_decision, decision_class, rationale, "
-            "abandoned_reason, record_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(decision_record_id) DO UPDATE SET "
-            "question = excluded.question, "
-            "subject_type = excluded.subject_type, "
-            "subject_id = excluded.subject_id, "
-            "status = excluded.status, "
-            "opened_by = excluded.opened_by, "
-            "opened_at = excluded.opened_at, "
-            "finalized_at = excluded.finalized_at, "
-            "final_decision = excluded.final_decision, "
-            "decision_class = excluded.decision_class, "
-            "rationale = excluded.rationale, "
-            "abandoned_reason = excluded.abandoned_reason, "
-            "record_json = excluded.record_json",
-            (
-                record.decision_record_id,
-                record.question,
-                record.subject_type,
-                record.subject_id,
-                record.status,
-                record.opened_by,
-                format_datetime(record.opened_at),
-                format_datetime(record.finalized_at),
-                record.final_decision,
-                record.decision_class,
-                record.rationale,
-                record.abandoned_reason,
-                record.model_dump_json(),
-            ),
-        )
+        """Insert a new decision record; an existing id is a refusal.
+
+        Insert-only on purpose. The previous full-row upsert meant anything
+        holding the store could rewrite a finalized record's question, opened_at
+        or final_decision — or push its status back to ``open`` — with no trace.
+        """
+        try:
+            self._conn.execute(
+                "INSERT INTO decision_records "
+                "(decision_record_id, question, subject_type, subject_id, status, opened_by, "
+                "opened_at, finalized_at, final_decision, decision_class, rationale, "
+                "abandoned_reason, record_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    record.decision_record_id,
+                    record.question,
+                    record.subject_type,
+                    record.subject_id,
+                    record.status,
+                    # Denormalized index only: derived from the actor context, never
+                    # a caller's self-declaration of what kind of actor it is.
+                    derived_actor_kind(record.opened_actor_context),
+                    format_datetime(record.opened_at),
+                    format_datetime(record.finalized_at),
+                    record.final_decision,
+                    record.decision_class,
+                    record.rationale,
+                    record.abandoned_reason,
+                    record.model_dump_json(),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ConfigError(
+                f"Decision record '{record.decision_record_id}' already exists"
+            ) from exc
         return record.decision_record_id
 
     def get_record(self, decision_record_id: str) -> DecisionRecord | None:
@@ -195,16 +206,49 @@ class DecisionStore(DecisionStoreProtocol):
         return int(row["count"]) if row else 0
 
     def update_record(self, record: DecisionRecord) -> None:
-        if self.get_record(record.decision_record_id) is None:
+        """Apply the one legitimate transition: an open record moving to terminal.
+
+        Deliberately narrow. Only the closing columns move, and only while the
+        stored record is still open, so a decision that has been finalized or
+        abandoned cannot be reopened or have its claim rewritten underneath the
+        events that were logged against it.
+        """
+        existing = self.get_record(record.decision_record_id)
+        if existing is None:
             raise ConfigError(f"Decision record '{record.decision_record_id}' not found")
-        self.save_record(record)
+        if existing.status != "open":
+            raise ConfigError(
+                f"Decision record '{record.decision_record_id}' is {existing.status} and "
+                f"cannot be changed to '{record.status}'; decision records are append-only"
+            )
+        rewritten = [
+            name
+            for name in _IMMUTABLE_RECORD_FIELDS
+            if getattr(existing, name) != getattr(record, name)
+        ]
+        if rewritten:
+            raise ConfigError(
+                f"Decision record '{record.decision_record_id}' cannot rewrite "
+                f"{', '.join(rewritten)}"
+            )
+        self._conn.execute(
+            "UPDATE decision_records SET status = ?, finalized_at = ?, final_decision = ?, "
+            "decision_class = ?, rationale = ?, abandoned_reason = ?, record_json = ? "
+            "WHERE decision_record_id = ?",
+            (
+                record.status,
+                format_datetime(record.finalized_at),
+                record.final_decision,
+                record.decision_class,
+                record.rationale,
+                record.abandoned_reason,
+                record.model_dump_json(),
+                record.decision_record_id,
+            ),
+        )
 
     def append_event(self, event: DecisionEvent) -> str:
-        record = self.get_record(event.decision_record_id)
-        if record is None:
-            raise ConfigError(f"Decision record '{event.decision_record_id}' not found")
-        if record.status != "open":
-            raise ConfigError(f"Decision record '{event.decision_record_id}' is not open")
+        self._require_open(event.decision_record_id)
         sequence = self._next_sequence(event.decision_record_id)
         event = event.model_copy(update={"sequence": sequence})
         self._conn.execute(
@@ -330,12 +374,19 @@ class DecisionStore(DecisionStoreProtocol):
         final_decision: str,
         decision_class: str,
         rationale: str = "",
+        actor_context: GovernedActorContext | None = None,
     ) -> DecisionRecord:
-        record = self.get_record(decision_record_id)
-        if record is None:
-            raise ConfigError(f"Decision record '{decision_record_id}' not found")
-        if record.status != "open":
-            raise ConfigError(f"Decision record '{decision_record_id}' is not open")
+        record = self._require_open(decision_record_id)
+        self._append_lifecycle_event(
+            decision_record_id,
+            command="decision_record:finalize",
+            payload={
+                "final_decision": final_decision,
+                "decision_class": decision_class,
+                "rationale": rationale,
+            },
+            actor_context=actor_context,
+        )
         updated = record.model_copy(
             update={
                 "status": "finalized",
@@ -343,26 +394,74 @@ class DecisionStore(DecisionStoreProtocol):
                 "decision_class": decision_class,
                 "rationale": rationale,
                 "finalized_at": utc_now(),
+                "finalized_actor_context": actor_context,
             }
         )
         self.update_record(updated)
         return updated
 
-    def abandon_record(self, decision_record_id: str, *, reason: str = "") -> DecisionRecord:
-        record = self.get_record(decision_record_id)
-        if record is None:
-            raise ConfigError(f"Decision record '{decision_record_id}' not found")
-        if record.status != "open":
-            raise ConfigError(f"Decision record '{decision_record_id}' is not open")
+    def abandon_record(
+        self,
+        decision_record_id: str,
+        *,
+        reason: str = "",
+        actor_context: GovernedActorContext | None = None,
+    ) -> DecisionRecord:
+        record = self._require_open(decision_record_id)
+        self._append_lifecycle_event(
+            decision_record_id,
+            command="decision_record:abandon",
+            payload={"reason": reason},
+            actor_context=actor_context,
+        )
         updated = record.model_copy(
             update={
                 "status": "abandoned",
                 "abandoned_reason": reason,
                 "finalized_at": utc_now(),
+                "finalized_actor_context": actor_context,
             }
         )
         self.update_record(updated)
         return updated
+
+    def _require_open(self, decision_record_id: str) -> DecisionRecord:
+        record = self.get_record(decision_record_id)
+        if record is None:
+            raise ConfigError(f"Decision record '{decision_record_id}' not found")
+        if record.status != "open":
+            raise ConfigError(f"Decision record '{decision_record_id}' is not open")
+        return record
+
+    def _append_lifecycle_event(
+        self,
+        decision_record_id: str,
+        *,
+        command: str,
+        payload: dict[str, Any],
+        actor_context: GovernedActorContext | None,
+    ) -> str:
+        """Log the closing act itself, before the status flips.
+
+        ``append_event`` refuses closed records, so appending after the
+        transition made the finalize/abandon event permanently unrecordable —
+        the one event that explains why the record stopped was the one event
+        that could never be written.
+        """
+        input_digest, input_summary = digest_payload(payload)
+        now = utc_now()
+        return self.append_event(
+            DecisionEvent(
+                decision_record_id=decision_record_id,
+                command=command,
+                status="success",
+                input_digest=input_digest,
+                input_summary=input_summary,
+                actor_context=actor_context,
+                started_at=now,
+                finished_at=now,
+            )
+        )
 
     def _next_sequence(self, decision_record_id: str) -> int:
         row = self._conn.execute(

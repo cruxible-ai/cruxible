@@ -1031,7 +1031,6 @@ shared_evidence:
 | `--question` | yes | `Sentinel.UNSET` | text | Question or decision being evaluated. |
 | `--subject-type` | no | `` | text | Optional subject type. |
 | `--subject-id` | no | `` | text | Optional subject identifier. |
-| `--opened-by` | no | `human` | choice |  |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**

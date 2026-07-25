@@ -2979,7 +2979,7 @@ def test_workflow_run_route_appends_decision_record_event(
 
     created = app_client.post(
         f"/api/v1/{instance_id}/decision-records",
-        json={"question": "Should the promo run?", "opened_by": "agent"},
+        json={"question": "Should the promo run?"},
     )
     assert created.status_code == 200
     decision_record_id = created.json()["record"]["decision_record_id"]

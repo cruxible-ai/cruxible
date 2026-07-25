@@ -52,6 +52,17 @@ from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 
 @dataclass(frozen=True)
+class DecisionEventAppendOutcome:
+    """Whether a requested decision-event append actually reached the store."""
+
+    requested: bool
+    appended: bool
+    decision_record_id: str | None = None
+    decision_event_id: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class OperationContext:
     """Optional audit context for recording an operation against a decision.
 
@@ -64,12 +75,24 @@ class OperationContext:
     request_id: str | None = None
     surface: Literal["cli", "mcp", "http", "local"] | None = None
     actor_context: GovernedActorContext | None = None
+    decision_event_failures: list[DecisionEventAppendOutcome] = field(
+        default_factory=list,
+        compare=False,
+    )
+    """Audit rows that were requested but did not land.
+
+    Appending decision-event metadata is deliberately best-effort: it must never
+    fail the work it observes. But a dropped row is evidence loss, so it is
+    accumulated on the context the caller already holds instead of vanishing
+    into a log line. Excluded from equality so the context stays comparable.
+    """
 
 
 @dataclass
 class DecisionRecordServiceResult:
     record: DecisionRecord
     events: list[DecisionEvent] = field(default_factory=list)
+    receipt_id: str | None = None
 
 
 @dataclass

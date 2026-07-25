@@ -966,7 +966,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         question: str,
         subject_type: str | None = None,
         subject_id: str | None = None,
-        opened_by: str = "human",
     ) -> contracts.DecisionRecordResult:
         """Open a decision record that can collect query and workflow receipts."""
         return handlers.handle_create_decision_record(
@@ -974,7 +973,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         )
 
     @_tool

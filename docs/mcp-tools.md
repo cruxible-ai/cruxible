@@ -1285,7 +1285,6 @@ without it, only the active materialized digest is checked.
 | `question` | yes | string |  |
 | `subject_type` | no | string | null |  |
 | `subject_id` | no | string | null |  |
-| `opened_by` | no | string |  |
 
 **Returns:** Top-level fields: `record`, `events`
 

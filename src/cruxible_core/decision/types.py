@@ -1,9 +1,11 @@
-"""Decision record types for auditable agent and human decisions."""
+"""Decision record types and the payload digest shared by decision events."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -15,6 +17,20 @@ DecisionStatus = Literal["open", "finalized", "abandoned"]
 DecisionClass = Literal["recommended", "rejected", "deferred", "escalated"]
 DecisionEventStatus = Literal["success", "error"]
 
+_SUMMARY_CHARS = 200
+
+
+def digest_payload(payload: Any) -> tuple[str, str]:
+    """Return deterministic digest and bounded summary for a JSON-like payload.
+
+    Lives beside the types rather than in the service layer so the store can
+    stamp its own lifecycle events with the identical digest shape without
+    importing upward into ``cruxible_core.service``.
+    """
+    canonical = json.dumps(payload, sort_keys=True, default=str)
+    digest = f"sha256:{hashlib.sha256(canonical.encode()).hexdigest()}"
+    return digest, canonical[:_SUMMARY_CHARS]
+
 
 class DecisionRecord(BaseModel):
     """A durable record scoped to one decision or inquiry."""
@@ -24,7 +40,6 @@ class DecisionRecord(BaseModel):
     subject_type: str | None = None
     subject_id: str | None = None
     status: DecisionStatus = "open"
-    opened_by: Literal["human", "agent", "service"] = "human"
     opened_actor_context: GovernedActorContext | None = None
     opened_at: datetime = Field(default_factory=utc_now)
     finalized_at: datetime | None = None

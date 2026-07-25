@@ -378,7 +378,6 @@ class DecisionRecordCreateRequest(BaseModel):
     question: str
     subject_type: str | None = None
     subject_id: str | None = None
-    opened_by: Literal["human", "agent", "service"] = "human"
     actor_context: contracts.GovernedActorContext | None = None
 
 
