@@ -140,6 +140,8 @@ def create_state_overlay_cmd(
     )
     click.echo(f"Created overlay for {result.manifest.state_id}:{result.manifest.release_id}")
     click.echo(f"Instance ID: {instance_id}")
+    for warning in result.warnings:
+        click.echo(f"Warning: {warning}", err=True)
     if isinstance(result, contracts.StateOverlayResult):
         if activate:
             _print_active_instance_change(_activate_server_instance(result.instance_id))

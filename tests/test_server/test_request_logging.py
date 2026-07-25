@@ -30,6 +30,7 @@ from cruxible_core.server.request_logging import (
     configure_request_logging,
     log_runtime_request,
 )
+from tests.support.workflow_helpers import write_placeholder_kit_lock
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
@@ -130,9 +131,7 @@ def _write_standalone_kit_manifest(kit_dir: Path, kit_id: str) -> None:
         )
         + "\n"
     )
-    (kit_dir / "cruxible.lock.yaml").write_text(
-        "version: '1'\nconfig_digest: test\nartifacts: {}\nproviders: {}\n"
-    )
+    write_placeholder_kit_lock(kit_dir)
 
 
 def test_successful_runtime_request_logs_principal_and_instance(

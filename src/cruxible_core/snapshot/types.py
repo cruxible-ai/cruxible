@@ -61,7 +61,22 @@ class InstanceBackupManifest(BaseModel):
 
 
 class PublishedStateManifest(BaseModel):
-    """Distribution metadata for a published state release bundle."""
+    """Distribution metadata for a published state release bundle.
+
+    ``bundle_format_version`` and ``members_digest`` are the bundle's
+    non-downgradable member contract. A publisher that emits the per-member
+    digest sidecar records both here, in the one member every consumer reads
+    first, so *removing* the sidecar is detectable: a manifest declaring the
+    format while the sidecar is absent or contradicts ``members_digest`` is
+    refused. Both are ``None`` on bundles published before the sidecar existed,
+    which keeps those on the older partial-verification story rather than
+    failing them closed.
+
+    They establish integrity relative to the manifest, not authenticity: an
+    attacker who can rewrite the whole bundle in transit can rewrite the
+    manifest too. Authenticity needs signing, which is future work; the
+    transport and the first pull are the trust boundary today.
+    """
 
     format_version: int = 1
     state_id: str
@@ -71,6 +86,8 @@ class PublishedStateManifest(BaseModel):
     owned_entity_types: list[str] = Field(default_factory=list)
     owned_relationship_types: list[str] = Field(default_factory=list)
     parent_release_id: str | None = None
+    bundle_format_version: int | None = None
+    members_digest: str | None = None
 
     @field_validator("state_id")
     @classmethod
@@ -101,3 +118,5 @@ class UpstreamMetadata(PublishedStateManifest):
     lock_path: str = ".cruxible/upstream/current/cruxible.lock.yaml"
     manifest_digest: str | None = None
     graph_digest: str | None = None
+    upstream_config_digest: str | None = None
+    upstream_lock_digest: str | None = None

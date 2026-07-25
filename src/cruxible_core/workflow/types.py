@@ -65,11 +65,22 @@ class LockedArtifact(BaseModel):
 
 
 class LockedProvider(BaseModel):
-    """Resolved provider metadata captured in a generated lock file."""
+    """Resolved provider metadata captured in a generated lock file.
+
+    ``provider_command_path`` records path identity for a command provider whose
+    executable is a system binary: the resolved path the ref pointed at when the
+    lock was generated. System executables are the OS trust boundary, so their
+    contents are not hashed (see
+    ``cruxible_core.provider.registry.resolve_command_provider_target``); which
+    file the ref resolves to is still pinned and compared. Command providers
+    whose executable lives inside the workspace are hashed into
+    ``provider_entrypoint_digest`` instead, like python entrypoints.
+    """
 
     version: str
     ref: str
     provider_entrypoint_digest: str | None = None
+    provider_command_path: str | None = None
     runtime: ProviderRuntime
     deterministic: bool
     side_effects: bool

@@ -32,6 +32,7 @@ from cruxible_core.server.credentials import (
 )
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service.snapshots import service_backup_instance
+from tests.support.workflow_helpers import write_placeholder_kit_lock
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -93,9 +94,7 @@ def _write_overlay_kit_manifest(
         )
         + "\n"
     )
-    (kit_dir / "cruxible.lock.yaml").write_text(
-        "version: '1'\nconfig_digest: test\nartifacts: {}\nproviders: {}\n"
-    )
+    write_placeholder_kit_lock(kit_dir)
 
 
 def _write_standalone_kit_manifest(kit_dir: Path, kit_id: str) -> None:
@@ -114,9 +113,7 @@ def _write_standalone_kit_manifest(kit_dir: Path, kit_id: str) -> None:
         )
         + "\n"
     )
-    (kit_dir / "cruxible.lock.yaml").write_text(
-        "version: '1'\nconfig_digest: test\nartifacts: {}\nproviders: {}\n"
-    )
+    write_placeholder_kit_lock(kit_dir)
 
 
 @pytest.fixture

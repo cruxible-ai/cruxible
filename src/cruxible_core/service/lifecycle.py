@@ -57,6 +57,7 @@ from cruxible_core.service.types import (
     ReloadConfigResult,
     ValidateServiceResult,
 )
+from cruxible_core.snapshot.upstream_verification import verify_tracked_upstream
 from cruxible_core.workflow.compiler import (
     LOCK_FILE_NAME,
     build_lock,
@@ -755,6 +756,11 @@ def service_reload_config(
         # local overlay file. Reload always regenerates the composed active
         # config that the instance actually reads.
         root = instance.get_root_path()
+        # The composed active config is built by extending the materialized
+        # upstream config, so an out-of-band edit to that file would be laundered
+        # into the instance's live schema by a reload. Verify it against the
+        # digest the pull recorded before composing against it.
+        verify_tracked_upstream(root, upstream, members=("config.yaml",))
         overlay_path = root / (config_path or upstream.overlay_config_path)
         if not overlay_path.is_absolute():
             overlay_path = root / overlay_path

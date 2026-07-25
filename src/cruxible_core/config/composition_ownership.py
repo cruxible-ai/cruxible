@@ -15,6 +15,7 @@ from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.snapshot.upstream_verification import verify_tracked_upstream
 
 OwnershipSource = Literal["upstream_metadata", "extends", "unavailable"]
 
@@ -108,6 +109,7 @@ def _compose_from_upstream_metadata(
 
     upstream_config_path = root / upstream.upstream_config_path
     overlay_config_path = root / upstream.overlay_config_path
+    verify_tracked_upstream(root, upstream, members=("config.yaml",))
     upstream_config = _try_load_config(upstream_config_path)
     overlay_config = _try_load_config(overlay_config_path)
     if upstream_config is None or overlay_config is None:
@@ -192,6 +194,11 @@ def _surface_ownership_from_upstream_paths(
     upstream = instance.get_upstream_metadata()
     assert upstream is not None
     root = instance.get_root_path()
+    # Ownership is what tells a caller which types are upstream's and which are
+    # the overlay's own -- it decides what may be written. Reading it out of a
+    # locally edited upstream config would let an edit re-assign ownership, so
+    # the file is verified against the pull's digest before it is consumed.
+    verify_tracked_upstream(root, upstream, members=("config.yaml",))
     upstream_config = _try_load_config(root / upstream.upstream_config_path)
     overlay_config = _try_load_config(root / upstream.overlay_config_path)
     if upstream_config is None or overlay_config is None:

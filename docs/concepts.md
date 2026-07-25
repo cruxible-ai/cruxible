@@ -191,6 +191,39 @@ precondition, so an interrupted run remains visible as `started` with a null
 verdict. Run verdicts are execution telemetry; external-world results belong in
 outcomes attached to the run receipt.
 
+Acceptance pins a procedure to the config and lock the reviewer recompiled it
+against, and every run compares against those pins. Recompiling at run time
+proves a definition still compiles; it does not prove it compiles against the
+same modelled world that was approved. A provider re-pointed at a different
+endpoint, an entity type redefined, a query rewritten — each recompiles cleanly
+while changing what the approved procedure does. So a run whose current
+`config_digest` or `lock_digest` differs from the accepted one is refused, with
+both values on the run receipt under `accepted_against` and `executed_against`:
+
+```
+Procedure 'PRC-...' is pinned to the config and lock it was accepted against,
+which no longer match this instance (config_digest: accepted against sha256:...,
+now sha256:...).
+```
+
+Recover by re-proposing the definition and having an independent reviewer accept
+it against the current config and lock:
+
+```bash
+cruxible procedure propose <definition-file> --supersedes <live-procedure-id>
+cruxible procedure resolve <new-procedure-id> --action accept --expected-version 1
+```
+
+Restoring the accepted config and re-running `cruxible lock` also clears the
+refusal. There is no flag that runs a procedure against an unreviewed model.
+
+A *missing* pin fails closed the same way, and for the same reason: with no
+recorded digest there is nothing the reviewer is known to have approved, and
+"no pin" must not be the one way to run a procedure unverified. Acceptance always
+writes both pins, and clones and snapshots carry them across, so this only
+reaches procedures accepted before pinning existed. They re-propose and
+re-accept once, like any other definition change.
+
 ## The Entity Graph
 
 Cruxible stores entities and relationships in a directed graph. Each node is an
