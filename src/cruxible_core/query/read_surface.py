@@ -47,6 +47,7 @@ class ReadInspectNeighbor:
     direction: str
     relationship_type: str
     edge_key: int | None
+    claim_id: str | None = None
     properties: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     entity: EntityInstance | None = None
@@ -77,6 +78,7 @@ class ReadNeighborhoodEdge:
     to_type: str
     to_id: str
     edge_key: int | None
+    claim_id: str | None = None
     properties: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -255,6 +257,7 @@ def inspect_entity(
             direction=row["direction"],
             relationship_type=str(row["relationship_type"]),
             edge_key=row.get("edge_key"),
+            claim_id=row.get("claim_id"),
             properties=dict(row.get("properties", {})),
             metadata=dict(row.get("metadata", {})),
             entity=(
@@ -514,6 +517,7 @@ def inspect_neighborhood(
             to_type=edge["to_type"],
             to_id=edge["to_id"],
             edge_key=edge.get("edge_key"),
+            claim_id=edge.get("claim_id"),
             properties=dict(edge.get("properties", {})),
             metadata=dict(edge.get("metadata", {})),
         )

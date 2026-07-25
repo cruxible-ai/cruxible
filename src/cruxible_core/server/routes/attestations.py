@@ -32,6 +32,7 @@ async def attest(
         evidence_refs=req.evidence_refs,
         observed_at=req.observed_at,
         edge_key=req.edge_key,
+        claim_id=req.claim_id,
         properties=req.properties,
         note=req.note,
         idempotency_key=req.idempotency_key,

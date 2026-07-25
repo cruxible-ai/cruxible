@@ -30,7 +30,10 @@ from cruxible_core.service.types import (
     SnapshotCreateResult,
     SnapshotListResult,
 )
-from cruxible_core.snapshot.types import InstanceBackupManifest
+from cruxible_core.snapshot.types import (
+    INSTANCE_BACKUP_FORMAT_VERSION,
+    InstanceBackupManifest,
+)
 from cruxible_core.storage.sqlite import backup_sqlite_database
 from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.compiler import LOCK_FILE_NAME, resolve_lock_path
@@ -360,6 +363,7 @@ def _read_verified_instance_backup(
                     f"Instance backup artifact is missing required file(s): {', '.join(missing)}"
                 )
             manifest = _parse_manifest(archive.read(_INSTANCE_BACKUP_MANIFEST))
+            _refuse_unsupported_backup_format(manifest)
             missing_required_artifacts = sorted(
                 (_INSTANCE_BACKUP_REQUIRED - {_INSTANCE_BACKUP_MANIFEST}) - set(manifest.artifacts)
             )
@@ -388,6 +392,22 @@ def _read_verified_instance_backup(
                 f"expected {expected}, got {actual}"
             )
     return {"manifest": manifest, "contents": contents}
+
+
+def _refuse_unsupported_backup_format(manifest: InstanceBackupManifest) -> None:
+    """Refuse a backup this build cannot install, BEFORE anything is written.
+
+    The minimum-reader check exists because the failure it replaces was awful:
+    a post-identity ``state.db`` restored under a pre-identity build installs
+    fine and then fails at the first graph read on a column that no longer
+    exists. Refusing up front, by version, says what is actually wrong.
+    """
+    if manifest.min_reader_format_version > INSTANCE_BACKUP_FORMAT_VERSION:
+        raise ConfigError(
+            "Instance backup requires a newer Cruxible: its state database is "
+            f"format {manifest.min_reader_format_version}, this build reads up to "
+            f"{INSTANCE_BACKUP_FORMAT_VERSION}. Upgrade before restoring."
+        )
 
 
 def _parse_manifest(content: bytes) -> InstanceBackupManifest:

@@ -166,6 +166,8 @@ class RelationshipTargetInput:
     to_type: str
     to_id: str
     edge_key: int | None = None
+    claim_id: str | None = None
+    """Optional stable-identity disambiguator; takes precedence over edge_key."""
 
 
 @dataclass
@@ -199,6 +201,7 @@ class DirectWriteGroupInteraction:
     group_signature: str | None = None
     source_workflow_name: str | None = None
     edge_key: int | None = None
+    claim_id: str | None = None
 
 
 @dataclass

@@ -138,15 +138,24 @@ def profile_entity_payload(payload: dict[str, Any], profile: ReadProfile) -> dic
 def profile_edge_payload(payload: dict[str, Any], profile: ReadProfile) -> dict[str, Any]:
     """Profile one serialized edge payload (``RelationshipInstance``-shaped dict).
 
-    Compact keeps the relationship identity (type, endpoints, ``edge_key``),
-    the full ``properties`` bag (edge properties ARE the assertion payload),
-    and the review/lifecycle markers; key order follows the input payload.
+    Compact keeps the relationship identity (type, endpoints, ``edge_key``,
+    ``claim_id``), the full ``properties`` bag (edge properties ARE the
+    assertion payload), and the review/lifecycle markers; key order follows the
+    input payload.
     """
     if profile != "compact":
         return payload
     compact: dict[str, Any] = {}
     for key, value in payload.items():
-        if key in ("relationship_type", "from_type", "from_id", "to_type", "to_id", "edge_key"):
+        if key in (
+            "relationship_type",
+            "from_type",
+            "from_id",
+            "to_type",
+            "to_id",
+            "edge_key",
+            "claim_id",
+        ):
             compact[key] = value
         elif key == "properties":
             compact[key] = dict(value or {})
@@ -243,6 +252,7 @@ def inspect_neighbor_payload(
     metadata: dict[str, Any],
     entity: dict[str, Any],
     profile: ReadProfile = "standard",
+    claim_id: str | None = None,
 ) -> dict[str, Any]:
     """Build one inspect neighbor row (the single local/remote assembly point).
 
@@ -253,6 +263,7 @@ def inspect_neighbor_payload(
         "direction": direction,
         "relationship_type": relationship_type,
         "edge_key": edge_key,
+        "claim_id": claim_id,
         "properties": properties,
         "metadata": metadata,
         "entity": entity,
@@ -268,6 +279,7 @@ def profile_inspect_neighbor(payload: dict[str, Any], profile: ReadProfile) -> d
         "direction": payload.get("direction"),
         "relationship_type": payload.get("relationship_type"),
         "edge_key": payload.get("edge_key"),
+        "claim_id": payload.get("claim_id"),
         "properties": dict(payload.get("properties") or {}),
         "metadata": _compact_edge_metadata(payload.get("metadata") or {}),
         **({"corroboration": payload["corroboration"]} if "corroboration" in payload else {}),
@@ -341,6 +353,7 @@ def neighborhood_edge_payload(
         "to_type": edge.get("to_type"),
         "to_id": edge.get("to_id"),
         "edge_key": edge.get("edge_key"),
+        "claim_id": edge.get("claim_id"),
         "properties": dict(edge.get("properties") or {}),
         "metadata": edge.get("metadata") or {},
         **({"corroboration": edge["corroboration"]} if "corroboration" in edge else {}),

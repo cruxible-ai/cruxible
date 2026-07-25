@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any, NoReturn, cast
+from typing import Any, Literal, NoReturn, cast
 
 from cruxible_core.attestation.types import (
     AttestationDisposition,
@@ -27,6 +27,10 @@ from cruxible_core.graph.assertion_state import (
     relationship_assertion_from_metadata,
     relationship_is_live,
     relationship_lifecycle_is_active,
+)
+from cruxible_core.graph.claim_target import (
+    ClaimTargetConflictError,
+    resolve_claim_target,
 )
 from cruxible_core.graph.evidence import (
     EvidenceRef,
@@ -55,11 +59,17 @@ def service_attest(
     observed_at: datetime,
     actor_context: GovernedActorContext | None,
     edge_key: int | None = None,
+    claim_id: str | None = None,
     properties: dict[str, Any] | None = None,
     note: str | None = None,
     idempotency_key: str | None = None,
 ) -> AttestationRecordResult:
-    """Record one observation, attaching or creating a pending claim per D2."""
+    """Record one observation, attaching or creating a pending claim per D2.
+
+    ``claim_id`` is the optional target disambiguator and it WINS over
+    ``edge_key``; supplying both with disagreeing values is refused rather than
+    silently resolved (see ``graph.claim_target``).
+    """
     claim_key = _claim_key(relationship_type, from_type, from_id, to_type, to_id)
     normalized_evidence = [normalize_evidence_ref(ref) for ref in evidence_refs]
     observed = ensure_utc(observed_at)
@@ -74,6 +84,7 @@ def service_attest(
             "to_type": to_type,
             "to_id": to_id,
             "edge_key": edge_key,
+            "claim_id": claim_id,
             "stance": stance,
             "observed_at": observed.isoformat(),
             "idempotency_key": idempotency_key,
@@ -129,7 +140,15 @@ def service_attest(
 
         config = instance.load_config()
         graph = ctx.uow.graph.load_graph()
-        relationship = _resolve_claim(graph, claim_key)
+        try:
+            relationship = _resolve_target(
+                graph,
+                claim_key,
+                claim_id=claim_id,
+                edge_key=edge_key,
+            )
+        except ClaimTargetConflictError as exc:
+            _refuse(ctx.builder, str(exc))
         created_claim = False
         warnings: list[str] = []
 
@@ -187,6 +206,7 @@ def service_attest(
                         "review_status": "pending",
                         "source": "attestation",
                     },
+                    claim_id=relationship.claim_id,
                 )
         elif properties is not None:
             warnings.append("properties ignored because the claim tuple already exists")
@@ -199,6 +219,10 @@ def service_attest(
             to_type=relationship.to_type,
             to_id=relationship.to_id,
             edge_key=edge_key if edge_key is not None else relationship.edge_key,
+            # Stamp from the RESOLVED claim, never from the request: the
+            # request's disambiguator is a reference, the resolved edge is the
+            # claim actually observed.
+            claim_id=relationship.claim_id,
             claim_content_digest=_relationship_digest(relationship),
             claim_state_at_record=_claim_state(relationship),
             stance=stance,
@@ -265,13 +289,13 @@ def service_list_attestations(
                 )
             )
             continue
+        mismatch, mismatch_kind = _target_identity_mismatch(record, relationship)
         items.append(
             AttestationListItem(
                 attestation=record,
                 latest_disposition=dispositions.get(record.attestation_id),
-                edge_key_mismatch=(
-                    record.edge_key is not None and record.edge_key != relationship.edge_key
-                ),
+                target_identity_mismatch=mismatch,
+                target_identity_mismatch_kind=mismatch_kind,
                 stale_content=(record.claim_content_digest != _relationship_digest(relationship)),
                 current_claim_state=_claim_state(relationship),
             )
@@ -322,6 +346,7 @@ def service_attestation_queue(
                 to_type=relationship.to_type,
                 to_id=relationship.to_id,
                 edge_key=relationship.edge_key,
+                claim_id=relationship.claim_id,
                 properties=dict(relationship.properties),
                 open_contradict_count=len(records),
                 distinct_contradicting_actor_count=len(
@@ -498,7 +523,7 @@ def _create_pending_claim(
     validated.relationship.metadata = RelationshipMetadata(
         evidence=RelationshipEvidence(evidence_refs=evidence_refs)
     )
-    apply_relationship(
+    created = apply_relationship(
         graph,
         validated,
         "attestation",
@@ -508,9 +533,6 @@ def _create_pending_claim(
         actor_context=actor_context,
         pending=True,
     )
-    created = _resolve_claim(graph, claim_key)
-    if created is None:
-        raise DataValidationError("pending claim creation did not produce a resolvable tuple")
     return created, True
 
 
@@ -527,6 +549,45 @@ def _claim_state(relationship: RelationshipInstance) -> ClaimStateAtRecord:
     if not relationship_lifecycle_is_active(assertion):
         return "inactive"
     return "live"
+
+
+def _target_identity_mismatch(
+    record: AttestationRecord,
+    relationship: RelationshipInstance,
+) -> tuple[bool, Literal["claim_id", "edge_key"] | None]:
+    """Compare a record's stamped target identity with the live claim.
+
+    EVER-OR-NEVER per record: a record that stamped a ``claim_id`` is compared
+    by id and never falls back to ``edge_key`` (which is per-load and would
+    report a spurious mismatch after any reload); a legacy record with only an
+    ``edge_key`` is compared by key, exactly as before.
+    """
+    if record.claim_id is not None:
+        return record.claim_id != relationship.claim_id, "claim_id"
+    if record.edge_key is not None:
+        return record.edge_key != relationship.edge_key, "edge_key"
+    return False, None
+
+
+def _resolve_target(
+    graph: Any,
+    claim_key: ClaimKey,
+    *,
+    claim_id: str | None,
+    edge_key: int | None,
+) -> RelationshipInstance | None:
+    """Resolve the observed claim honouring the disambiguator precedence."""
+    relationship_type, from_type, from_id, to_type, to_id = claim_key
+    return resolve_claim_target(
+        graph,
+        relationship_type=relationship_type,
+        from_type=from_type,
+        from_id=from_id,
+        to_type=to_type,
+        to_id=to_id,
+        claim_id=claim_id,
+        edge_key=edge_key,
+    ).relationship
 
 
 def _resolve_claim(graph: Any, claim_key: ClaimKey) -> RelationshipInstance | None:

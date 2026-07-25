@@ -1430,6 +1430,7 @@ def _inspect_neighbor_rows(neighbors: list[Any]) -> list[dict[str, Any]]:
                 direction=neighbor.direction,
                 relationship_type=neighbor.relationship_type,
                 edge_key=neighbor.edge_key,
+                claim_id=getattr(neighbor, "claim_id", None),
                 properties=neighbor.properties,
                 metadata=neighbor.metadata,
                 entity=entity_payload,

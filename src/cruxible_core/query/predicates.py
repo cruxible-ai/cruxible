@@ -145,6 +145,7 @@ def iter_step_relationships(
             to_type=to_entity.entity_type,
             to_id=to_entity.entity_id,
             edge_key=row.get("edge_key"),
+            claim_id=row.get("claim_id"),
             properties=dict(row.get("properties", {})),
             metadata=row.get("metadata", {}),
         )

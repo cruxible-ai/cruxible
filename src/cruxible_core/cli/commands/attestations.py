@@ -233,8 +233,9 @@ def attest_list(
         markers = []
         if item.get("unresolved_target"):
             markers.append("unresolved_target")
-        if item.get("edge_key_mismatch"):
-            markers.append("edge_key_mismatch")
+        if item.get("target_identity_mismatch"):
+            kind = item.get("target_identity_mismatch_kind") or "identity"
+            markers.append(f"target_identity_mismatch:{kind}")
         if item.get("stale_content"):
             markers.append("stale_content")
         suffix = f" ({', '.join(markers)})" if markers else ""

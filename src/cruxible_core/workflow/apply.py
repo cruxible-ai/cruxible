@@ -487,7 +487,7 @@ def apply_relationship_set(
         )
         if existing is None:
             create_count += 1
-            apply_relationship(
+            durable = apply_relationship(
                 graph,
                 validated,
                 "workflow_apply",
@@ -505,6 +505,7 @@ def apply_relationship_set(
                     relationship_set.relationship_type,
                     is_update=False,
                     parent_id=parent_id,
+                    claim_id=durable.claim_id,
                 )
             continue
         evidence_changed = (
@@ -513,7 +514,7 @@ def apply_relationship_set(
         )
         if existing.properties != rel.properties or evidence_changed:
             update_count += 1
-            apply_relationship(
+            durable = apply_relationship(
                 graph,
                 validated,
                 "workflow_apply",
@@ -530,6 +531,7 @@ def apply_relationship_set(
                     relationship_set.relationship_type,
                     is_update=True,
                     parent_id=parent_id,
+                    claim_id=durable.claim_id,
                 )
             continue
         noop_count += 1

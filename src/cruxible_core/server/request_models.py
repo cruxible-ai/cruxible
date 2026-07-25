@@ -233,6 +233,7 @@ class AttestRequest(BaseModel):
     evidence_refs: list[contracts.EvidenceRef] = Field(default_factory=list)
     observed_at: datetime
     edge_key: int | None = None
+    claim_id: str | None = None
     properties: dict[str, Any] | None = None
     note: str | None = None
     idempotency_key: str | None = None

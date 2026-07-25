@@ -1537,6 +1537,7 @@ def _relationship_matches_list_where(
         to_type=relationship.to_type,
         to_id=relationship.to_id,
         edge_key=relationship.edge_key,
+        claim_id=relationship.claim_id,
         properties=dict(relationship.properties),
         metadata=relationship.metadata,
     )

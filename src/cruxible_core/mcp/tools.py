@@ -1179,6 +1179,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         observed_at: str,
         evidence_refs: list[contracts.EvidenceRef] | None = None,
         edge_key: int | None = None,
+        claim_id: str | None = None,
         properties: dict[str, Any] | None = None,
         note: str | None = None,
         idempotency_key: str | None = None,
@@ -1190,6 +1191,10 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         claim, using ``properties``. ``contradict`` and ``unsure`` are refused
         on an absent claim. Attesting is therefore not a pure observation on
         the create path — use it only when you mean to assert the claim exists.
+
+        When several edges share the tuple, pass ``claim_id`` (the stable
+        identity, preferred) or ``edge_key`` (per-load) to pick one. Passing
+        both with disagreeing values is refused, never silently resolved.
         """
         return handlers.handle_attest(
             instance_id,
@@ -1202,6 +1207,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             observed_at=observed_at,
             evidence_refs=evidence_refs,
             edge_key=edge_key,
+            claim_id=claim_id,
             properties=properties,
             note=note,
             idempotency_key=idempotency_key,

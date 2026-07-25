@@ -33,6 +33,7 @@ from cruxible_core.feedback.types import (
     OutcomeRecord,
 )
 from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.graph.claim_target import ClaimTargetConflictError, resolve_claim_target
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, GroupResolution
@@ -93,12 +94,36 @@ def _normalize_feedback_record(
     group_override: bool,
     actor_context: GovernedActorContext | None = None,
 ) -> FeedbackRecord:
-    """Validate and normalize one feedback request into a record."""
+    """Validate and normalize one feedback request into a record.
+
+    The target is resolved ONCE here, honouring the disambiguator precedence
+    (``claim_id`` wins; disagreeing disambiguators refuse), and the resolved
+    claim's identity is stamped onto the recorded target. Resolution semantics
+    are otherwise unchanged: tuple-first, and an unresolvable target still
+    records -- feedback about an edge that has since gone is still feedback.
+    """
     _validate_feedback_request_values(
         action=action,
         source=source,
         corrections=corrections,
     )
+
+    try:
+        resolved_target = resolve_claim_target(
+            graph,
+            relationship_type=target.relationship_type,
+            from_type=target.from_type,
+            from_id=target.from_id,
+            to_type=target.to_type,
+            to_id=target.to_id,
+            claim_id=target.claim_id,
+            edge_key=target.edge_key,
+        ).relationship
+    except ClaimTargetConflictError as exc:
+        raise ConfigError(str(exc)) from exc
+    if resolved_target is not None:
+        # Record-time stamp from the RESOLVED claim, not from the request.
+        target = target.model_copy(update={"claim_id": resolved_target.claim_id})
 
     normalized_corrections = corrections or {}
     if action == "correct" and normalized_corrections:
@@ -124,17 +149,9 @@ def _normalize_feedback_record(
     normalized_scope_hints = dict(scope_hints or {})
 
     if group_override:
-        rel = graph.get_relationship(
-            target.from_type,
-            target.from_id,
-            target.to_type,
-            target.to_id,
-            target.relationship_type,
-            edge_key=target.edge_key,
-        )
-        if rel is None:
+        if resolved_target is None:
             raise ConfigError("group_override requires the edge to exist in the graph")
-        if target.edge_key is None:
+        if target.edge_key is None and target.claim_id is None:
             count = graph.relationship_count_between(
                 target.from_type,
                 target.from_id,
@@ -335,6 +352,7 @@ def _build_context_snapshot(
         "edge": {
             "relationship": target.relationship_type,
             "edge_key": target.edge_key,
+            "claim_id": target.claim_id,
             "properties": edge_props,
         },
         "context": decision_context,
@@ -747,6 +765,7 @@ def _relationship_target_from_input(target: RelationshipTargetInput) -> Relation
         to_type=target.to_type,
         to_id=target.to_id,
         edge_key=target.edge_key,
+        claim_id=target.claim_id,
     )
 
 
@@ -783,6 +802,7 @@ def _target_from_query_relationship_mapping(
         to_type=target.to_type,
         to_id=target.to_id,
         edge_key=target.edge_key,
+        claim_id=target.claim_id,
     )
 
 

@@ -18,6 +18,13 @@ from cruxible_core.config.loader import save_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.legacy_identity import (
+    backfill_legacy_graph,
+    dump_legacy_identity_map,
+    legacy_identity_map_digest,
+    load_legacy_identity_map,
+    record_minted_identities,
+)
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import (
     compute_bundle_digest,
@@ -45,6 +52,7 @@ from cruxible_core.snapshot.types import (
     UpstreamMetadata,
 )
 from cruxible_core.snapshot.upstream_verification import sha256_file, verify_tracked_upstream
+from cruxible_core.storage.sqlite import LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY
 from cruxible_core.transport.backends import (
     RELEASE_BUNDLE_MEMBERS,
     RELEASE_MEMBER_DIGESTS_FILE,
@@ -161,7 +169,13 @@ def service_create_state_overlay(
     # references a phantom receipt -- the same invariant the clone-from-snapshot
     # and state-pull-apply paths enforce.
     upstream_graph.relabel_clone_receipts()
+    # LEGACY-IMAGE BACKFILL (overlay create). A release published before edge
+    # identity has no claim ids in its graph.json, and that bundle is immutable
+    # forever. Mint them in memory; the bundle bytes on disk are untouched, so
+    # the members digest and release immutability still verify.
+    minted = backfill_legacy_graph(upstream_graph)
     instance.save_graph(upstream_graph)
+    identity_map = record_minted_identities({}, minted)
     materialize_local_operator_auth_managed_entities(instance)
     upstream = UpstreamMetadata(
         transport_ref=resolved.tracking_transport_ref,
@@ -175,6 +189,7 @@ def service_create_state_overlay(
         owned_relationship_types=pulled.manifest.owned_relationship_types,
         bundle_format_version=pulled.manifest.bundle_format_version,
         members_digest=pulled.manifest.members_digest,
+        identity_map_digest=legacy_identity_map_digest(identity_map),
         overlay_config_path="config.yaml",
         manifest_path=str((upstream_dir / "manifest.json").relative_to(root)),
         graph_path=str((upstream_dir / "graph.json").relative_to(root)),
@@ -183,6 +198,12 @@ def service_create_state_overlay(
         **_materialized_upstream_digests(upstream_dir),
     )
     instance.set_upstream_metadata(upstream)
+    if identity_map:
+        with instance.write_transaction() as uow:
+            uow.snapshots.set_instance_state(
+                LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY,
+                dump_legacy_identity_map(identity_map),
+            )
     service_lock(instance)
     return StateOverlayResult(
         instance=instance,
@@ -243,7 +264,7 @@ def _build_state_pull_preview(
 
     current_upstream_graph = _load_graph_from_bundle(root / ".cruxible" / "upstream" / "current")
     next_graph = _load_graph_from_bundle(pulled.root_dir)
-    local_graph = _extract_local_overlay_graph(instance.load_graph(), upstream)
+    local_graph = _extract_local_overlay_graph(instance.load_graph(), pulled.manifest)
     conflicts.extend(_find_dangling_reference_conflicts(local_graph, next_graph, pulled.manifest))
     apply_digest = _compute_state_apply_digest(
         current_release_id=upstream.release_id,
@@ -287,6 +308,16 @@ def service_pull_state_apply(
         raise ConfigError("State pull apply digest mismatch; rerun pull preview before apply")
     if preview.conflicts:
         raise ConfigError("State pull preview has blocking conflicts", errors=preview.conflicts)
+    if pulled.manifest.release_id == upstream.release_id:
+        # A no-op re-apply of the release already tracked. It was already
+        # warning-worthy; with claim identity it is worse than useless -- it
+        # re-materializes the same immutable bundle and, for a pre-identity
+        # upstream, re-runs the legacy backfill for no state change at all.
+        # Refuse rather than churn.
+        raise ConfigError(
+            f"Instance already tracks release '{upstream.release_id}'; "
+            "re-applying the same release is a no-op and is refused"
+        )
 
     root = instance.get_root_path()
     pre_pull_snapshot_id = service_create_snapshot(
@@ -303,7 +334,7 @@ def service_pull_state_apply(
     )
 
     current_graph = instance.load_graph()
-    local_graph = _extract_local_overlay_graph(current_graph, upstream)
+    local_graph = _extract_local_overlay_graph(current_graph, pulled.manifest)
     next_upstream_graph = _load_graph_from_bundle(upstream_dir)
     # The upstream bundle is graph+config+lock with NO receipts: any receipt_id
     # on an upstream edge points at a receipt in the publishing instance that is
@@ -311,6 +342,16 @@ def service_pull_state_apply(
     # merge so no upstream-origin edge in this overlay references a phantom
     # receipt. Local overlay edges keep their receipt_id -- it resolves locally.
     next_upstream_graph.relabel_clone_receipts()
+    # LEGACY-IMAGE BACKFILL (pull apply). A pre-identity upstream release never
+    # gains ids of its own, so this overlay mints them -- reusing whatever it
+    # minted for the same tuples on an earlier pull, so upstream identities stay
+    # stable across re-pulls instead of churning invisibly. The bundle bytes are
+    # untouched; only this instance's live SQLite learns the ids.
+    stored_identity_map = load_legacy_identity_map(
+        instance.get_instance_state(LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY)
+    )
+    minted = backfill_legacy_graph(next_upstream_graph, reuse=stored_identity_map)
+    identity_map = record_minted_identities(stored_identity_map, minted)
     conflicts = _find_dangling_reference_conflicts(
         local_graph,
         next_upstream_graph,
@@ -359,6 +400,7 @@ def service_pull_state_apply(
         owned_relationship_types=pulled.manifest.owned_relationship_types,
         bundle_format_version=pulled.manifest.bundle_format_version,
         members_digest=pulled.manifest.members_digest,
+        identity_map_digest=legacy_identity_map_digest(identity_map),
         overlay_config_path=upstream.overlay_config_path,
         manifest_path=str((upstream_dir / "manifest.json").relative_to(root)),
         graph_path=str((upstream_dir / "graph.json").relative_to(root)),
@@ -387,6 +429,11 @@ def service_pull_state_apply(
     # instance.json advertising a release whose graph had been rolled back.
     with instance.write_transaction() as uow:
         instance.save_graph(merged)
+        if identity_map != stored_identity_map:
+            uow.snapshots.set_instance_state(
+                LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY,
+                dump_legacy_identity_map(identity_map),
+            )
         materialize_local_operator_auth_managed_entities(instance)
         receipt_id = _record_state_pull_apply_receipt(
             instance,
@@ -865,17 +912,27 @@ def _compute_state_apply_digest(
 
 def _extract_local_overlay_graph(
     current_graph: EntityGraph,
-    upstream: UpstreamMetadata,
+    ownership: PublishedStateManifest,
 ) -> EntityGraph:
+    """Split the overlay's own state out of the merged graph.
+
+    ``ownership`` is the manifest whose ownership decides what "local" means,
+    and on a pull it must be the NEW manifest, not the tracked (stale) upstream
+    metadata. A type the incoming release has TAKEN OVER would otherwise still
+    look local, be extracted, and then collide with the upstream edge of the
+    same tuple at merge time -- the stale-ownership window. The merge guard
+    refuses that collision loudly; passing the new ownership here means it never
+    arises.
+    """
     local_entity_types = [
         entity_type
         for entity_type in current_graph.list_entity_types()
-        if entity_type not in set(upstream.owned_entity_types)
+        if entity_type not in set(ownership.owned_entity_types)
     ]
     local_relationship_types = [
         relationship_type
         for relationship_type in current_graph.list_relationship_types()
-        if relationship_type not in set(upstream.owned_relationship_types)
+        if relationship_type not in set(ownership.owned_relationship_types)
     ]
     return current_graph.extract_owned_subgraph(
         entity_types=local_entity_types,

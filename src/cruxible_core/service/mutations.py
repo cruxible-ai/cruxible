@@ -353,6 +353,7 @@ def _direct_write_conflict_record(
         "to_id": interaction.to_id,
         "receipt_id": receipt_id,
         "edge_key": persisted.edge_key if persisted is not None else interaction.edge_key,
+        "claim_id": persisted.claim_id if persisted is not None else None,
         "detected_at": detected_at,
         "source": source,
         "source_ref": source_ref,
@@ -923,7 +924,7 @@ def service_batch_direct_write(
         touched_relationships = []
         for relationship_item in prepared.relationships:
             edge = relationship_item.relationship
-            apply_relationship(
+            persisted_relationship = apply_relationship(
                 prepared.graph,
                 relationship_item.validated,
                 source,
@@ -934,15 +935,7 @@ def service_batch_direct_write(
                 pending=relationship_item.pending,
                 lifecycle=relationship_item.lifecycle,
             )
-            persisted_relationship = prepared.graph.get_relationship(
-                edge.from_type,
-                edge.from_id,
-                edge.to_type,
-                edge.to_id,
-                edge.relationship_type,
-            )
-            if persisted_relationship is not None:
-                touched_relationships.append(persisted_relationship)
+            touched_relationships.append(persisted_relationship)
             if builder:
                 evidence_detail: dict[str, object] = {}
                 if edge.metadata.evidence is not None:
@@ -972,6 +965,7 @@ def service_batch_direct_write(
                     edge.relationship_type,
                     is_update=relationship_item.validated.is_update,
                     detail=evidence_detail,
+                    claim_id=persisted_relationship.claim_id,
                 )
 
         if ctx.uow is not None:
@@ -1410,7 +1404,7 @@ def service_add_relationships(
         updated = 0
         touched_relationships = []
         for validated, edge, pending_flag, lifecycle_state in prepared_relationships:
-            apply_relationship(
+            persisted = apply_relationship(
                 graph,
                 validated,
                 source,
@@ -1421,15 +1415,7 @@ def service_add_relationships(
                 pending=pending_flag,
                 lifecycle=lifecycle_state,
             )
-            persisted = graph.get_relationship(
-                edge.from_type,
-                edge.from_id,
-                edge.to_type,
-                edge.to_id,
-                edge.relationship_type,
-            )
-            if persisted is not None:
-                touched_relationships.append(persisted)
+            touched_relationships.append(persisted)
             if builder:
                 evidence_detail: dict[str, object] = {}
                 if edge.metadata.evidence is not None:
@@ -1451,6 +1437,7 @@ def service_add_relationships(
                     edge.relationship_type,
                     is_update=validated.is_update,
                     detail=evidence_detail,
+                    claim_id=persisted.claim_id,
                 )
             if validated.is_update:
                 updated += 1
