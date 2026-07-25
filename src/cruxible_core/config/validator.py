@@ -31,6 +31,7 @@ from cruxible_core.config.schema import (
     NamedQueryResultCountQualityCheck,
     PropertyQualityCheck,
     RelationshipPropertyConsistencyQualityCheck,
+    ResolutionContractGuardCondition,
     UniquenessQualityCheck,
 )
 from cruxible_core.errors import ConfigError
@@ -59,6 +60,7 @@ def validate_config(config: CoreConfig) -> list[str]:
     _validate_provider_artifacts(config, errors)
     _validate_quality_checks(config, errors)
     _validate_mutation_guards(config, errors)
+    _validate_outcome_guard_coverage(config, warnings)
     _validate_decision_policies(config, errors)
     _validate_workflows(config, errors)
     _validate_tests(config, errors)
@@ -860,6 +862,45 @@ def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
                 )
         elif isinstance(condition, CoWriteGuardCondition):
             _validate_co_write_condition(config, guard, condition, errors)
+
+
+_OUTCOME_ADOPTION_PROPERTY = "outcome_tracking"
+"""The conventional spelling of the outcome-forcing adoption property.
+
+This release introduces the convention (the guard teaching messages spell it),
+so a kit that opts into outcome forcing this way is recognizable by name alone.
+A kit that expresses the same adoption choice under a different property name
+is out of this lint's reach by design: the guard's ``where`` clause, not this
+constant, is the source of truth for what a guard actually scopes over.
+"""
+
+
+def _validate_outcome_guard_coverage(config: CoreConfig, warnings: list[str]) -> None:
+    """Warn when a type declares outcome adoption but no guard enforces it.
+
+    A resolution contract opened against an uncovered type is inert: activation
+    intents are minted only inside guard evaluation, so the contract can never
+    be activated by an acceptance and simply expires unanswered. That is a
+    warning, not an error — a config with no contracts at all is fine, and the
+    adoption property may be declared a release before the guard lands.
+    """
+    covered = {
+        guard.entity_type
+        for guard in config.mutation_guards
+        if isinstance(guard.condition, ResolutionContractGuardCondition)
+    }
+    for entity_type, entity_schema in config.entity_types.items():
+        if _OUTCOME_ADOPTION_PROPERTY not in entity_schema.properties:
+            continue
+        if entity_type in covered:
+            continue
+        warnings.append(
+            f"Entity type '{entity_type}': declares an "
+            f"'{_OUTCOME_ADOPTION_PROPERTY}' property but no mutation guard with "
+            "condition 'requires_resolution_contract' covers it; resolution "
+            "contracts opened against it could never be activated and would "
+            "expire unanswered"
+        )
 
 
 _GUARD_ENTITY_PREDICATE_SECTIONS = frozenset({"entity_type", "entity_id", "properties", "metadata"})

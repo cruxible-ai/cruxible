@@ -30,6 +30,7 @@ from cruxible_core.config.schema import (
     ProviderArtifactSchema,
     ProviderSchema,
     RelationshipSchema,
+    ResolutionContractGuardCondition,
     SignalPolicySchema,
     TraversalStep,
     WorkflowSchema,
@@ -600,6 +601,83 @@ class TestValidateMutationGuards:
             validate_config(config)
 
         assert any("relationship_type 'missing'" in e for e in exc_info.value.errors)
+
+
+class TestValidateOutcomeGuardCoverage:
+    def _tracked_entity_types(self, **overrides) -> dict[str, EntityTypeSchema]:
+        entity_types = {
+            "A": EntityTypeSchema(
+                properties={
+                    "id": PropertySchema(type="string", primary_key=True),
+                    "status": PropertySchema(type="string", optional=True),
+                    "outcome_tracking": PropertySchema(type="string", optional=True),
+                }
+            ),
+            "B": EntityTypeSchema(
+                properties={"id": PropertySchema(type="string", primary_key=True)}
+            ),
+        }
+        entity_types.update(overrides)
+        return entity_types
+
+    def _contract_guard(self, **overrides) -> MutationGuardSchema:
+        defaults = dict(
+            name="a_accepted_needs_contract",
+            entity_type="A",
+            property="status",
+            new_value="accepted",
+            condition=ResolutionContractGuardCondition(type="requires_resolution_contract"),
+        )
+        defaults.update(overrides)
+        return MutationGuardSchema(**defaults)
+
+    def test_tracked_entity_type_without_a_contract_guard_warns(self):
+        config = _minimal_config(entity_types=self._tracked_entity_types())
+
+        warnings = validate_config(config)
+
+        assert any("Entity type 'A'" in w and "requires_resolution_contract" in w for w in warnings)
+
+    def test_tracked_entity_type_covered_by_a_contract_guard_is_silent(self):
+        config = _minimal_config(
+            entity_types=self._tracked_entity_types(),
+            mutation_guards=[self._contract_guard()],
+        )
+
+        assert validate_config(config) == []
+
+    def test_coverage_is_type_level_not_where_clause_satisfiability(self):
+        """A guard scoped to a subset of the type still counts as coverage."""
+        config = _minimal_config(
+            entity_types=self._tracked_entity_types(),
+            mutation_guards=[
+                self._contract_guard(
+                    where={"candidate.properties.outcome_tracking": {"eq": "required"}}
+                )
+            ],
+        )
+
+        assert validate_config(config) == []
+
+    def test_a_config_without_the_adoption_property_is_silent(self):
+        assert validate_config(_minimal_config()) == []
+
+    def test_a_guard_on_another_type_does_not_cover_this_one(self):
+        config = _minimal_config(
+            entity_types=self._tracked_entity_types(
+                B=EntityTypeSchema(
+                    properties={
+                        "id": PropertySchema(type="string", primary_key=True),
+                        "status": PropertySchema(type="string", optional=True),
+                    }
+                )
+            ),
+            mutation_guards=[self._contract_guard(entity_type="B")],
+        )
+
+        warnings = validate_config(config)
+
+        assert any("Entity type 'A'" in w for w in warnings)
 
 
 class TestValidateLoopOneControls:

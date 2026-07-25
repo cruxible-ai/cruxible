@@ -14,7 +14,7 @@ from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import reset_registry
-from tests.test_outcome_contracts.conftest import UNGUARDED_CONFIG
+from tests.test_outcome_contracts.conftest import GUARDED_CONFIG
 
 CHECK_AT = "2026-07-24T12:00:00Z"
 EXPIRES_AT = "2026-08-24T12:00:00Z"
@@ -48,7 +48,7 @@ def _init(client: TestClient, root: Path) -> str:
     root.mkdir()
     response = client.post(
         "/api/v1/instances",
-        json={"root_dir": str(root), "config_yaml": UNGUARDED_CONFIG},
+        json={"root_dir": str(root), "config_yaml": GUARDED_CONFIG},
     )
     assert response.status_code == 200, response.text
     return cast(str, response.json()["instance_id"])
@@ -81,7 +81,7 @@ def _seed_subject(client: TestClient, instance_id: str) -> None:
 
 
 def _activate(client: TestClient, instance_id: str, contract_id: str) -> None:
-    """Stand in for the acceptance write path (no guard on this config)."""
+    """Stand in for the acceptance write path; these routes never accept."""
     from cruxible_core.resolution_contracts.types import ContractActivation
 
     instance = get_manager().get(instance_id)
