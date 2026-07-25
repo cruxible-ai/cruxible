@@ -1790,6 +1790,50 @@ def _create_prior_resolution(
 
 
 class TestAutoResolve:
+    def test_re_proposing_an_auto_resolved_signature_mints_no_duplicate_row(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        """The wi-group-auto-resolve-bug regression.
+
+        ``auto_resolved`` was a group STATUS with no resolution behind it. Both
+        ``find_pending_group`` and the pending unique index key on
+        ``pending_review``, and ``list_approved_relationship_tuples`` only counts
+        members of a ``resolved`` group with a CONFIRMED approval — so an
+        auto-resolved group was invisible to all three. Re-proposing the same
+        signature therefore found no pending bucket AND no approved tuples, and
+        inserted a whole second group carrying the very same members.
+
+        Auto-resolution is now a real confirmed approval, which is what closes
+        the hole: the second propose sees its tuples as already approved, the
+        delta is empty, and nothing new is written.
+        """
+        _seed_policy_graph(matching_instance)
+        members = [_member(signals=_all_support_signals())]
+        facts = _agent_signature_facts(matching_instance, "fits", members)
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
+
+        first = service_propose_group(matching_instance, "fits", members)
+        assert first.status == "resolved"
+
+        second = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member(signals=_all_support_signals())],
+        )
+        assert second.group_id is None
+        assert second.suppressed is True
+
+        group_store = matching_instance.get_group_store()
+        try:
+            for_signature = group_store.list_groups(
+                relationship_type="fits",
+                signature=first.signature,
+            )
+            assert [group.group_id for group in for_signature] == [first.group_id]
+            assert group_store.find_pending_group("fits", first.signature) is None
+        finally:
+            group_store.close()
+
     def test_prior_trusted_all_support_auto_resolved(
         self, matching_instance: CruxibleInstance
     ) -> None:
