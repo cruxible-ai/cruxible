@@ -52,11 +52,18 @@ def test_inspect_neighborhood_state_defaults_to_all() -> None:
 
 
 def test_group_status_contract_is_persisted_lifecycle_only() -> None:
+    """``auto_resolved`` is retired; ``withdrawn`` replaces the hard delete.
+
+    ``auto_resolved`` was a dead-end status no path transitioned out of, and it
+    escaped both ``find_pending_group`` and the pending unique index — so a
+    re-propose of the same signature minted a duplicate row. Auto-resolution is
+    now a real approve and survives only as ``resolution_source``.
+    """
     assert set(get_args(contracts.GroupStatus)) == {
         "pending_review",
-        "auto_resolved",
         "applying",
         "resolved",
+        "withdrawn",
     }
 
 

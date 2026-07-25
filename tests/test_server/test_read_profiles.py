@@ -252,6 +252,7 @@ UNREVIEWED_ASSERTION_FULL = {
         "superseded_by": None,
     },
     "group_override": False,
+    "group_approval_drift": None,
 }
 
 # Deliberate wi-read-revision-and-continuation envelope extension:
