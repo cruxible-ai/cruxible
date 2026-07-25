@@ -15,7 +15,11 @@ from typing import Any, NoReturn, cast
 from pydantic import BaseModel
 
 from cruxible_core.attestation.types import compute_claim_content_digest
-from cruxible_core.config.schema import CoreConfig, NamedQuerySchema
+from cruxible_core.config.schema import (
+    CoreConfig,
+    NamedQuerySchema,
+    ResolutionContractGuardCondition,
+)
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -147,6 +151,20 @@ def service_open_resolution_contract(
                 # minting a second mutation receipt.
                 return replay
 
+        # Coverage is checked on the fresh-create path only, after the replay
+        # branch has returned. A contract opened while the guard existed stays
+        # replayable if the config later drops it: the replay returns history,
+        # and refusing it would rewrite the answer to a question already asked.
+        if not _outcome_guard_covers(config, entity_type):
+            _refuse(
+                ctx.builder,
+                "no requires_resolution_contract mutation guard covers entity type "
+                f"'{entity_type}'; this contract could never be activated by an "
+                "acceptance and would expire unanswered. Declare a mutation guard "
+                "with condition requires_resolution_contract on the accepting "
+                "transition, then re-open",
+            )
+
         assert subject is not None
         contract = ResolutionContract(
             entity_type=entity_type,
@@ -171,6 +189,20 @@ def service_open_resolution_contract(
         result = ContractOpenResult(contract=contract)
         ctx.set_result(result)
     return result
+
+
+def _outcome_guard_covers(config: CoreConfig, entity_type: str) -> bool:
+    """Return whether any mutation guard demands a contract for this entity type.
+
+    Type-level coverage only. A guard's ``where`` clause reads the candidate at
+    write time, so whether THIS subject will fall in scope cannot be known at
+    open; a guard scoped to a subset of the type therefore counts as coverage.
+    """
+    return any(
+        isinstance(guard.condition, ResolutionContractGuardCondition)
+        and guard.entity_type == entity_type
+        for guard in config.mutation_guards
+    )
 
 
 def _build_declaration(

@@ -96,6 +96,17 @@ def test_open_refuses_an_absent_subject(contract_instance) -> None:
         _open(contract_instance, decision_id="dd-missing")
 
 
+def test_open_refuses_a_type_no_outcome_guard_covers(unguarded_instance) -> None:
+    """Guard-absent miswiring must teach, not mint a permanently inert contract."""
+    add_decision(unguarded_instance)
+    with pytest.raises(ConfigError) as excinfo:
+        _open(unguarded_instance)
+    message = str(excinfo.value)
+    assert "no requires_resolution_contract mutation guard covers entity type" in message
+    assert "would expire unanswered" in message
+    assert service_list_resolution_contracts(unguarded_instance).total == 0
+
+
 def test_open_refuses_check_at_at_or_after_expiry(contract_instance) -> None:
     add_decision(contract_instance)
     with pytest.raises(ConfigError, match="check_at must be strictly before expires_at"):

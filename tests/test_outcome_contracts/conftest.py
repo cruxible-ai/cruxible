@@ -134,7 +134,18 @@ LEGACY_TRACKING_CONFIG = GUARDED_CONFIG.replace(
 
 @pytest.fixture
 def contract_instance(tmp_path: Path) -> CruxibleInstance:
-    """An instance with no outcome guard: exercises the store and service."""
+    """A guarded instance used to exercise the store and service semantics.
+
+    These tests never take the acceptance path — activation is written directly
+    — but opening now requires the type to be covered by an outcome guard, so
+    the config must declare one for the service surface to be reachable at all.
+    """
+    return _instance(tmp_path, GUARDED_CONFIG)
+
+
+@pytest.fixture
+def unguarded_instance(tmp_path: Path) -> CruxibleInstance:
+    """An instance whose Decision type no outcome guard covers."""
     return _instance(tmp_path, UNGUARDED_CONFIG)
 
 

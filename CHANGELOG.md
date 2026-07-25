@@ -9,6 +9,28 @@ the project's own state instance.
 
 ### Changed (BREAKING)
 
+- **Opening a resolution contract requires an outcome guard on the
+  subject's type**: `outcome open` (and its HTTP/MCP equivalents) now
+  refuses unless the config declares a mutation guard whose condition is
+  `requires_resolution_contract` and whose `entity_type` is the subject's.
+  Coverage is checked at the type level only — a guard's `where` clause
+  reads the candidate at write time and cannot be evaluated at open, so a
+  guard scoped to a subset of the type counts as coverage. The refusal is
+  receipted like every other open-time refusal and names the fix.
+
+  **Behavior change:** a call that previously *succeeded* now refuses.
+  This is a governance-integrity fix rather than a capability removal: the
+  contract that call created was provably inert. Activation intents are
+  minted only inside guard evaluation, so with no guard covering the type
+  the contract could never be activated by an acceptance, appeared in no
+  attention queue, and silently expired unanswered. Every other
+  miswiring of this machinery teaches; guard-absent gave zero signal.
+
+  **Migration:** declare the guard on the accepting transition, then
+  re-open. Idempotent replays of contracts opened while a guard existed
+  are unaffected — the coverage check runs on the fresh-create path only,
+  so history stays replayable if the config later drops the guard.
+
 - **Feedback adjudication requires `graph_write`**: `feedback approve`,
   `reject`, and `correct` decide a claim's fate — they make a non-live
   edge live, or retract one — so they now require `GRAPH_WRITE` even
@@ -44,6 +66,19 @@ the project's own state instance.
   write verbs, so freezing live writes can no longer be walked around via
   feedback. `reject` / `flag` stay available — they move edges *out* of
   live state.
+
+### Added
+
+- **`config validate` lints outcome-guard coverage**: validation now emits
+  a WARNING when an entity type declares an `outcome_tracking` property
+  and no `requires_resolution_contract` guard covers that type — the
+  config says the type's decisions are outcome-tracked while nothing
+  enforces it. A warning rather than an error: a config with no contracts
+  at all is fine, and the adoption property may legitimately land a
+  release before the guard. `outcome_tracking` is doctrine vocabulary
+  (the guard's own teaching messages spell it); a kit expressing the same
+  adoption choice under another property name is out of the lint's reach
+  by design, where the guard's `where` clause is the source of truth.
 
 ### Fixed
 
