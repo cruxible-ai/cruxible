@@ -9,6 +9,88 @@ the project's own state instance.
 
 ### Changed (BREAKING)
 
+- **The self-declared `human`/`agent` axis is retired**: `FeedbackRecord.source`,
+  `OutcomeRecord.source`, `GroupResolution.resolved_by`,
+  `CandidateGroup.proposed_by`, `DecisionRecord.opened_by`, and
+  `make_group_proposal`'s `proposed_by` were all caller-supplied, defaulted to
+  `"human"`, and were never reconciled with `actor_context.actor_type`. They were
+  not inert: the feedback and outcome profiles require a `reason_code` only for
+  non-human writers, so an agent could skip the accountability rule written for
+  it simply by declaring itself a person. Every one of those fields is removed,
+  along with the matching `source` / `proposed_by` / `resolved_by` / `opened_by`
+  parameters on the service functions, the runtime facade, the MCP tools, the
+  HTTP request models, the CLI (`--source`, `--opened-by`), and the client.
+  Readers derive the value from the actor context.
+
+  The `reason_code` requirement now keys off the derived kind and applies to
+  everything that is not a resolved human — including `"unknown"`, because an
+  unattributed write is absence of evidence, not evidence of a person.
+  `RelationshipReviewSource` gains `"unknown"` for the same reason.
+
+  **Migration:** drop the retired arguments from every call; supply an
+  `actor_context` instead (auth-on daemons derive one from the credential;
+  auth-off daemons default to the declared local operator). Kits declaring
+  `proposed_by` on a `make_group_proposal` step must remove it — the step spec
+  forbids extra keys. Persisted rows are unaffected: the SQL columns survive as
+  denormalized projections written from the derived value.
+
+  **Contract fields removed:** `FeedbackFromQueryInput.source`;
+  `StateHealthGroupsSection.auto_resolved_count` (replaced by `withdrawn_count`);
+  the `FeedbackSource`, `GroupProposedBy`, and `GroupResolvedBy` type aliases.
+
+- **`auto_resolved` is retired as a group status**: it was a dead-end label. No
+  code path transitioned a group out of it, no edges were created, no resolution
+  row existed, and because `find_pending_group` and the pending unique index both
+  key on `pending_review`, an auto-resolved group was invisible to the next
+  proposal of the same signature — which therefore inserted a DUPLICATE pending
+  row instead of rewriting it (`wi-group-auto-resolve-bug`; auto-resolve is
+  enabled in shipped kits). Auto-resolution now runs the real approve transition:
+  same receipt, same edge provenance, same resolution row as a reviewer-driven
+  approve, marked `resolution_source="auto_resolved"`. `propose_group` returns
+  `status="resolved"` with a `resolution_id`.
+
+  Applying edges is `GRAPH_WRITE` while proposing is `GOVERNED_WRITE`, so a
+  proposer below that tier does not escalate itself: the group stays in
+  `pending_review` and the result carries `auto_resolve_deferred_reason`. The
+  same happens if the approve itself is refused (a member fails validation, a
+  guard rejects it) — the proposal does not fail, and the reason travels on the
+  result.
+
+  **Contract change:** `GroupStatus` drops `auto_resolved` and gains
+  `withdrawn`; `GroupResolution` drops `resolved_by` and gains
+  `resolution_source`.
+
+- **An empty-delta re-propose withdraws its pending group instead of deleting
+  it**: under the default `pending_refresh_mode="replace"`, a re-propose that
+  produced no delta used to DELETE the pending group and every one of its
+  members, erasing governance history and leaving any receipt naming that
+  `group_id` joined to nothing. The group is now marked `withdrawn` with its
+  members intact; `withdrawn` sits outside the pending unique index, so the
+  signature is free for a later proposal. The receipt operation type is
+  `group_withdraw` (was `group_clear`). `propose_group` also accepts an optional
+  `expected_pending_version`, the same optimistic guard `resolve_group` requires.
+
+- **Approve no longer moves trust**: a new approval CARRIES the signature's trust
+  posture — status, reason, and the actor who set it — forward verbatim. It used
+  to launder a reviewer's receipted `invalidated` into `watch`, twice (once when
+  the resolution was created, once again at confirmation), discarding the
+  judgement without a receipt, an actor, or a reason. Under
+  `auto_resolve_requires_prior_trust: trusted_or_watch` that also silently
+  re-armed auto-resolution for the very thesis a reviewer had just invalidated;
+  under the `trusted_only` default it merely lost the reason. Trust changes only
+  through the receipted `update_trust_status` verb.
+  `GroupStore.confirm_resolution` no longer takes a `trust_status` override.
+
+- **Config mutations and snapshot creation move up a tier**: `add_constraint` and
+  `add_decision_policy` are ACTIVE CONFIG — once saved they adjudicate every
+  later query and workflow, which is the authority `reload_config` carries — so
+  both require `ADMIN`. `create_snapshot` MOVES the instance head, invalidating
+  every outstanding state-pull apply guarded on the previous one, so it requires
+  `GRAPH_WRITE`. All three now mint receipts (`config_add_constraint` and
+  `config_add_decision_policy` carry pre/post config digests; `snapshot_create`
+  names the head it moved from and to) and thread the resolved actor, which the
+  facades previously computed and discarded.
+
 - **Feedback adjudication requires `graph_write`**: `feedback approve`,
   `reject`, and `correct` decide a claim's fate — they make a non-live
   edge live, or retract one — so they now require `GRAPH_WRITE` even
@@ -46,6 +128,47 @@ the project's own state instance.
   live state.
 
 ### Fixed
+
+- **Acceptance binds content**: a group approval accepts an edge's PROPERTIES,
+  not merely its existence. A later direct write that changes a group-approved
+  edge's content is now refused on `proposal_only` types (with a message naming
+  the approving group and pointing at the proposal rail) and stamped with a
+  receipted drift marker on ordinary types, where facts legitimately change. A
+  content-identical write is neither refused nor marked.
+
+- **Direct-write conflict records are append-only and attributed**: a second
+  conflict on the same tuple used to REPLACE the first, destroying the earlier
+  `detected_at` and `receipt_id` — the record of how many times live state moved
+  under a proposal. Records now append and carry the acting actor context. More
+  importantly, `update_group_analysis_state` now bumps `pending_version`, so the
+  reviewer's `expected_pending_version` guard actually trips: a resolve issued
+  against the pre-conflict view used to sail straight through the one mechanism
+  that says "the group changed during your review".
+
+- **Provenance backfill no longer claims the toucher's channel**: touching an
+  edge that carried NO provenance used to stamp the touching channel as the
+  edge's ORIGIN, asserting a provenance the edge never had and turning "we do
+  not know where this came from" into a confident, false claim. Such edges are
+  now marked `source="unknown_backfilled"` with the touching channel recorded
+  separately as `touched_by`.
+
+- **Decision records are append-only and receipted**: `save_record` was a
+  full-row upsert, so a finalized record could be silently rewritten back to
+  `open`; and because `append_event` refuses once a record is closed while
+  finalize/abandon transitioned FIRST, the terminal event for the closing act
+  itself could never be recorded. Records are now insert-only with an explicit
+  reopen refusal, the terminal event is emitted before the status guard, create/
+  finalize/abandon mint receipts, and a failed event append is surfaced on the
+  result instead of being swallowed into a log line.
+
+- **Execution traces and source artifacts are insert-only**: a duplicate
+  `trace_id` used to silently REPLACE the evidence that a prior provider
+  execution happened; traces now refuse it and carry an `actor_context`.
+  Registering a source artifact under an existing id used to rewrite the
+  manifest that prior evidence refs were pinned against — it now writes a new
+  revision with a supersedes pointer, closes the duplicate-check TOCTOU by
+  holding the guard inside the write boundary, mints a receipt, and PERSISTS
+  detected content drift instead of recomputing and forgetting it on every read.
 
 - **Pending proposals are no longer clobbered**: a plain non-pending write
   onto a tuple whose edge is still `pending` used to resolve as an update
