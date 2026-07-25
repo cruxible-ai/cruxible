@@ -7,6 +7,7 @@ invariants. (The docs/dev draft is a local commented reference of the same gramm
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from textwrap import dedent
@@ -21,7 +22,7 @@ from cruxible_core.config.compact import (
     expand_compact_file_full,
     expand_compact_full,
 )
-from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.schema import CoreConfig, ResolutionContractGuardCondition
 
 KIT_DIR = Path(__file__).resolve().parents[2] / "kits" / "agent-operation"
 # config.yaml is the single source of truth (compact); the loader expands it on load,
@@ -1673,6 +1674,77 @@ def test_guard_where_passthrough() -> None:
     )
     guard = config["mutation_guards"][0]
     assert guard["where"] == {"candidate.properties.type": {"eq": "research"}}
+
+
+def test_guard_resolution_contract_sugar_expands() -> None:
+    config = _expand(
+        _GUARD_HEADER,
+        """
+        mutation_guards:
+          - g:
+              when: WorkItem.status -> closed
+              require: {resolution_contract: true}
+        """,
+    )
+    assert config["mutation_guards"][0]["condition"] == {"type": "requires_resolution_contract"}
+
+
+def test_guard_resolution_contract_sugar_validates_against_the_schema() -> None:
+    """The sugar must expand into a condition the schema actually accepts."""
+    config = CoreConfig.model_validate(
+        _expand(
+            _GUARD_HEADER,
+            """
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require: {resolution_contract: true}
+            """,
+        )
+    )
+    condition = config.mutation_guards[0].condition
+    assert isinstance(condition, ResolutionContractGuardCondition)
+
+
+@pytest.mark.parametrize("value", [False, "true", 1, None])
+def test_guard_resolution_contract_sugar_refuses_non_true(value: object) -> None:
+    """The condition takes no options, so only the literal true means anything."""
+    with pytest.raises(CompactExpansionError, match="resolution_contract must be true"):
+        _expand(
+            _GUARD_HEADER,
+            f"""
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require: {{resolution_contract: {json.dumps(value)}}}
+            """,
+        )
+
+
+def test_guard_resolution_contract_sugar_refuses_unknown_keys() -> None:
+    with pytest.raises(CompactExpansionError, match="min_count"):
+        _expand(
+            _GUARD_HEADER,
+            """
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require: {resolution_contract: true, min_count: 1}
+            """,
+        )
+
+
+def test_guard_require_error_names_the_resolution_contract_option() -> None:
+    with pytest.raises(CompactExpansionError, match="query, or resolution_contract"):
+        _expand(
+            _GUARD_HEADER,
+            """
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require: {nonsense: true}
+            """,
+        )
 
 
 def test_guard_where_related_passthrough() -> None:

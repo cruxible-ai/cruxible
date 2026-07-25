@@ -12,9 +12,11 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, NoReturn, cast
 
+from pydantic import BaseModel
+
 from cruxible_core.attestation.types import compute_claim_content_digest
 from cruxible_core.config.schema import CoreConfig, NamedQuerySchema
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
@@ -23,6 +25,7 @@ from cruxible_core.instance_protocol import (
     InstanceProtocol,
     ResolutionContractStoreProtocol,
 )
+from cruxible_core.query.engine import effective_query_receipt_options
 from cruxible_core.query.entity_state import entity_matches_query_state
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
@@ -50,6 +53,16 @@ from cruxible_core.service.gates import entity_matches_property_equality_conditi
 from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.service.types import ListResult, list_truncated
 from cruxible_core.temporal import ensure_utc, format_datetime, utc_now
+
+_UNPINNED_OPTION_KEYS = frozenset({"relationship_state_source"})
+"""Receipt execution-option keys that record provenance, not the question asked.
+
+``relationship_state_source`` says whether the state came from the query config
+or a runtime override. Two runs at the same effective ``relationship_state``
+measured the same thing however that state was chosen, so pinning the source
+would refuse an honest re-run for a difference that carries no meaning.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Open
@@ -187,11 +200,44 @@ def _build_declaration(
         declaration = declaration.model_copy(
             update={
                 "measurement": declaration.measurement.model_copy(
-                    update={"query_definition_digest": compute_query_definition_digest(schema)}
+                    update={
+                        "query_definition_digest": compute_query_definition_digest(schema),
+                        "execution_options": _pinned_execution_options(
+                            config,
+                            declaration.measurement,
+                            schema,
+                            builder=builder,
+                        ),
+                    }
                 )
             }
         )
     return declaration
+
+
+def _pinned_execution_options(
+    config: CoreConfig,
+    measurement: QueryMeasurement,
+    schema: NamedQuerySchema,
+    *,
+    builder: ReceiptBuilder,
+) -> dict[str, str]:
+    """Pin the execution options the declared measurement will run under.
+
+    The definition digest pins what the query IS; this pins how it is EXECUTED.
+    A named query that allows runtime overrides can otherwise be re-run at a
+    different ``relationship_state`` and produce a receipt that "satisfies" a
+    promise nobody made.
+    """
+    try:
+        options = effective_query_receipt_options(config, measurement.query_name, schema)
+    except QueryExecutionError as exc:
+        _refuse(
+            builder,
+            f"query measurement query '{measurement.query_name}' cannot be executed "
+            f"as configured: {exc}",
+        )
+    return {key: value for key, value in options.items() if key not in _UNPINNED_OPTION_KEYS}
 
 
 def _validated_query_schema(
@@ -227,7 +273,57 @@ def _validated_query_schema(
                 f"query measurement params must supply '{primary_key}' for entry "
                 f"point '{schema.entry_point}'; got {sorted(measurement.params)}",
             )
+    accepted = _accepted_query_param_keys(config, schema)
+    unexpected = sorted(set(measurement.params) - accepted)
+    if unexpected:
+        # A typo'd param is silently ignored at execution time, so the contract
+        # would pin a measurement subtly different from the one the opener meant.
+        _refuse(
+            builder,
+            f"query measurement params carry key(s) {unexpected} that query "
+            f"'{measurement.query_name}' does not accept; accepted keys are "
+            f"{sorted(accepted)}",
+        )
     return schema
+
+
+def _accepted_query_param_keys(config: CoreConfig, schema: NamedQuerySchema) -> set[str]:
+    """Return every param key one named query can actually read.
+
+    That is the entry-point primary key (traversal queries resolve their entry
+    entity from it) plus the root of every ``$input.<name>`` reference the
+    definition makes. Nothing else reaches the engine, so anything else in
+    ``params`` is a typo the contract would otherwise pin forever.
+    """
+    accepted: set[str] = set()
+    if schema.entry_point is not None:
+        entity_schema = config.get_entity_type(schema.entry_point)
+        primary_key = entity_schema.get_primary_key() if entity_schema is not None else None
+        if primary_key is not None:
+            accepted.add(primary_key)
+    accepted.update(_input_reference_roots(schema))
+    return accepted
+
+
+def _input_reference_roots(value: Any) -> set[str]:
+    """Collect the root names of every ``$input.<root>[...]`` reference."""
+    if isinstance(value, BaseModel):
+        return _input_reference_roots(value.model_dump(mode="python", exclude_none=True))
+    if isinstance(value, Mapping):
+        roots: set[str] = set()
+        for key, item in value.items():
+            if isinstance(key, str) and key.startswith("$input."):
+                roots.add(key[len("$input.") :].split(".")[0])
+            roots.update(_input_reference_roots(item))
+        return roots
+    if isinstance(value, (list, tuple, set)):
+        roots = set()
+        for item in value:
+            roots.update(_input_reference_roots(item))
+        return roots
+    if isinstance(value, str) and value.startswith("$input."):
+        return {value[len("$input.") :].split(".")[0]}
+    return set()
 
 
 def _declaration_divergences(
@@ -305,9 +401,11 @@ def service_resolve_outcome(
         if observed > recorded:
             _refuse(ctx.builder, "observed_at must be <= recorded_at")
         if verdict == "satisfied" and observed < contract.declaration.check_at:
-            # The clock rule: a success observed before the contract said to
-            # look has not measured what was promised. Failure and uncertainty
-            # are honest at any time.
+            # The clock rule, caller half: a success observed before the
+            # contract said to look has not measured what was promised. Failure
+            # and uncertainty are honest at any time. The binding half — the
+            # evidence's OWN timestamps — is enforced below; the caller's
+            # observed_at is recorded but never what satisfies the clock rule.
             _refuse(
                 ctx.builder,
                 "verdict 'satisfied' requires observed_at at or after the "
@@ -405,6 +503,7 @@ def _validate_measurement_evidence(
         _validate_query_measurement(
             instance,
             uow,
+            contract=contract,
             measurement=measurement,
             verdict=verdict,
             resolving_query_receipt_id=resolving_query_receipt_id,
@@ -424,6 +523,7 @@ def _validate_measurement_evidence(
         )
     _validate_attestation_measurement(
         uow,
+        contract=contract,
         measurement=measurement,
         verdict=verdict,
         resolving_attestation_ids=resolving_attestation_ids,
@@ -435,6 +535,7 @@ def _validate_query_measurement(
     instance: InstanceProtocol,
     uow: Any,
     *,
+    contract: ResolutionContract,
     measurement: QueryMeasurement,
     verdict: ResolutionVerdict,
     resolving_query_receipt_id: str | None,
@@ -493,6 +594,19 @@ def _validate_query_measurement(
             f"receipt '{resolving_query_receipt_id}' ran the declared query with "
             "different parameters than the contract declared",
         )
+    _validate_receipt_execution_options(
+        measurement,
+        receipt,
+        receipt_id=resolving_query_receipt_id,
+        builder=builder,
+    )
+    _validate_receipt_observation_clock(
+        contract,
+        receipt,
+        verdict=verdict,
+        receipt_id=resolving_query_receipt_id,
+        builder=builder,
+    )
     result_detail = _result_node_detail(receipt)
     if result_detail.get("truncated"):
         _refuse(
@@ -518,6 +632,89 @@ def _validate_query_measurement(
             builder,
             f"receipt '{resolving_query_receipt_id}' satisfies the declared "
             "expectation; it cannot evidence a 'contradicted' verdict",
+        )
+
+
+def _validate_receipt_execution_options(
+    measurement: QueryMeasurement,
+    receipt: Receipt,
+    *,
+    receipt_id: str,
+    builder: ReceiptBuilder,
+) -> None:
+    """Refuse a receipt whose execution options differ from the pinned ones.
+
+    The definition digest cannot see a runtime override: the same query run at
+    ``relationship_state: all`` instead of the declared ``live`` asks a
+    different question and may "satisfy" a promise nobody made.
+    """
+    pinned = measurement.execution_options
+    if pinned is None:
+        # Contracts opened before options were pinned carry no pin; the digest
+        # still governs definition drift. Every contract opened by this service
+        # pins its options.
+        return
+    observed = {
+        key: value
+        for key, value in receipt.execution_options.items()
+        if key not in _UNPINNED_OPTION_KEYS
+    }
+    if observed == pinned:
+        return
+    differing = sorted(
+        set(pinned) | set(observed),
+        key=str,
+    )
+    mismatches = [
+        f"{key}: declared {pinned.get(key)!r}, receipt {observed.get(key)!r}"
+        for key in differing
+        if pinned.get(key) != observed.get(key)
+    ]
+    _refuse(
+        builder,
+        f"receipt '{receipt_id}' ran the declared query under different execution "
+        f"options than the contract pinned ({'; '.join(mismatches)}); a run under "
+        "other options measured a different question",
+    )
+
+
+def _validate_receipt_observation_clock(
+    contract: ResolutionContract,
+    receipt: Receipt,
+    *,
+    verdict: ResolutionVerdict,
+    receipt_id: str,
+    builder: ReceiptBuilder,
+) -> None:
+    """Bind the verdict to the RECEIPT's own clock, not the caller's observed_at.
+
+    A caller-supplied ``observed_at`` is an assertion; the receipt's
+    ``created_at`` is a record. Resolution-grade evidence must therefore have
+    been produced after the contract was opened (and, for ``satisfied``, at or
+    after ``check_at``), and must carry the ``read_revision`` stamp that says
+    which state it observed — a pre-stamp receipt cannot prove that.
+    """
+    if receipt.read_revision is None:
+        _refuse(
+            builder,
+            f"receipt '{receipt_id}' carries no read_revision stamp, so it cannot "
+            "prove which instance revision it observed; re-run the measurement "
+            "query and cite the new receipt",
+        )
+    created = ensure_utc(receipt.created_at)
+    if created < contract.opened_at:
+        _refuse(
+            builder,
+            f"receipt '{receipt_id}' was created at {format_datetime(created)}, "
+            f"before this contract was opened ({format_datetime(contract.opened_at)}); "
+            "evidence predating the commitment cannot resolve it",
+        )
+    if verdict == "satisfied" and created < contract.declaration.check_at:
+        _refuse(
+            builder,
+            f"verdict 'satisfied' requires a measurement taken at or after the "
+            f"declared check_at ({format_datetime(contract.declaration.check_at)}); "
+            f"receipt '{receipt_id}' was created at {format_datetime(created)}",
         )
 
 
@@ -588,6 +785,7 @@ def _row_matches_condition(
 def _validate_attestation_measurement(
     uow: Any,
     *,
+    contract: ResolutionContract,
     measurement: AttestationMeasurement,
     verdict: ResolutionVerdict,
     resolving_attestation_ids: Sequence[str],
@@ -622,6 +820,8 @@ def _validate_attestation_measurement(
             dict(claim.properties),
         )
     )
+    dispositions = uow.attestations.get_latest_dispositions(list(resolving_attestation_ids))
+    latest_observed: datetime | None = None
     for attestation_id in resolving_attestation_ids:
         record = uow.attestations.get_attestation(attestation_id)
         if record is None:
@@ -645,6 +845,43 @@ def _validate_attestation_measurement(
                 "claim content than the claim now carries; it cannot settle this "
                 "contract",
             )
+        disposition = dispositions.get(attestation_id)
+        if disposition is not None and disposition.verdict == "invalidated":
+            # A reviewer has already said this observation is not to be relied
+            # on. Letting it resolve a contract would launder an invalidated
+            # observation into a settled outcome.
+            _refuse(
+                builder,
+                f"attestation '{attestation_id}' was invalidated by a reviewer "
+                f"disposition ({disposition.disposition_id}); an invalidated "
+                "observation cannot serve as resolution evidence",
+            )
+        observed = ensure_utc(record.observed_at)
+        if observed < contract.opened_at:
+            # Evidence-time binding: the attestation's OWN clock, not the
+            # caller's observed_at, is what places the observation after the
+            # commitment.
+            _refuse(
+                builder,
+                f"attestation '{attestation_id}' observed at "
+                f"{format_datetime(observed)} predates this contract's opening "
+                f"({format_datetime(contract.opened_at)}); an observation taken "
+                "before the commitment cannot resolve it",
+            )
+        if latest_observed is None or observed > latest_observed:
+            latest_observed = observed
+    if (
+        verdict == "satisfied"
+        and latest_observed is not None
+        and latest_observed < contract.declaration.check_at
+    ):
+        _refuse(
+            builder,
+            "verdict 'satisfied' requires at least one resolving attestation "
+            "observed at or after the declared check_at "
+            f"({format_datetime(contract.declaration.check_at)}); the newest cited "
+            f"observation is from {format_datetime(latest_observed)}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -660,7 +897,14 @@ def service_dispose_resolution(
     actor_context: GovernedActorContext | None,
     note: str | None = None,
 ) -> ContractDispositionResult:
-    """Uphold or overturn one resolution; an overturn re-opens its contract."""
+    """Uphold or overturn one resolution; an overturn re-opens its contract.
+
+    Dispositions are latest-wins (attestation-disposition precedent): a
+    reviewer who upheld a resolution in error records another disposition, and
+    the newest one stands. The one thing supersession may not do is rewrite
+    history that has already been acted on — once an overturn has been answered
+    by a later resolution, the correction belongs on that resolution.
+    """
     with mutation_receipt(
         instance,
         "resolution_contract_disposition",
@@ -674,17 +918,20 @@ def service_dispose_resolution(
         resolution = store.get_resolution(resolution_id)
         if resolution is None:
             _refuse(ctx.builder, f"resolution '{resolution_id}' not found")
-        if store.get_dispositions([resolution_id]):
-            # One disposition per resolution: after an overturn the next answer
-            # is a NEW resolution, so a second disposition on the same record
-            # would have nothing left to decide.
+        history = store.list_dispositions(resolution_id)
+        superseded = history[-1] if history else None
+        if superseded is not None and _resolution_answered_after(store, resolution, superseded):
+            # Once the overturn has been used — a later resolution exists — the
+            # disposition is spent history, not a live judgment to revise. The
+            # corrective path then runs through the NEW resolution.
             _refuse(
                 ctx.builder,
-                f"resolution '{resolution_id}' already carries a reviewer "
-                "disposition; record the next answer as a new resolution",
+                f"resolution '{resolution_id}' was already overturned and answered "
+                f"by a later resolution; dispose that resolution instead",
             )
         disposition = ResolutionDisposition(
             resolution_id=resolution_id,
+            sequence=1 if superseded is None else superseded.sequence + 1,
             verdict=verdict,
             reviewer_actor_context=reviewer,
             note=note,
@@ -697,13 +944,31 @@ def service_dispose_resolution(
                 "resolution_id": resolution_id,
                 "contract_id": resolution.contract_id,
                 "disposition_id": disposition.disposition_id,
+                "sequence": disposition.sequence,
                 "verdict": verdict,
                 "reopened": verdict == "overturned",
+                "supersedes": None if superseded is None else superseded.disposition_id,
             },
         )
         result = ContractDispositionResult(disposition=disposition)
         ctx.set_result(result)
     return result
+
+
+def _resolution_answered_after(
+    store: ResolutionContractStoreProtocol,
+    resolution: ContractResolution,
+    disposition: ResolutionDisposition,
+) -> bool:
+    """Return whether a later resolution already answered this disposition.
+
+    Only an ``overturned`` disposition can be answered, and only by a
+    higher-sequence resolution on the same contract.
+    """
+    if disposition.verdict != "overturned":
+        return False
+    history = store.list_resolutions(resolution.contract_id)
+    return any(later.sequence > resolution.sequence for later in history)
 
 
 # ---------------------------------------------------------------------------

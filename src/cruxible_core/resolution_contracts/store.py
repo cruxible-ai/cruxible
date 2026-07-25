@@ -75,14 +75,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_resolution_contract_resolutions_sequence
 
 CREATE TABLE IF NOT EXISTS resolution_contract_dispositions (
     disposition_id TEXT PRIMARY KEY,
-    resolution_id TEXT NOT NULL UNIQUE
+    resolution_id TEXT NOT NULL
         REFERENCES resolution_contract_resolutions(resolution_id),
+    sequence INTEGER NOT NULL,
     verdict TEXT NOT NULL CHECK (verdict IN ('upheld', 'overturned')),
     reviewer_actor_context_json TEXT NOT NULL,
     note TEXT,
     receipt_id TEXT,
     recorded_at TEXT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_resolution_contract_dispositions_sequence
+    ON resolution_contract_dispositions(resolution_id, sequence);
 """
 
 
@@ -323,11 +326,13 @@ class ResolutionContractStore(ResolutionContractStoreProtocol):
         """Insert one reviewer disposition without committing."""
         self._conn.execute(
             "INSERT INTO resolution_contract_dispositions "
-            "(disposition_id, resolution_id, verdict, reviewer_actor_context_json, "
-            "note, receipt_id, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(disposition_id, resolution_id, sequence, verdict, "
+            "reviewer_actor_context_json, note, receipt_id, recorded_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 disposition.disposition_id,
                 disposition.resolution_id,
+                disposition.sequence,
                 disposition.verdict,
                 json.dumps(
                     dump_actor_context(disposition.reviewer_actor_context),
@@ -344,16 +349,34 @@ class ResolutionContractStore(ResolutionContractStoreProtocol):
         self,
         resolution_ids: Sequence[str],
     ) -> dict[str, ResolutionDisposition]:
-        """Load dispositions for many resolutions in one query."""
+        """Load the STANDING (highest-sequence) disposition for many resolutions.
+
+        Dispositions are latest-wins: a reviewer who mistakenly upheld a
+        resolution supersedes that answer by recording another one, and every
+        read of "the" disposition means the newest.
+        """
         if not resolution_ids:
             return {}
         placeholders = ",".join("?" for _ in resolution_ids)
         rows = self._conn.execute(
-            "SELECT * FROM resolution_contract_dispositions "
-            f"WHERE resolution_id IN ({placeholders})",
+            "WITH ranked AS ("
+            "SELECT d.*, ROW_NUMBER() OVER ("
+            "PARTITION BY resolution_id ORDER BY sequence DESC"
+            ") AS position FROM resolution_contract_dispositions d "
+            f"WHERE resolution_id IN ({placeholders})"
+            ") SELECT * FROM ranked WHERE position = 1",
             tuple(resolution_ids),
         ).fetchall()
         return {row["resolution_id"]: self._row_to_disposition(row) for row in rows}
+
+    def list_dispositions(self, resolution_id: str) -> list[ResolutionDisposition]:
+        """List one resolution's full disposition history, oldest sequence first."""
+        rows = self._conn.execute(
+            "SELECT * FROM resolution_contract_dispositions "
+            "WHERE resolution_id = ? ORDER BY sequence ASC",
+            (resolution_id,),
+        ).fetchall()
+        return [self._row_to_disposition(row) for row in rows]
 
     # -- derived queues ----------------------------------------------------
 
@@ -362,10 +385,11 @@ class ResolutionContractStore(ResolutionContractStoreProtocol):
     ) -> list[ResolutionContract]:
         """Return activated contracts whose clock has passed and are unanswered.
 
-        "Unanswered" means the highest-sequence resolution, if any, was
-        overturned by a reviewer — an overturn re-opens the contract. A
-        contract carrying a standing resolution has been answered and must not
-        keep nagging.
+        "Unanswered" means every resolution on the contract was overturned by
+        its STANDING (highest-sequence) reviewer disposition — an overturn
+        re-opens the contract, and a later disposition supersedes an earlier
+        one. A contract carrying a standing resolution has been answered and
+        must not keep nagging.
         """
         column = "expires_at" if use_expiry else "check_at"
         rows = self._conn.execute(
@@ -374,10 +398,12 @@ class ResolutionContractStore(ResolutionContractStoreProtocol):
             f"WHERE c.{column} <= ? "
             "AND NOT EXISTS ("
             "SELECT 1 FROM resolution_contract_resolutions r "
-            "LEFT JOIN resolution_contract_dispositions d "
-            "ON d.resolution_id = r.resolution_id "
             "WHERE r.contract_id = c.contract_id "
-            "AND (d.verdict IS NULL OR d.verdict <> 'overturned')"
+            "AND COALESCE(("
+            "SELECT d.verdict FROM resolution_contract_dispositions d "
+            "WHERE d.resolution_id = r.resolution_id "
+            "ORDER BY d.sequence DESC LIMIT 1"
+            "), '') <> 'overturned'"
             ") "
             "ORDER BY c.check_at ASC, c.contract_id ASC",
             (before,),
@@ -385,7 +411,12 @@ class ResolutionContractStore(ResolutionContractStoreProtocol):
         return [self._row_to_contract(row) for row in rows]
 
     def list_undisposed_contradictions(self) -> list[tuple[ResolutionContract, ContractResolution]]:
-        """Return standing contradicted resolutions with no reviewer disposition."""
+        """Return standing contradicted resolutions with no reviewer disposition.
+
+        "No disposition" means no disposition at all, not "no standing
+        disposition": once a reviewer has answered, the attention is theirs to
+        re-file, and a superseding disposition keeps the queue drained.
+        """
         rows = self._conn.execute(
             "SELECT c.*, r.resolution_id AS r_resolution_id, r.contract_id AS r_contract_id, "
             "r.sequence AS r_sequence, r.verdict AS r_verdict, "
@@ -397,9 +428,10 @@ class ResolutionContractStore(ResolutionContractStoreProtocol):
             "r.receipt_id AS r_receipt_id "
             "FROM resolution_contract_resolutions r "
             "JOIN resolution_contracts c ON c.contract_id = r.contract_id "
-            "LEFT JOIN resolution_contract_dispositions d "
-            "ON d.resolution_id = r.resolution_id "
-            "WHERE r.verdict = 'contradicted' AND d.disposition_id IS NULL "
+            "WHERE r.verdict = 'contradicted' AND NOT EXISTS ("
+            "SELECT 1 FROM resolution_contract_dispositions d "
+            "WHERE d.resolution_id = r.resolution_id"
+            ") "
             "ORDER BY r.recorded_at DESC, r.resolution_id DESC"
         ).fetchall()
         results: list[tuple[ResolutionContract, ContractResolution]] = []
@@ -501,6 +533,7 @@ class ResolutionContractStore(ResolutionContractStoreProtocol):
         return ResolutionDisposition(
             disposition_id=row["disposition_id"],
             resolution_id=row["resolution_id"],
+            sequence=int(row["sequence"]),
             verdict=row["verdict"],
             reviewer_actor_context=reviewer,
             note=row["note"],

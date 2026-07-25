@@ -358,6 +358,17 @@ class CruxibleInstance(InstanceProtocol):
     def _ensure_state_initialized(self) -> None:
         self._storage_backend().initialize()
 
+    def active_unit_of_work(self) -> UnitOfWorkProtocol | None:
+        """Return the open write boundary, or None when there is none.
+
+        Callers that must be atomic with the surrounding write ask this rather
+        than opening their own boundary: ``write_transaction`` would silently
+        hand them a fresh, independently-committing transaction outside an
+        apply, which is exactly the durability hole the resolution-contract
+        activation must not have.
+        """
+        return self._active_uow
+
     @contextmanager
     def write_transaction(self) -> Iterator[UnitOfWorkProtocol]:
         """Open the authoritative instance-owned write boundary."""

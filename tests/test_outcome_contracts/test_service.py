@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 from typing import Any
 
@@ -17,6 +18,7 @@ from cruxible_core.service import (
     service_open_resolution_contract,
     service_outcome_queue,
     service_query,
+    service_resolve_attestation,
     service_resolve_outcome,
 )
 from cruxible_core.service.mutation_guards import record_contract_activations
@@ -119,6 +121,70 @@ def test_open_refuses_an_expectation_that_constrains_nothing(contract_instance) 
     add_decision(contract_instance)
     with pytest.raises(ConfigError, match="expect requires min_count, max_count, or condition"):
         _open(contract_instance, measurement=query_measurement(expect={}))
+
+
+def test_open_refuses_a_vacuously_satisfiable_all_condition(contract_instance) -> None:
+    """An ALL condition over zero rows is true; a promise must be falsifiable."""
+    add_decision(contract_instance)
+    with pytest.raises(ConfigError, match="condition_scope 'all' requires min_count"):
+        _open(
+            contract_instance,
+            measurement=query_measurement(expect={"condition": {"health": "healthy"}}),
+        )
+
+    result = _open(
+        contract_instance,
+        measurement=query_measurement(expect={"condition": {"health": "healthy"}, "min_count": 1}),
+    )
+    assert result.contract.declaration.measurement.expect.min_count == 1
+
+
+def test_open_accepts_an_any_scoped_condition_without_a_count_floor(contract_instance) -> None:
+    """ANY over an empty result set is False, so it is already falsifiable."""
+    add_decision(contract_instance)
+    result = _open(
+        contract_instance,
+        measurement=query_measurement(
+            expect={"condition": {"health": "healthy"}, "condition_scope": "any"}
+        ),
+    )
+    assert result.contract.declaration.measurement.expect.condition_scope == "any"
+
+
+def test_open_pins_the_effective_execution_options(contract_instance) -> None:
+    add_decision(contract_instance)
+    measurement = _open(contract_instance).contract.declaration.measurement
+    assert measurement.execution_options == {
+        "relationship_state": "live",
+        "result_shape": "entity",
+        "dedupe": "entity",
+    }
+
+
+def test_open_refuses_a_param_key_the_query_does_not_accept(contract_instance) -> None:
+    """A typo'd param is ignored at execution time, so it is refused at open."""
+    add_decision(contract_instance)
+    with pytest.raises(ConfigError, match="does not accept"):
+        _open(
+            contract_instance,
+            measurement=query_measurement(
+                query_name="service_controls",
+                params={"service_id": "svc-1", "servcie_id": "svc-1"},
+            ),
+        )
+
+
+def test_idempotent_open_replays_after_the_contract_activates(contract_instance) -> None:
+    """A retry after acceptance must not mint a second, still-eligible contract."""
+    add_decision(contract_instance)
+    first = _open(contract_instance, idempotency_key="retry-1")
+    _activate(contract_instance, first.contract.contract_id)
+
+    replay = _open(contract_instance, idempotency_key="retry-1")
+    assert replay.idempotent_replay is True
+    assert replay.contract.contract_id == first.contract.contract_id
+    assert service_list_resolution_contracts(contract_instance).total == 1
+    assert service_list_resolution_contracts(contract_instance).items[0].status == "open"
 
 
 def test_multiple_open_contracts_per_subject_are_legal(contract_instance) -> None:
@@ -364,6 +430,153 @@ def test_satisfied_requires_a_resolving_receipt_on_a_query_measurement(
         )
 
 
+def _restamped_receipt(contract_instance, receipt_id: str, **updates: Any) -> str:
+    """Store a copy of one receipt under a new id with the given fields changed.
+
+    Evidence-time binding is about the RECEIPT's own clock, so the tests need
+    receipts with chosen timestamps rather than sleeps.
+    """
+    with contract_instance.write_transaction() as uow:
+        original = uow.receipts.get_receipt(receipt_id)
+        assert original is not None
+        copy = original.model_copy(update={"receipt_id": "RCP-restamped", **updates})
+        uow.receipts.save_receipt(copy)
+    return copy.receipt_id
+
+
+def test_resolution_refuses_a_receipt_created_before_the_contract_opened(
+    contract_instance,
+) -> None:
+    """Evidence predating the commitment cannot resolve it — by its own clock."""
+    add_decision(contract_instance)
+    contract = _open(contract_instance).contract
+    _activate(contract_instance, contract.contract_id)
+    stale_id = _restamped_receipt(
+        contract_instance,
+        _resolving_query_receipt(contract_instance),
+        created_at=contract.opened_at - timedelta(minutes=5),
+    )
+
+    with pytest.raises(ConfigError, match="before this contract was opened"):
+        service_resolve_outcome(
+            contract_instance,
+            contract.contract_id,
+            verdict="satisfied",
+            observed_at=utc_now(),
+            evidence_refs=[evidence("stale")],
+            actor_context=actor("checker"),
+            resolving_query_receipt_id=stale_id,
+        )
+
+
+def test_satisfied_refuses_a_receipt_created_before_check_at(contract_instance) -> None:
+    """The caller's observed_at is an assertion; the receipt's clock is a record."""
+    add_decision(contract_instance)
+    # check_at just far enough ahead that the measurement below is stamped
+    # before it, and near enough that the wait to pass it is imperceptible.
+    contract = _open(
+        contract_instance,
+        check_at=utc_now() + timedelta(milliseconds=200),
+        expires_at=EXPIRES_AT,
+    ).contract
+    _activate(contract_instance, contract.contract_id)
+    early_id = _restamped_receipt(
+        contract_instance,
+        _resolving_query_receipt(contract_instance),
+        # After the contract opened (so the opening rule passes) but before
+        # check_at: measured too early to say the promise held.
+        created_at=contract.opened_at,
+    )
+    time.sleep(0.3)
+
+    with pytest.raises(ConfigError, match="requires a measurement taken at or after"):
+        service_resolve_outcome(
+            contract_instance,
+            contract.contract_id,
+            verdict="satisfied",
+            # The caller SAYS it observed after check_at; the receipt says
+            # otherwise, and the receipt is what settles it.
+            observed_at=utc_now(),
+            evidence_refs=[evidence("early")],
+            actor_context=actor("checker"),
+            resolving_query_receipt_id=early_id,
+        )
+
+
+def test_resolution_refuses_a_receipt_without_a_read_revision(contract_instance) -> None:
+    """Pre-stamp receipts are not resolution-grade: they prove no revision."""
+    add_decision(contract_instance)
+    contract = _open(contract_instance).contract
+    _activate(contract_instance, contract.contract_id)
+    unstamped_id = _restamped_receipt(
+        contract_instance,
+        _resolving_query_receipt(contract_instance),
+        read_revision=None,
+    )
+
+    with pytest.raises(ConfigError, match="no read_revision stamp"):
+        service_resolve_outcome(
+            contract_instance,
+            contract.contract_id,
+            verdict="satisfied",
+            observed_at=utc_now(),
+            evidence_refs=[evidence("unstamped")],
+            actor_context=actor("checker"),
+            resolving_query_receipt_id=unstamped_id,
+        )
+
+
+def test_resolution_refuses_a_receipt_run_under_other_execution_options(
+    contract_instance,
+) -> None:
+    """A runtime visibility override asks a different question than the pin."""
+    _add_protection_claim(contract_instance)
+    add_decision(contract_instance)
+    contract = _open(
+        contract_instance,
+        measurement=query_measurement(
+            query_name="overridable_service_controls",
+            params={"service_id": "svc-1"},
+        ),
+    ).contract
+    _activate(contract_instance, contract.contract_id)
+
+    overridden = service_query(
+        contract_instance,
+        "overridable_service_controls",
+        {"service_id": "svc-1"},
+        relationship_state="all",
+    )
+    assert overridden.receipt_id is not None
+
+    with pytest.raises(ConfigError, match="different execution options"):
+        service_resolve_outcome(
+            contract_instance,
+            contract.contract_id,
+            verdict="satisfied",
+            observed_at=utc_now(),
+            evidence_refs=[evidence("override")],
+            actor_context=actor("checker"),
+            resolving_query_receipt_id=overridden.receipt_id,
+        )
+
+    # The same query at the pinned options resolves it.
+    declared = service_query(
+        contract_instance, "overridable_service_controls", {"service_id": "svc-1"}
+    )
+    assert declared.receipt_id is not None
+    result = service_resolve_outcome(
+        contract_instance,
+        contract.contract_id,
+        verdict="satisfied",
+        observed_at=utc_now(),
+        evidence_refs=[evidence("declared")],
+        actor_context=actor("checker"),
+        resolving_query_receipt_id=declared.receipt_id,
+    )
+    assert result.resolution.verdict == "satisfied"
+
+
 def test_query_definition_drift_allows_only_indeterminate(contract_instance) -> None:
     add_decision(contract_instance)
     contract = _open(contract_instance).contract
@@ -396,9 +609,8 @@ def test_query_definition_drift_allows_only_indeterminate(contract_instance) -> 
     assert result.resolution.verdict == "indeterminate"
 
 
-def test_attestation_measurement_validates_stance_and_content_digest(
-    contract_instance,
-) -> None:
+def _add_protection_claim(contract_instance) -> None:
+    """Write the claim tuple the attestation measurements observe."""
     from cruxible_core.graph.types import RelationshipInstance
     from cruxible_core.service import service_add_relationships
 
@@ -418,10 +630,9 @@ def test_attestation_measurement_validates_stance_and_content_digest(
         "outcome-fixture",
         actor_context=actor("claim-writer"),
     )
-    add_decision(contract_instance)
-    contract = _open(contract_instance, measurement=attestation_measurement()).contract
-    _activate(contract_instance, contract.contract_id)
 
+
+def _support_attestation(contract_instance, observed_at: Any = None) -> str:
     support = service_attest(
         contract_instance,
         relationship_type="protected_by",
@@ -431,10 +642,21 @@ def test_attestation_measurement_validates_stance_and_content_digest(
         to_id="ctl-1",
         stance="support",
         evidence_refs=[evidence("att")],
-        observed_at=utc_now(),
+        observed_at=observed_at or utc_now(),
         actor_context=actor("observer"),
     )
-    attestation_id = support.attestation.attestation_id
+    return support.attestation.attestation_id
+
+
+def test_attestation_measurement_validates_stance_and_content_digest(
+    contract_instance,
+) -> None:
+    _add_protection_claim(contract_instance)
+    add_decision(contract_instance)
+    contract = _open(contract_instance, measurement=attestation_measurement()).contract
+    _activate(contract_instance, contract.contract_id)
+
+    attestation_id = _support_attestation(contract_instance)
 
     with pytest.raises(ConfigError, match="needs 'contradict'"):
         service_resolve_outcome(
@@ -458,6 +680,107 @@ def test_attestation_measurement_validates_stance_and_content_digest(
         resolving_attestation_ids=[attestation_id],
     )
     assert result.resolution.resolving_attestation_ids == [attestation_id]
+
+
+def test_attestation_evidence_predating_the_contract_refuses(contract_instance) -> None:
+    """The attestation's OWN observed_at places it after the commitment."""
+    _add_protection_claim(contract_instance)
+    add_decision(contract_instance)
+    stale_id = _support_attestation(contract_instance, observed_at=utc_now() - timedelta(days=2))
+    contract = _open(contract_instance, measurement=attestation_measurement()).contract
+    _activate(contract_instance, contract.contract_id)
+
+    with pytest.raises(ConfigError, match="predates this contract's opening"):
+        service_resolve_outcome(
+            contract_instance,
+            contract.contract_id,
+            verdict="satisfied",
+            observed_at=utc_now(),
+            evidence_refs=[evidence("stale")],
+            actor_context=actor("checker"),
+            resolving_attestation_ids=[stale_id],
+        )
+
+
+def test_satisfied_needs_an_attestation_observed_at_or_after_check_at(
+    contract_instance,
+) -> None:
+    _add_protection_claim(contract_instance)
+    add_decision(contract_instance)
+    contract = _open(
+        contract_instance,
+        measurement=attestation_measurement(),
+        check_at=utc_now() + timedelta(days=3),
+        expires_at=utc_now() + timedelta(days=30),
+    ).contract
+    _activate(contract_instance, contract.contract_id)
+    attestation_id = _support_attestation(contract_instance)
+
+    with pytest.raises(ConfigError, match="at or after the declared check_at"):
+        service_resolve_outcome(
+            contract_instance,
+            contract.contract_id,
+            verdict="satisfied",
+            # Even a caller claiming a post-check_at observation cannot get past
+            # the cited attestation's own clock.
+            observed_at=utc_now(),
+            evidence_refs=[evidence("early")],
+            actor_context=actor("checker"),
+            resolving_attestation_ids=[attestation_id],
+        )
+
+
+def test_an_invalidated_attestation_cannot_resolve_a_contract(contract_instance) -> None:
+    """A reviewer already said not to rely on this observation."""
+    _add_protection_claim(contract_instance)
+    add_decision(contract_instance)
+    contract = _open(contract_instance, measurement=attestation_measurement()).contract
+    _activate(contract_instance, contract.contract_id)
+    attestation_id = _support_attestation(contract_instance)
+    service_resolve_attestation(
+        contract_instance,
+        attestation_id,
+        verdict="invalidated",
+        actor_context=actor("reviewer"),
+        note="the observer was looking at the wrong environment",
+    )
+
+    with pytest.raises(ConfigError, match="invalidated by a reviewer disposition"):
+        service_resolve_outcome(
+            contract_instance,
+            contract.contract_id,
+            verdict="satisfied",
+            observed_at=utc_now(),
+            evidence_refs=[evidence("invalid")],
+            actor_context=actor("checker"),
+            resolving_attestation_ids=[attestation_id],
+        )
+
+
+def test_an_upheld_attestation_still_resolves(contract_instance) -> None:
+    """Only 'invalidated' disqualifies; a reviewed-and-kept observation stands."""
+    _add_protection_claim(contract_instance)
+    add_decision(contract_instance)
+    contract = _open(contract_instance, measurement=attestation_measurement()).contract
+    _activate(contract_instance, contract.contract_id)
+    attestation_id = _support_attestation(contract_instance)
+    service_resolve_attestation(
+        contract_instance,
+        attestation_id,
+        verdict="upheld",
+        actor_context=actor("reviewer"),
+    )
+
+    result = service_resolve_outcome(
+        contract_instance,
+        contract.contract_id,
+        verdict="satisfied",
+        observed_at=utc_now(),
+        evidence_refs=[evidence("upheld")],
+        actor_context=actor("checker"),
+        resolving_attestation_ids=[attestation_id],
+    )
+    assert result.resolution.verdict == "satisfied"
 
 
 def test_second_resolution_refuses_until_a_reviewer_overturns(contract_instance) -> None:
@@ -532,7 +855,62 @@ def test_upheld_disposition_does_not_reopen(contract_instance) -> None:
         )
 
 
-def test_second_disposition_on_one_resolution_refuses(contract_instance) -> None:
+def test_a_later_disposition_supersedes_a_mistaken_one(contract_instance) -> None:
+    """Attestation precedent: dispositions are latest-wins, not one-shot.
+
+    A reviewer who upheld a resolution in error must be able to say so. The
+    corrective path is another disposition, and the newest one is what every
+    read means by "the" disposition.
+    """
+    add_decision(contract_instance)
+    contract = _open(contract_instance).contract
+    _activate(contract_instance, contract.contract_id)
+    receipt_id = _resolving_query_receipt(contract_instance)
+    first = service_resolve_outcome(
+        contract_instance,
+        contract.contract_id,
+        verdict="satisfied",
+        observed_at=utc_now(),
+        evidence_refs=[evidence("first")],
+        actor_context=actor("checker"),
+        resolving_query_receipt_id=receipt_id,
+    ).resolution
+    upheld = service_dispose_resolution(
+        contract_instance,
+        first.resolution_id,
+        verdict="upheld",
+        actor_context=actor("reviewer"),
+    ).disposition
+    assert upheld.sequence == 1
+
+    corrected = service_dispose_resolution(
+        contract_instance,
+        first.resolution_id,
+        verdict="overturned",
+        actor_context=actor("reviewer"),
+        note="upholding that was my mistake; the receipt measured the wrong window",
+    ).disposition
+    assert corrected.sequence == 2
+
+    item = service_list_resolution_contracts(contract_instance).items[0]
+    assert item.latest_disposition is not None
+    assert item.latest_disposition.disposition_id == corrected.disposition_id
+    # The superseding overturn re-opened the contract, exactly as a first-pass
+    # overturn would have.
+    assert item.status == "open"
+    second = service_resolve_outcome(
+        contract_instance,
+        contract.contract_id,
+        verdict="indeterminate",
+        observed_at=utc_now(),
+        actor_context=actor("checker"),
+        note="re-measured, inconclusive",
+    ).resolution
+    assert second.sequence == 2
+
+
+def test_a_spent_overturn_cannot_be_revised(contract_instance) -> None:
+    """Supersession may not rewrite a judgment a later resolution already answered."""
     add_decision(contract_instance)
     contract = _open(contract_instance).contract
     _activate(contract_instance, contract.contract_id)
@@ -549,14 +927,24 @@ def test_second_disposition_on_one_resolution_refuses(contract_instance) -> None
     service_dispose_resolution(
         contract_instance,
         first.resolution_id,
-        verdict="upheld",
+        verdict="overturned",
         actor_context=actor("reviewer"),
+        note="re-measure this",
     )
-    with pytest.raises(ConfigError, match="already carries a reviewer disposition"):
+    service_resolve_outcome(
+        contract_instance,
+        contract.contract_id,
+        verdict="indeterminate",
+        observed_at=utc_now(),
+        actor_context=actor("checker"),
+        note="re-measured, inconclusive",
+    )
+
+    with pytest.raises(ConfigError, match="already overturned and answered"):
         service_dispose_resolution(
             contract_instance,
             first.resolution_id,
-            verdict="overturned",
+            verdict="upheld",
             actor_context=actor("reviewer"),
         )
 

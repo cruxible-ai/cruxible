@@ -592,6 +592,8 @@ class ResolutionContractStoreProtocol(ABC):
         resolution_ids: Sequence[str],
     ) -> dict[str, ResolutionDisposition]: ...
     @abstractmethod
+    def list_dispositions(self, resolution_id: str) -> list[ResolutionDisposition]: ...
+    @abstractmethod
     def list_activated_unresolved(
         self,
         *,
@@ -649,6 +651,17 @@ class InstanceProtocol(ABC):
     def invalidate_graph_cache(self) -> None: ...
     @abstractmethod
     def write_transaction(self) -> AbstractContextManager[UnitOfWorkProtocol]: ...
+    @abstractmethod
+    def active_unit_of_work(self) -> UnitOfWorkProtocol | None:
+        """Return the currently open write boundary, or None outside one.
+
+        A caller that must write ATOMICALLY with the surrounding write — the
+        resolution-contract activation is the first such case — needs to know
+        whether it is inside someone else's transaction rather than able to
+        open (and independently commit) its own.
+        """
+        ...
+
     @abstractmethod
     def get_head_snapshot_id(self) -> str | None: ...
     @abstractmethod

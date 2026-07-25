@@ -22,6 +22,7 @@ from cruxible_core.config.schema import (
     ContractSchema,
     CoreConfig,
     CoWriteGuardCondition,
+    EntityTypeSchema,
     EvidenceRequirementGuardCondition,
     FrozenPropertyGuardCondition,
     JsonContentQualityCheck,
@@ -849,6 +850,8 @@ def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
                         f"'{property_name}': {exc}"
                     )
 
+        _validate_guard_where_paths(guard, entity_type, entity_schema, errors)
+
         if isinstance(condition, NamedQueryResultCountGuardCondition):
             if condition.query_name not in config.named_queries:
                 errors.append(
@@ -857,6 +860,55 @@ def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
                 )
         elif isinstance(condition, CoWriteGuardCondition):
             _validate_co_write_condition(config, guard, condition, errors)
+
+
+_GUARD_ENTITY_PREDICATE_SECTIONS = frozenset({"entity_type", "entity_id", "properties", "metadata"})
+"""Fields of an entity a guard ``where`` path may address."""
+
+
+def _validate_guard_where_paths(
+    guard: MutationGuardSchema,
+    entity_type: str,
+    entity_schema: EntityTypeSchema,
+    errors: list[str],
+) -> None:
+    """Validate guard ``where`` predicate paths against the scoped entity type.
+
+    A guard's scope decides whether it FIRES, so a misspelled property path is
+    silently permissive: the predicate never matches, the guard never runs, and
+    the config looks enforced. Nothing downstream would ever catch it — an
+    unfired guard leaves no trace — so it is caught here, at config validation.
+    """
+    if guard.where is None:
+        return
+    for path in guard.where.root:
+        scope, _, remainder = path.partition(".")
+        if scope != "candidate":
+            # The schema already refuses any other scope; nothing to resolve.
+            continue
+        parts = [part for part in remainder.split(".") if part]
+        if not parts or parts[0] not in _GUARD_ENTITY_PREDICATE_SECTIONS:
+            sections = ", ".join(sorted(_GUARD_ENTITY_PREDICATE_SECTIONS))
+            errors.append(
+                f"Mutation guard '{guard.name}': where path '{path}' does not "
+                f"resolve on an entity; after the scope it must address one of: "
+                f"{sections}"
+            )
+            continue
+        if parts[0] != "properties":
+            continue
+        if len(parts) < 2:
+            errors.append(
+                f"Mutation guard '{guard.name}': where path '{path}' must name a "
+                f"property of entity type '{entity_type}'"
+            )
+            continue
+        if parts[1] not in entity_schema.properties:
+            errors.append(
+                f"Mutation guard '{guard.name}': where path '{path}' references "
+                f"property '{parts[1]}', which is not defined on entity type "
+                f"'{entity_type}'"
+            )
 
 
 def _validate_frozen_guard(

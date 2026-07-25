@@ -596,10 +596,11 @@ def _enforce_entity_mutation_guards(
         # refuse_direct_writes decision.
         apply_entity(proposed_graph, validated, config=config, source="workflow_apply")
 
-    # Only the store-backed condition needs a transaction boundary here, so the
-    # boundary is opened only when one is configured. Every other condition
-    # keeps its existing, transaction-free evaluation — a preview must not start
-    # taking a write lock just because this branch exists.
+    # Only the store-backed condition needs a store handle at all; every other
+    # condition keeps its existing, handle-free evaluation. No path here opens a
+    # write boundary: a preview reads eligibility on its own connection (it
+    # consumes nothing, so there is nothing to serialize), and an apply must
+    # already be inside the caller's boundary.
     needs_contract_store = any(
         isinstance(guard.condition, ResolutionContractGuardCondition)
         for guard in config.mutation_guards
@@ -618,22 +619,56 @@ def _enforce_entity_mutation_guards(
             contract_store=None,
         )
         return
-    # Under apply this yields the executor's ALREADY-OPEN unit of work, so the
-    # eligibility lookup and the activation below share one transaction with the
-    # entity write; a standalone call opens and commits its own.
-    with instance.write_transaction() as uow:
-        _run_entity_guards(
-            instance,
-            config,
-            graph,
-            step_id,
-            validated_entities,
-            proposed_graph=proposed_graph,
-            actor_context=actor_context,
-            receipt_builder=receipt_builder,
-            persist_writes=persist_writes,
-            contract_store=uow.resolution_contracts,
+
+    if not persist_writes:
+        # Preview: the activation intents are discarded, so eligibility may be
+        # read on a standalone connection and nothing is consumed.
+        preview_store = instance.get_resolution_contract_store()
+        try:
+            _run_entity_guards(
+                instance,
+                config,
+                graph,
+                step_id,
+                validated_entities,
+                proposed_graph=proposed_graph,
+                actor_context=actor_context,
+                receipt_builder=receipt_builder,
+                persist_writes=False,
+                contract_store=preview_store,
+            )
+        finally:
+            preview_store.close()
+        return
+
+    # Apply: the eligibility lookup and the activation it writes must commit
+    # atomically with the entity write, which means they must run inside the
+    # caller's ALREADY-OPEN unit of work. Opening one here would commit
+    # independently — an activation that survives a rolled-back apply, or a
+    # consumed contract for a write that never landed — so the absence of a
+    # boundary is refused, not papered over.
+    uow = instance.active_unit_of_work()
+    if uow is None:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' cannot evaluate the resolution-contract "
+            "guard outside an instance write transaction: the eligibility lookup "
+            "and the activation the acceptance writes must commit atomically with "
+            "the entity write. Apply through service_apply_workflow (or open "
+            "instance.write_transaction() around the call) rather than invoking "
+            "execute_workflow(mode='apply') directly."
         )
+    _run_entity_guards(
+        instance,
+        config,
+        graph,
+        step_id,
+        validated_entities,
+        proposed_graph=proposed_graph,
+        actor_context=actor_context,
+        receipt_builder=receipt_builder,
+        persist_writes=True,
+        contract_store=uow.resolution_contracts,
+    )
 
 
 def _run_entity_guards(

@@ -1524,7 +1524,7 @@ without it, only the active materialized digest is checked.
 
 **Returns:** The prepared contract, the idempotent-replay marker, and the receipt ID.
 
-**Side Effects:** Appends a contract and receipt; never mutates the subject. Multiple open contracts on one subject are legal.
+**Side Effects:** Appends a contract and receipt; never mutates the subject. Multiple open contracts on one subject are legal. A query measurement pins both the query definition digest and the effective execution options, so a later run under a different `relationship_state` cannot resolve it.
 
 ## cruxible_resolve_outcome
 
@@ -1539,7 +1539,7 @@ without it, only the active materialized digest is checked.
 | `instance_id` | yes | string | Governed instance ID. |
 | `contract_id` | yes | string | Activated contract being answered. |
 | `verdict` | yes | string | `satisfied`, `contradicted`, or `indeterminate`. |
-| `observed_at` | yes | string | ISO-8601 observation time; `satisfied` requires it at or after `check_at`. |
+| `observed_at` | yes | string | ISO-8601 observation time; `satisfied` requires it at or after `check_at`. It is recorded, but the cited evidence's own timestamps are what bind the verdict. |
 | `evidence_refs` | no | array or null | Evidence pointers; at least one is required for `satisfied` and `contradicted`. |
 | `note` | no | string or null | Observation note; required for `contradicted`. |
 | `resolving_query_receipt_id` | no | string or null | Receipt of the query run that observed a query-measured outcome. |
@@ -1547,7 +1547,7 @@ without it, only the active materialized digest is checked.
 
 **Returns:** The immutable resolution and receipt ID.
 
-**Side Effects:** Appends one resolution and receipt; never mutates the subject. A contract accepts exactly one standing resolution until a reviewer overturns it.
+**Side Effects:** Appends one resolution and receipt; never mutates the subject. A contract accepts exactly one standing resolution until a reviewer overturns it. Cited evidence must postdate the contract's opening by its own clock (and, for `satisfied`, the declared check time); a query receipt must carry a `read_revision` stamp and match the pinned execution options, and an attestation invalidated by a reviewer cannot be cited.
 
 ## cruxible_list_outcome_contracts
 
@@ -1606,7 +1606,7 @@ without it, only the active materialized digest is checked.
 
 **Returns:** The appended disposition and receipt ID.
 
-**Side Effects:** Appends a disposition and receipt; an `overturned` verdict re-opens the contract for exactly one further resolution. Never mutates the subject.
+**Side Effects:** Appends a disposition and receipt; an `overturned` verdict re-opens the contract for exactly one further resolution. Dispositions are latest-wins: a further disposition on the same resolution supersedes the previous one (unless that one was an overturn a later resolution already answered). Never mutates the subject.
 
 ## cruxible_propose_procedure
 

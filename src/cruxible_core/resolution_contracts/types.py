@@ -64,6 +64,19 @@ class MeasurementExpectation(BaseModel):
             raise ValueError("measurement expect min_count must be <= max_count")
         if self.condition is not None and not self.condition:
             raise ValueError("measurement expect condition requires at least one property=value")
+        if (
+            self.condition is not None
+            and self.condition_scope == "all"
+            and (self.min_count is None or self.min_count < 1)
+        ):
+            # ALL over an empty result set is vacuously true, so a condition-only
+            # expectation could be "satisfied" by measuring nothing at all. A
+            # floor of one row is what makes the condition falsifiable.
+            raise ValueError(
+                "measurement expect with condition_scope 'all' requires min_count >= 1: "
+                "an ALL condition over zero rows is vacuously satisfied, which would let "
+                "an empty measurement close the contract"
+            )
         return self
 
 
@@ -80,6 +93,18 @@ class QueryMeasurement(BaseModel):
             "Digest of the named query definition pinned when the contract was "
             "opened. A resolution recorded after the definition drifts may only "
             "be indeterminate: the measurement no longer means what was declared."
+        ),
+    )
+    execution_options: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Effective query execution options (relationship_state, result_shape, "
+            "dedupe) pinned when the contract was opened. The definition digest "
+            "cannot catch a RUNTIME override, so a receipt run with different "
+            "options — e.g. relationship_state 'all' against a contract that "
+            "declared 'live' — measured a different question and cannot resolve "
+            "this contract. ``relationship_state_source`` is deliberately not "
+            "pinned: it records HOW the state was chosen, not what was measured."
         ),
     )
 
@@ -259,10 +284,18 @@ class ContractResolution(BaseModel):
 
 
 class ResolutionDisposition(BaseModel):
-    """One immutable reviewer answer to a resolution."""
+    """One immutable reviewer answer to a resolution.
+
+    Dispositions are append-only and **latest-wins by sequence** (attestation
+    precedent): a subsequent reviewer disposition supersedes a mistaken earlier
+    one, so an erroneous ``upheld`` on a contradicted resolution can be
+    corrected without inventing a second corrective verb. Every disposition
+    stays on the record; only the highest sequence is the standing answer.
+    """
 
     disposition_id: str = Field(default_factory=lambda: new_id("RSD"))
     resolution_id: str
+    sequence: int = Field(default=1, ge=1)
     verdict: ResolutionDispositionVerdict
     reviewer_actor_context: GovernedActorContext
     note: str | None = None

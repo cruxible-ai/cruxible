@@ -2412,12 +2412,15 @@ cruxible outcome open --entity-type TYPE --entity-id ID --description TEXT --che
 **Output And Side Effects:**
 
 - Appends an immutable contract and receipt; the subject is never mutated.
+- Pins the measurement query's definition digest AND its effective execution options (`relationship_state`, `result_shape`, `dedupe`), so a later receipt run under other options cannot resolve the contract.
 - Requires daemon transport so actor attribution and permissions are enforced.
 - Multiple open contracts on one subject are legal; each is answered separately.
 
 **Common Errors:**
 - The subject does not exist yet — propose the record first, then open the contract.
 - `--check-at` at or after `--expires-at`, or a measurement query that is not defined in `named_queries`.
+- A measurement param key the query cannot read (typos are refused, not ignored).
+- A condition-only expectation with `condition_scope: all` and no `min_count` — an ALL condition over zero rows is vacuously satisfied.
 - Reusing an idempotency key with a different declaration.
 
 ## cruxible outcome resolve
@@ -2451,7 +2454,9 @@ cruxible outcome resolve CONTRACT_ID --verdict satisfied|contradicted|indetermin
 
 **Common Errors:**
 - The contract was never activated by an acceptance, or already carries a standing resolution.
-- The resolving receipt ran a different query, different params, was truncated, or contradicts the verdict.
+- The resolving receipt ran a different query, different params, different execution options (e.g. a `relationship_state` override), was truncated, or contradicts the verdict.
+- The resolving receipt was created before the contract was opened, carries no `read_revision` stamp, or — for `satisfied` — was created before the declared check time. The evidence's own clock is what settles the timing, not the caller's `--observed-at`.
+- A cited attestation predates the contract's opening, was invalidated by a reviewer disposition, or — for `satisfied` — is older than the declared check time.
 - The measurement query changed since the contract was opened — only `indeterminate` remains available.
 
 ## cruxible outcome dispose
@@ -2476,11 +2481,12 @@ cruxible outcome dispose RESOLUTION_ID --verdict upheld|overturned [--note TEXT]
 **Output And Side Effects:**
 
 - Appends a disposition and receipt; an `overturned` verdict re-opens the contract for exactly one further resolution.
-- One disposition per resolution: the next answer is a new resolution, not a second disposition.
+- Dispositions are latest-wins: recording another one on the same resolution supersedes the previous answer (a mistaken `upheld` is corrected this way), and every read reports the newest.
 - Requires daemon transport and a reviewer-tier credential.
 
 **Common Errors:**
-- The resolution does not exist, or already carries a disposition.
+- The resolution does not exist.
+- The disposition being revised was an `overturned` that a later resolution already answered — dispose that resolution instead.
 - Permission mode below `GRAPH_WRITE`.
 
 ## cruxible outcome list

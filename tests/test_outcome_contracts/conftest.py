@@ -75,6 +75,15 @@ named_queries:
     traversal:
       - relationship: protected_by
         direction: outgoing
+  overridable_service_controls:
+    mode: traversal
+    entry_point: Service
+    returns: Control
+    result_shape: entity
+    allow_relationship_state_override: true
+    traversal:
+      - relationship: protected_by
+        direction: outgoing
 """
 
 
@@ -107,6 +116,21 @@ mutation_guards:
 # so the trigger's `where` scope never matches.
 OPT_OUT_CONFIG = GUARDED_CONFIG
 
+# The migration shape: the adoption property exists but is OPTIONAL, so records
+# predating it carry no value at all. The guard must fail closed on those rather
+# than letting them slip out of scope.
+LEGACY_TRACKING_CONFIG = GUARDED_CONFIG.replace(
+    """      outcome_tracking:
+        type: string
+        enum: [required, not_applicable]
+""",
+    """      outcome_tracking:
+        type: string
+        optional: true
+        enum: [required, not_applicable]
+""",
+)
+
 
 @pytest.fixture
 def contract_instance(tmp_path: Path) -> CruxibleInstance:
@@ -118,6 +142,12 @@ def contract_instance(tmp_path: Path) -> CruxibleInstance:
 def guarded_instance(tmp_path: Path) -> CruxibleInstance:
     """An instance whose Decision.status -> accepted requires a contract."""
     return _instance(tmp_path, GUARDED_CONFIG)
+
+
+@pytest.fixture
+def legacy_guarded_instance(tmp_path: Path) -> CruxibleInstance:
+    """A guarded instance where the adoption property is optional (pre-migration)."""
+    return _instance(tmp_path, LEGACY_TRACKING_CONFIG)
 
 
 def _instance(root: Path, config_yaml: str) -> CruxibleInstance:
@@ -167,22 +197,28 @@ def add_decision(
     decision_id: str = "dd-1",
     *,
     status: str = "proposed",
-    outcome_tracking: str = "required",
+    outcome_tracking: str | None = "required",
     title: str = "Adopt the thing",
 ) -> EntityInstance:
-    """Create one proposed decision subject."""
+    """Create one proposed decision subject.
+
+    ``outcome_tracking=None`` omits the adoption property entirely, which is
+    what a record created before the property existed looks like.
+    """
+    properties: dict[str, Any] = {
+        "decision_id": decision_id,
+        "status": status,
+        "title": title,
+    }
+    if outcome_tracking is not None:
+        properties["outcome_tracking"] = outcome_tracking
     service_add_entities(
         instance,
         [
             EntityInstance(
                 entity_type="Decision",
                 entity_id=decision_id,
-                properties={
-                    "decision_id": decision_id,
-                    "status": status,
-                    "outcome_tracking": outcome_tracking,
-                    "title": title,
-                },
+                properties=properties,
             )
         ],
         actor_context=actor("proposer"),

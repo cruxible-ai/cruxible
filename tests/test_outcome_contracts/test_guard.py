@@ -162,6 +162,77 @@ def test_editing_the_subject_after_opening_invalidates_the_contract(guarded_inst
         _accept(guarded_instance, title="edited after the promise")
 
 
+def test_acceptance_that_co_edits_content_refuses(guarded_instance) -> None:
+    """Content binding: the transition may change the guarded property, nothing else.
+
+    Eligibility is keyed on the PRE-write content, so a write that accepts and
+    rewrites the decision in one go would otherwise ratify a commitment made
+    about different content.
+    """
+    add_decision(guarded_instance)
+    _open(guarded_instance)
+
+    with pytest.raises(DataValidationError) as excinfo:
+        _accept(guarded_instance, title="rewritten while accepting")
+    message = str(excinfo.value.errors)
+    assert "content the contract never committed to" in message
+    assert "Re-open a contract" in message
+
+    stored = guarded_instance.load_graph().get_entity("Decision", "dd-1")
+    assert stored is not None
+    assert stored.properties["status"] == "proposed"
+    assert service_list_resolution_contracts(guarded_instance).items[0].activation is None
+
+    # The taught flow works: accept alone, then edit in a separate write.
+    _accept(guarded_instance)
+    assert service_list_resolution_contracts(guarded_instance).items[0].activation is not None
+
+
+def test_a_missing_adoption_property_fails_closed(legacy_guarded_instance) -> None:
+    """A record predating the adoption property must not slip out of scope.
+
+    ``where: {candidate.properties.outcome_tracking: {eq: required}}`` does not
+    match an entity that carries no such property. Skipping the guard there
+    would let every pre-migration decision accept with no contract — the
+    silence is exactly the failure mode, so it refuses instead.
+    """
+    add_decision(legacy_guarded_instance, outcome_tracking=None)
+
+    with pytest.raises(DataValidationError) as excinfo:
+        service_add_entities(
+            legacy_guarded_instance,
+            [
+                EntityInstance(
+                    entity_type="Decision",
+                    entity_id="dd-1",
+                    properties={
+                        "decision_id": "dd-1",
+                        "status": "accepted",
+                        "title": "Adopt the thing",
+                    },
+                )
+            ],
+            actor_context=actor("reviewer"),
+        )
+    message = str(excinfo.value.errors)
+    assert "'outcome_tracking' is not set" in message
+    assert "not_applicable" in message
+
+    stored = legacy_guarded_instance.load_graph().get_entity("Decision", "dd-1")
+    assert stored is not None
+    assert stored.properties["status"] == "proposed"
+
+
+def test_an_explicit_not_applicable_still_accepts(legacy_guarded_instance) -> None:
+    """Fail-closed applies to ABSENCE, not to the recorded opt-out."""
+    add_decision(legacy_guarded_instance, outcome_tracking="not_applicable")
+    _accept(legacy_guarded_instance, outcome_tracking="not_applicable")
+
+    stored = legacy_guarded_instance.load_graph().get_entity("Decision", "dd-1")
+    assert stored is not None
+    assert stored.properties["status"] == "accepted"
+
+
 def test_one_contract_satisfies_only_one_acceptance_in_a_batch(guarded_instance) -> None:
     add_decision(guarded_instance, "dd-1")
     add_decision(guarded_instance, "dd-2")
