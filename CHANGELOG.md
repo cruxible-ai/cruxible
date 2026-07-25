@@ -7,6 +7,48 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+### Changed (BREAKING)
+
+- **Feedback adjudication requires `graph_write`**: `feedback approve`,
+  `reject`, and `correct` decide a claim's fate — they make a non-live
+  edge live, or retract one — so they now require `GRAPH_WRITE` even
+  though the `cruxible_feedback` / `_batch` / `_from_query` tools
+  themselves stay at `GOVERNED_WRITE`. Previously a single
+  `governed_write` actor could stage an edge (attestation on an absent
+  claim, or a `pending` write) and then approve its own proposal, reaching
+  a live approved claim on a `proposal_only` type with no reviewer above
+  it. `flag` and plain feedback recording are unchanged at
+  `governed_write`. The refusal is a receipted `PermissionDeniedError`
+  (HTTP 403) naming the required tier.
+
+  **Migration:** any caller that approves/rejects/corrects with a
+  `governed_write` credential must present a `graph_write` one. This also
+  overrides a type's config-declared `write_tier: governed_write` for
+  those three actions — a type owner may lower who *direct-writes* their
+  type, not who *adjudicates* claims on it. Auth-off local use is
+  unaffected (the local default is `admin`).
+
+- **`CRUXIBLE_REFUSE_DIRECT_WRITES` now spans the feedback channel**: while
+  the kill-switch is set, the feedback actions that move an edge *into*
+  accepted state (`approve` / `correct`) are refused alongside the direct
+  write verbs, so freezing live writes can no longer be walked around via
+  feedback. `reject` / `flag` stay available — they move edges *out* of
+  live state.
+
+### Fixed
+
+- **Pending proposals are no longer clobbered**: a plain non-pending write
+  onto a tuple whose edge is still `pending` used to resolve as an update
+  and silently replace the proposal's properties in place while a reviewer
+  was adjudicating it. It is now refused at the single relationship
+  chokepoint with `PendingEdgeWriteRefusedError`
+  (`pending_edge_write_refused`, HTTP **409**), so every write path —
+  single, batch, typed lifecycle write, and canonical workflow apply —
+  inherits it. The message names both exits: withdraw/re-propose through
+  the pending path, or resolve the proposal through the review machinery
+  first. Pending-onto-pending is unchanged (still the create-only rule),
+  and post-acceptance updates work exactly as before.
+
 ## 0.2.8 — 2026-07-21
 
 ### Added

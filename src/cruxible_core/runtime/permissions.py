@@ -184,6 +184,10 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_state_health": PermissionMode.READ_ONLY,
     "cruxible_list_source_artifacts": PermissionMode.READ_ONLY,
     "cruxible_get_source_artifact": PermissionMode.READ_ONLY,
+    # Adjudicating a claim (feedback approve / reject / correct). See
+    # FEEDBACK_ACTION_PERMISSIONS below: the feedback TOOLS sit at
+    # GOVERNED_WRITE, but the adjudication ACTIONS they carry are GRAPH_WRITE.
+    "cruxible_feedback_adjudicate": PermissionMode.GRAPH_WRITE,
     "cruxible_governed_instance_lifecycle": PermissionMode.ADMIN,
     "cruxible_hosted_instance_init": PermissionMode.ADMIN,
     "cruxible_init_with_config": PermissionMode.ADMIN,
@@ -195,6 +199,43 @@ PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
     **TOOL_PERMISSIONS,
     **RUNTIME_OPERATION_PERMISSIONS,
 }
+
+# ---------------------------------------------------------------------------
+# Feedback action → minimum permission tier (per-ACTION, not per-tool)
+# ---------------------------------------------------------------------------
+#
+# The permission map above is per-TOOL, and ``cruxible_feedback`` (with its
+# batch/from_query siblings) is not one operation: it multiplexes RECORDING an
+# observation with ADJUDICATING a claim. Recording is a governed-operator act.
+# Adjudication is not: ``approve``/``correct`` make a non-live edge LIVE and
+# ``reject`` retracts one, which is the same authority a direct graph write or a
+# group resolution carries. Leaving every action at the tool's GOVERNED_WRITE
+# floor let a single GOVERNED_WRITE actor attest a pending edge and then
+# approve their own proposal — a live approved claim on a proposal_only type
+# with no reviewer above them (wi-feedback-approval-rail).
+#
+# So the adjudication verbs are gated at GRAPH_WRITE, the same tier that
+# ``cruxible_resolve_group`` and the direct-write verbs require, matching the
+# procedure-resolve/disposition precedent. ``flag`` stays at GOVERNED_WRITE: it
+# moves an edge to ``pending``, i.e. it ASKS for review rather than granting it
+# (``flag`` retires later under dd-flag-superseded-by-attestation). Plainly
+# recording feedback — persisting the FeedbackRecord itself, with no review
+# transition — likewise stays at the GOVERNED_WRITE floor.
+#
+# Enforced in ``service/feedback.py`` (the single service chokepoint every
+# surface funnels through), not here, because the requirement is a property of
+# the payload's action rather than of the tool name.
+FEEDBACK_ACTION_PERMISSIONS: dict[str, PermissionMode] = {
+    "approve": PermissionMode.GRAPH_WRITE,
+    "reject": PermissionMode.GRAPH_WRITE,
+    "correct": PermissionMode.GRAPH_WRITE,
+    "flag": PermissionMode.GOVERNED_WRITE,
+}
+
+# Audited operation name the adjudication check reports under. It is a runtime
+# operation rather than a registered MCP tool, so the denial message names the
+# adjudication act instead of whichever feedback tool carried it.
+FEEDBACK_ADJUDICATION_OPERATION = "cruxible_feedback_adjudicate"
 
 # ---------------------------------------------------------------------------
 # Cached state

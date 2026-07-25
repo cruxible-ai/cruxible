@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -744,16 +745,39 @@ def _fit_review_status(
     return lookup.json()["metadata"]["assertion"]["review"]["status"]
 
 
-def test_governed_write_credential_approve_promotes_with_attribution(
+def _approve_fit_edge(
+    client: TestClient,
+    instance_id: str,
+    headers: dict[str, str],
+) -> httpx.Response:
+    return client.post(
+        f"/api/v1/{instance_id}/feedback",
+        json={
+            "action": "approve",
+            "source": "human",
+            "from_type": "Part",
+            "from_id": "BP-PEND",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-PEND",
+        },
+        headers=headers,
+    )
+
+
+def test_governed_write_credential_approve_is_refused(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     server_project: Path,
 ) -> None:
-    """Under auth, a GOVERNED_WRITE credential may promote a review edge.
+    """A GOVERNED_WRITE credential may NOT adjudicate a review edge.
 
-    The runtime credential supplies the resolved actor identity, so the
-    review-state promotion is attributed and the actor-guard (audit F3) is
-    satisfied without a request-supplied actor_context.
+    Approve is an adjudication act, not a governed-operator observation: it makes
+    a non-live edge LIVE. Before wi-feedback-approval-rail this test asserted the
+    opposite (the credential's attributed promotion was accepted at
+    GOVERNED_WRITE), which is exactly the rail the audit found missing — the
+    attribution guard proved WHO approved, never that they were entitled to.
+    The refusal names the required tier so the caller knows what to present.
     """
     client = _make_app_client(tmp_path, monkeypatch)
     instance_id = _init_instance(client, server_project)
@@ -772,22 +796,134 @@ def test_governed_write_credential_approve_promotes_with_attribution(
         permission_mode=PermissionMode.GOVERNED_WRITE,
         label="governed-reviewer",
     )
-    approve = client.post(
-        f"/api/v1/{instance_id}/feedback",
-        json={
-            "action": "approve",
-            "source": "human",
+    approve = _approve_fit_edge(client, instance_id, governed_headers)
+    assert approve.status_code == 403, approve.text
+    body = approve.json()
+    assert body["context"]["required_mode"] == "GRAPH_WRITE"
+    assert body["context"]["current_mode"] == "GOVERNED_WRITE"
+    assert "GRAPH_WRITE" in body["message"]
+    # The refusal is receipted like any other refused mutation.
+    assert body["mutation_receipt_id"] is not None
+    # The proposal is untouched: still pending, still awaiting a real reviewer.
+    assert _fit_review_status(client, instance_id, admin_headers) == "pending"
+
+
+def test_graph_write_credential_approve_promotes_with_attribution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    """A GRAPH_WRITE credential adjudicates, and the promotion stays attributed.
+
+    The tier rail is additive to the actor guard (audit F3): the credential still
+    supplies the resolved actor identity, so no request-supplied actor_context is
+    needed and the promotion is attributed as before.
+    """
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    admin_headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.ADMIN,
+        label="seed-admin",
+    )
+    _seed_pending_fit_edge(client, instance_id, admin_headers)
+    assert _fit_review_status(client, instance_id, admin_headers) == "pending"
+
+    reviewer_headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GRAPH_WRITE,
+        label="graph-write-reviewer",
+    )
+    approve = _approve_fit_edge(client, instance_id, reviewer_headers)
+    assert approve.status_code == 200, approve.text
+    assert approve.json()["applied"] is True
+
+    lookup = client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params={
             "from_type": "Part",
             "from_id": "BP-PEND",
             "relationship_type": "fits",
             "to_type": "Vehicle",
             "to_id": "V-PEND",
         },
+        headers=reviewer_headers,
+    )
+    assert lookup.status_code == 200
+    review = lookup.json()["metadata"]["assertion"]["review"]
+    assert review["status"] == "approved"
+    assert review["actor_context"]["actor_id"] == "graph-write-reviewer"
+
+
+def test_governed_write_actor_cannot_attest_then_approve_own_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    """The two-step self-approval loop is closed end to end.
+
+    Mechanism the audit flagged: a single GOVERNED_WRITE actor attests support on
+    an ABSENT claim (which stages a pending edge, legitimately at GOVERNED_WRITE),
+    then feedback-approves that same edge — arriving at a live approved claim with
+    no reviewer above them. Step one still works; step two is now refused.
+    """
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    admin_headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.ADMIN,
+        label="seed-admin",
+    )
+    seed = client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [
+                {
+                    "entity_type": "Part",
+                    "entity_id": "BP-PEND",
+                    "properties": {
+                        "part_number": "BP-PEND",
+                        "name": "Pending Pads",
+                        "category": "brakes",
+                    },
+                },
+                _valid_vehicle_entity("V-PEND"),
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert seed.status_code == 200, seed.text
+
+    governed_headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GOVERNED_WRITE,
+        label="self-approver",
+    )
+    attested = client.post(
+        f"/api/v1/{instance_id}/attestations/record",
+        json={
+            "relationship_type": "fits",
+            "from_type": "Part",
+            "from_id": "BP-PEND",
+            "to_type": "Vehicle",
+            "to_id": "V-PEND",
+            "stance": "support",
+            "observed_at": "2026-01-01T00:00:00Z",
+            "evidence_refs": [{"source": "test", "source_record_id": "self-approve"}],
+        },
         headers=governed_headers,
     )
-    assert approve.status_code == 200
-    assert approve.json()["applied"] is True
-    assert _fit_review_status(client, instance_id, governed_headers) == "approved"
+    assert attested.status_code == 200, attested.text
+    assert _fit_review_status(client, instance_id, admin_headers) == "pending"
+
+    approve = _approve_fit_edge(client, instance_id, governed_headers)
+    assert approve.status_code == 403, approve.text
+    assert approve.json()["context"]["required_mode"] == "GRAPH_WRITE"
+    assert _fit_review_status(client, instance_id, admin_headers) == "pending"
 
 
 def _review_actor_context() -> GovernedActorContext:

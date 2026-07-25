@@ -7,11 +7,17 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | Mode | Env value | Meaning |
 | --- | --- | --- |
 | READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, snapshots listing. |
-| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow and procedure runs, procedure/group proposals, claim attestations, feedback, outcomes, decision records, snapshot creation, and source artifact registration. |
-| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, group resolution/trust updates, procedure resolution/retirement, and attestation dispositions. |
+| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow and procedure runs, procedure/group proposals, claim attestations, feedback recording and `flag`, outcomes, decision records, snapshot creation, and source artifact registration. |
+| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, group resolution/trust updates, procedure resolution/retirement, attestation dispositions, and feedback **adjudication** (`approve` / `reject` / `correct`). |
 | ADMIN | `admin` | Full lifecycle, config reload, locks, snapshots, clone, state publication/pull, ingest, constraints, and policies. |
 
 `tools/list` advertises only tools allowed by the active `CRUXIBLE_MODE`; call-time permission checks still enforce the same tiers as a backstop.
+
+The **Permission** line on each tool below is the tier needed to *call* it. Two
+surfaces additionally gate on the payload: the feedback tools require
+`GRAPH_WRITE` for the adjudication actions `approve` / `reject` / `correct`
+(`flag` and plain recording stay at `GOVERNED_WRITE`), and the direct-write
+tools honor a type's config-declared `write_tier`.
 
 ## Tool Catalog Curation
 
@@ -513,6 +519,8 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when a person or reviewer agent adjudicated one explicit relationship and you need to record support, rejection, flagging, or a correction. Use edge_key only to disambiguate multiple stored edges with the same relationship tuple; receipt_id is optional for explicit-coordinate feedback.
 
+**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; `flag` and plain recording stay at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too.
+
 **Arguments:**
 
 | Name | Required | Type | Description |
@@ -548,6 +556,8 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when a query receipt and result index identify the relationship that needs feedback. This path requires receipt_id because the receipt/result selection is the target selector.
 
+**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; `flag` and plain recording stay at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too.
+
 **Arguments:**
 
 | Name | Required | Type | Description |
@@ -580,6 +590,8 @@ happened; they never prove its inputs are still current.
 **Permission:** `GOVERNED_WRITE`
 
 **Purpose:** Use when you need to record several relationship feedback decisions from the same review session.
+
+**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; `flag` and plain recording stay at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too.
 
 **Arguments:**
 

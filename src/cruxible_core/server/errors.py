@@ -23,6 +23,7 @@ from cruxible_core.errors import (
     MutationError,
     OutcomeNotFoundError,
     OwnershipError,
+    PendingEdgeWriteRefusedError,
     PermissionDeniedError,
     QueryExecutionError,
     QueryNotFoundError,
@@ -88,7 +89,12 @@ def _status_for_error(exc: CoreError) -> int:
         ),
     ):
         return 404
-    if isinstance(exc, (RelationshipAmbiguityError, StaleContinuationError)):
+    if isinstance(
+        exc,
+        (RelationshipAmbiguityError, StaleContinuationError, PendingEdgeWriteRefusedError),
+    ):
+        # 409: a pending-edge refusal is a STATE conflict, not a policy or tier
+        # denial -- the same write succeeds once the proposal is resolved.
         return 409
     if isinstance(exc, (ConstraintViolationError, InvalidContinuationError)):
         return 422
@@ -119,6 +125,12 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["kind"] = exc.kind
         context["type_name"] = exc.type_name
         context["source"] = exc.source
+    if isinstance(exc, PendingEdgeWriteRefusedError):
+        context["relationship_type"] = exc.relationship_type
+        context["from_type"] = exc.from_type
+        context["from_id"] = exc.from_id
+        context["to_type"] = exc.to_type
+        context["to_id"] = exc.to_id
     if isinstance(exc, EntityTypeNotFoundError):
         context["entity_type"] = exc.entity_type
         context["known_entity_types"] = exc.known_entity_types
