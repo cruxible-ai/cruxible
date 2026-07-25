@@ -471,6 +471,54 @@ class TestValidateMutationGuards:
             "requires.kind filter needs a 'kind' property" in e for e in exc_info.value.errors
         )
 
+    def test_mutation_guard_accepts_a_where_path_on_a_declared_property(self):
+        config = _minimal_config(
+            named_queries={"find_a": self._query()},
+            mutation_guards=[self._guard(where={"candidate.properties.status": {"eq": "open"}})],
+        )
+
+        validate_config(config)
+
+    def test_mutation_guard_accepts_non_property_where_paths(self):
+        config = _minimal_config(
+            named_queries={"find_a": self._query()},
+            mutation_guards=[
+                self._guard(
+                    where={
+                        "candidate.entity_id": {"eq": "a-1"},
+                        "candidate.metadata.lifecycle.status": {"eq": "live"},
+                    }
+                )
+            ],
+        )
+
+        validate_config(config)
+
+    def test_mutation_guard_rejects_a_where_path_on_an_undeclared_property(self):
+        """A misspelled scope property silently disables the guard, so it is caught here."""
+        config = _minimal_config(
+            named_queries={"find_a": self._query()},
+            mutation_guards=[
+                self._guard(where={"candidate.properties.outcome_trackign": {"eq": "required"}})
+            ],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("references property 'outcome_trackign'" in e for e in exc_info.value.errors)
+
+    def test_mutation_guard_rejects_a_where_path_that_addresses_no_entity_field(self):
+        config = _minimal_config(
+            named_queries={"find_a": self._query()},
+            mutation_guards=[self._guard(where={"candidate.status": {"eq": "open"}})],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("does not resolve on an entity" in e for e in exc_info.value.errors)
+
     def test_mutation_guard_rejects_duplicate_names(self):
         config = _minimal_config(
             named_queries={"find_a": self._query()},

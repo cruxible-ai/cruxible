@@ -246,6 +246,33 @@ class ResolveAttestationRequest(BaseModel):
     actor_context: contracts.GovernedActorContext | None = None
 
 
+class OpenOutcomeContractRequest(BaseModel):
+    entity_type: str
+    entity_id: str
+    description: str
+    check_at: datetime
+    expires_at: datetime
+    measurement: dict[str, Any]
+    idempotency_key: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
+
+
+class ResolveOutcomeRequest(BaseModel):
+    verdict: contracts.ResolutionVerdict
+    observed_at: datetime
+    evidence_refs: list[contracts.EvidenceRef] = Field(default_factory=list)
+    note: str | None = None
+    resolving_query_receipt_id: str | None = None
+    resolving_attestation_ids: list[str] = Field(default_factory=list)
+    actor_context: contracts.GovernedActorContext | None = None
+
+
+class DisposeOutcomeResolutionRequest(BaseModel):
+    verdict: contracts.ResolutionDispositionVerdict
+    note: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
+
+
 class RegisterSourceArtifactRequest(BaseModel):
     source_path: str
     source_artifact_id: str | None = None

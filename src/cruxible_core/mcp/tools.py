@@ -1256,6 +1256,101 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         )
 
     @_tool
+    def cruxible_open_outcome_contract(
+        instance_id: str,
+        entity_type: str,
+        entity_id: str,
+        description: str,
+        check_at: str,
+        expires_at: str,
+        measurement: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> contracts.OutcomeContractResult:
+        """Declare in advance what result counts as success for one subject."""
+        return handlers.handle_open_outcome_contract(
+            instance_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            description=description,
+            check_at=check_at,
+            expires_at=expires_at,
+            measurement=measurement,
+            idempotency_key=idempotency_key,
+        )
+
+    @_tool
+    def cruxible_resolve_outcome(
+        instance_id: str,
+        contract_id: str,
+        verdict: contracts.ResolutionVerdict,
+        observed_at: str,
+        evidence_refs: list[contracts.EvidenceRef] | None = None,
+        note: str | None = None,
+        resolving_query_receipt_id: str | None = None,
+        resolving_attestation_ids: list[str] | None = None,
+    ) -> contracts.OutcomeResolutionResult:
+        """Record what reality said about one activated resolution contract."""
+        return handlers.handle_resolve_outcome(
+            instance_id,
+            contract_id,
+            verdict=verdict,
+            observed_at=observed_at,
+            evidence_refs=evidence_refs,
+            note=note,
+            resolving_query_receipt_id=resolving_query_receipt_id,
+            resolving_attestation_ids=resolving_attestation_ids,
+        )
+
+    @_tool
+    def cruxible_list_outcome_contracts(
+        instance_id: str,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        status: contracts.ContractStatus | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        """List resolution contracts with status, activation, and standing answer."""
+        return handlers.handle_list_outcome_contracts(
+            instance_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+
+    @_tool
+    def cruxible_outcome_due(
+        instance_id: str,
+        queue: contracts.ContractQueue = "due",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        """List due, overdue, or contradicted outcomes on live subjects."""
+        return handlers.handle_outcome_due(
+            instance_id,
+            queue=queue,
+            limit=limit,
+            offset=offset,
+        )
+
+    @_tool
+    def cruxible_dispose_outcome_resolution(
+        instance_id: str,
+        resolution_id: str,
+        verdict: contracts.ResolutionDispositionVerdict,
+        note: str | None = None,
+    ) -> contracts.OutcomeDispositionResult:
+        """Uphold or overturn one recorded outcome; an overturn re-opens it."""
+        return handlers.handle_dispose_outcome_resolution(
+            instance_id,
+            resolution_id,
+            verdict=verdict,
+            note=note,
+        )
+
+    @_tool
     def cruxible_propose_group(
         instance_id: str,
         relationship_type: str,

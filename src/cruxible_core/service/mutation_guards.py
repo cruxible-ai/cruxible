@@ -20,6 +20,7 @@ from cruxible_core.config.schema import (
     FrozenPropertyGuardCondition,
     MutationGuardSchema,
     NamedQueryResultCountGuardCondition,
+    ResolutionContractGuardCondition,
 )
 from cruxible_core.errors import DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext
@@ -27,7 +28,10 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import RelationshipEvidence
 from cruxible_core.graph.operations import ValidatedEntity, ValidatedRelationship
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.instance_protocol import (
+    InstanceProtocol,
+    ResolutionContractStoreProtocol,
+)
 from cruxible_core.query.engine import execute_query
 from cruxible_core.query.predicates import (
     entity_matches_predicates,
@@ -35,9 +39,47 @@ from cruxible_core.query.predicates import (
 )
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.resolution_contracts.types import (
+    ContractActivation,
+    compute_entity_content_digest,
+)
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
+from cruxible_core.temporal import format_datetime, utc_now
 
 _MISSING = object()
+
+_ENTITY_PREDICATE_SCOPES = frozenset({"candidate", "current", "entry", "source", "target"})
+"""Predicate scopes that resolve to the guarded entity itself.
+
+Guard predicates evaluate with a synthetic self-segment, so every one of these
+names addresses the mutated entity; ``edge`` and ``result`` do not name entity
+properties and are left alone.
+"""
+
+CREATE_WITH_GUARDED_VALUE_REFUSAL = (
+    "an outcome-tracked value cannot be set at create time: a resolution "
+    "contract must be opened against a subject that already exists, and a "
+    "subject cannot pre-exist its own creation. Propose the record first, open "
+    "a resolution contract against it (cruxible outcome open), then accept it"
+)
+"""Teaching refusal for create-with-accepted-value under an outcome guard."""
+
+NO_ELIGIBLE_CONTRACT_REFUSAL = (
+    "no eligible resolution contract exists for this subject. An eligible "
+    "contract is unexpired, never previously activated, and pinned to the "
+    "subject content being accepted (editing the subject after opening means "
+    "opening a new contract). Open one with cruxible outcome open"
+)
+"""Refusal for a guarded transition with no consumable contract."""
+
+CONTENT_CO_EDIT_REFUSAL = (
+    "this write changes subject content the contract never committed to: an "
+    "eligible contract is pinned to the content it was opened against, and "
+    "accepting an edited subject would ratify a promise made about different "
+    "content. Re-open a contract against the edited subject (cruxible outcome "
+    "open), then accept — or accept first and edit in a separate write"
+)
+"""Refusal for an acceptance that co-edits content past the pinned digest."""
 
 
 @dataclass(frozen=True)
@@ -145,11 +187,29 @@ class GuardPass:
 
 
 @dataclass(frozen=True)
+class ContractActivationIntent:
+    """One resolution contract a passing guard consumed, awaiting activation.
+
+    Guard evaluation only SELECTS the contract; the accepting write path turns
+    the intent into a durable activation record inside the same transaction
+    (:func:`record_contract_activations`). A dry run or a refused write simply
+    drops the intent, so nothing is consumed by a write that never happened.
+    """
+
+    contract_id: str
+    guard_name: str
+    entity_type: str
+    entity_id: str
+    accepted_content_digest: str
+
+
+@dataclass(frozen=True)
 class GuardEvaluation:
     """Structured outcome of evaluating the configured mutation guards."""
 
     refusals: tuple[GuardRefusal, ...] = ()
     passes: tuple[GuardPass, ...] = ()
+    contract_activations: tuple[ContractActivationIntent, ...] = ()
 
     @property
     def messages(self) -> list[str]:
@@ -166,9 +226,38 @@ class GuardEvaluation:
 class _GuardEvaluationAccumulator:
     refusals: list[GuardRefusal] = field(default_factory=list)
     passes: list[GuardPass] = field(default_factory=list)
+    contract_activations: list[ContractActivationIntent] = field(default_factory=list)
 
     def result(self) -> GuardEvaluation:
-        return GuardEvaluation(refusals=tuple(self.refusals), passes=tuple(self.passes))
+        return GuardEvaluation(
+            refusals=tuple(self.refusals),
+            passes=tuple(self.passes),
+            contract_activations=tuple(self.contract_activations),
+        )
+
+
+def record_contract_activations(
+    store: ResolutionContractStoreProtocol,
+    intents: Iterable[ContractActivationIntent],
+    *,
+    acceptance_receipt_id: str | None,
+) -> list[ContractActivation]:
+    """Write the activation record for every contract this write consumed.
+
+    Called by the accepting write path inside the same transaction as the
+    entity write, with the SAME store handle guard evaluation used, so lookup
+    and activation cannot interleave with a competing acceptance.
+    """
+    activated: list[ContractActivation] = []
+    for intent in intents:
+        activation = ContractActivation(
+            contract_id=intent.contract_id,
+            acceptance_receipt_id=acceptance_receipt_id,
+            subject_content_digest=intent.accepted_content_digest,
+        )
+        store.save_activation(activation)
+        activated.append(activation)
+    return activated
 
 
 def record_guard_evaluation(builder: ReceiptBuilder, evaluation: GuardEvaluation) -> None:
@@ -310,18 +399,30 @@ def evaluate_mutation_guards(
     actor_context: GovernedActorContext | None = None,
     write_delta: GuardWriteDelta | None = None,
     creation_actor_resolver: CreationActorResolver | None = None,
+    resolution_contract_store: ResolutionContractStoreProtocol | None = None,
 ) -> GuardEvaluation:
     """Evaluate entity mutation guards, returning structured refusals and passes.
 
     ``creation_actor_resolver`` supplies creation-provenance lookups for
     ``distinct_from_creation_actor`` conditions; when it is None those
     conditions fail closed.
+
+    ``resolution_contract_store`` is the ACTIVE unit-of-work's store; it is the
+    only input that lets ``requires_resolution_contract`` conditions pass, and
+    a caller that cannot supply one gets a fail-closed refusal rather than a
+    lookup on a second connection (which would be a TOCTOU against the
+    activation this evaluation's consumer writes).
     """
     outcome = _GuardEvaluationAccumulator()
     if not config.mutation_guards:
         return outcome.result()
+    now = format_datetime(utc_now()) or ""
 
     delta = write_delta if write_delta is not None else GuardWriteDelta.empty()
+    # One contract satisfies exactly one guarded transition, even within a
+    # single batch: without this a batch could ratify N acceptances against one
+    # commitment before any activation row exists to exclude it.
+    consumed_contract_ids: set[str] = set()
     for entity in entities:
         current = current_graph.get_entity(
             entity.entity.entity_type,
@@ -352,6 +453,47 @@ def evaluate_mutation_guards(
                         )
                     )
                 elif evaluated:
+                    outcome.passes.append(
+                        GuardPass(
+                            guard_name=guard.name,
+                            entity_type=proposed.entity_type,
+                            entity_id=proposed.entity_id,
+                            guard_property=guard.property,
+                        )
+                    )
+                continue
+            if isinstance(guard.condition, ResolutionContractGuardCondition):
+                context = _guard_transition_context(config, guard, entity, current, proposed)
+                if context is None:
+                    continue
+                missing_scope = _missing_scope_properties(guard, proposed)
+                if not missing_scope and not _guard_scope_matches(
+                    config, guard, proposed, proposed_graph
+                ):
+                    continue
+                intent, reason = _resolution_contract_condition_outcome(
+                    guard,
+                    context,
+                    store=resolution_contract_store,
+                    consumed=consumed_contract_ids,
+                    now=now,
+                    missing_scope_properties=missing_scope,
+                )
+                if reason is not None:
+                    outcome.refusals.append(
+                        GuardRefusal(
+                            message=_guard_error_message(guard, entity.entity, context, reason),
+                            guard_name=guard.name,
+                            entity_type=proposed.entity_type,
+                            entity_id=proposed.entity_id,
+                            guard_property=guard.property,
+                            guard_value=context.new_value,
+                        )
+                    )
+                else:
+                    assert intent is not None
+                    consumed_contract_ids.add(intent.contract_id)
+                    outcome.contract_activations.append(intent)
                     outcome.passes.append(
                         GuardPass(
                             guard_name=guard.name,
@@ -406,6 +548,7 @@ def mutation_guard_errors(
     actor_context: GovernedActorContext | None = None,
     write_delta: GuardWriteDelta | None = None,
     creation_actor_resolver: CreationActorResolver | None = None,
+    resolution_contract_store: ResolutionContractStoreProtocol | None = None,
 ) -> list[str]:
     """Return mutation guard errors for proposed entity writes (creates and updates)."""
     return evaluate_mutation_guards(
@@ -416,6 +559,7 @@ def mutation_guard_errors(
         actor_context=actor_context,
         write_delta=write_delta,
         creation_actor_resolver=creation_actor_resolver,
+        resolution_contract_store=resolution_contract_store,
     ).messages
 
 
@@ -484,6 +628,7 @@ def validate_mutation_guards(
     actor_context: GovernedActorContext | None = None,
     write_delta: GuardWriteDelta | None = None,
     creation_actor_resolver: CreationActorResolver | None = None,
+    resolution_contract_store: ResolutionContractStoreProtocol | None = None,
 ) -> None:
     """Raise DataValidationError when any proposed entity write violates a guard."""
     errors = mutation_guard_errors(
@@ -494,6 +639,7 @@ def validate_mutation_guards(
         actor_context=actor_context,
         write_delta=write_delta,
         creation_actor_resolver=creation_actor_resolver,
+        resolution_contract_store=resolution_contract_store,
     )
     if errors:
         raise DataValidationError(
@@ -510,6 +656,27 @@ def _matching_guard_context(
     proposed: EntityInstance,
     proposed_graph: EntityGraph,
 ) -> _GuardEntityContext | None:
+    context = _guard_transition_context(config, guard, validated, current, proposed)
+    if context is None:
+        return None
+    if not _guard_scope_matches(config, guard, proposed, proposed_graph):
+        return None
+    return context
+
+
+def _guard_transition_context(
+    config: CoreConfig,
+    guard: MutationGuardSchema,
+    validated: ValidatedEntity,
+    current: EntityInstance | None,
+    proposed: EntityInstance,
+) -> _GuardEntityContext | None:
+    """Match the guard's VALUE TRANSITION, ignoring where/where_related scoping.
+
+    Split out from scope matching because the outcome-forcing condition must
+    tell "this transition is out of scope" apart from "this transition's scope
+    cannot be evaluated" — the latter fails closed rather than skipping.
+    """
     entity = validated.entity
     if guard.entity_type != entity.entity_type:
         return None
@@ -529,8 +696,23 @@ def _matching_guard_context(
         return None
     if old_value == new_value:
         return None
+    return _GuardEntityContext(
+        current=current,
+        proposed=proposed,
+        old_value=old_value,
+        new_value=new_value,
+    )
+
+
+def _guard_scope_matches(
+    config: CoreConfig,
+    guard: MutationGuardSchema,
+    proposed: EntityInstance,
+    proposed_graph: EntityGraph,
+) -> bool:
+    """Return whether the guard's where/where_related scoping selects this entity."""
     if guard.where is not None and not entity_matches_predicates(config, guard.where, proposed):
-        return None
+        return False
     # Related-edge trigger scoping: the guard fires only when the proposed
     # entity's edges satisfy the related predicates. Edges are evaluated at the
     # canonical visible ("live") relationship state -- the chosen default; there
@@ -543,13 +725,8 @@ def _matching_guard_context(
         guard.where_not_related,
         relationship_state="live",
     ):
-        return None
-    return _GuardEntityContext(
-        current=current,
-        proposed=proposed,
-        old_value=old_value,
-        new_value=new_value,
-    )
+        return False
+    return True
 
 
 def _guarded_value_list(new_value: Any) -> list[Any]:
@@ -722,7 +899,153 @@ def _guard_condition_passes(
     if isinstance(condition, CoWriteGuardCondition):
         delta = write_delta if write_delta is not None else GuardWriteDelta.empty()
         return _co_write_condition_passes(condition, context, delta, config)
+    if isinstance(condition, ResolutionContractGuardCondition):
+        # Store-backed and handled ahead of this dispatch in
+        # evaluate_mutation_guards, which owns the contract store handle and
+        # the activation intent. Reaching here means a caller evaluated the
+        # condition without that handle: fail closed.
+        return False
     return False
+
+
+def _missing_scope_properties(
+    guard: MutationGuardSchema,
+    proposed: EntityInstance,
+) -> list[str]:
+    """Return the guard's scoping properties that the proposed entity does not set.
+
+    Adoption is declared by a property (``outcome_tracking: required |
+    not_applicable``) and the guard is scoped by it. An entity that predates the
+    property — or a write that drops it — would otherwise fall out of scope
+    silently and accept without a contract, which is the migration hole. The
+    property paths are read from the guard's own ``where`` clause so nothing is
+    hardcoded to one kit's spelling.
+    """
+    if guard.where is None:
+        return []
+    missing: list[str] = []
+    for path in guard.where.root:
+        property_name = _scoped_property_name(path)
+        if property_name is None:
+            continue
+        if property_name not in proposed.properties and property_name not in missing:
+            missing.append(property_name)
+    return missing
+
+
+def _scoped_property_name(path: str) -> str | None:
+    """Return the entity property a guard ``where`` path reads, if it reads one."""
+    parts = path.split(".")
+    if len(parts) != 3:
+        return None
+    scope, section, name = parts
+    if scope not in _ENTITY_PREDICATE_SCOPES or section != "properties":
+        return None
+    return name
+
+
+def _resolution_contract_condition_outcome(
+    guard: MutationGuardSchema,
+    context: _GuardEntityContext,
+    *,
+    store: ResolutionContractStoreProtocol | None,
+    consumed: set[str],
+    now: str,
+    missing_scope_properties: Sequence[str] = (),
+) -> tuple[ContractActivationIntent | None, str | None]:
+    """Return ``(activation intent, refusal reason)`` for an outcome guard.
+
+    Exactly one of the two is non-None. Refusals are teaching messages: the
+    guard exists to route work through propose -> open -> accept, so saying
+    only "condition failed" would leave the caller with no next step.
+    """
+    if missing_scope_properties:
+        joined = ", ".join(f"'{name}'" for name in missing_scope_properties)
+        return None, (
+            f"the guard's scope property {joined} is not set on "
+            f"{context.proposed.entity_type}:{context.proposed.entity_id}, so this "
+            "guard cannot tell whether the transition needs a resolution contract. "
+            "Outcome tracking is an explicit, reviewable choice: set the property "
+            "to the value that demands a contract (outcome_tracking: required) or "
+            "to the value that records no honest measurable outcome "
+            "(not_applicable), then re-run the transition. Records created before "
+            "the property existed must be migrated, not skipped"
+        )
+    if context.current is None:
+        # No from-state in the grammar means the guard also fires on
+        # create-with-guarded-value. That is refused outright: the subject
+        # cannot pre-exist its own creation, so no contract can exist.
+        return None, CREATE_WITH_GUARDED_VALUE_REFUSAL
+    if store is None:
+        return None, (
+            "resolution contract enforcement is unavailable on this write path "
+            "(no unit-of-work contract store); refusing rather than passing a "
+            "guarded transition unchecked"
+        )
+    pre_write_digest = compute_entity_content_digest(
+        context.current.entity_type,
+        context.current.entity_id,
+        dict(context.current.properties),
+    )
+    # Content binding: the guarded lifecycle property is the ONE thing this
+    # transition is allowed to change. Normalizing it back to its pre-write
+    # value must reproduce exactly the content the contract pinned; anything
+    # else means the acceptance also carries substantive edits the commitment
+    # was never made about.
+    reverted_digest = compute_entity_content_digest(
+        context.proposed.entity_type,
+        context.proposed.entity_id,
+        _properties_with_guarded_value_reverted(guard, context),
+    )
+    eligible = store.find_eligible_contracts(
+        entity_type=context.current.entity_type,
+        entity_id=context.current.entity_id,
+        subject_content_digest=pre_write_digest,
+        now=now,
+    )
+    for contract in eligible:
+        if contract.contract_id in consumed:
+            continue
+        if reverted_digest != contract.subject_content_digest:
+            return None, CONTENT_CO_EDIT_REFUSAL
+        return (
+            ContractActivationIntent(
+                contract_id=contract.contract_id,
+                guard_name=guard.name,
+                entity_type=context.proposed.entity_type,
+                entity_id=context.proposed.entity_id,
+                # What was ACCEPTED, i.e. the post-transition content. The
+                # contract's own digest records what was promised against.
+                accepted_content_digest=compute_entity_content_digest(
+                    context.proposed.entity_type,
+                    context.proposed.entity_id,
+                    dict(context.proposed.properties),
+                ),
+            ),
+            None,
+        )
+    return None, NO_ELIGIBLE_CONTRACT_REFUSAL
+
+
+def _properties_with_guarded_value_reverted(
+    guard: MutationGuardSchema,
+    context: _GuardEntityContext,
+) -> dict[str, Any]:
+    """Return the proposed properties with the guarded property put back.
+
+    The result is what the subject WOULD be if this write only performed the
+    guarded transition. Comparing its digest to the contract's pinned digest is
+    what separates "accept this decision" from "accept this decision and
+    rewrite it".
+    """
+    reverted = dict(context.proposed.properties)
+    if guard.property is None:
+        return reverted
+    if context.old_value is _MISSING:
+        reverted.pop(guard.property, None)
+    else:
+        reverted[guard.property] = context.old_value
+    return reverted
 
 
 def _distinct_from_creation_actor_passes(
@@ -896,8 +1219,16 @@ def _guard_error_message(
     guard: MutationGuardSchema,
     entity: EntityInstance,
     context: _GuardEntityContext,
+    reason: str | None = None,
 ) -> str:
-    message = guard.message or "mutation guard condition failed"
+    """Render one entity-guard refusal.
+
+    ``reason`` is the condition's own diagnosis. It is never replaced by the
+    kit-authored ``message``: an operator-facing hint must not erase the
+    mechanical reason the write was refused, so both are rendered.
+    """
+    parts = [part for part in (guard.message, reason) if part]
+    message = "; ".join(parts) or "mutation guard condition failed"
     return (
         f"Mutation guard '{guard.name}' rejected write "
         f"{entity.entity_type}:{entity.entity_id} "
@@ -983,6 +1314,9 @@ def _relationship_evidence_guard_error_message(
 
 
 __all__ = [
+    "CREATE_WITH_GUARDED_VALUE_REFUSAL",
+    "NO_ELIGIBLE_CONTRACT_REFUSAL",
+    "ContractActivationIntent",
     "CreationActorResolution",
     "CreationActorResolver",
     "GuardEvaluation",
@@ -994,6 +1328,7 @@ __all__ = [
     "evaluate_relationship_mutation_guards",
     "mutation_guard_errors",
     "receipt_creation_actor_resolver",
+    "record_contract_activations",
     "record_guard_evaluation",
     "validate_mutation_guards",
 ]

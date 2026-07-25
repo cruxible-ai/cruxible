@@ -40,6 +40,12 @@ if TYPE_CHECKING:
     )
     from cruxible_core.provider.types import ExecutionTrace
     from cruxible_core.receipt.types import Receipt
+    from cruxible_core.resolution_contracts.types import (
+        ContractActivation,
+        ContractResolution,
+        ResolutionContract,
+        ResolutionDisposition,
+    )
     from cruxible_core.snapshot.types import StateSnapshot, UpstreamMetadata
     from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
     from cruxible_core.storage.protocols import UnitOfWorkProtocol
@@ -518,6 +524,90 @@ class AttestationStoreProtocol(ABC):
     def close(self) -> None: ...
 
 
+class ResolutionContractStoreProtocol(ABC):
+    """Interface for resolution contracts, activations, and their answers."""
+
+    @abstractmethod
+    def save_contract(self, contract: ResolutionContract) -> str: ...
+    @abstractmethod
+    def get_contract(self, contract_id: str) -> ResolutionContract | None: ...
+    @abstractmethod
+    def find_idempotent_contract(
+        self,
+        *,
+        idempotency_key: str,
+        entity_type: str,
+        entity_id: str,
+        actor_org_id: str,
+        actor_id: str,
+    ) -> ResolutionContract | None: ...
+    @abstractmethod
+    def list_contracts(
+        self,
+        *,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ResolutionContract]: ...
+    @abstractmethod
+    def count_contracts(
+        self,
+        *,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+    ) -> int: ...
+    @abstractmethod
+    def find_eligible_contracts(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        subject_content_digest: str,
+        now: str,
+    ) -> list[ResolutionContract]: ...
+    @abstractmethod
+    def save_activation(self, activation: ContractActivation) -> str: ...
+    @abstractmethod
+    def get_activations(
+        self,
+        contract_ids: Sequence[str],
+    ) -> dict[str, ContractActivation]: ...
+    @abstractmethod
+    def save_resolution(self, resolution: ContractResolution) -> str: ...
+    @abstractmethod
+    def get_resolution(self, resolution_id: str) -> ContractResolution | None: ...
+    @abstractmethod
+    def list_resolutions(self, contract_id: str) -> list[ContractResolution]: ...
+    @abstractmethod
+    def get_latest_resolutions(
+        self,
+        contract_ids: Sequence[str],
+    ) -> dict[str, ContractResolution]: ...
+    @abstractmethod
+    def save_disposition(self, disposition: ResolutionDisposition) -> str: ...
+    @abstractmethod
+    def get_dispositions(
+        self,
+        resolution_ids: Sequence[str],
+    ) -> dict[str, ResolutionDisposition]: ...
+    @abstractmethod
+    def list_dispositions(self, resolution_id: str) -> list[ResolutionDisposition]: ...
+    @abstractmethod
+    def list_activated_unresolved(
+        self,
+        *,
+        before: str,
+        use_expiry: bool,
+    ) -> list[ResolutionContract]: ...
+    @abstractmethod
+    def list_undisposed_contradictions(
+        self,
+    ) -> list[tuple[ResolutionContract, ContractResolution]]: ...
+    @abstractmethod
+    def close(self) -> None: ...
+
+
 class InstanceProtocol(ABC):
     """Interface for a cruxible instance."""
 
@@ -562,6 +652,17 @@ class InstanceProtocol(ABC):
     @abstractmethod
     def write_transaction(self) -> AbstractContextManager[UnitOfWorkProtocol]: ...
     @abstractmethod
+    def active_unit_of_work(self) -> UnitOfWorkProtocol | None:
+        """Return the currently open write boundary, or None outside one.
+
+        A caller that must write ATOMICALLY with the surrounding write — the
+        resolution-contract activation is the first such case — needs to know
+        whether it is inside someone else's transaction rather than able to
+        open (and independently commit) its own.
+        """
+        ...
+
+    @abstractmethod
     def get_head_snapshot_id(self) -> str | None: ...
     @abstractmethod
     def get_read_revision(self) -> int: ...
@@ -602,5 +703,7 @@ class InstanceProtocol(ABC):
     def get_procedure_store(self) -> ProcedureStoreProtocol: ...
     @abstractmethod
     def get_attestation_store(self) -> AttestationStoreProtocol: ...
+    @abstractmethod
+    def get_resolution_contract_store(self) -> ResolutionContractStoreProtocol: ...
     @abstractmethod
     def get_source_artifact_store(self) -> SourceArtifactStoreProtocol: ...

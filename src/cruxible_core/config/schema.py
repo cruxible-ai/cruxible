@@ -1542,6 +1542,26 @@ class FrozenPropertyGuardCondition(BaseModel):
         return self
 
 
+class ResolutionContractGuardCondition(BaseModel):
+    """Outcome-forcing condition: the guarded transition needs a live commitment.
+
+    The transition is refused unless an ELIGIBLE resolution contract already
+    exists for the subject — unexpired, never previously activated, and pinned
+    to the subject content being accepted. This is the first store-backed
+    entity-guard condition: evaluation needs the active unit-of-work's
+    resolution-contract store, and fails closed without one.
+
+    The grammar has no from-state, so the guard also fires on
+    create-with-guarded-value. That case is an outright refusal: a subject
+    cannot pre-exist its own creation, so no contract can have been opened
+    against it. The flow is propose -> open -> accept, always.
+    """
+
+    type: Literal["requires_resolution_contract"]
+
+    model_config = {"extra": "forbid"}
+
+
 MutationGuardConditionSchema = Annotated[
     (
         NamedQueryResultCountGuardCondition
@@ -1549,6 +1569,7 @@ MutationGuardConditionSchema = Annotated[
         | CoWriteGuardCondition
         | EvidenceRequirementGuardCondition
         | FrozenPropertyGuardCondition
+        | ResolutionContractGuardCondition
     ),
     Field(discriminator="type"),
 ]

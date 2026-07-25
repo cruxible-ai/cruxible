@@ -1515,6 +1515,111 @@ without it, only the active materialized digest is checked.
 
 **Side Effects:** Appends a disposition and receipt; never mutates the target claim or attestation.
 
+## cruxible_open_outcome_contract
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Use when a decision is about to be accepted and you need to state in advance what result counts as success, how it will be measured, when to check it, and when the commitment expires.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `entity_type` | yes | string | Subject entity type; the subject must already exist. |
+| `entity_id` | yes | string | Subject entity ID. |
+| `description` | yes | string | Free-text success criterion that survives mechanical rot. |
+| `check_at` | yes | string | ISO-8601 time when the outcome is first checked; must precede `expires_at`. |
+| `expires_at` | yes | string | ISO-8601 time when an unresolved contract ages into overdue. |
+| `measurement` | yes | object | `{kind: query, query_name, params, expect}` or `{kind: attestation, relationship_type, from_type, from_id, to_type, to_id}`; validated against the live config at open. |
+| `idempotency_key` | no | string or null | Retry-safe key scoped to the subject and resolved actor. |
+
+**Returns:** The prepared contract, the idempotent-replay marker, and the receipt ID.
+
+**Side Effects:** Appends a contract and receipt; never mutates the subject. Multiple open contracts on one subject are legal. A query measurement pins both the query definition digest and the effective execution options, so a later run under a different `relationship_state` cannot resolve it.
+
+## cruxible_resolve_outcome
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Use when you checked an outcome contract and need to record what reality said: satisfied, contradicted, or indeterminate.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `contract_id` | yes | string | Activated contract being answered. |
+| `verdict` | yes | string | `satisfied`, `contradicted`, or `indeterminate`. |
+| `observed_at` | yes | string | ISO-8601 observation time; `satisfied` requires it at or after `check_at`. It is recorded, but the cited evidence's own timestamps are what bind the verdict. |
+| `evidence_refs` | no | array or null | Evidence pointers; at least one is required for `satisfied` and `contradicted`. |
+| `note` | no | string or null | Observation note; required for `contradicted`. |
+| `resolving_query_receipt_id` | no | string or null | Receipt of the query run that observed a query-measured outcome. |
+| `resolving_attestation_ids` | no | array or null | Attestation ids backing an attestation-measured outcome. |
+
+**Returns:** The immutable resolution and receipt ID.
+
+**Side Effects:** Appends one resolution and receipt; never mutates the subject. A contract accepts exactly one standing resolution until a reviewer overturns it. Cited evidence must postdate the contract's opening by its own clock (and, for `satisfied`, the declared check time); a query receipt must carry a `read_revision` stamp and match the pinned execution options, and an attestation invalidated by a reviewer cannot be cited.
+
+## cruxible_list_outcome_contracts
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need the outcome contracts on a subject with their status, activation, and standing answer.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `entity_type` | no | string or null | Filter to one subject entity type. |
+| `entity_id` | no | string or null | Filter to one subject entity ID. |
+| `status` | no | string or null | Filter the returned page by derived status: `prepared`, `open`, or `resolved`. |
+| `limit` | no | integer | Maximum contracts per page. |
+| `offset` | no | integer | Contracts to skip. |
+
+**Returns:** Standard list envelope with per-contract status, activation, standing resolution, disposition, expiry, and subject-drift markers.
+
+**Side Effects:** Read-only.
+
+## cruxible_outcome_due
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need the outcome work list: contracts due for checking, overdue contracts, or contradicted outcomes awaiting a reviewer.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `queue` | no | string | `due` (past `check_at`), `overdue` (past `expires_at`), or `contradicted` (undisposed). |
+| `limit` | no | integer | Maximum entries. |
+| `offset` | no | integer | Entries to skip. |
+
+**Returns:** Standard list envelope of activated contracts on live subjects, oldest check time first.
+
+**Side Effects:** Read-only.
+
+## cruxible_dispose_outcome_resolution
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Use when a reviewer needs to uphold or overturn a recorded outcome; an overturn re-opens the contract for one new answer.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `resolution_id` | yes | string | Immutable resolution being reviewed. |
+| `verdict` | yes | string | `upheld` or `overturned`. |
+| `note` | no | string or null | Optional reviewer explanation. |
+
+**Returns:** The appended disposition and receipt ID.
+
+**Side Effects:** Appends a disposition and receipt; an `overturned` verdict re-opens the contract for exactly one further resolution. Dispositions are latest-wins: a further disposition on the same resolution supersedes the previous one (unless that one was an overturn a later resolution already answered). Never mutates the subject.
+
 ## cruxible_propose_procedure
 
 **Permission:** `GOVERNED_WRITE`

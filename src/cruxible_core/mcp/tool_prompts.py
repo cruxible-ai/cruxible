@@ -286,6 +286,27 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when a reviewer needs to uphold, correct, or invalidate an attestation "
         "without changing its immutable history."
     ),
+    "cruxible_open_outcome_contract": (
+        "Use when a decision is about to be accepted and you need to state in "
+        "advance what result counts as success, how it will be measured, when to "
+        "check it, and when the commitment expires."
+    ),
+    "cruxible_resolve_outcome": (
+        "Use when you checked an outcome contract and need to record what reality "
+        "said: satisfied, contradicted, or indeterminate."
+    ),
+    "cruxible_list_outcome_contracts": (
+        "Use when you need the outcome contracts on a subject with their status, "
+        "activation, and standing answer."
+    ),
+    "cruxible_outcome_due": (
+        "Use when you need the outcome work list: contracts due for checking, "
+        "overdue contracts, or contradicted outcomes awaiting a reviewer."
+    ),
+    "cruxible_dispose_outcome_resolution": (
+        "Use when a reviewer needs to uphold or overturn a recorded outcome; an "
+        "overturn re-opens the contract for one new answer."
+    ),
     "cruxible_propose_group": (
         "Use when you need to create a review group for candidate relationship changes."
     ),

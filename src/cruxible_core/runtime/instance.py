@@ -42,6 +42,7 @@ from cruxible_core.primitives import new_id
 from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.procedure.types import ProcedureRecord
 from cruxible_core.receipt.store import SQLiteReceiptStore
+from cruxible_core.resolution_contracts.store import ResolutionContractStore
 from cruxible_core.snapshot.types import StateSnapshot, UpstreamMetadata
 from cruxible_core.storage.sqlite import (
     SQLiteSourceArtifactStore,
@@ -356,6 +357,17 @@ class CruxibleInstance(InstanceProtocol):
 
     def _ensure_state_initialized(self) -> None:
         self._storage_backend().initialize()
+
+    def active_unit_of_work(self) -> UnitOfWorkProtocol | None:
+        """Return the open write boundary, or None when there is none.
+
+        Callers that must be atomic with the surrounding write ask this rather
+        than opening their own boundary: ``write_transaction`` would silently
+        hand them a fresh, independently-committing transaction outside an
+        apply, which is exactly the durability hole the resolution-contract
+        activation must not have.
+        """
+        return self._active_uow
 
     @contextmanager
     def write_transaction(self) -> Iterator[UnitOfWorkProtocol]:
@@ -692,6 +704,19 @@ class CruxibleInstance(InstanceProtocol):
             return self._active_uow.attestations
         self._ensure_state_initialized()
         return AttestationStore(self._state_db_path())
+
+    def get_resolution_contract_store(self) -> ResolutionContractStore:
+        """Get or create the append-only resolution contract SQLite store.
+
+        Guard evaluation MUST receive the active unit-of-work's store: the
+        eligibility lookup and the activation the acceptance writes have to be
+        atomic with the accepted entity write, or a second acceptance can
+        consume the same contract between them.
+        """
+        if self._active_uow is not None:
+            return self._active_uow.resolution_contracts
+        self._ensure_state_initialized()
+        return ResolutionContractStore(self._state_db_path())
 
     def get_source_artifact_store(self) -> SQLiteSourceArtifactStore:
         """Get or create the source artifact SQLite store."""

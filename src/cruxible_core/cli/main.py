@@ -746,6 +746,31 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "analyze_outcomes_cmd",
                 "Analyze structured outcomes and print trust/debugging suggestions.",
             ),
+            "open": _command(
+                "outcome_contracts",
+                "outcome_open",
+                "Open a resolution contract on a subject before it is accepted.",
+            ),
+            "resolve": _command(
+                "outcome_contracts",
+                "outcome_resolve",
+                "Record what reality said about one activated resolution contract.",
+            ),
+            "dispose": _command(
+                "outcome_contracts",
+                "outcome_dispose",
+                "Uphold or overturn a recorded outcome.",
+            ),
+            "list": _command(
+                "outcome_contracts",
+                "outcome_list",
+                "List resolution contracts with status, activation, and standing answer.",
+            ),
+            "due": _command(
+                "outcome_contracts",
+                "outcome_due",
+                "List outcomes due for checking, overdue, or contradicted and undisposed.",
+            ),
         },
         module="feedback",
         attr="outcome_group",

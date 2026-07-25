@@ -1888,6 +1888,159 @@ def handle_resolve_attestation(
     )
 
 
+def handle_open_outcome_contract(
+    instance_id: str,
+    *,
+    entity_type: str,
+    entity_id: str,
+    description: str,
+    check_at: str,
+    expires_at: str,
+    measurement: dict[str, Any],
+    idempotency_key: str | None = None,
+) -> contracts.OutcomeContractResult:
+    """Open one resolution contract against an existing governed subject."""
+    return _dispatch_remote_or_local(
+        lambda client: client.open_outcome_contract(
+            instance_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            description=description,
+            check_at=check_at,
+            expires_at=expires_at,
+            measurement=measurement,
+            idempotency_key=idempotency_key,
+        ),
+        lambda: api.open_outcome_contract(
+            instance_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            description=description,
+            check_at=check_at,
+            expires_at=expires_at,
+            measurement=measurement,
+            idempotency_key=idempotency_key,
+        ),
+        allow_local=False,
+        operation_name="cruxible_open_outcome_contract",
+    )
+
+
+def handle_resolve_outcome(
+    instance_id: str,
+    contract_id: str,
+    *,
+    verdict: contracts.ResolutionVerdict,
+    observed_at: str,
+    evidence_refs: list[contracts.EvidenceRef] | None = None,
+    note: str | None = None,
+    resolving_query_receipt_id: str | None = None,
+    resolving_attestation_ids: list[str] | None = None,
+) -> contracts.OutcomeResolutionResult:
+    """Record the one standing answer to one activated resolution contract."""
+    return _dispatch_remote_or_local(
+        lambda client: client.resolve_outcome(
+            instance_id,
+            contract_id,
+            verdict=verdict,
+            observed_at=observed_at,
+            evidence_refs=evidence_refs or [],
+            note=note,
+            resolving_query_receipt_id=resolving_query_receipt_id,
+            resolving_attestation_ids=resolving_attestation_ids or [],
+        ),
+        lambda: api.resolve_outcome(
+            instance_id,
+            contract_id,
+            verdict=verdict,
+            observed_at=observed_at,
+            evidence_refs=evidence_refs or [],
+            note=note,
+            resolving_query_receipt_id=resolving_query_receipt_id,
+            resolving_attestation_ids=resolving_attestation_ids or [],
+        ),
+        allow_local=False,
+        operation_name="cruxible_resolve_outcome",
+    )
+
+
+def handle_dispose_outcome_resolution(
+    instance_id: str,
+    resolution_id: str,
+    *,
+    verdict: contracts.ResolutionDispositionVerdict,
+    note: str | None = None,
+) -> contracts.OutcomeDispositionResult:
+    """Uphold or overturn one recorded outcome."""
+    return _dispatch_remote_or_local(
+        lambda client: client.dispose_outcome_resolution(
+            instance_id,
+            resolution_id,
+            verdict=verdict,
+            note=note,
+        ),
+        lambda: api.dispose_outcome_resolution(
+            instance_id,
+            resolution_id,
+            verdict=verdict,
+            note=note,
+        ),
+        allow_local=False,
+        operation_name="cruxible_dispose_outcome_resolution",
+    )
+
+
+def handle_list_outcome_contracts(
+    instance_id: str,
+    *,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    status: contracts.ContractStatus | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.ListResult:
+    """List resolution contracts with derived lifecycle markers."""
+    result = _dispatch_remote_or_local(
+        lambda client: client.list_outcome_contracts(
+            instance_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        ),
+        lambda: api.list_outcome_contracts(
+            instance_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+    return _captured_read(result, tool="cruxible_list_outcome_contracts", instance_id=instance_id)
+
+
+def handle_outcome_due(
+    instance_id: str,
+    *,
+    queue: contracts.ContractQueue = "due",
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.ListResult:
+    """Return one derived outcome attention queue."""
+    result = _dispatch_remote_or_local(
+        lambda client: client.outcome_due(
+            instance_id,
+            queue=queue,
+            limit=limit,
+            offset=offset,
+        ),
+        lambda: api.outcome_due(instance_id, queue=queue, limit=limit, offset=offset),
+    )
+    return _captured_read(result, tool="cruxible_outcome_due", instance_id=instance_id)
+
+
 def handle_propose_group(
     instance_id: str,
     relationship_type: str,

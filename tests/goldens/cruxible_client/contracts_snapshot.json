@@ -20,6 +20,20 @@
         "error"
       ]
     },
+    "ContractQueue": {
+      "values": [
+        "due",
+        "overdue",
+        "contradicted"
+      ]
+    },
+    "ContractStatus": {
+      "values": [
+        "prepared",
+        "open",
+        "resolved"
+      ]
+    },
     "DecisionClass": {
       "values": [
         "recommended",
@@ -233,6 +247,19 @@
         "inactive",
         "superseded",
         "retracted"
+      ]
+    },
+    "ResolutionDispositionVerdict": {
+      "values": [
+        "upheld",
+        "overturned"
+      ]
+    },
+    "ResolutionVerdict": {
+      "values": [
+        "satisfied",
+        "contradicted",
+        "indeterminate"
       ]
     },
     "ResourceType": {
@@ -15240,6 +15267,89 @@
         "entity_type"
       ]
     },
+    "OutcomeContractResult": {
+      "fields": {
+        "contract": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contract",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Contract",
+            "type": "object"
+          }
+        },
+        "idempotent_replay": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "idempotent_replay",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Idempotent Replay",
+            "type": "boolean"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Opened resolution contract plus its idempotent-replay marker.",
+        "properties": {
+          "contract": {
+            "additionalProperties": true,
+            "title": "Contract",
+            "type": "object"
+          },
+          "idempotent_replay": {
+            "default": false,
+            "title": "Idempotent Replay",
+            "type": "boolean"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "required": [
+          "contract"
+        ],
+        "title": "OutcomeContractResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "contract"
+      ]
+    },
     "OutcomeDecisionPolicySuggestion": {
       "fields": {
         "applies_to": {
@@ -15480,6 +15590,71 @@
         "rationale",
         "relationship_type",
         "support_count"
+      ]
+    },
+    "OutcomeDispositionResult": {
+      "fields": {
+        "disposition": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "disposition",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Disposition",
+            "type": "object"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Appended reviewer disposition on one resolution, and receipt.",
+        "properties": {
+          "disposition": {
+            "additionalProperties": true,
+            "title": "Disposition",
+            "type": "object"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "required": [
+          "disposition"
+        ],
+        "title": "OutcomeDispositionResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "disposition"
       ]
     },
     "OutcomeGroupSummary": {
@@ -15856,6 +16031,71 @@
         "support_count",
         "surface_name",
         "surface_type"
+      ]
+    },
+    "OutcomeResolutionResult": {
+      "fields": {
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "resolution": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "resolution",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Resolution",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Recorded resolution and receipt.",
+        "properties": {
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
+          "resolution": {
+            "additionalProperties": true,
+            "title": "Resolution",
+            "type": "object"
+          }
+        },
+        "required": [
+          "resolution"
+        ],
+        "title": "OutcomeResolutionResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "resolution"
       ]
     },
     "OutcomeResult": {

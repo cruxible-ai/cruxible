@@ -113,6 +113,13 @@ from cruxible_core.service.queries import (
     service_schema,
     service_stats,
 )
+from cruxible_core.service.resolution_contracts import (
+    service_dispose_resolution,
+    service_list_resolution_contracts,
+    service_open_resolution_contract,
+    service_outcome_queue,
+    service_resolve_outcome,
+)
 from cruxible_core.service.server import service_server_info
 from cruxible_core.service.snapshots import (
     read_instance_backup_manifest,
@@ -442,8 +449,13 @@ __all__ = [
     "service_query",
     "service_query_inline_surface",
     "service_query_surface",
+    "service_dispose_resolution",
+    "service_list_resolution_contracts",
+    "service_open_resolution_contract",
+    "service_outcome_queue",
     "service_register_source_artifact",
     "service_reload_config",
+    "service_resolve_outcome",
     "service_sample",
     "service_schema",
     "service_server_info",

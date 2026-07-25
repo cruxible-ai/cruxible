@@ -182,6 +182,28 @@ def execute_query(
     )
 
 
+def effective_query_receipt_options(
+    config: CoreConfig,
+    query_name: str,
+    query_schema: NamedQuerySchema,
+    *,
+    relationship_state: QueryVisibilityState | None = None,
+) -> dict[str, str]:
+    """Return the execution options a run of this query would stamp on its receipt.
+
+    Same resolution (and validation) the engine performs, without executing:
+    callers that need to PIN how a query will run — resolution contracts — must
+    read exactly what a later receipt will carry, not a hand-rolled copy of the
+    defaulting rules.
+    """
+    return _resolve_effective_query_options(
+        config,
+        query_name,
+        query_schema,
+        relationship_state,
+    ).receipt_options()
+
+
 def execute_query_definition(
     config: CoreConfig,
     graph: EntityGraph,

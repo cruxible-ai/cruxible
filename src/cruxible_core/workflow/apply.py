@@ -14,7 +14,12 @@ from copy import deepcopy
 from typing import Any
 
 from cruxible_core.config.ownership import check_upstream_type_ownership
-from cruxible_core.config.schema import CoreConfig, MakeEntitiesSpec, MakeRelationshipsSpec
+from cruxible_core.config.schema import (
+    CoreConfig,
+    MakeEntitiesSpec,
+    MakeRelationshipsSpec,
+    ResolutionContractGuardCondition,
+)
 from cruxible_core.errors import DataValidationError, QueryExecutionError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -344,6 +349,7 @@ def apply_entity_set(
         validated_entities,
         actor_context=actor_context,
         receipt_builder=receipt_builder,
+        persist_writes=persist_writes,
     )
 
     for validated in validated_entities:
@@ -547,6 +553,7 @@ def _enforce_entity_mutation_guards(
     *,
     actor_context: GovernedActorContext | None,
     receipt_builder: ReceiptBuilder,
+    persist_writes: bool = False,
 ) -> None:
     """Reject canonical workflow entity writes that violate config mutation guards.
 
@@ -566,11 +573,6 @@ def _enforce_entity_mutation_guards(
     # Deferred import: cruxible_core.service.__init__ pulls in service.execution
     # -> workflow.executor -> workflow.apply, so a top-level import here would be
     # circular. The function-local import breaks that cycle.
-    from cruxible_core.service.mutation_guards import (
-        evaluate_mutation_guards,
-        receipt_creation_actor_resolver,
-        record_guard_evaluation,
-    )
     from cruxible_core.service.mutation_proposals import build_proposal, entity_instance_member
 
     # The proposal lands before the guard runs, so a refused workflow apply
@@ -594,6 +596,102 @@ def _enforce_entity_mutation_guards(
         # refuse_direct_writes decision.
         apply_entity(proposed_graph, validated, config=config, source="workflow_apply")
 
+    # Only the store-backed condition needs a store handle at all; every other
+    # condition keeps its existing, handle-free evaluation. No path here opens a
+    # write boundary: a preview reads eligibility on its own connection (it
+    # consumes nothing, so there is nothing to serialize), and an apply must
+    # already be inside the caller's boundary.
+    needs_contract_store = any(
+        isinstance(guard.condition, ResolutionContractGuardCondition)
+        for guard in config.mutation_guards
+    )
+    if not needs_contract_store:
+        _run_entity_guards(
+            instance,
+            config,
+            graph,
+            step_id,
+            validated_entities,
+            proposed_graph=proposed_graph,
+            actor_context=actor_context,
+            receipt_builder=receipt_builder,
+            persist_writes=persist_writes,
+            contract_store=None,
+        )
+        return
+
+    if not persist_writes:
+        # Preview: the activation intents are discarded, so eligibility may be
+        # read on a standalone connection and nothing is consumed.
+        preview_store = instance.get_resolution_contract_store()
+        try:
+            _run_entity_guards(
+                instance,
+                config,
+                graph,
+                step_id,
+                validated_entities,
+                proposed_graph=proposed_graph,
+                actor_context=actor_context,
+                receipt_builder=receipt_builder,
+                persist_writes=False,
+                contract_store=preview_store,
+            )
+        finally:
+            preview_store.close()
+        return
+
+    # Apply: the eligibility lookup and the activation it writes must commit
+    # atomically with the entity write, which means they must run inside the
+    # caller's ALREADY-OPEN unit of work. Opening one here would commit
+    # independently — an activation that survives a rolled-back apply, or a
+    # consumed contract for a write that never landed — so the absence of a
+    # boundary is refused, not papered over.
+    uow = instance.active_unit_of_work()
+    if uow is None:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' cannot evaluate the resolution-contract "
+            "guard outside an instance write transaction: the eligibility lookup "
+            "and the activation the acceptance writes must commit atomically with "
+            "the entity write. Apply through service_apply_workflow (or open "
+            "instance.write_transaction() around the call) rather than invoking "
+            "execute_workflow(mode='apply') directly."
+        )
+    _run_entity_guards(
+        instance,
+        config,
+        graph,
+        step_id,
+        validated_entities,
+        proposed_graph=proposed_graph,
+        actor_context=actor_context,
+        receipt_builder=receipt_builder,
+        persist_writes=True,
+        contract_store=uow.resolution_contracts,
+    )
+
+
+def _run_entity_guards(
+    instance: InstanceProtocol,
+    config: CoreConfig,
+    graph: EntityGraph,
+    step_id: str,
+    validated_entities: list[ValidatedEntity],
+    *,
+    proposed_graph: EntityGraph,
+    actor_context: GovernedActorContext | None,
+    receipt_builder: ReceiptBuilder,
+    persist_writes: bool,
+    contract_store: Any,
+) -> None:
+    """Evaluate the guards and, on the apply pass, durably consume contracts."""
+    from cruxible_core.service.mutation_guards import (
+        evaluate_mutation_guards,
+        receipt_creation_actor_resolver,
+        record_contract_activations,
+        record_guard_evaluation,
+    )
+
     evaluation = evaluate_mutation_guards(
         config,
         current_graph=graph,
@@ -601,6 +699,7 @@ def _enforce_entity_mutation_guards(
         entities=validated_entities,
         actor_context=actor_context,
         creation_actor_resolver=receipt_creation_actor_resolver(instance),
+        resolution_contract_store=contract_store,
     )
     record_guard_evaluation(receipt_builder, evaluation)
     guard_errors = evaluation.messages
@@ -608,6 +707,13 @@ def _enforce_entity_mutation_guards(
         raise QueryExecutionError(
             f"Workflow step '{step_id}' mutation guard validation failed: "
             + "; ".join(guard_errors)
+        )
+    # Previews consume nothing: only the apply pass turns the intent durable.
+    if persist_writes and contract_store is not None and evaluation.contract_activations:
+        record_contract_activations(
+            contract_store,
+            evaluation.contract_activations,
+            acceptance_receipt_id=receipt_builder.receipt_id,
         )
 
 

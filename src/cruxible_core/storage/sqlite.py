@@ -21,6 +21,7 @@ from cruxible_core.group.store import GroupStore
 from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.receipt.store import SQLiteReceiptStore
+from cruxible_core.resolution_contracts.store import ResolutionContractStore
 from cruxible_core.snapshot.types import StateSnapshot
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 from cruxible_core.source_artifacts.types import (
@@ -716,6 +717,11 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
             connection=self._conn,
             initialize_schema=False,
         )
+        self.resolution_contracts = ResolutionContractStore(
+            self.db_path,
+            connection=self._conn,
+            initialize_schema=False,
+        )
         self.decisions = DecisionStore(
             self.db_path,
             connection=self._conn,
@@ -909,6 +915,7 @@ class SQLiteStorageBackend:
         GroupStore(self.db_path, connection=conn)
         ProcedureStore(self.db_path, connection=conn)
         AttestationStore(self.db_path, connection=conn)
+        ResolutionContractStore(self.db_path, connection=conn)
         DecisionStore(self.db_path, connection=conn)
         SQLiteSourceArtifactStore(self.db_path, connection=conn)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):
