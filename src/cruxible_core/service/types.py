@@ -943,6 +943,12 @@ class StatePublishResult:
 class StateOverlayResult:
     instance: InstanceProtocol
     manifest: PublishedStateManifest
+    # Verification warnings raised while pulling the release this overlay was
+    # created from -- today, that the bundle predates per-member digests and so
+    # could not be fully verified. Returned rather than logged only: the caller
+    # creating the overlay is the one who can decide to ask upstream for a
+    # re-publish, and `state pull preview` already reports the same warning.
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass

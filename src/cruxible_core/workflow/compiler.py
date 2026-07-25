@@ -12,11 +12,15 @@ from typing import Any, cast
 
 import yaml
 
-from cruxible_core.config.schema import CoreConfig, WorkflowType
+from cruxible_core.config.schema import CoreConfig, ProviderSchema, WorkflowType
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import compute_kit_provider_sha256, is_kit_provider_ref
-from cruxible_core.provider.registry import get_provider_entrypoint_path, resolve_provider
+from cruxible_core.provider.registry import (
+    get_provider_entrypoint_path,
+    resolve_command_provider_target,
+    resolve_provider,
+)
 from cruxible_core.workflow.artifacts import resolve_local_artifact_path
 from cruxible_core.workflow.contracts import (
     contract_reference_label,
@@ -135,6 +139,11 @@ def build_lock(
                 provider_entrypoint_digest=_compute_provider_entrypoint_sha256(
                     provider_name=name,
                     config=config,
+                    config_base_path=config_base_path,
+                ),
+                provider_command_path=compute_provider_command_path(
+                    provider_name=name,
+                    provider=provider,
                     config_base_path=config_base_path,
                 ),
                 runtime=provider.runtime,
@@ -393,6 +402,18 @@ def compile_plan_definition(
             if current_entrypoint_sha != locked.provider_entrypoint_digest:
                 raise ConfigError(
                     f"Provider '{step.provider}' entrypoint changed since lock generation. "
+                    "Run `cruxible lock`."
+                )
+            current_command_path = compute_provider_command_path(
+                provider_name=step.provider,
+                provider=provider_schema,
+                config_base_path=config_base_path,
+            )
+            if current_command_path != locked.provider_command_path:
+                raise ConfigError(
+                    f"Provider '{step.provider}' command ref resolves to "
+                    f"{current_command_path or '(none)'}, not the "
+                    f"{locked.provider_command_path or '(none)'} the lock recorded. "
                     "Run `cruxible lock`."
                 )
             if is_canonical:
@@ -696,6 +717,12 @@ def _compute_provider_entrypoint_sha256(
 
     enforce_customer_code_execution_supported()
     provider = config.providers[provider_name]
+    if provider.runtime == "command":
+        return _compute_command_provider_sha256(
+            provider_name=provider_name,
+            provider=provider,
+            config_base_path=config_base_path,
+        )
     if is_kit_provider_ref(provider.ref):
         if config_base_path is None:
             raise ConfigError(
@@ -709,36 +736,112 @@ def _compute_provider_entrypoint_sha256(
     return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
 
 
+def _compute_command_provider_sha256(
+    *,
+    provider_name: str,
+    provider: ProviderSchema,
+    config_base_path: Path | None,
+) -> str | None:
+    """Hash a command provider's executable when it is the instance's to pin.
+
+    Workspace-relative commands are hashed. System executables are not (they are
+    the OS trust boundary; hashing them would invalidate every lock on every
+    system update) -- their path identity is recorded separately in
+    ``LockedProvider.provider_command_path``.
+
+    A command exported to procedures gets no unhashed workspace path: procedures
+    run unattended under a budget, so a workspace script that cannot be pinned
+    is refused rather than executed on the strength of its filename.
+    """
+    target = resolve_command_provider_target(
+        provider_name,
+        provider,
+        config_base_path=config_base_path,
+    )
+    if target.workspace_path is not None:
+        return f"sha256:{hashlib.sha256(target.workspace_path.read_bytes()).hexdigest()}"
+    if target.declared_workspace_relative and provider.procedure_access != "disabled":
+        raise ConfigError(
+            f"Provider '{provider_name}' is exported to procedures "
+            f"(procedure_access: {provider.procedure_access}) and its command ref "
+            f"'{provider.ref}' names a path inside the instance, but no file is there to "
+            "pin. A procedure-exported command must be a real file whose contents can be "
+            "hashed into the lock. Add the script at that path and re-run `cruxible "
+            "lock`, or point the provider at an absolute system executable if the OS "
+            "binary is what you mean."
+        )
+    return None
+
+
+def compute_provider_command_path(
+    *,
+    provider_name: str,
+    provider: ProviderSchema,
+    config_base_path: Path | None,
+) -> str | None:
+    """Record which system executable a command ref resolved to, for later comparison."""
+    if provider.runtime != "command":
+        return None
+    target = resolve_command_provider_target(
+        provider_name,
+        provider,
+        config_base_path=config_base_path,
+    )
+    return str(target.system_path) if target.system_path is not None else None
+
+
 def verify_provider_entrypoint_digest(
     provider_name: str,
     config: CoreConfig,
     *,
     expected_digest: str | None,
+    expected_command_path: str | None = None,
     config_base_path: Path | None = None,
 ) -> None:
-    """Refuse a provider whose entrypoint no longer matches its locked digest.
+    """Refuse a provider whose entrypoint no longer matches what the lock pinned.
 
     Compilation pins each provider's entrypoint digest into the plan, but the
     plan is executed later -- after other steps have run, after repeat attempts,
     and for procedures under a wall-clock budget measured in minutes. The file
     that will actually be imported and called is only known at invocation, so
     the locked digest is compared again here, immediately before the call.
+
+    For a command provider resolving to a system executable there is no digest
+    to compare -- see the posture note on
+    ``resolve_command_provider_target`` -- but the path the ref resolves to is
+    recorded, and a ref that now resolves somewhere else (a PATH entry inserted
+    ahead of the locked one, a re-pointed absolute path) is refused.
     """
     current_digest = _compute_provider_entrypoint_sha256(
         provider_name=provider_name,
         config=config,
         config_base_path=config_base_path,
     )
-    if current_digest == expected_digest:
-        return
-    raise ConfigError(
-        f"Provider '{provider_name}' entrypoint does not match its locked digest at "
-        f"invocation: lock records {expected_digest or '(none)'}, found "
-        f"{current_digest or '(none)'}. The provider code changed after the plan was "
-        "compiled, so the call is refused rather than executed against unpinned code. "
-        "Re-run `cruxible lock` to pin the current provider code, or restore the "
-        "locked entrypoint, then re-run."
+    if current_digest != expected_digest:
+        raise ConfigError(
+            f"Provider '{provider_name}' entrypoint does not match its locked digest at "
+            f"invocation: lock records {expected_digest or '(none)'}, found "
+            f"{current_digest or '(none)'}. The provider code changed after the plan was "
+            "compiled, so the call is refused rather than executed against unpinned code. "
+            "Re-run `cruxible lock` to pin the current provider code, or restore the "
+            "locked entrypoint, then re-run."
+        )
+    current_command_path = compute_provider_command_path(
+        provider_name=provider_name,
+        provider=config.providers[provider_name],
+        config_base_path=config_base_path,
     )
+    if current_command_path != expected_command_path:
+        raise ConfigError(
+            f"Provider '{provider_name}' command ref "
+            f"'{config.providers[provider_name].ref}' no longer resolves to the executable "
+            f"the lock recorded: lock records {expected_command_path or '(none)'}, now "
+            f"resolves to {current_command_path or '(none)'}. System executables are not "
+            "hashed -- their path identity is what is pinned -- so a ref that changes "
+            "target is refused rather than run. Restore the environment the lock was "
+            "generated in (PATH, virtualenv, installed packages), or re-run `cruxible "
+            "lock` to pin the executable this environment resolves."
+        )
 
 
 def _collect_canonical_artifact_names(config: CoreConfig) -> set[str]:

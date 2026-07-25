@@ -9778,6 +9778,18 @@
         "$defs": {
           "PublishedStateManifest": {
             "properties": {
+              "bundle_format_version": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bundle Format Version"
+              },
               "compatibility": {
                 "enum": [
                   "data_only",
@@ -9790,6 +9802,18 @@
               "format_version": {
                 "title": "Format Version",
                 "type": "integer"
+              },
+              "members_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Members Digest"
               },
               "owned_entity_types": {
                 "items": {
@@ -16426,6 +16450,26 @@
     },
     "PublishedStateManifest": {
       "fields": {
+        "bundle_format_version": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "bundle_format_version",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bundle Format Version"
+          }
+        },
         "compatibility": {
           "has_default": false,
           "has_default_factory": false,
@@ -16449,6 +16493,26 @@
           "schema": {
             "title": "Format Version",
             "type": "integer"
+          }
+        },
+        "members_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "members_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Members Digest"
           }
         },
         "owned_entity_types": {
@@ -16530,6 +16594,18 @@
       },
       "json_schema": {
         "properties": {
+          "bundle_format_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bundle Format Version"
+          },
           "compatibility": {
             "enum": [
               "data_only",
@@ -16542,6 +16618,18 @@
           "format_version": {
             "title": "Format Version",
             "type": "integer"
+          },
+          "members_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Members Digest"
           },
           "owned_entity_types": {
             "items": {
@@ -28857,12 +28945,37 @@
           "schema": {
             "$ref": "#/$defs/PublishedStateManifest"
           }
+        },
+        "warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
         }
       },
       "json_schema": {
         "$defs": {
           "PublishedStateManifest": {
             "properties": {
+              "bundle_format_version": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bundle Format Version"
+              },
               "compatibility": {
                 "enum": [
                   "data_only",
@@ -28875,6 +28988,18 @@
               "format_version": {
                 "title": "Format Version",
                 "type": "integer"
+              },
+              "members_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Members Digest"
               },
               "owned_entity_types": {
                 "items": {
@@ -28933,6 +29058,13 @@
           },
           "manifest": {
             "$ref": "#/$defs/PublishedStateManifest"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -28963,6 +29095,18 @@
         "$defs": {
           "PublishedStateManifest": {
             "properties": {
+              "bundle_format_version": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bundle Format Version"
+              },
               "compatibility": {
                 "enum": [
                   "data_only",
@@ -28975,6 +29119,18 @@
               "format_version": {
                 "title": "Format Version",
                 "type": "integer"
+              },
+              "members_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Members Digest"
               },
               "owned_entity_types": {
                 "items": {
@@ -29327,6 +29483,18 @@
         "$defs": {
           "UpstreamMetadataResult": {
             "properties": {
+              "bundle_format_version": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bundle Format Version"
+              },
               "compatibility": {
                 "enum": [
                   "data_only",
@@ -29371,6 +29539,18 @@
               "manifest_path": {
                 "title": "Manifest Path",
                 "type": "string"
+              },
+              "members_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Members Digest"
               },
               "overlay_config_path": {
                 "title": "Overlay Config Path",
@@ -29430,9 +29610,33 @@
                 "title": "Transport Ref",
                 "type": "string"
               },
+              "upstream_config_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Upstream Config Digest"
+              },
               "upstream_config_path": {
                 "title": "Upstream Config Path",
                 "type": "string"
+              },
+              "upstream_lock_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Upstream Lock Digest"
               }
             },
             "required": [
@@ -30545,6 +30749,26 @@
     },
     "UpstreamMetadataResult": {
       "fields": {
+        "bundle_format_version": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "bundle_format_version",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bundle Format Version"
+          }
+        },
         "compatibility": {
           "has_default": false,
           "has_default_factory": false,
@@ -30628,6 +30852,26 @@
           "schema": {
             "title": "Manifest Path",
             "type": "string"
+          }
+        },
+        "members_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "members_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Members Digest"
           }
         },
         "overlay_config_path": {
@@ -30746,6 +30990,26 @@
             "type": "string"
           }
         },
+        "upstream_config_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "upstream_config_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Upstream Config Digest"
+          }
+        },
         "upstream_config_path": {
           "has_default": false,
           "has_default_factory": false,
@@ -30755,10 +31019,42 @@
             "title": "Upstream Config Path",
             "type": "string"
           }
+        },
+        "upstream_lock_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "upstream_lock_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Upstream Lock Digest"
+          }
         }
       },
       "json_schema": {
         "properties": {
+          "bundle_format_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bundle Format Version"
+          },
           "compatibility": {
             "enum": [
               "data_only",
@@ -30803,6 +31099,18 @@
           "manifest_path": {
             "title": "Manifest Path",
             "type": "string"
+          },
+          "members_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Members Digest"
           },
           "overlay_config_path": {
             "title": "Overlay Config Path",
@@ -30862,9 +31170,33 @@
             "title": "Transport Ref",
             "type": "string"
           },
+          "upstream_config_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Upstream Config Digest"
+          },
           "upstream_config_path": {
             "title": "Upstream Config Path",
             "type": "string"
+          },
+          "upstream_lock_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Upstream Lock Digest"
           }
         },
         "required": [

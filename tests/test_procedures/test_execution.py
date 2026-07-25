@@ -718,6 +718,54 @@ def test_run_refuses_when_config_drifts_from_the_accepted_pins(
     assert root["procedure_id"] == procedure_id
 
 
+def test_run_refuses_a_live_procedure_with_no_recorded_acceptance_pins(
+    procedure_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing pin fails closed; it is not a licence to run unverified.
+
+    Acceptance always writes both pins, so the only rows that reach this state
+    are ones accepted before the columns existed. Nulling them here reproduces
+    exactly that row. If "no pin" meant "no check", clearing two columns would
+    be the cheapest way to run a procedure against an unreviewed model.
+    """
+    procedure_id = _accept(
+        procedure_instance,
+        provider_definition("unpinned_acceptance"),
+    )
+    called = False
+
+    def should_not_run(payload: dict[str, Any]) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        return payload
+
+    _stub_provider(monkeypatch, should_not_run)
+    with sqlite3.connect(procedure_instance.get_instance_dir() / "state.db") as connection:
+        connection.execute(
+            "UPDATE procedures SET acceptance_config_digest = NULL, "
+            "acceptance_lock_digest = NULL WHERE procedure_id = ?",
+            (procedure_id,),
+        )
+
+    with pytest.raises(ConfigError, match="no recorded acceptance") as exc_info:
+        service_run_procedure(
+            procedure_instance,
+            procedure_id,
+            {"value": 5},
+            actor("runner"),
+        )
+
+    message = str(exc_info.value)
+    assert "config_digest or lock_digest" in message
+    assert "cruxible procedure propose" in message
+    assert "cruxible procedure resolve" in message
+    assert called is False
+    assert (
+        _run(procedure_instance, getattr(exc_info.value, "procedure_run_id")).verdict == "refused"
+    )
+
+
 def test_run_receipt_records_matching_accepted_and_executed_digests(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,

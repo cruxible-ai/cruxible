@@ -132,28 +132,82 @@ A published bundle is a directory: `manifest.json`, `snapshot.json`,
 pulling verifies it, before the release is materialized and before any
 `state pull apply` touches your graph.
 
+### Integrity, not authenticity
+
+Be precise about what these digests buy you. They establish **integrity**: the
+bundle you materialize is byte-identical to the one whose manifest you read, and
+nothing was added, removed, or edited between publication and use. They do not
+establish **authenticity**: nothing here proves *who* published the bundle. A
+party who can rewrite the whole directory in transit can rewrite the manifest
+along with it, and every digest will agree.
+
+What closes that gap is signing, and signing is future work. Until it lands:
+
+- The transport is the trust boundary. Use one you control or one that
+  authenticates the publisher (a private registry, an authenticated URL, a
+  filesystem only you can write).
+- The first pull is trust-on-first-use. After it, the release ID and the
+  materialized upstream are both pinned, so *later* substitutions are caught —
+  but the first fetch is taken on the transport's word.
+
+### The member contract is non-downgradable
+
+`manifest.json` carries two fields that describe the bundle's own verification:
+`bundle_format_version` (this bundle was published with `members.json`) and
+`members_digest` (the sidecar body the manifest vouches for, covering every
+member except the manifest itself — the manifest cannot pin its own final
+bytes).
+
+They exist so the weaker legacy path cannot be *chosen*. Deleting `members.json`
+from a current bundle used to buy the deleter the pre-sidecar rules; now the
+manifest still declares the sidecar, so its absence is a refusal. Replacing the
+sidecar wholesale is caught by `members_digest`.
+
 A mismatch is always a refusal — never a warning, never a silent overwrite:
 
 | Refusal | What it means | How to recover |
 | --- | --- | --- |
 | `failed digest verification for member '<name>'` | A bundle member's bytes are not what the publisher pinned. | Re-publish the release upstream under a **new** `--release-id`, then pull that. Never edit a pulled bundle in place. |
 | `carries members that members.json does not pin` | The bundle gained a file after publication. | Re-publish upstream and pull again. |
+| `declares bundle_format_version <n> ... but that file is absent` | The per-member digest sidecar was stripped from a bundle that was published with one. | Re-publish upstream and pull again. Do not hand-delete `members.json`. |
+| `has a members.json that its manifest does not vouch for` | The sidecar was replaced after publication. | Re-publish upstream and pull again. |
+| `declares bundle_format_version <n>, but this Cruxible understands at most <m>` | The bundle came from a newer Cruxible. | Upgrade Cruxible, then pull again. |
 | `Release '<id>' was already materialized ... but the transport now resolves that same release_id to <other digest>` | A release ID was rewritten upstream. Release IDs are immutable. | Publish the changed state under a **new** release ID and pull that. If the local copy is what drifted, delete `.cruxible/upstream/releases/<id>/` and pull again. |
 | `no longer matches its recorded '<member>' digest` | The materialized upstream under `.cruxible/upstream/` was edited locally. | Restore the file from the published release, or re-create the overlay with `state create-overlay`. |
 
+### The materialized upstream is verified on every read, not just on pull
+
+`.cruxible/upstream/current/` is pulled state. `manifest.json`, `graph.json`,
+`config.yaml`, and `cruxible.lock.yaml` are each pinned in the overlay's
+tracking metadata when the pull records them, and each is verified immediately
+before it is consumed — by `state pull preview`, by `state pull apply`, by
+`config reload` (which composes the active config *by extending* the upstream
+config), and by ownership resolution (which decides which types the overlay may
+write). Editing a file under `.cruxible/upstream/` therefore does not quietly
+re-scope anything; it makes the next operation that reads it refuse, with the
+member name, both digests, and the recovery.
+
+### Refusals leave the target untouched
+
+Verification runs before anything is written. A refused `state create-overlay`
+leaves no instance root behind; a refused `state pull apply` leaves the live
+graph and the active config exactly as they were, with the previous release
+still tracked. There is no partial-apply state to clean up and no flag that
+proceeds past a failed verification.
+
 ### Bundles published before `members.json` existed
 
-`members.json` is a later addition, so older bundles do not carry it. Those
-still verify `graph.json` and `cruxible.lock.yaml` against the digests
-`snapshot.json` has always recorded — a mismatch there is a refusal exactly as
-above. Only `config.yaml` has no pre-existing digest, so it is the one member
-that cannot be verified in an old bundle. The pull reports this rather than
-implying the bundle was checked: `state pull preview` returns a warning
-(`predates per-member digests ... config.yaml could not be verified`), and
-`state create-overlay` logs the same warning. Re-publish the release from a
-current Cruxible to get full verification.
+`members.json` and the manifest fields that declare it are later additions, so
+older bundles carry neither. Those still verify `graph.json` and
+`cruxible.lock.yaml` against the digests `snapshot.json` has always recorded — a
+mismatch there is a refusal exactly as above. Only `config.yaml` has no
+pre-existing digest, so it is the one member that cannot be verified in an old
+bundle. The pull reports this rather than implying the bundle was checked:
+`state pull preview` and `state create-overlay` both return a warning
+(`predates per-member digests ... config.yaml could not be verified`), and the
+CLI prints it. Re-publish the release from a current Cruxible to get full
+verification.
 
 Verify-if-present, refuse-if-mismatch, warn-only-if-absent applies **only** to
-pre-field bundles. Once a bundle carries `members.json`, every member is
-verified and any mismatch refuses.
-
+bundles whose manifest declares no `bundle_format_version`. Once a bundle
+declares one, every member is verified and any mismatch refuses.

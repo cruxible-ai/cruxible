@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import importlib.util
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -21,6 +22,8 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from cruxible_core.errors import ConfigError
+
+_logger = logging.getLogger(__name__)
 
 KIT_MANIFEST_FILE = "cruxible-kit.yaml"
 KIT_METADATA_FILE = "kit.json"
@@ -160,15 +163,21 @@ def resolve_kit_ref(kit: str) -> KitBundle:
     raise ConfigError("Kit refs must be aliases, file:// refs, or oci:// refs")
 
 
-def materialize_kit(
+def resolve_verified_kit_bundle(
     *,
     kit: str,
-    root: Path,
     expected_role: str,
     target_state: str | None = None,
-    upstream_config_path: str | None = None,
-) -> Path:
-    """Copy a resolved kit bundle into an instance root and return its config path."""
+) -> KitBundle:
+    """Resolve a kit ref and verify it fully, before anything is written anywhere.
+
+    Everything that can refuse a kit -- the ``oci://`` pin, the cache integrity
+    check, the role and target-state checks, the presence of ``entry_config``,
+    and the bundled lock's digest -- runs against the staged cache copy. A
+    caller can therefore verify first and install second, so a refusal leaves
+    the target root exactly as it found it instead of half-populated with a kit
+    that turned out to be untrustworthy.
+    """
     bundle = resolve_kit_ref(kit)
     manifest = bundle.manifest
     if manifest.role != expected_role:
@@ -188,18 +197,54 @@ def materialize_kit(
         raise ConfigError(
             f"Kit '{manifest.kit_id}' targets state '{manifest.target_state}', not '{target_state}'"
         )
-
-    _copy_bundle_files(bundle.root, root)
-    config_path = root / manifest.entry_config
-    if not config_path.exists():
+    if not (bundle.root / manifest.entry_config).exists():
         raise ConfigError(
             f"Kit '{manifest.kit_id}' is missing entry_config: {manifest.entry_config}"
         )
+    _verify_bundled_lock(bundle.root)
+    return bundle
+
+
+def install_verified_kit_bundle(
+    bundle: KitBundle,
+    *,
+    root: Path,
+    upstream_config_path: str | None = None,
+) -> Path:
+    """Copy an already-verified kit bundle into an instance root.
+
+    Writes only. Every refusal belongs to ``resolve_verified_kit_bundle``, which
+    must have run first; this function assumes the bundle it is handed has
+    already been checked.
+    """
+    manifest = bundle.manifest
+    _copy_bundle_files(bundle.root, root)
+    config_path = root / manifest.entry_config
     if manifest.role == "overlay" and upstream_config_path is not None:
         _rewrite_extends(config_path, upstream_config_path)
-    _verify_bundled_lock(root)
     write_materialized_kit_metadata(root, bundle_digest=bundle.digest)
     return config_path
+
+
+def materialize_kit(
+    *,
+    kit: str,
+    root: Path,
+    expected_role: str,
+    target_state: str | None = None,
+    upstream_config_path: str | None = None,
+) -> Path:
+    """Verify a resolved kit bundle, then copy it into an instance root."""
+    bundle = resolve_verified_kit_bundle(
+        kit=kit,
+        expected_role=expected_role,
+        target_state=target_state,
+    )
+    return install_verified_kit_bundle(
+        bundle,
+        root=root,
+        upstream_config_path=upstream_config_path,
+    )
 
 
 def copy_kit_runtime_files(
@@ -406,6 +451,16 @@ def config_yaml_has_kit_provider_refs(config_yaml: str) -> bool:
 
 
 def _install_kit_cache(source: Path) -> KitBundle:
+    """Install a kit bundle into the content-addressed cache and re-verify it.
+
+    The cache key is the bundle's content digest, so a cache hit *asserts* the
+    contents. That assertion is never taken on faith: the directory is rehashed
+    before it is reused, and the staged copy is rehashed before it is installed.
+    A digest-keyed directory whose contents no longer hash to its key has been
+    corrupted or poisoned -- anything materialized from it would carry a digest
+    that describes bytes it no longer holds -- so it is refused, not repaired
+    silently.
+    """
     source = source.resolve()
     manifest = load_kit_manifest(source)
     digest = compute_bundle_digest(source)
@@ -415,15 +470,43 @@ def _install_kit_cache(source: Path) -> KitBundle:
     lock_path = cache_dir / f"{digest_key}.lock"
     cache_dir.mkdir(parents=True, exist_ok=True)
     with _file_lock(lock_path):
-        if not target.exists():
+        if target.exists():
+            _verify_cached_kit_dir(target, expected=digest)
+        else:
+            # Stage, hash, then install atomically -- the kit_distribution
+            # pattern. Hashing the staged copy catches a truncated or altered
+            # write before it is ever visible under the digest key.
             temp_target = Path(tempfile.mkdtemp(prefix=f"{digest_key}.", dir=cache_dir))
             try:
                 _copy_bundle_files(source, temp_target)
+                staged = compute_bundle_digest(temp_target)
+                if staged != digest:
+                    raise ConfigError(
+                        f"Kit bundle from {source} hashed to {digest} at its source but "
+                        f"{staged} after being staged into the cache. The copy did not "
+                        "reproduce the bundle, so it is not installed. Retry; if it "
+                        "recurs, the cache directory or the source tree is unstable."
+                    )
                 os.replace(temp_target, target)
             except Exception:
                 shutil.rmtree(temp_target, ignore_errors=True)
                 raise
     return KitBundle(root=target, manifest=manifest, digest=digest)
+
+
+def _verify_cached_kit_dir(target: Path, *, expected: str) -> None:
+    actual = compute_bundle_digest(target)
+    if actual == expected:
+        return
+    raise ConfigError(
+        f"Cached kit bundle at {target} is poisoned: the cache entry is keyed by "
+        f"content digest {expected}, but its contents now hash to {actual}. Something "
+        "edited the cache after installation, so the cached copy is refused rather "
+        f"than reused. Delete {target} and re-run the command to re-fetch the kit from "
+        f"its ref (or clear the whole cache directory {target.parent}); if the cache "
+        "lives on shared or writable-by-others storage, move it by setting "
+        "CRUXIBLE_KIT_CACHE_DIR."
+    )
 
 
 def _pull_oci_kit(ref: str) -> Path:
@@ -477,6 +560,13 @@ def _pin_oci_kit_digest(ref: str, digest: str) -> None:
     of what the tag delivered; every later resolution must match it. A repointed
     tag is refused -- silently accepting new content under an unchanged ref is
     exactly the substitution a digest is supposed to catch.
+
+    The re-pin escape hatch carries the digest the operator expects, not a bare
+    ``1``. That makes it self-expiring: once the pin is moved, an environment
+    still exporting the old value no longer authorizes anything, and a *second*
+    tag repoint is refused rather than waved through by a variable someone left
+    in a shell profile or a CI job definition. Overwriting an existing pin is
+    also logged with both digests, so a re-pin is never a silent event.
     """
     pin_path = _oci_pin_path()
     pin_path.parent.mkdir(parents=True, exist_ok=True)
@@ -484,18 +574,34 @@ def _pin_oci_kit_digest(ref: str, digest: str) -> None:
     with _file_lock(lock_path):
         pins = _load_oci_pins()
         recorded = pins.get(ref)
-        repin_requested = os.environ.get(OCI_REPIN_ENV) == "1"
-        if recorded is not None and recorded != digest and not repin_requested:
-            raise ConfigError(
-                f"Kit ref '{ref}' is pinned to content digest {recorded}, but the "
-                f"registry now serves {digest} for that same tag. The mutable tag was "
-                "repointed at different content, so the pull is refused rather than "
-                "silently accepted. If the new content is expected, re-pin explicitly "
-                f"with {OCI_REPIN_ENV}=1 and re-run the command (or pull the immutable "
-                f"digest ref directly); the pin file is {pin_path}."
-            )
         if recorded == digest:
             return
+        if recorded is not None:
+            repin_authorization = os.environ.get(OCI_REPIN_ENV, "").strip()
+            if repin_authorization != digest:
+                detail = (
+                    f" ({OCI_REPIN_ENV} is set to {repin_authorization!r}, which "
+                    "authorizes a different digest than the one the registry served)"
+                    if repin_authorization
+                    else ""
+                )
+                raise ConfigError(
+                    f"Kit ref '{ref}' is pinned to content digest {recorded}, but the "
+                    f"registry now serves {digest} for that same tag. The mutable tag "
+                    "was repointed at different content, so the pull is refused rather "
+                    f"than silently accepted{detail}. If the new content is expected, "
+                    "re-pin explicitly by naming the digest you are accepting -- "
+                    f"{OCI_REPIN_ENV}={digest} -- and re-run the command, or pull the "
+                    f"immutable digest ref directly; the pin file is {pin_path}."
+                )
+            _logger.warning(
+                "Re-pinning oci kit ref %s: %s -> %s (authorized by %s). The previously "
+                "pinned content is no longer what this ref resolves to.",
+                ref,
+                recorded,
+                digest,
+                OCI_REPIN_ENV,
+            )
         pins[ref] = digest
         pin_path.write_text(json.dumps(pins, indent=2, sort_keys=True) + "\n")
 

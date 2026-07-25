@@ -1686,6 +1686,8 @@ class PublishedStateManifest(BaseModel):
     owned_entity_types: list[str] = Field(default_factory=list)
     owned_relationship_types: list[str] = Field(default_factory=list)
     parent_release_id: str | None = None
+    bundle_format_version: int | None = None
+    members_digest: str | None = None
 
 
 class UpstreamMetadataResult(BaseModel):
@@ -1705,6 +1707,10 @@ class UpstreamMetadataResult(BaseModel):
     lock_path: str
     manifest_digest: str | None = None
     graph_digest: str | None = None
+    upstream_config_digest: str | None = None
+    upstream_lock_digest: str | None = None
+    bundle_format_version: int | None = None
+    members_digest: str | None = None
 
 
 class StatePublishResult(BaseModel):
@@ -1714,6 +1720,7 @@ class StatePublishResult(BaseModel):
 class StateOverlayResult(BaseModel):
     instance_id: str
     manifest: PublishedStateManifest
+    warnings: list[str] = Field(default_factory=list)
 
 
 class StateStatusResult(BaseModel):

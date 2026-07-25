@@ -296,14 +296,21 @@ def execute_provider_step(
         deterministic=locked_provider.deterministic,
         artifact=artifact,
     )
+    # Budget check first, hash second. ``before_provider_invocation`` is what
+    # refuses a run that has exhausted its wall clock or call allowance; hashing
+    # ahead of it makes an already-doomed attempt pay for a digest nobody will
+    # use -- and for a kit provider that digest is the whole provider tree. The
+    # ordering is still verify-before-execute: nothing is invoked, and the
+    # provider is not even resolved, until the digest has been compared.
+    timeout_ceiling_s = (
+        before_provider_invocation() if before_provider_invocation is not None else None
+    )
     verify_provider_entrypoint_digest(
         compiled_step.provider_name,
         config,
         expected_digest=locked_provider.provider_entrypoint_digest,
+        expected_command_path=locked_provider.provider_command_path,
         config_base_path=config_base_path,
-    )
-    timeout_ceiling_s = (
-        before_provider_invocation() if before_provider_invocation is not None else None
     )
     if timeout_ceiling_s is None:
         provider_fn = resolve_provider(

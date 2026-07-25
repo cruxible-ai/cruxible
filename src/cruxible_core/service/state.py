@@ -8,6 +8,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
+from typing import TypedDict
 
 from cruxible_core.config.composer import (
     compose_runtime_config_files,
@@ -18,7 +19,11 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.kits import compute_bundle_digest, materialize_kit
+from cruxible_core.kits import (
+    compute_bundle_digest,
+    install_verified_kit_bundle,
+    resolve_verified_kit_bundle,
+)
 from cruxible_core.kits.state_refs import resolve_state_source
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.server.auth_managed_entities import (
@@ -38,6 +43,7 @@ from cruxible_core.snapshot.types import (
     StateCompatibility,
     UpstreamMetadata,
 )
+from cruxible_core.snapshot.upstream_verification import sha256_file, verify_tracked_upstream
 from cruxible_core.transport.backends import (
     RELEASE_BUNDLE_MEMBERS,
     RELEASE_MEMBER_DIGESTS_FILE,
@@ -94,28 +100,41 @@ def service_create_state_overlay(
     if (root / CruxibleInstance.INSTANCE_DIR / "instance.json").exists():
         raise ConfigError(f"Instance already exists at {root}")
 
+    normalized_kit = (kit or "").strip() or None
+    if normalized_kit is not None and no_kit:
+        raise ConfigError("Provide kit or no_kit, not both")
+
     resolved = resolve_state_source(transport_ref=transport_ref, state_ref=state_ref)
     pulled, bundle_warnings = _pull_bundle(resolved.pull_transport_ref)
     for warning in bundle_warnings:
         _logger.warning("%s", warning)
 
-    normalized_kit = (kit or "").strip() or None
-    if normalized_kit is not None and no_kit:
-        raise ConfigError("Provide kit or no_kit, not both")
     selected_kit = None if no_kit else (normalized_kit or resolved.default_kit)
+    # Verify BEFORE writing: the release bundle's members are already verified
+    # above, and resolving the kit here runs its oci pin check, its cache
+    # integrity check, and its bundled-lock digest check while the target root
+    # is still untouched. A refusal from any of them leaves nothing behind to
+    # clean up -- no materialized upstream, no half-installed kit, no config.
+    verified_kit = (
+        resolve_verified_kit_bundle(
+            kit=selected_kit,
+            expected_role="overlay",
+            target_state=pulled.manifest.state_id,
+        )
+        if selected_kit is not None
+        else None
+    )
 
     composed_path = root / ".cruxible" / "composed" / "config.yaml"
     upstream_dir = _materialize_upstream_bundle(root, pulled.root_dir, pulled.manifest.release_id)
 
     overlay_path = (
-        materialize_kit(
-            kit=selected_kit,
+        install_verified_kit_bundle(
+            verified_kit,
             root=root,
-            expected_role="overlay",
-            target_state=pulled.manifest.state_id,
             upstream_config_path=".cruxible/upstream/current/config.yaml",
         )
-        if selected_kit is not None
+        if verified_kit is not None
         else _write_default_overlay_config(root, pulled.manifest.state_id, upstream_dir)
     )
     composed = compose_runtime_config_files(
@@ -150,17 +169,22 @@ def service_create_state_overlay(
         compatibility=pulled.manifest.compatibility,
         owned_entity_types=pulled.manifest.owned_entity_types,
         owned_relationship_types=pulled.manifest.owned_relationship_types,
+        bundle_format_version=pulled.manifest.bundle_format_version,
+        members_digest=pulled.manifest.members_digest,
         overlay_config_path="config.yaml",
         manifest_path=str((upstream_dir / "manifest.json").relative_to(root)),
         graph_path=str((upstream_dir / "graph.json").relative_to(root)),
         upstream_config_path=str((upstream_dir / "config.yaml").relative_to(root)),
         lock_path=str((upstream_dir / "cruxible.lock.yaml").relative_to(root)),
-        manifest_digest=_sha256_file(upstream_dir / "manifest.json"),
-        graph_digest=_sha256_file(upstream_dir / "graph.json"),
+        **_materialized_upstream_digests(upstream_dir),
     )
     instance.set_upstream_metadata(upstream)
     service_lock(instance)
-    return StateOverlayResult(instance=instance, manifest=pulled.manifest)
+    return StateOverlayResult(
+        instance=instance,
+        manifest=pulled.manifest,
+        warnings=bundle_warnings,
+    )
 
 
 def service_state_status(instance: InstanceProtocol) -> StateStatusResult:
@@ -192,7 +216,7 @@ def _build_state_pull_preview(
 ) -> StatePullPreviewResult:
     """Evaluate a materialized upstream bundle against the current overlay."""
     root = instance.get_root_path()
-    _verify_tracked_upstream(root, upstream)
+    verify_tracked_upstream(root, upstream)
     _verify_release_immutability(root, pulled.root_dir, pulled.manifest.release_id)
     warnings: list[str] = list(bundle_warnings)
     conflicts: list[str] = []
@@ -221,7 +245,7 @@ def _build_state_pull_preview(
         current_release_id=upstream.release_id,
         target_release_id=pulled.manifest.release_id,
         current_graph_digest=upstream.graph_digest or "",
-        next_graph_digest=_sha256_file(pulled.root_dir / "graph.json"),
+        next_graph_digest=sha256_file(pulled.root_dir / "graph.json"),
     )
     return StatePullPreviewResult(
         current_release_id=upstream.release_id,
@@ -331,13 +355,14 @@ def service_pull_state_apply(
         compatibility=pulled.manifest.compatibility,
         owned_entity_types=pulled.manifest.owned_entity_types,
         owned_relationship_types=pulled.manifest.owned_relationship_types,
+        bundle_format_version=pulled.manifest.bundle_format_version,
+        members_digest=pulled.manifest.members_digest,
         overlay_config_path=upstream.overlay_config_path,
         manifest_path=str((upstream_dir / "manifest.json").relative_to(root)),
         graph_path=str((upstream_dir / "graph.json").relative_to(root)),
         upstream_config_path=str((upstream_dir / "config.yaml").relative_to(root)),
         lock_path=str((upstream_dir / "cruxible.lock.yaml").relative_to(root)),
-        manifest_digest=_sha256_file(upstream_dir / "manifest.json"),
-        graph_digest=_sha256_file(upstream_dir / "graph.json"),
+        **_materialized_upstream_digests(upstream_dir),
     )
     instance.set_upstream_metadata(updated)
     service_lock(instance)
@@ -379,6 +404,18 @@ def build_release_bundle(
         if source.exists():
             shutil.copy2(source, bundle_dir / name)
     config = instance.load_config()
+    # The snapshot members are pinned first so the manifest can carry the
+    # sidecar's digest; the sidecar then pins the manifest. Neither can pin the
+    # other's final bytes, so the cycle is broken by scope: members_digest
+    # covers every member EXCEPT the manifest, and the sidecar covers the
+    # manifest too. Stripping the sidecar leaves a manifest that still declares
+    # it, and swapping the sidecar leaves a members_digest that no longer
+    # matches -- both detectable without either file pinning itself.
+    snapshot_member_digests = {
+        name: _sha256_bytes((bundle_dir / name).read_bytes())
+        for name in RELEASE_BUNDLE_MEMBERS
+        if (bundle_dir / name).exists()
+    }
     manifest = PublishedStateManifest(
         state_id=state_id,
         release_id=release_id,
@@ -387,34 +424,51 @@ def build_release_bundle(
         owned_entity_types=sorted(config.entity_types.keys()),
         owned_relationship_types=sorted(rel.name for rel in config.relationships),
         parent_release_id=parent_release_id,
+        bundle_format_version=MEMBER_DIGESTS_FORMAT_VERSION,
+        members_digest=_compute_members_digest(snapshot_member_digests),
     )
-    (bundle_dir / "manifest.json").write_text(
-        json.dumps(manifest.model_dump(mode="json"), indent=2, sort_keys=True)
+    manifest_path = bundle_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest.model_dump(mode="json"), indent=2, sort_keys=True))
+    _write_release_member_digests(
+        bundle_dir,
+        {
+            **snapshot_member_digests,
+            "manifest.json": _sha256_bytes(manifest_path.read_bytes()),
+        },
     )
-    _write_release_member_digests(bundle_dir)
     return bundle_dir
 
 
-def _write_release_member_digests(bundle_dir: Path) -> None:
+def _members_sidecar_payload(digests: dict[str, str]) -> str:
+    return json.dumps(
+        {"format_version": MEMBER_DIGESTS_FORMAT_VERSION, "digests": digests},
+        indent=2,
+        sort_keys=True,
+    )
+
+
+def _compute_members_digest(digests: dict[str, str]) -> str:
+    """Digest the sidecar body that pins every member other than the manifest.
+
+    Scoped to exclude ``manifest.json`` because the manifest carries this value:
+    including it would require the manifest to pin its own final bytes.
+    """
+    return _sha256_bytes(
+        _members_sidecar_payload(
+            {name: digest for name, digest in digests.items() if name != "manifest.json"}
+        ).encode()
+    )
+
+
+def _write_release_member_digests(bundle_dir: Path, digests: dict[str, str]) -> None:
     """Emit the per-member digest sidecar that pull-side verification compares against.
 
     Every file already written into the bundle -- ``manifest.json`` included --
     is pinned by the sha256 of its exact bytes. The sidecar cannot pin itself,
-    so it is the one member excluded; it is the bundle's digest root, and the
-    transport is the trust boundary that delivers it.
+    so it is the one member excluded; the manifest's ``members_digest`` covers
+    it instead, and the manifest is what a consumer reads first.
     """
-    digests = {
-        path.name: _sha256_bytes(path.read_bytes())
-        for path in sorted(bundle_dir.iterdir())
-        if path.is_file() and path.name != RELEASE_MEMBER_DIGESTS_FILE
-    }
-    (bundle_dir / RELEASE_MEMBER_DIGESTS_FILE).write_text(
-        json.dumps(
-            {"format_version": MEMBER_DIGESTS_FORMAT_VERSION, "digests": digests},
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    (bundle_dir / RELEASE_MEMBER_DIGESTS_FILE).write_text(_members_sidecar_payload(digests))
 
 
 def verify_release_bundle(pulled: PulledReleaseBundle, *, transport_ref: str) -> list[str]:
@@ -425,12 +479,28 @@ def verify_release_bundle(pulled: PulledReleaseBundle, *, transport_ref: str) ->
     caller must surface: bundles published before ``members.json`` existed carry
     no digest for ``config.yaml``, so that one member stays unverifiable until
     the upstream re-publishes.
+
+    The manifest's ``bundle_format_version`` makes that pre-field story
+    non-downgradable. A bundle that declares the sidecar must produce it: strip
+    ``members.json`` from a current bundle and the manifest still says it should
+    be there, so the pull refuses instead of silently falling back to the weaker
+    verification an old bundle gets.
     """
     root = pulled.root_dir
     label = f"{pulled.manifest.state_id}:{pulled.manifest.release_id}"
     warnings: list[str] = []
     sidecar_path = root / RELEASE_MEMBER_DIGESTS_FILE
-    if sidecar_path.exists():
+    declared_format = pulled.manifest.bundle_format_version
+    if declared_format is not None:
+        _verify_declared_member_contract(
+            root,
+            sidecar_path,
+            declared_format=declared_format,
+            expected_members_digest=pulled.manifest.members_digest,
+            label=label,
+            ref=transport_ref,
+        )
+    elif sidecar_path.exists():
         _verify_release_member_digests(root, sidecar_path, label=label, ref=transport_ref)
     else:
         warnings.append(
@@ -462,13 +532,60 @@ def verify_release_bundle(pulled: PulledReleaseBundle, *, transport_ref: str) ->
     return warnings
 
 
+def _verify_declared_member_contract(
+    root: Path,
+    sidecar_path: Path,
+    *,
+    declared_format: int,
+    expected_members_digest: str | None,
+    label: str,
+    ref: str,
+) -> None:
+    """Enforce the member contract a bundle's manifest declares.
+
+    The manifest is the one member every consumer reads first, so it is where
+    the bundle states what verification it supports. Declaring the sidecar and
+    then not shipping it -- or shipping one whose body contradicts the digest
+    the manifest recorded -- is a downgrade attempt, not a legacy bundle.
+    """
+    if declared_format > MEMBER_DIGESTS_FORMAT_VERSION:
+        raise ConfigError(
+            f"Release bundle {label} pulled from {ref} declares bundle_format_version "
+            f"{declared_format}, but this Cruxible understands at most "
+            f"{MEMBER_DIGESTS_FORMAT_VERSION}. It was published by a newer Cruxible and "
+            "cannot be verified here; upgrade Cruxible, then pull again."
+        )
+    if not sidecar_path.exists():
+        raise ConfigError(
+            f"Release bundle {label} pulled from {ref} declares bundle_format_version "
+            f"{declared_format} in its manifest, which means it was published with "
+            f"{RELEASE_MEMBER_DIGESTS_FILE}, but that file is absent. The per-member "
+            "digest sidecar was stripped after publication, so the bundle is refused "
+            "rather than verified against the weaker pre-sidecar rules. Re-publish the "
+            "release upstream and pull again."
+        )
+    digests = _verify_release_member_digests(root, sidecar_path, label=label, ref=ref)
+    if expected_members_digest is None:
+        return
+    actual = _compute_members_digest(digests)
+    if actual != expected_members_digest:
+        raise ConfigError(
+            f"Release bundle {label} pulled from {ref} has a "
+            f"{RELEASE_MEMBER_DIGESTS_FILE} that its manifest does not vouch for: the "
+            f"manifest records members_digest={expected_members_digest}, the sidecar "
+            f"body hashes to {actual}. The sidecar was replaced after publication, so "
+            "the members it pins cannot be trusted. Re-publish the release upstream "
+            "and pull again."
+        )
+
+
 def _verify_release_member_digests(
     root: Path,
     sidecar_path: Path,
     *,
     label: str,
     ref: str,
-) -> None:
+) -> dict[str, str]:
     try:
         raw = json.loads(sidecar_path.read_text())
     except ValueError as exc:
@@ -500,7 +617,7 @@ def _verify_release_member_digests(
             raise ConfigError(
                 f"Release bundle {label} pulled from {ref} failed digest verification "
                 f"for member '{member}': expected {expected}, found {actual}. The "
-                "published bundle was altered after it was signed off; nothing from it "
+                "published bundle was altered after it was published; nothing from it "
                 "is applied. Re-publish the release upstream under a new release_id, "
                 "then pull again -- never edit a pulled bundle in place."
             )
@@ -517,6 +634,7 @@ def _verify_release_member_digests(
             "Unpinned content is refused rather than trusted; re-publish the release "
             "upstream and pull again."
         )
+    return {str(member): str(digest) for member, digest in digests.items()}
 
 
 def _verify_recorded_member_digest(
@@ -572,41 +690,6 @@ def _verify_release_immutability(root: Path, bundle_dir: Path, release_id: str) 
     )
 
 
-def _verify_tracked_upstream(root: Path, upstream: UpstreamMetadata) -> None:
-    """Verify the materialized upstream still matches the digests tracking recorded.
-
-    ``UpstreamMetadata`` pins the manifest and graph of the release this overlay
-    tracks. Both are read back on every preview and apply -- the composed config
-    extends the materialized upstream config, and the pull delta is computed
-    against the materialized upstream graph -- so a local edit to either would
-    otherwise silently re-scope the pull.
-    """
-    for relative_path, expected, member in (
-        (upstream.manifest_path, upstream.manifest_digest, "manifest.json"),
-        (upstream.graph_path, upstream.graph_digest, "graph.json"),
-    ):
-        if expected is None:
-            continue
-        path = root / relative_path
-        if not path.exists():
-            raise ConfigError(
-                f"Tracked upstream release {upstream.state_id}:{upstream.release_id} is "
-                f"missing its materialized '{member}' at {relative_path}, which upstream "
-                f"tracking pins at {expected}. Re-create the overlay from the published "
-                "release; a pull cannot proceed against a missing upstream."
-            )
-        actual = _sha256_file(path)
-        if actual != expected:
-            raise ConfigError(
-                f"Tracked upstream release {upstream.state_id}:{upstream.release_id} no "
-                f"longer matches its recorded '{member}' digest: expected {expected}, "
-                f"found {actual} at {relative_path}. The materialized upstream was edited "
-                "locally, and pulled state must stay byte-identical to what was published. "
-                "Restore the file from the published release (or re-create the overlay), "
-                "then retry the pull."
-            )
-
-
 def _materialize_upstream_bundle(root: Path, bundle_dir: Path, release_id: str) -> Path:
     releases_dir = root / ".cruxible" / "upstream" / "releases" / release_id
     current_dir = root / ".cruxible" / "upstream" / "current"
@@ -643,10 +726,28 @@ def _sha256_bytes(payload: bytes) -> str:
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
-def _sha256_file(path: Path) -> str | None:
-    if not path.exists():
-        return None
-    return _sha256_bytes(path.read_bytes())
+class _MaterializedUpstreamDigests(TypedDict):
+    manifest_digest: str | None
+    graph_digest: str | None
+    upstream_config_digest: str | None
+    upstream_lock_digest: str | None
+
+
+def _materialized_upstream_digests(upstream_dir: Path) -> _MaterializedUpstreamDigests:
+    """Pin every materialized upstream member the overlay will later read back.
+
+    Recorded at pull time, compared by
+    ``cruxible_core.snapshot.upstream_verification`` on every read of the
+    materialized upstream. Pinning all four -- not just the manifest and graph
+    the pull delta uses -- is what lets config reload and ownership resolution
+    verify ``config.yaml`` before composing against it.
+    """
+    return {
+        "manifest_digest": sha256_file(upstream_dir / "manifest.json"),
+        "graph_digest": sha256_file(upstream_dir / "graph.json"),
+        "upstream_config_digest": sha256_file(upstream_dir / "config.yaml"),
+        "upstream_lock_digest": sha256_file(upstream_dir / "cruxible.lock.yaml"),
+    }
 
 
 def _lock_text(path: Path) -> str | None:

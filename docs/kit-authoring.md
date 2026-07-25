@@ -198,10 +198,17 @@ Bundle behavior:
 - Symlinks are rejected.
 - Bundles are cached under `CRUXIBLE_KIT_CACHE_DIR` or
   `${XDG_CACHE_HOME:-~/.cache}/cruxible/kits`.
-- Cache installs are locked and atomic by bundle digest.
+- Cache installs are locked and atomic by bundle digest: the staged copy is
+  re-hashed before it is moved into place, and a cache **hit** is re-hashed
+  before it is reused. The cache key is derivable from a kit's contents, so a
+  directory sitting under a known key is never trusted on the strength of the
+  key alone. A cache entry whose contents no longer hash to its key is refused
+  as poisoned — delete the named directory and re-run to re-fetch, or move the
+  cache somewhere only you can write with `CRUXIBLE_KIT_CACHE_DIR`.
 - `oci://` refs are pinned in `oci-pins.json` in that same cache directory: the
   first resolution records the content digest, later resolutions verify it, and
-  a repointed tag refuses until `CRUXIBLE_OCI_REPIN=1` re-pins it explicitly.
+  a repointed tag refuses until `CRUXIBLE_OCI_REPIN=<the new digest>` re-pins it
+  explicitly.
 - Materialization copies the cached kit into the instance root.
 - Kit bundles carry `cruxible.lock.yaml` at the kit root as a portable bundle
   artifact, and materialization verifies that lock against its recorded
@@ -338,6 +345,10 @@ lock_digest=sha256:..., but its contents hash to sha256:...
 Recover by re-running `cruxible lock --kit-dir <kit>` upstream, re-publishing
 the kit, and materializing again. Never hand-edit a lock file.
 
+Verification runs against the staged cache copy, before anything is written into
+the instance root: a refused kit leaves the target directory exactly as it was,
+with no half-installed config, provider tree, or metadata to clean up.
+
 ### `oci://` kit refs are pinned to the content they first resolved to
 
 An `oci://` tag is mutable: the same ref can be re-pushed to point at different
@@ -350,15 +361,19 @@ Kit ref 'oci://.../kit:1.0.0' is pinned to content digest sha256:..., but the
 registry now serves sha256:... for that same tag.
 ```
 
-If the new content is expected, re-pin **explicitly** — there is no silent
-acceptance path:
+If the new content is expected, re-pin **explicitly** by naming the digest you
+are accepting — there is no silent acceptance path and no blanket "yes":
 
 ```bash
-CRUXIBLE_OCI_REPIN=1 cruxible init --kit <name>
+CRUXIBLE_OCI_REPIN=sha256:<the digest the refusal named> cruxible init --kit <name>
 ```
 
-The re-pin applies to that one command; subsequent resolutions verify against
-the newly recorded digest. Pulling an immutable digest ref (`...@sha256:...`)
+Naming the digest makes the escape hatch self-expiring. A `CRUXIBLE_OCI_REPIN=1`
+left in a shell profile or a CI job definition would authorize every future
+repoint of every ref; a digest stops authorizing anything the moment the pin it
+named is taken, so the *next* repoint is refused again. Overwriting a pin is
+logged with the ref and both digests. Subsequent resolutions verify against the
+newly recorded digest. Pulling an immutable digest ref (`...@sha256:...`)
 instead of a tag avoids the situation entirely.
 
 Vocabulary:

@@ -259,6 +259,44 @@ records sha256:..., found sha256:...
 Re-run `cruxible lock` to pin the current provider code, or restore the locked
 entrypoint, then re-run.
 
+Locating the file to hash never imports it. Importing a provider module to find
+out where it lives would execute its top-level code *before* the digest meant to
+gate that execution had been compared — the tampered code would run first and the
+refusal would arrive second. Cruxible asks the import system where the module
+would come from (`importlib.util.find_spec`) and stops there, and it refuses a
+symlinked entrypoint, which would let the pinned file be repointed without
+changing anything the lock records.
+
+**What the pin actually covers**, stated rather than implied:
+
+| Provider kind | Hash scope | Not covered |
+| --- | --- | --- |
+| Python function (`module.attr`) | The one module file the ref names. | Helper modules it imports; code re-exported into it from elsewhere. A ref pointing at a re-export pins the re-exporting file. |
+| `kit://` provider | Every `.py` file under the kit's declared `provider_paths`. | Nothing inside the kit's provider tree. |
+| Command, workspace-relative (`./bin/extract`) | The executable's contents. | Anything the script itself shells out to. |
+| Command, absolute or PATH-resolved (`/usr/bin/jq`, `curl`) | The resolved path only — *not* the contents. | The binary's bytes. |
+
+Reach for a kit provider when the pin must cover more than a single file.
+
+**System executables are the OS trust boundary.** A command provider that
+resolves to a system binary records which file the ref resolved to, and a ref
+that later resolves somewhere else — a PATH entry inserted ahead of the locked
+one, a re-pointed absolute path — is refused. Its *contents* are deliberately not
+hashed: every OS package update, security patch, and interpreter upgrade would
+otherwise invalidate every lock that mentions the binary, and operators would
+learn to regenerate locks reflexively, which is how a pin stops meaning anything.
+Keeping `/usr/bin/jq` trustworthy is the platform's job. A command whose contents
+must be pinned belongs inside the workspace or inside a kit — and a command
+exported to procedures (`procedure_access`) that names a workspace path with no
+file there is refused outright, because procedures run unattended.
+
+Re-hashing before every invocation is not free. For a plain function provider it
+is one file read; for a `kit://` provider it is the kit's whole declared provider
+tree, re-hashed on **every attempt** — including each retry inside a `repeat`
+step. Kits with large provider trees called in tight repeat loops pay for that
+per attempt. The budget check runs first, so an attempt that has already
+exhausted its wall clock or call allowance does not pay the hash at all.
+
 Canonical workflows are **preview-first**:
 
 ```bash

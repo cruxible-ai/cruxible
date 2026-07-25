@@ -4360,6 +4360,7 @@ def create_state_overlay_local(
         manifest=contracts.PublishedStateManifest.model_validate(
             result.manifest.model_dump(mode="json")
         ),
+        warnings=result.warnings,
     )
 
 
@@ -4398,6 +4399,7 @@ def create_state_overlay_governed(
         manifest=contracts.PublishedStateManifest.model_validate(
             result.manifest.model_dump(mode="json")
         ),
+        warnings=result.warnings,
     )
 
 

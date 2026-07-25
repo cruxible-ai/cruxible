@@ -217,6 +217,13 @@ cruxible procedure resolve <new-procedure-id> --action accept --expected-version
 Restoring the accepted config and re-running `cruxible lock` also clears the
 refusal. There is no flag that runs a procedure against an unreviewed model.
 
+A *missing* pin fails closed the same way, and for the same reason: with no
+recorded digest there is nothing the reviewer is known to have approved, and
+"no pin" must not be the one way to run a procedure unverified. Acceptance always
+writes both pins, and clones and snapshots carry them across, so this only
+reaches procedures accepted before pinning existed. They re-propose and
+re-accept once, like any other definition change.
+
 ## The Entity Graph
 
 Cruxible stores entities and relationships in a directed graph. Each node is an

@@ -714,7 +714,34 @@ def _verify_acceptance_pins(
     type redefined, a query rewritten: each recompiles cleanly while changing
     what the approved procedure actually does. The pins are compared here so that
     divergence is a refusal on the receipt rather than a field nobody reads.
+
+    A MISSING pin fails closed for the same reason a mismatched one does: with no
+    recorded digest there is no approved world to compare against, and "no pin"
+    would otherwise be the one way to run a procedure unverified. Nothing
+    legitimate is caught by this -- acceptance writes both pins, and clones and
+    snapshots carry them across -- the target is a row written before the columns
+    existed, which would otherwise run indefinitely with its acceptance
+    unverifiable.
     """
+    missing = [
+        label
+        for label, accepted in (
+            ("config_digest", procedure.acceptance_config_digest),
+            ("lock_digest", procedure.acceptance_lock_digest),
+        )
+        if accepted is None
+    ]
+    if missing:
+        raise ConfigError(
+            f"Procedure '{procedure.procedure_id}' has no recorded acceptance "
+            f"{' or '.join(missing)}, so there is no accepted config and lock to verify "
+            "this run against. The procedure predates acceptance pinning; running it "
+            "would execute against a model no reviewer is known to have approved, so it "
+            "is refused. Recover by re-proposing the definition and having an "
+            "independent reviewer accept it against the current config and lock "
+            f"(`cruxible procedure propose <file> --supersedes {procedure.procedure_id}`, "
+            "then `cruxible procedure resolve <new-id> --action accept`)."
+        )
     mismatches = [
         (label, accepted, executed)
         for label, accepted, executed in (
