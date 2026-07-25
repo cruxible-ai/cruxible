@@ -865,13 +865,13 @@ def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
 
 
 _OUTCOME_ADOPTION_PROPERTY = "outcome_tracking"
-"""The doctrine spelling of the outcome-forcing adoption property.
+"""The conventional spelling of the outcome-forcing adoption property.
 
-The guard's own teaching messages spell it, so a kit that opts into outcome
-forcing this way is recognizable by name alone. A kit that expresses the same
-adoption choice under a different property name is out of this lint's reach by
-design: the guard's ``where`` clause, not this constant, is the source of truth
-for what a guard actually scopes over.
+This release introduces the convention (the guard teaching messages spell it),
+so a kit that opts into outcome forcing this way is recognizable by name alone.
+A kit that expresses the same adoption choice under a different property name
+is out of this lint's reach by design: the guard's ``where`` clause, not this
+constant, is the source of truth for what a guard actually scopes over.
 """
 
 

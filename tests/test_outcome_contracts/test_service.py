@@ -104,6 +104,7 @@ def test_open_refuses_a_type_no_outcome_guard_covers(unguarded_instance) -> None
     message = str(excinfo.value)
     assert "no requires_resolution_contract mutation guard covers entity type" in message
     assert "would expire unanswered" in message
+    assert excinfo.value.mutation_receipt_id is not None
     assert service_list_resolution_contracts(unguarded_instance).total == 0
 
 
