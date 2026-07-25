@@ -2321,6 +2321,11 @@ Text output labels an interrupted record as
 
 **Subcommands:**
 
+- `cruxible outcome open` - Open a resolution contract on a subject before it is accepted.
+- `cruxible outcome resolve` - Record what reality said about one activated resolution contract.
+- `cruxible outcome dispose` - Uphold or overturn a recorded outcome.
+- `cruxible outcome list` - List resolution contracts with status, activation, and standing answer.
+- `cruxible outcome due` - List outcomes due for checking, overdue, or contradicted and undisposed.
 - `cruxible outcome record` - Record the outcome of a decision.
 - `cruxible outcome profile` - Display the configured outcome profile for one anchor context.
 - `cruxible outcome analyze` - Analyze structured outcomes and print trust/debugging suggestions.
@@ -2380,6 +2385,163 @@ Text output labels an interrupted record as
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible outcome open
+
+**Usage:**
+
+```bash
+cruxible outcome open --entity-type TYPE --entity-id ID --description TEXT --check-at ISO_TIME --expires-at ISO_TIME --measurement JSON [--idempotency-key KEY] [--json]
+```
+
+**Purpose:** Open a resolution contract on a subject before it is accepted.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--entity-type` | yes |  | text | Subject entity type; the subject must already exist. |
+| `--entity-id` | yes |  | text | Subject entity ID. |
+| `--description` | yes |  | text | Free-text success criterion that survives mechanical rot. |
+| `--check-at` | yes |  | text | ISO-8601 time when the outcome is first checked; must precede `--expires-at`. |
+| `--expires-at` | yes |  | text | ISO-8601 time when an unresolved contract ages into overdue. |
+| `--measurement` | yes |  | JSON | Measurement declaration: `{kind: query, ...}` or `{kind: attestation, ...}`. |
+| `--idempotency-key` | no |  | text | Retry-safe key scoped to the subject and resolved actor. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+
+- Appends an immutable contract and receipt; the subject is never mutated.
+- Requires daemon transport so actor attribution and permissions are enforced.
+- Multiple open contracts on one subject are legal; each is answered separately.
+
+**Common Errors:**
+- The subject does not exist yet — propose the record first, then open the contract.
+- `--check-at` at or after `--expires-at`, or a measurement query that is not defined in `named_queries`.
+- Reusing an idempotency key with a different declaration.
+
+## cruxible outcome resolve
+
+**Usage:**
+
+```bash
+cruxible outcome resolve CONTRACT_ID --verdict satisfied|contradicted|indeterminate --observed-at ISO_TIME [--evidence-ref JSON]... [--note TEXT] [--query-receipt RECEIPT_ID] [--attestation ATTESTATION_ID]... [--json]
+```
+
+**Purpose:** Record what reality said about one activated resolution contract.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `CONTRACT_ID` | yes |  | text | Activated contract being answered. |
+| `--verdict` | yes |  | choice | `satisfied`, `contradicted`, or `indeterminate`. |
+| `--observed-at` | yes |  | text | ISO-8601 observation time; `satisfied` requires it at or after `check_at`. |
+| `--evidence-ref` | no |  | JSON | Evidence pointer; repeatable and required for satisfied or contradicted. |
+| `--note` | no |  | text | Observation note; required for contradicted. |
+| `--query-receipt` | no |  | text | Receipt of the query run that observed a query-measured outcome. |
+| `--attestation` | no |  | text | Attestation id backing an attestation-measured outcome; repeatable. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+
+- Appends one immutable resolution and receipt; the subject is never mutated.
+- A contract accepts exactly one standing resolution; a second attempt refuses until a reviewer overturns the first.
+- Requires daemon transport so actor attribution and permissions are enforced.
+
+**Common Errors:**
+- The contract was never activated by an acceptance, or already carries a standing resolution.
+- The resolving receipt ran a different query, different params, was truncated, or contradicts the verdict.
+- The measurement query changed since the contract was opened — only `indeterminate` remains available.
+
+## cruxible outcome dispose
+
+**Usage:**
+
+```bash
+cruxible outcome dispose RESOLUTION_ID --verdict upheld|overturned [--note TEXT] [--json]
+```
+
+**Purpose:** Uphold or overturn a recorded outcome.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `RESOLUTION_ID` | yes |  | text | Immutable resolution being reviewed. |
+| `--verdict` | yes |  | choice | `upheld` or `overturned`. |
+| `--note` | no |  | text | Reviewer note. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+
+- Appends a disposition and receipt; an `overturned` verdict re-opens the contract for exactly one further resolution.
+- One disposition per resolution: the next answer is a new resolution, not a second disposition.
+- Requires daemon transport and a reviewer-tier credential.
+
+**Common Errors:**
+- The resolution does not exist, or already carries a disposition.
+- Permission mode below `GRAPH_WRITE`.
+
+## cruxible outcome list
+
+**Usage:**
+
+```bash
+cruxible outcome list [--entity-type TYPE] [--entity-id ID] [--status prepared|open|resolved] [--limit N] [--offset N] [--json]
+```
+
+**Purpose:** List resolution contracts with status, activation, and standing answer.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--entity-type` | no |  | text | Filter to one subject entity type. |
+| `--entity-id` | no |  | text | Filter to one subject entity ID. |
+| `--status` | no |  | choice | Filter the returned page by derived status. |
+| `--limit` | no | `100` | integer range | Contracts per page. |
+| `--offset` | no | `0` | integer range | Contracts to skip. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+
+- Read-only; returns the standard paged envelope with `--json`.
+- Marks expiry, subject presence, and subject-content drift per contract.
+- `--status` filters the returned page only; `total` stays the unfiltered store count.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- `--limit` below 1 or `--offset` below 0.
+
+## cruxible outcome due
+
+**Usage:**
+
+```bash
+cruxible outcome due [--queue due|overdue|contradicted] [--limit N] [--offset N] [--json]
+```
+
+**Purpose:** List outcomes due for checking, overdue, or contradicted and undisposed.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--queue` | no | `due` | choice | `due` (past check time), `overdue` (past expiry), or `contradicted` (undisposed). |
+| `--limit` | no | `100` | integer range | Entries per page. |
+| `--offset` | no | `0` | integer range | Entries to skip. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+
+- Read-only; returns the standard paged envelope with `--json`.
+- Lists only activated contracts on live subjects; prepared contracts expire without ever demanding attention.
+- `due` includes past-expiry contracts (the check is still owed) and marks them `overdue`.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- `--limit` below 1 or `--offset` below 0.
 
 ## cruxible plan
 

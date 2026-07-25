@@ -54,6 +54,7 @@ DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
         Path("src/cruxible_core/group/store.py"),
         Path("src/cruxible_core/procedure/store.py"),
         Path("src/cruxible_core/attestation/store.py"),
+        Path("src/cruxible_core/resolution_contracts/store.py"),
         Path("src/cruxible_core/decision/store.py"),
         Path("src/cruxible_core/server/registry.py"),
         Path("src/cruxible_core/server/credentials.py"),

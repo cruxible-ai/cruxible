@@ -98,6 +98,7 @@ from cruxible_core.service import (
     service_create_state_overlay,
     service_dereference_source_evidence,
     service_describe_query,
+    service_dispose_resolution,
     service_evaluate,
     service_evaluate_gate,
     service_explain_receipt,
@@ -131,12 +132,15 @@ from cruxible_core.service import (
     service_list_procedure_runs,
     service_list_procedures,
     service_list_queries,
+    service_list_resolution_contracts,
     service_list_resolutions,
     service_list_snapshots,
     service_list_source_artifacts,
     service_list_traces,
     service_lock,
+    service_open_resolution_contract,
     service_outcome,
+    service_outcome_queue,
     service_plan,
     service_propose_group_inputs,
     service_propose_procedure,
@@ -153,6 +157,7 @@ from cruxible_core.service import (
     service_resolve_attestation,
     service_resolve_feedback_query_target,
     service_resolve_group,
+    service_resolve_outcome,
     service_restore_instance,
     service_retire_procedure,
     service_run,
@@ -3780,6 +3785,163 @@ def _optional_attestation_claim_key(
         cast(str, to_type),
         cast(str, to_id),
     )
+
+
+def open_outcome_contract(
+    instance_id: str,
+    *,
+    entity_type: str,
+    entity_id: str,
+    description: str,
+    check_at: str | datetime,
+    expires_at: str | datetime,
+    measurement: dict[str, Any],
+    idempotency_key: str | None = None,
+    actor_context: Any | None = None,
+) -> contracts.OutcomeContractResult:
+    """Open one resolution contract against an existing governed subject."""
+    check_permission("cruxible_open_outcome_contract", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
+    parsed_check_at = _require_datetime(check_at, field="check_at")
+    parsed_expires_at = _require_datetime(expires_at, field="expires_at")
+    result = service_open_resolution_contract(
+        get_manager().get(instance_id),
+        entity_type=entity_type,
+        entity_id=entity_id,
+        description=description,
+        check_at=parsed_check_at,
+        expires_at=parsed_expires_at,
+        measurement=measurement,
+        actor_context=actor,
+        idempotency_key=idempotency_key,
+    )
+    return contracts.OutcomeContractResult(
+        contract=result.contract.model_dump(mode="json", exclude_none=True),
+        idempotent_replay=result.idempotent_replay,
+        receipt_id=result.receipt_id,
+    )
+
+
+def resolve_outcome(
+    instance_id: str,
+    contract_id: str,
+    *,
+    verdict: contracts.ResolutionVerdict,
+    observed_at: str | datetime,
+    evidence_refs: Sequence[contracts.EvidenceRef | dict[str, Any]] = (),
+    note: str | None = None,
+    resolving_query_receipt_id: str | None = None,
+    resolving_attestation_ids: Sequence[str] = (),
+    actor_context: Any | None = None,
+) -> contracts.OutcomeResolutionResult:
+    """Record the one standing answer to one activated resolution contract."""
+    check_permission("cruxible_resolve_outcome", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
+    parsed_observed_at = _require_datetime(observed_at, field="observed_at")
+    parsed_evidence = [
+        ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
+        for ref in evidence_refs
+    ]
+    result = service_resolve_outcome(
+        get_manager().get(instance_id),
+        contract_id,
+        verdict=verdict,
+        observed_at=parsed_observed_at,
+        evidence_refs=parsed_evidence,
+        actor_context=actor,
+        note=note,
+        resolving_query_receipt_id=resolving_query_receipt_id,
+        resolving_attestation_ids=list(resolving_attestation_ids),
+    )
+    return contracts.OutcomeResolutionResult(
+        resolution=result.resolution.model_dump(mode="json", exclude_none=True),
+        receipt_id=result.receipt_id,
+    )
+
+
+def dispose_outcome_resolution(
+    instance_id: str,
+    resolution_id: str,
+    *,
+    verdict: contracts.ResolutionDispositionVerdict,
+    note: str | None = None,
+    actor_context: Any | None = None,
+) -> contracts.OutcomeDispositionResult:
+    """Uphold or overturn one resolution; an overturn re-opens its contract."""
+    check_permission("cruxible_dispose_outcome_resolution", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
+    result = service_dispose_resolution(
+        get_manager().get(instance_id),
+        resolution_id,
+        verdict=verdict,
+        actor_context=actor,
+        note=note,
+    )
+    return contracts.OutcomeDispositionResult(
+        disposition=result.disposition.model_dump(mode="json", exclude_none=True),
+        receipt_id=result.receipt_id,
+    )
+
+
+def list_outcome_contracts(
+    instance_id: str,
+    *,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    status: contracts.ContractStatus | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.ListResult:
+    """List resolution contracts with derived lifecycle markers."""
+    check_permission("cruxible_list_outcome_contracts", instance_id=instance_id)
+    result = service_list_resolution_contracts(
+        get_manager().get(instance_id),
+        entity_type=entity_type,
+        entity_id=entity_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    return _outcome_list_result(result)
+
+
+def outcome_due(
+    instance_id: str,
+    *,
+    queue: contracts.ContractQueue = "due",
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.ListResult:
+    """Return one derived outcome attention queue over activated contracts."""
+    check_permission("cruxible_outcome_due", instance_id=instance_id)
+    result = service_outcome_queue(
+        get_manager().get(instance_id),
+        queue=queue,
+        limit=limit,
+        offset=offset,
+    )
+    return _outcome_list_result(result)
+
+
+def _outcome_list_result(result: Any) -> contracts.ListResult:
+    return contracts.ListResult(
+        items=[item.model_dump(mode="json", exclude_none=True) for item in result.items],
+        total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        truncated=result.truncated,
+        read_revision=result.read_revision,
+    )
+
+
+def _require_datetime(value: str | datetime, *, field: str) -> datetime:
+    try:
+        parsed = parse_datetime(value)
+    except ValueError as exc:
+        raise ConfigError(f"{field} must be an ISO-8601 datetime") from exc
+    if parsed is None:
+        raise ConfigError(f"{field} is required")
+    return parsed
 
 
 def propose_procedure(

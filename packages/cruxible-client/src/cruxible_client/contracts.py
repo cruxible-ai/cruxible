@@ -339,6 +339,34 @@ class AttestationDispositionResult(BaseModel):
     receipt_id: str | None = None
 
 
+ResolutionVerdict = Literal["satisfied", "contradicted", "indeterminate"]
+ResolutionDispositionVerdict = Literal["upheld", "overturned"]
+ContractStatus = Literal["prepared", "open", "resolved"]
+ContractQueue = Literal["due", "overdue", "contradicted"]
+
+
+class OutcomeContractResult(BaseModel):
+    """Opened resolution contract plus its idempotent-replay marker."""
+
+    contract: dict[str, Any]
+    idempotent_replay: bool = False
+    receipt_id: str | None = None
+
+
+class OutcomeResolutionResult(BaseModel):
+    """Recorded resolution and receipt."""
+
+    resolution: dict[str, Any]
+    receipt_id: str | None = None
+
+
+class OutcomeDispositionResult(BaseModel):
+    """Appended reviewer disposition on one resolution, and receipt."""
+
+    disposition: dict[str, Any]
+    receipt_id: str | None = None
+
+
 class SourceEvidenceInput(BaseModel):
     source_artifact_id: str = Field(
         description="Id of the registered source artifact this evidence points into."

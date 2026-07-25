@@ -1753,6 +1753,124 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.AttestationDispositionResult)
 
+    def open_outcome_contract(
+        self,
+        instance_id: str,
+        *,
+        entity_type: str,
+        entity_id: str,
+        description: str,
+        check_at: str,
+        expires_at: str,
+        measurement: dict[str, Any],
+        idempotency_key: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.OutcomeContractResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/outcome-contracts/open",
+            json=self._with_actor_context(
+                {
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "description": description,
+                    "check_at": check_at,
+                    "expires_at": expires_at,
+                    "measurement": measurement,
+                    "idempotency_key": idempotency_key,
+                },
+                actor_context,
+            ),
+        )
+        return self._parse_model(response, contracts.OutcomeContractResult)
+
+    def resolve_outcome(
+        self,
+        instance_id: str,
+        contract_id: str,
+        *,
+        verdict: contracts.ResolutionVerdict,
+        observed_at: str,
+        evidence_refs: Sequence[contracts.EvidenceRef | dict[str, Any]] = (),
+        note: str | None = None,
+        resolving_query_receipt_id: str | None = None,
+        resolving_attestation_ids: Sequence[str] = (),
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.OutcomeResolutionResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/outcome-contracts/{contract_id}/resolve",
+            json=self._with_actor_context(
+                {
+                    "verdict": verdict,
+                    "observed_at": observed_at,
+                    "evidence_refs": [
+                        item.model_dump(mode="json") if isinstance(item, BaseModel) else item
+                        for item in evidence_refs
+                    ],
+                    "note": note,
+                    "resolving_query_receipt_id": resolving_query_receipt_id,
+                    "resolving_attestation_ids": list(resolving_attestation_ids),
+                },
+                actor_context,
+            ),
+        )
+        return self._parse_model(response, contracts.OutcomeResolutionResult)
+
+    def dispose_outcome_resolution(
+        self,
+        instance_id: str,
+        resolution_id: str,
+        *,
+        verdict: contracts.ResolutionDispositionVerdict,
+        note: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.OutcomeDispositionResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/outcome-resolutions/{resolution_id}/dispose",
+            json=self._with_actor_context(
+                {"verdict": verdict, "note": note},
+                actor_context,
+            ),
+        )
+        return self._parse_model(response, contracts.OutcomeDispositionResult)
+
+    def list_outcome_contracts(
+        self,
+        instance_id: str,
+        *,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        status: contracts.ContractStatus | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/outcome-contracts",
+            params=self._omit_none_params(
+                {
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "status": status,
+                    "limit": limit,
+                    "offset": offset,
+                }
+            ),
+        )
+        return self._parse_model(response, contracts.ListResult)
+
+    def outcome_due(
+        self,
+        instance_id: str,
+        *,
+        queue: contracts.ContractQueue = "due",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.ListResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/outcome-contracts/queue",
+            params={"queue": queue, "limit": limit, "offset": offset},
+        )
+        return self._parse_model(response, contracts.ListResult)
+
     def list_procedures(
         self,
         instance_id: str,

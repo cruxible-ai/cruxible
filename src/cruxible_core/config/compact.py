@@ -1580,10 +1580,11 @@ def _expand_mutation_guards(raw_guards: list[Any]) -> list[dict[str, Any]]:
     """Expand compact ``mutation_guards:`` to explicit auditable guards.
 
     Trigger: ``when: <Entity>.<prop> -> <value|[values]>`` -> entity_type/property/new_value.
-    Condition (``require:``), one of three types -- expanded 1:1 with NO identity magic:
+    Condition (``require:``), one of four types -- expanded 1:1 with NO identity magic:
         ``{co_write: <Entity> via <relationship>, kind: ...}`` -> type co_write
         ``{allowed_actors: [...]}``  -> type actor, allowed_actor_ids (literal passthrough)
         ``{query:..., params:..., min_count/max_count:...}`` -> type query
+        ``{resolution_contract: true}`` -> type requires_resolution_contract
     Optional ``where:`` is a structured predicate map (candidate scope only) that
     scopes the trigger -- the guard fires only when the mutated entity matches. It
     passes through unchanged (same shape as ``QueryPredicateSpec``). Optional
@@ -1746,8 +1747,22 @@ def _expand_guard_condition(name: str, require: dict[str, Any]) -> dict[str, Any
             condition["max_count"] = require["max_count"]
         return condition
 
+    if "resolution_contract" in require:
+        _reject_unknown_keys(
+            f"mutation guard '{name}' require resolution_contract",
+            require,
+            {"resolution_contract"},
+        )
+        if require["resolution_contract"] is not True:
+            raise CompactExpansionError(
+                f"mutation guard '{name}': resolution_contract must be true; the "
+                "condition takes no options"
+            )
+        return {"type": "requires_resolution_contract"}
+
     raise CompactExpansionError(
-        f"mutation guard '{name}': require must declare co_write, allowed_actors, or query"
+        f"mutation guard '{name}': require must declare co_write, allowed_actors, "
+        "query, or resolution_contract"
     )
 
 

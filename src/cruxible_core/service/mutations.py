@@ -32,14 +32,20 @@ from cruxible_core.graph.types import (
     RelationshipMetadata,
 )
 from cruxible_core.group.types import CandidateGroup
-from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
+from cruxible_core.instance_protocol import (
+    GroupStoreProtocol,
+    InstanceProtocol,
+    ResolutionContractStoreProtocol,
+)
 from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.mutation_guards import (
+    ContractActivationIntent,
     GuardEvaluation,
     build_guard_write_delta,
     evaluate_mutation_guards,
     evaluate_relationship_mutation_guards,
     receipt_creation_actor_resolver,
+    record_contract_activations,
     record_guard_evaluation,
 )
 from cruxible_core.service.mutation_proposals import (
@@ -91,6 +97,7 @@ class _PreparedBatchDirectWrite:
     evidence_sources_used: list[str]
     pending_conflicts: list[DirectWriteGroupInteraction]
     updated_group_backed_edges: list[DirectWriteGroupInteraction]
+    contract_activations: tuple[ContractActivationIntent, ...] = ()
 
 
 @dataclass
@@ -573,6 +580,7 @@ def _prepare_batch_direct_write(
     actor_context: GovernedActorContext | None = None,
     builder: Any | None = None,
     group_store: GroupStoreProtocol | None = None,
+    resolution_contract_store: ResolutionContractStoreProtocol | None = None,
 ) -> _PreparedBatchDirectWrite:
     config = instance.load_config()
     current_graph = instance.load_graph()
@@ -743,6 +751,7 @@ def _prepare_batch_direct_write(
                 [item.validated for item in validated_relationships],
             ),
             creation_actor_resolver=receipt_creation_actor_resolver(instance),
+            resolution_contract_store=resolution_contract_store,
         )
     except DataValidationError as exc:
         guard_evaluation = GuardEvaluation.from_messages([str(exc), *exc.errors])
@@ -787,6 +796,7 @@ def _prepare_batch_direct_write(
         evidence_sources_used=evidence_sources,
         pending_conflicts=interactions.pending_conflicts,
         updated_group_backed_edges=interactions.updated_group_backed_edges,
+        contract_activations=guard_evaluation.contract_activations,
     )
 
 
@@ -833,13 +843,22 @@ def service_batch_direct_write(
     )
 
     if dry_run:
-        prepared = _prepare_batch_direct_write(
-            instance,
-            payload,
-            source=source,
-            source_ref=source_ref,
-            actor_context=actor_context,
-        )
+        # A preview opens no unit of work, so it reads eligibility on its own
+        # connection. That is safe precisely because it writes nothing: the
+        # activation intents it produces are discarded, so no contract is
+        # consumed by a write that never happened.
+        preview_contract_store = instance.get_resolution_contract_store()
+        try:
+            prepared = _prepare_batch_direct_write(
+                instance,
+                payload,
+                source=source,
+                source_ref=source_ref,
+                actor_context=actor_context,
+                resolution_contract_store=preview_contract_store,
+            )
+        finally:
+            preview_contract_store.close()
         return _batch_direct_write_result(prepared, dry_run=True)
 
     with mutation_receipt(
@@ -865,7 +884,16 @@ def service_batch_direct_write(
             actor_context=actor_context,
             builder=builder,
             group_store=ctx.uow.groups if ctx.uow is not None else None,
+            resolution_contract_store=(
+                ctx.uow.resolution_contracts if ctx.uow is not None else None
+            ),
         )
+        if ctx.uow is not None and prepared.contract_activations:
+            record_contract_activations(
+                ctx.uow.resolution_contracts,
+                prepared.contract_activations,
+                acceptance_receipt_id=builder.receipt_id if builder else None,
+            )
         touched_entities = []
         for entity_item in prepared.entities:
             persisted_entity = prepared.graph.get_entity(
@@ -1076,6 +1104,9 @@ def service_add_entities(
                 actor_context=actor_context,
                 write_delta=build_guard_write_delta(pending),
                 creation_actor_resolver=receipt_creation_actor_resolver(instance),
+                resolution_contract_store=(
+                    ctx.uow.resolution_contracts if ctx.uow is not None else None
+                ),
             )
         except DataValidationError as exc:
             guard_evaluation = GuardEvaluation.from_messages([str(exc), *exc.errors])
@@ -1092,6 +1123,13 @@ def service_add_entities(
             return AddEntityResult(
                 added=sum(1 for validated in pending if not validated.is_update),
                 updated=sum(1 for validated in pending if validated.is_update),
+            )
+
+        if ctx.uow is not None and guard_evaluation.contract_activations:
+            record_contract_activations(
+                ctx.uow.resolution_contracts,
+                guard_evaluation.contract_activations,
+                acceptance_receipt_id=builder.receipt_id if builder else None,
             )
 
         added = 0
