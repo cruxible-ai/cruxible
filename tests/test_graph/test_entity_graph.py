@@ -366,6 +366,7 @@ class TestRelationshipStateWrites:
                     assertion=RelationshipAssertion(
                         review=RelationshipReviewState(
                             status="approved",
+                            source="human",
                         )
                     )
                 ),
@@ -383,6 +384,7 @@ class TestRelationshipStateWrites:
                 assertion=RelationshipAssertion(
                     review=RelationshipReviewState(
                         status="rejected",
+                        source="agent",
                     )
                 )
             ),

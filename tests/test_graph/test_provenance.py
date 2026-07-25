@@ -131,7 +131,7 @@ def test_stamp_modified_preserves_creation_correlation_fields() -> None:
 def test_backfill_on_touch_stamps_existing_provenance() -> None:
     existing = make_provenance("ingest", "fitments", receipt_id="RCP-create")
 
-    result = backfill_provenance_on_touch(existing, "cli_add", "add_relationship", "cli_add")
+    result = backfill_provenance_on_touch(existing, "cli_add")
 
     # Existing provenance is stamped, not replaced: creation fields survive.
     assert result.source == "ingest"
@@ -141,17 +141,24 @@ def test_backfill_on_touch_stamps_existing_provenance() -> None:
     assert result.last_modified_at is not None
 
 
-def test_backfill_on_touch_creates_provenance_when_null() -> None:
+def test_backfill_on_touch_marks_origin_unknown_rather_than_claiming_the_toucher() -> None:
+    """A touch does not get to assert where the edge came from.
+
+    Stamping the touching channel as ``source`` turned "we do not know"
+    into a confident claim that the edge originated from whoever last
+    happened to write to it. What is actually known — which channel
+    backfilled it, and when — is recorded separately.
+    """
     result = backfill_provenance_on_touch(
         None,
-        "human",
-        "feedback:approve",
         "feedback:approve",
         actor_context=_actor_context(),
     )
 
-    assert result.source == "human"
-    assert result.source_ref == "feedback:approve"
+    assert result.source == "unknown_backfilled"
+    assert result.source_ref == "unknown_backfilled"
+    assert result.touched_by == "feedback:approve"
+    assert result.backfilled_at is not None
     assert result.last_modified_by == "feedback:approve"
     assert result.last_modified_at is not None
     assert result.last_modified_actor_context is not None

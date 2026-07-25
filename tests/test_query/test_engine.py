@@ -5047,6 +5047,7 @@ class TestStructuredPredicates:
                         assertion=RelationshipAssertion(
                             review=RelationshipReviewState(
                                 status=review_status,
+                                source="human",
                             ),
                             lifecycle=RelationshipLifecycleState(status=lifecycle_status),
                         )
