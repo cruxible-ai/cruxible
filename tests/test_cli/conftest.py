@@ -8,7 +8,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.server.registry import reset_registry
 
@@ -181,6 +181,7 @@ def populated_graph() -> EntityGraph:
     # Fitments (Part -> Vehicle)
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1001",
@@ -191,6 +192,7 @@ def populated_graph() -> EntityGraph:
     )
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1001",
@@ -201,6 +203,7 @@ def populated_graph() -> EntityGraph:
     )
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1002",
@@ -213,6 +216,7 @@ def populated_graph() -> EntityGraph:
     # Replacement
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="replaces",
             from_type="Part",
             from_id="BP-1002",

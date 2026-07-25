@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -210,11 +211,39 @@ _AUDIT_ONLY_TABLES = frozenset(
 )
 
 
+_WAL_SWITCH_TIMEOUT_SECONDS = 5.0
+
+
 def _configure_connection(conn: sqlite3.Connection) -> None:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")
-    conn.execute("PRAGMA journal_mode = WAL")
+    _ensure_wal_journal(conn)
+
+
+def _ensure_wal_journal(conn: sqlite3.Connection) -> None:
+    """Switch to WAL, waiting out a concurrent writer instead of failing.
+
+    Changing the journal mode needs an EXCLUSIVE lock, and unlike ordinary
+    statements it does NOT honour ``busy_timeout`` -- it returns SQLITE_BUSY
+    immediately. That matters now that initialization takes a migration lock:
+    a second process opening the same not-yet-WAL database while the first is
+    mid-migration would otherwise die on connect, before it ever got the chance
+    to wait for the lock. A database ALREADY in WAL needs no switch at all,
+    which is the overwhelmingly common case.
+    """
+    current = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    if str(current).lower() == "wal":
+        return
+    deadline = time.monotonic() + _WAL_SWITCH_TIMEOUT_SECONDS
+    while True:
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            return
+        except sqlite3.OperationalError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
 
 
 def backup_sqlite_database(source: Path, target: Path) -> None:

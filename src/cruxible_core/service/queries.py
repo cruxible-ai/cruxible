@@ -767,6 +767,7 @@ def service_inspect_entity(
                     to_type=edge.to_type,
                     to_id=edge.to_id,
                     edge_key=edge.edge_key,
+                    claim_id=edge.claim_id,
                     properties=edge.properties,
                     metadata=edge.metadata,
                 )
@@ -804,6 +805,7 @@ def service_inspect_entity(
                 direction=cast(NeighborDirection, neighbor.direction),
                 relationship_type=neighbor.relationship_type,
                 edge_key=neighbor.edge_key,
+                claim_id=neighbor.claim_id,
                 properties=neighbor.properties,
                 metadata=neighbor.metadata,
                 entity=neighbor.entity,
@@ -1566,6 +1568,7 @@ def _relationship_list_payload(relationship: RelationshipInstance) -> dict[str, 
         "to_id": relationship.to_id,
         "relationship_type": relationship.relationship_type,
         "edge_key": relationship.edge_key,
+        "claim_id": relationship.claim_id,
         "properties": dict(relationship.properties),
         "metadata": metadata.model_dump(mode="json", exclude_none=True),
     }

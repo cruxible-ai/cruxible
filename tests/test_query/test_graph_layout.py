@@ -22,7 +22,7 @@ from cruxible_core.config.schema import (
     TraversalStep,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.query.engine import execute_query
 from cruxible_core.query.graph_layout import normalize_query_items
 from cruxible_core.query.profiles import ReadProfile, profile_query_items
@@ -285,6 +285,7 @@ def diamond_graph() -> EntityGraph:
     g.add_relationship(_fits("P-DUAL", "V-2", verified=False))
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="replaces",
             from_type="Part",
             from_id="P-REP",
@@ -338,6 +339,7 @@ class TestLosslessness:
         for source, target in (("P-1", "P-2"), ("P-2", "P-3"), ("P-3", "P-1")):
             g.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="replaces",
                     from_type="Part",
                     from_id=source,
@@ -453,6 +455,7 @@ class TestProfileComposition:
         g.add_entity(_entity("Part", "P-1", part_number="P-1", name="Pads"))
         g.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -601,6 +604,7 @@ def _scenery_fixture() -> tuple[CoreConfig, EntityGraph]:
         )
         g.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="located_at",
                 from_type="Scenery",
                 from_id=scenery_id,

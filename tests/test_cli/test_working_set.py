@@ -21,7 +21,7 @@ from cruxible_core.cli.working_set import (
     working_set_enabled,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 
 
 @pytest.fixture
@@ -164,7 +164,12 @@ class TestCaptureShapes:
         by_identity = _records_by_identity(populated_instance)
         assert ("entity", "Part", "BP-1001") in by_identity
         assert ("entity", "Vehicle", "V-2024-CIVIC-EX") in by_identity
-        edge = by_identity[("edge", "fits", "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", 0)]
+        cached_edge = populated_instance.load_graph().get_relationship(
+            "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits"
+        )
+        assert cached_edge is not None
+        # Edge records key on the stable claim identity, not the per-load key.
+        edge = by_identity[("edge", cached_edge.claim_id)]
         assert edge["read_revision"] == revision
         assert edge["review"] is not None
         assert edge["props"]["verified"] is True
@@ -203,7 +208,12 @@ class TestCaptureShapes:
         by_identity = _records_by_identity(populated_instance)
         assert ("entity", "Part", "BP-1001") in by_identity  # root
         assert ("entity", "Vehicle", "V-2024-CIVIC-EX") in by_identity  # node
-        edge = by_identity[("edge", "fits", "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", 0)]
+        cached_edge = populated_instance.load_graph().get_relationship(
+            "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits"
+        )
+        assert cached_edge is not None
+        # Edge records key on the stable claim identity, not the per-load key.
+        edge = by_identity[("edge", cached_edge.claim_id)]
         assert edge["read_revision"] == revision
         assert edge["source_cmd"] == "entity inspect"
 
@@ -560,6 +570,18 @@ class TestRefresh:
             assert _chdir_run(runner, root, args).exit_code == 0
 
         # Mutation: rename BP-1001, delete BP-1002 (and every edge touching it).
+        # The surviving edge keeps its CLAIM IDENTITY across the rewrite -- it is
+        # the same claim, edited; a fresh id would make it a different claim and
+        # the cached record would (rightly) be dropped rather than refreshed.
+        surviving = populated_instance.load_graph().get_relationship(
+            "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits"
+        )
+        assert surviving is not None
+        removed_edge_ids = {
+            edge.claim_id
+            for edge in populated_instance.load_graph().iter_relationships()
+            if "BP-1002" in (edge.from_id, edge.to_id)
+        }
         new_graph = EntityGraph()
         new_graph.add_entity(
             EntityInstance(
@@ -587,6 +609,7 @@ class TestRefresh:
         )
         new_graph.add_relationship(
             RelationshipInstance(
+                claim_id=surviving.claim_id,
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1001",
@@ -620,9 +643,16 @@ class TestRefresh:
         assert refreshed["source_cmd"] == "ws refresh"
         # Deleted entity dropped, along with edges owned by it.
         assert ("entity", "Part", "BP-1002") not in by_identity
-        assert not any(identity[0] == "edge" and "BP-1002" in identity for identity in by_identity)
+        assert not any(
+            identity[0] == "edge" and identity[1] in removed_edge_ids for identity in by_identity
+        )
         # Surviving stale edge refreshed to the current revision.
-        edge = by_identity[("edge", "fits", "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", 0)]
+        cached_edge = populated_instance.load_graph().get_relationship(
+            "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits"
+        )
+        assert cached_edge is not None
+        # Edge records key on the stable claim identity, not the per-load key.
+        edge = by_identity[("edge", cached_edge.claim_id)]
         assert edge["read_revision"] == current_revision
         # Fresh record untouched (not rewritten by refresh).
         fresh = by_identity[("entity", "Vehicle", "V-2024-CIVIC-EX")]
@@ -662,6 +692,7 @@ class TestRefresh:
                 from_id=from_id,
                 to_type="Part",
                 to_id=to_id,
+                claim_id=mint_claim_id(),
                 properties={"direction": "upgrade", "confidence": 0.9},
             )
 
@@ -726,7 +757,9 @@ class TestRefresh:
         assert "could not confirm" not in refresh.output
 
         by_identity = _records_by_identity(instance)
-        assert not any(identity[0] == "edge" and "P-1" in identity for identity in by_identity)
+        # Edge records key on claim_id now, so the check is simply that the one
+        # cached edge -- the deleted one -- is gone.
+        assert not any(identity[0] == "edge" for identity in by_identity)
 
         verify = _chdir_run(runner, root, ["ws", "verify"])
         assert verify.exit_code == 0

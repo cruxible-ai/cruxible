@@ -8,7 +8,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, RelationshipAmbiguityError
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.service import (
     service_feedback,
@@ -112,6 +112,7 @@ def instance(tmp_path: Path) -> CruxibleInstance:
     # Add an edge to work with
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1",
@@ -184,6 +185,7 @@ class TestGroupOverride:
         graph = instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1",

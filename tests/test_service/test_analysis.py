@@ -23,7 +23,7 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.provenance import SOURCE_REF_ADD_RELATIONSHIP
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.types import (
     CandidateMember,
     CandidateSignal,
@@ -1368,6 +1368,7 @@ class TestLint:
         graph = populated_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="BP-1001",

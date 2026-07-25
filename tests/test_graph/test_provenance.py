@@ -21,6 +21,7 @@ from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
     RelationshipMetadata,
+    mint_claim_id,  # noqa: F401
 )
 
 
@@ -216,6 +217,7 @@ def _fits_edge(receipt_id: str | None) -> RelationshipInstance:
         from_id="BP-1",
         to_type="Vehicle",
         to_id="V-1",
+        claim_id=mint_claim_id(),
         metadata=RelationshipMetadata(provenance=provenance),
     )
 

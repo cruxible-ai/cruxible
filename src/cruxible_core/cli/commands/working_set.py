@@ -420,6 +420,7 @@ def _fetch_owner_neighborhood(
             "to_type": edge.to_type,
             "to_id": edge.to_id,
             "edge_key": edge.edge_key,
+            "claim_id": edge.claim_id,
             "properties": edge.properties,
             "metadata": edge.metadata,
         }
@@ -430,6 +431,24 @@ def _fetch_owner_neighborhood(
         _budget_truncated(list(local_result.truncation_reasons)),
         edges,
         context.instance.get_read_revision(),
+    )
+
+
+def _edge_matches_record(edge: dict[str, Any], record: dict[str, Any]) -> bool:
+    """Match a live edge to a cached record, preferring the stable identity.
+
+    ``claim_id`` wins when the record carries one: ``edge_key`` is a per-load
+    counter that a pull re-keys, so matching on it would drop a surviving claim
+    as "edge gone" purely because its key moved. Records captured before
+    identity keep the old endpoint+edge_key match.
+    """
+    record_claim_id = record.get("claim_id")
+    if isinstance(record_claim_id, str) and record_claim_id:
+        return bool(edge.get("claim_id") == record_claim_id)
+    return bool(
+        edge.get("to_type") == record.get("to_type")
+        and edge.get("to_id") == record.get("to_id")
+        and (record.get("edge_key") is None or edge.get("edge_key") == record.get("edge_key"))
     )
 
 
@@ -471,16 +490,7 @@ def _refresh_edge_records(
             continue
         for record in records:
             match = next(
-                (
-                    edge
-                    for edge in edges
-                    if edge.get("to_type") == record.get("to_type")
-                    and edge.get("to_id") == record.get("to_id")
-                    and (
-                        record.get("edge_key") is None
-                        or edge.get("edge_key") == record.get("edge_key")
-                    )
-                ),
+                (edge for edge in edges if _edge_matches_record(edge, record)),
                 None,
             )
             if match is not None:

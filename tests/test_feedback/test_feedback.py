@@ -17,7 +17,12 @@ from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import RelationshipProvenance
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    RelationshipMetadata,
+    mint_claim_id,
+)
 from cruxible_core.query.engine import execute_query
 
 # ---------------------------------------------------------------------------
@@ -62,6 +67,7 @@ def graph() -> EntityGraph:
     )
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="P-1",
@@ -72,6 +78,7 @@ def graph() -> EntityGraph:
     )
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="P-2",
@@ -433,6 +440,7 @@ class TestApplier:
     def test_ambiguous_target_requires_edge_key(self, graph: EntityGraph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -458,6 +466,7 @@ class TestApplier:
     def test_apply_with_edge_key_targets_single_edge(self, graph: EntityGraph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",

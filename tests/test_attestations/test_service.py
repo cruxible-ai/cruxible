@@ -90,7 +90,14 @@ def test_absent_support_creates_pending_with_required_properties(
     assert relationship.metadata.evidence is not None
     assert relationship.metadata.evidence.evidence_refs == result.attestation.evidence_refs
     listed = service_list_attestations(attestation_instance, claim_key=CLAIM_KEY)
-    assert listed.items[0].edge_key_mismatch is True
+    # EVER-OR-NEVER: this record stamped a claim_id at record time, so the
+    # target-identity comparison is id-vs-id and the stale caller-supplied
+    # edge_key (999) is never consulted. Comparing the per-load edge_key on a
+    # record that has a stable identity would report a mismatch after any
+    # reload, which is noise, not signal.
+    assert listed.items[0].target_identity_mismatch_kind == "claim_id"
+    assert listed.items[0].target_identity_mismatch is False
+    assert listed.items[0].attestation.claim_id == relationship.claim_id
     attached = _attest(attestation_instance, "contradict")
     assert attached.created_claim is False
     assert attached.attestation.claim_state_at_record == "pending"

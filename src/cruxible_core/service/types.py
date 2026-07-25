@@ -317,6 +317,7 @@ class InspectNeighborResult:
     direction: NeighborDirection
     relationship_type: str
     edge_key: int | None
+    claim_id: str | None = None
     properties: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     entity: EntityInstance | None = None
@@ -350,6 +351,7 @@ class NeighborhoodEdgeResult:
     to_type: str
     to_id: str
     edge_key: int | None
+    claim_id: str | None = None
     properties: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 

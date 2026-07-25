@@ -9,7 +9,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, DataValidationError, MutationError
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.receipt.types import Receipt
@@ -575,6 +575,7 @@ class TestGroupResolveReceipts:
         graph = resolve_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1",
@@ -600,6 +601,14 @@ class TestGroupResolveReceipts:
         assert receipt.operation_type == "group_resolve"
         assert receipt.committed is True
         write_nodes = [node for node in receipt.nodes if node.node_type == "relationship_write"]
+        # The write node is stamped with the DURABLE claim identity of the edge
+        # the apply produced -- which is only knowable after the apply, and is
+        # why write nodes moved to after it.
+        assert len(write_nodes) == 1
+        applied_edge = resolve_instance.load_graph().get_relationship(
+            "Part", "BP-2", "Vehicle", "V-2", "fits"
+        )
+        assert applied_edge is not None
         assert [node.detail for node in write_nodes] == [
             {
                 "from_type": "Part",
@@ -608,6 +617,7 @@ class TestGroupResolveReceipts:
                 "to_id": "V-2",
                 "relationship": "fits",
                 "is_update": False,
+                "claim_id": applied_edge.claim_id,
             }
         ]
 

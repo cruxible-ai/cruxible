@@ -2897,6 +2897,7 @@ def inspect_entity(
                 "to_type": edge.to_type,
                 "to_id": edge.to_id,
                 "edge_key": edge.edge_key,
+                "claim_id": edge.claim_id,
                 "properties": edge.properties,
                 "metadata": edge.metadata,
             }
@@ -2951,6 +2952,7 @@ def inspect_entity(
             "to_type": other.entity_type if neighbor.direction == "outgoing" else entity_type,
             "to_id": other.entity_id if neighbor.direction == "outgoing" else entity_id,
             "edge_key": neighbor.edge_key,
+            "claim_id": neighbor.claim_id,
             "properties": neighbor.properties,
             "metadata": neighbor.metadata,
             "direction": neighbor.direction,

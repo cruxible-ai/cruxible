@@ -13,7 +13,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.mcp.handlers import (
     handle_add_relationship,
     handle_batch_direct_write,
@@ -299,6 +299,7 @@ def dev_graph_instance_id(tmp_project: Path) -> str:
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             from_type="Part",
             from_id="BP-1001",
             relationship_type="fits",
@@ -309,6 +310,7 @@ def dev_graph_instance_id(tmp_project: Path) -> str:
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             from_type="Part",
             from_id="BP-1002",
             relationship_type="fits",

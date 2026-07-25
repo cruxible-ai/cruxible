@@ -23,6 +23,7 @@ from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
     RelationshipMetadata,
+    mint_claim_id,
 )
 from cruxible_core.query.read_surface import (
     inspect_neighborhood,
@@ -51,6 +52,7 @@ def _graph(edges: list[tuple[str, str]], *, entity_type: str = "Node") -> Entity
     for from_id, to_id in edges:
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="linked",
                 from_type=entity_type,
                 from_id=from_id,
@@ -192,6 +194,7 @@ class TestFilters:
         ]:
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type=rel,
                     from_type="Hub",
                     from_id="H",
@@ -271,6 +274,7 @@ class TestStateParity:
             graph.add_entity(EntityInstance(entity_type="Node", entity_id=target))
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="linked",
                     from_type="Node",
                     from_id="ROOT",
@@ -342,6 +346,7 @@ class TestEdgesHiddenByState:
             graph.add_entity(EntityInstance(entity_type="Node", entity_id=target))
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="depends_on",
                     from_type="Node",
                     from_id="ROOT",
@@ -384,6 +389,7 @@ class TestEdgesHiddenByState:
         for rel, to_type, to_id in [("makes", "Widget", "W"), ("owns", "Gadget", "G")]:
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type=rel,
                     from_type="Hub",
                     from_id="H",
@@ -414,6 +420,7 @@ class TestEdgesHiddenByState:
         for from_id, to_id in (("ROOT", "A"), ("A", "B")):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="linked",
                     from_type="Node",
                     from_id=from_id,
@@ -432,6 +439,7 @@ class TestEdgesHiddenByState:
         graph.add_entity(EntityInstance(entity_type="Node", entity_id="LIVE-1"))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="depends_on",
                 from_type="Node",
                 from_id="ROOT",

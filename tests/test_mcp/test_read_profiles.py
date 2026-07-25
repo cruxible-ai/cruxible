@@ -23,6 +23,7 @@ from cruxible_core.graph.types import (
     EntityInstance,
     EntityMetadata,
     RelationshipInstance,
+    mint_claim_id,
 )
 from cruxible_core.mcp.server import create_server
 from cruxible_core.runtime import api
@@ -82,6 +83,7 @@ def governed_read_instance_id(tmp_project: Path) -> str:
         )
     )
     pending_edge = RelationshipInstance(
+        claim_id=mint_claim_id(),
         from_type="Part",
         from_id="BP-1",
         relationship_type="fits",
@@ -97,6 +99,7 @@ def governed_read_instance_id(tmp_project: Path) -> str:
     )
     graph.add_relationship(pending_edge)
     live_edge = RelationshipInstance(
+        claim_id=mint_claim_id(),
         from_type="Part",
         from_id="BP-1",
         relationship_type="fits",
@@ -123,6 +126,7 @@ def governed_read_instance_id(tmp_project: Path) -> str:
         )
     )
     rejected_edge = RelationshipInstance(
+        claim_id=mint_claim_id(),
         from_type="Part",
         from_id="BP-1",
         relationship_type="fits",

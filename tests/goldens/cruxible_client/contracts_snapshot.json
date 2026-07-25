@@ -631,6 +631,18 @@
         "$defs": {
           "DirectWriteGroupInteraction": {
             "properties": {
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "edge_key": {
                 "anyOf": [
                   {
@@ -2913,6 +2925,18 @@
         "$defs": {
           "DirectWriteGroupInteraction": {
             "properties": {
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "edge_key": {
                 "anyOf": [
                   {
@@ -5836,6 +5860,26 @@
     },
     "DirectWriteGroupInteraction": {
       "fields": {
+        "claim_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          }
+        },
         "edge_key": {
           "default": null,
           "default_json_serializable": true,
@@ -5979,6 +6023,18 @@
       },
       "json_schema": {
         "properties": {
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          },
           "edge_key": {
             "anyOf": [
               {
@@ -6074,6 +6130,27 @@
     },
     "EdgeTargetInput": {
       "fields": {
+        "claim_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Stable claim identity. Preferred disambiguator when multiple edges share the same endpoints; takes precedence over edge_key. Supplying both with disagreeing values is refused, never silently resolved.",
+            "title": "Claim Id"
+          }
+        },
         "edge_key": {
           "default": null,
           "default_json_serializable": true,
@@ -6153,6 +6230,19 @@
       },
       "json_schema": {
         "properties": {
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Stable claim identity. Preferred disambiguator when multiple edges share the same endpoints; takes precedence over edge_key. Supplying both with disagreeing values is refused, never silently resolved.",
+            "title": "Claim Id"
+          },
           "edge_key": {
             "anyOf": [
               {
@@ -7452,6 +7542,19 @@
         "$defs": {
           "EdgeTargetInput": {
             "properties": {
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Stable claim identity. Preferred disambiguator when multiple edges share the same endpoints; takes precedence over edge_key. Supplying both with disagreeing values is refused, never silently resolved.",
+                "title": "Claim Id"
+              },
               "edge_key": {
                 "anyOf": [
                   {
@@ -8868,6 +8971,26 @@
     },
     "GetRelationshipResult": {
       "fields": {
+        "claim_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          }
+        },
         "corroboration": {
           "default": null,
           "default_json_serializable": true,
@@ -8994,6 +9117,18 @@
       },
       "json_schema": {
         "properties": {
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          },
           "corroboration": {
             "anyOf": [
               {
@@ -10789,6 +10924,18 @@
         "$defs": {
           "InspectNeighborResult": {
             "properties": {
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "corroboration": {
                 "anyOf": [
                   {
@@ -10915,6 +11062,26 @@
     },
     "InspectNeighborResult": {
       "fields": {
+        "claim_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          }
+        },
         "corroboration": {
           "default": null,
           "default_json_serializable": true,
@@ -11016,6 +11183,18 @@
       },
       "json_schema": {
         "properties": {
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          },
           "corroboration": {
             "anyOf": [
               {
@@ -11313,6 +11492,18 @@
           "NeighborhoodEdgeResult": {
             "description": "One returned edge of a bounded neighborhood read.\n\n``metadata`` keeps the assertion review/lifecycle markers so\npending/live/rejected/superseded edges never flatten together.",
             "properties": {
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "corroboration": {
                 "anyOf": [
                   {
@@ -15073,6 +15264,26 @@
     },
     "NeighborhoodEdgeResult": {
       "fields": {
+        "claim_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          }
+        },
         "corroboration": {
           "default": null,
           "default_json_serializable": true,
@@ -15190,6 +15401,18 @@
       "json_schema": {
         "description": "One returned edge of a bounded neighborhood read.\n\n``metadata`` keeps the assertion review/lifecycle markers so\npending/live/rejected/superseded edges never flatten together.",
         "properties": {
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          },
           "corroboration": {
             "anyOf": [
               {
@@ -17402,6 +17625,26 @@
     },
     "QueryGraphEdgeItem": {
       "fields": {
+        "claim_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          }
+        },
         "corroboration": {
           "default": null,
           "default_json_serializable": true,
@@ -17519,6 +17762,18 @@
       "json_schema": {
         "description": "One PHYSICAL relationship card in the shared graph-layout `edges` array.\n\nExactly the serialized edge payload minus the per-occurrence traversal\n`alias`: aliases are reference-level metadata (path step refs, include\nitem refs), so one physical edge is always one card even when visited\nunder several step aliases.",
         "properties": {
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          },
           "corroboration": {
             "anyOf": [
               {
@@ -19103,6 +19358,18 @@
           "QueryGraphEdgeItem": {
             "description": "One PHYSICAL relationship card in the shared graph-layout `edges` array.\n\nExactly the serialized edge payload minus the per-occurrence traversal\n`alias`: aliases are reference-level metadata (path step refs, include\nitem refs), so one physical edge is always one card even when visited\nunder several step aliases.",
             "properties": {
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "corroboration": {
                 "anyOf": [
                   {
@@ -19795,6 +20062,18 @@
                 "default": null,
                 "title": "Alias"
               },
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "corroboration": {
                 "anyOf": [
                   {
@@ -20054,6 +20333,18 @@
                 ],
                 "default": null,
                 "title": "Alias"
+              },
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
               },
               "corroboration": {
                 "anyOf": [
@@ -21086,6 +21377,18 @@
                 "default": null,
                 "title": "Alias"
               },
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "corroboration": {
                 "anyOf": [
                   {
@@ -21221,6 +21524,26 @@
             "title": "Alias"
           }
         },
+        "claim_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          }
+        },
         "corroboration": {
           "default": null,
           "default_json_serializable": true,
@@ -21349,6 +21672,18 @@
             ],
             "default": null,
             "title": "Alias"
+          },
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
           },
           "corroboration": {
             "anyOf": [
@@ -21724,6 +22059,18 @@
                 "default": null,
                 "title": "Alias"
               },
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "corroboration": {
                 "anyOf": [
                   {
@@ -21793,6 +22140,18 @@
           "QueryRelationshipItem": {
             "description": "Relationship-shaped row returned by relationship result queries.",
             "properties": {
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "corroboration": {
                 "anyOf": [
                   {
@@ -21931,6 +22290,26 @@
     },
     "QueryRelationshipItem": {
       "fields": {
+        "claim_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          }
+        },
         "corroboration": {
           "default": null,
           "default_json_serializable": true,
@@ -22227,6 +22606,18 @@
                 "default": null,
                 "title": "Alias"
               },
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "corroboration": {
                 "anyOf": [
                   {
@@ -22296,6 +22687,18 @@
         },
         "description": "Relationship-shaped row returned by relationship result queries.",
         "properties": {
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          },
           "corroboration": {
             "anyOf": [
               {
@@ -22970,6 +23373,18 @@
                 "default": null,
                 "title": "Alias"
               },
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "corroboration": {
                 "anyOf": [
                   {
@@ -23072,6 +23487,18 @@
           "QueryRelationshipItem": {
             "description": "Relationship-shaped row returned by relationship result queries.",
             "properties": {
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
               "corroboration": {
                 "anyOf": [
                   {

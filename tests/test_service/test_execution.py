@@ -12,7 +12,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.loader import load_config
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.service import (
@@ -427,6 +427,7 @@ def query_evidence_proposal_instance(tmp_path: Path) -> CruxibleInstance:
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="candidate_product",
             from_type="Campaign",
             from_id="CMP-1",
@@ -1333,6 +1334,7 @@ class TestWorkflowExecutionServices:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="candidate_product",
                 from_type="Campaign",
                 from_id="CMP-1",
@@ -1551,6 +1553,7 @@ class TestWorkflowExecutionServices:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="candidate_product",
                 from_type="Campaign",
                 from_id="CMP-1",
@@ -1619,6 +1622,7 @@ class TestWorkflowExecutionServices:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="candidate_product",
                 from_type="Campaign",
                 from_id="CMP-1",

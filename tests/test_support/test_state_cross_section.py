@@ -12,7 +12,7 @@ from tests.support.state_cross_section import (
 )
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import service_add_entities, service_add_relationships, service_query
 
@@ -207,6 +207,7 @@ def test_cross_section_includes_edge_key_only_for_same_pair_multi_edges(
     graph = instance.load_graph()
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             from_type="Part",
             from_id="BP-1234",
             relationship_type="fits",
@@ -217,6 +218,7 @@ def test_cross_section_includes_edge_key_only_for_same_pair_multi_edges(
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             from_type="Part",
             from_id="BP-1234",
             relationship_type="fits",

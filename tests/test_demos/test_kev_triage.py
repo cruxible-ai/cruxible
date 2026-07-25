@@ -15,7 +15,7 @@ from cruxible_core.config.loader import save_config
 from cruxible_core.errors import QueryExecutionError
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.evidence import RelationshipEvidence
-from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
+from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata, mint_claim_id
 from cruxible_core.kits import load_kit_provider_module, write_materialized_kit_metadata
 from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
 from cruxible_core.providers.common.tabular import load_tabular_artifact_bundle
@@ -1199,6 +1199,7 @@ def test_broad_context_queries_include_reviewable_provenance(
     }
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="asset_vulnerability_posture",
             from_type="Asset",
             from_id=asset_id,
@@ -1220,6 +1221,7 @@ def test_broad_context_queries_include_reviewable_provenance(
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="asset_vulnerability_posture",
             from_type="Asset",
             from_id=asset_id,
@@ -1244,6 +1246,7 @@ def test_broad_context_queries_include_reviewable_provenance(
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="vulnerability_classified_as",
             from_type="Vulnerability",
             from_id=cve_id,
@@ -1364,6 +1367,7 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
 
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="asset_remediated_vulnerability",
             from_type="Asset",
             from_id=asset_id,
@@ -1392,6 +1396,7 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="asset_patch_exception_for",
             from_type="Asset",
             from_id=asset_id,
@@ -1476,6 +1481,7 @@ def test_owner_patch_queue_excludes_non_exposed_posture_rows(tmp_path: Path) -> 
 
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="asset_vulnerability_posture",
             from_type="Asset",
             from_id=asset_id,
@@ -1552,6 +1558,7 @@ def test_owner_patch_queue_excludes_scoped_exception_pairs(tmp_path: Path) -> No
 
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="asset_patch_exception_for",
             from_type="Asset",
             from_id=asset_id,

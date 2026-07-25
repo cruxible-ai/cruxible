@@ -8,7 +8,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 
 # Re-use the car parts config from CLI tests
 from tests.test_cli.conftest import CAR_PARTS_YAML  # noqa: F401
@@ -84,6 +84,7 @@ def populated_graph() -> EntityGraph:
 
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1001",
@@ -94,6 +95,7 @@ def populated_graph() -> EntityGraph:
     )
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1001",
@@ -104,6 +106,7 @@ def populated_graph() -> EntityGraph:
     )
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1002",
@@ -114,6 +117,7 @@ def populated_graph() -> EntityGraph:
     )
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="replaces",
             from_type="Part",
             from_id="BP-1002",

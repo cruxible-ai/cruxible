@@ -1483,6 +1483,7 @@ def _neighborhood_payload(
                     "to_type": edge.to_type,
                     "to_id": edge.to_id,
                     "edge_key": edge.edge_key,
+                    "claim_id": getattr(edge, "claim_id", None),
                     "properties": edge.properties,
                     "metadata": edge.metadata,
                 },

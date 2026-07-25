@@ -1,7 +1,7 @@
 """Tests for edge_key in RelationshipInstance and get_relationship()."""
 
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 
 
 class TestRelationshipEdgeKey:
@@ -11,6 +11,7 @@ class TestRelationshipEdgeKey:
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V1", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P1",
@@ -32,6 +33,7 @@ class TestRelationshipEdgeKey:
         # Add two fits edges between same endpoints
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P1",
@@ -42,6 +44,7 @@ class TestRelationshipEdgeKey:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P1",
