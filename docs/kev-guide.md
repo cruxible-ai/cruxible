@@ -74,6 +74,15 @@ like everything else:
 ```bash
 cruxible state status
 cruxible state pull-preview
+```
+
+The preview is read-only, so a triage agent can run it and report the delta.
+Applying is an operator step: `cruxible state pull-apply` replaces the active
+config and the whole graph, so it sits at the ADMIN tier and is denied to
+governed-tier agents. Run it yourself from the local CLI operator console, or
+with an ADMIN-tier credential against the daemon:
+
+```bash
 cruxible state pull-apply
 ```
 

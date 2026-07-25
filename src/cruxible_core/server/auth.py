@@ -117,6 +117,16 @@ def get_current_auth_context() -> ResolvedAuthContext | None:
     return _AUTH_CONTEXT.get()
 
 
+def is_http_request_in_flight() -> bool:
+    """Return whether the calling code is serving a daemon HTTP request.
+
+    False for embedded/CLI/in-process callers, which reach the runtime facade
+    directly. Callers use this to distinguish "identity asserted by a remote
+    request body" from "identity asserted by the local process".
+    """
+    return _REQUEST_CONTEXT.get() is not None
+
+
 def set_current_operation_id(operation_id: str) -> None:
     """Record the effective governed operation id for request logging."""
     _REQUEST_OPERATION_ID.set(operation_id)
@@ -237,8 +247,6 @@ async def token_auth_middleware(
     call_next: Callable[[Request], Awaitable[Any]],
 ) -> Any:
     """Resolve auth context and request-scoped permission mode for incoming requests."""
-    if request.url.path in {HEALTH_PATH, VERSION_PATH} or is_ui_static_path(request.url.path):
-        return await call_next(request)
     # Reject browser-originated cross-origin API requests before any handler runs.
     # Programmatic clients send no Origin; this closes DNS-rebinding / malicious
     # webpage attacks against the loopback daemon without breaking CLI/SDK clients.
@@ -269,6 +277,12 @@ async def token_auth_middleware(
         and _request_media_type(request) != _JSON_MEDIA_TYPE
     ):
         return _forbidden_origin_response(request)
+    # Credential-free surfaces: liveness, version, and the bundled UI assets.
+    # They skip auth resolution but NOT the Origin allowlist above — a hostile
+    # page must not be able to fingerprint the loopback daemon by probing
+    # /health or /version from the browser.
+    if request.url.path in {HEALTH_PATH, VERSION_PATH} or is_ui_static_path(request.url.path):
+        return await call_next(request)
     if _is_bootstrap_claim_request(request):
         return await _call_next_with_request_log(request, call_next, auth_context=None)
 

@@ -93,13 +93,22 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     assert shown.status_code == 200, shown.text
     assert shown.json()["procedure"]["procedure_id"] == procedure_id
 
-    accepted = app_client.post(
+    # accept enforces reviewer independence, so an HTTP caller may not name the
+    # reviewer itself; the request is attributed to the local operator instead.
+    spoofed = app_client.post(
         f"/api/v1/{instance_id}/procedures/{procedure_id}/resolve",
         json={
             "action": "accept",
             "expected_version": 1,
             "actor_context": actor("http-reviewer").model_dump(mode="json"),
         },
+    )
+    assert spoofed.status_code == 401, spoofed.text
+    assert "reviewer independence" in spoofed.json()["message"]
+
+    accepted = app_client.post(
+        f"/api/v1/{instance_id}/procedures/{procedure_id}/resolve",
+        json={"action": "accept", "expected_version": 1},
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["procedure"]["status"] == "live"

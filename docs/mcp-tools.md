@@ -1429,7 +1429,7 @@ without it, only the active materialized digest is checked.
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Use when you observed evidence supporting, contradicting, or leaving you unsure about one relationship claim. Supply evidence for support or contradict; a note is optional but encouraged for unsure.
+**Purpose:** Use when you observed evidence supporting, contradicting, or leaving you unsure about one relationship claim. Supply evidence for support or contradict; a note is optional but encouraged for unsure. If the claim does not exist yet, a 'support' stance CREATES it as a pending (unreviewed) claim from 'properties' — 'contradict' and 'unsure' are refused on an absent claim.
 
 **Arguments:**
 
@@ -2118,7 +2118,7 @@ without it, only the active materialized digest is checked.
 
 ## cruxible_state_pull_apply
 
-**Permission:** `GOVERNED_WRITE`
+**Permission:** `ADMIN`
 
 **Purpose:** Use when a pull preview returned an apply digest and you are ready to apply it.
 
@@ -2129,7 +2129,7 @@ without it, only the active materialized digest is checked.
 | `instance_id` | yes | string |  |
 | `expected_apply_digest` | yes | string |  |
 
-**Returns:** Top-level fields: `release_id`, `apply_digest`, `pre_pull_snapshot_id`
+**Returns:** Top-level fields: `release_id`, `apply_digest`, `pre_pull_snapshot_id`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 

@@ -113,7 +113,11 @@ def _list_items(result: Any) -> list[dict[str, Any]]:
     help="JSON evidence ref. Required for support and contradict; repeatable.",
 )
 @click.option("--edge-key", type=int, default=None)
-@click.option("--properties", default=None, help="JSON properties for absent support only.")
+@click.option(
+    "--properties",
+    default=None,
+    help="JSON properties used when a support stance CREATES an absent claim as pending.",
+)
 @click.option("--note", default=None, help="Optional observation note; encouraged for unsure.")
 @click.option("--idempotency-key", default=None, help="Retry-safe caller key.")
 @json_option
@@ -133,7 +137,12 @@ def attest_record(
     idempotency_key: str | None,
     output_json: bool,
 ) -> None:
-    """Record one observation against a relationship claim."""
+    """Record one observation against a relationship claim.
+
+    If the claim does not exist yet, --stance support CREATES it as a pending
+    (unreviewed) claim from --properties; contradict and unsure are refused on
+    an absent claim.
+    """
     parsed_evidence = _parse_evidence_refs(evidence_refs)
     parsed_properties = _parse_object(properties, option="--properties")
     result = _dispatch_cli_instance(

@@ -8,7 +8,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from cruxible_core.config.composer import (
     compose_runtime_config_files,
@@ -25,6 +25,7 @@ from cruxible_core.kits import (
     resolve_verified_kit_bundle,
 )
 from cruxible_core.kits.state_refs import resolve_state_source
+from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.server.auth_managed_entities import (
     materialize_local_operator_auth_managed_entities,
@@ -50,6 +51,9 @@ from cruxible_core.transport.backends import (
     resolve_transport,
 )
 from cruxible_core.transport.types import PulledReleaseBundle
+
+if TYPE_CHECKING:
+    from cruxible_core.storage.protocols import UnitOfWorkProtocol
 
 _logger = logging.getLogger(__name__)
 
@@ -342,9 +346,7 @@ def service_pull_state_apply(
     # before this materialization. Revisit if overlay state ever becomes
     # writable OUTSIDE the guarded write paths, or if a guard kind is added
     # that evaluates static graph shape rather than per-write transitions.
-    instance.save_graph(merged)
-    materialize_local_operator_auth_managed_entities(instance)
-
+    materialized_digests = _materialized_upstream_digests(upstream_dir)
     updated = UpstreamMetadata(
         transport_ref=upstream.transport_ref,
         requested_source_ref=upstream.requested_source_ref,
@@ -362,15 +364,103 @@ def service_pull_state_apply(
         graph_path=str((upstream_dir / "graph.json").relative_to(root)),
         upstream_config_path=str((upstream_dir / "config.yaml").relative_to(root)),
         lock_path=str((upstream_dir / "cruxible.lock.yaml").relative_to(root)),
-        **_materialized_upstream_digests(upstream_dir),
+        **materialized_digests,
     )
+    # ONE commit boundary for the state replacement AND its receipt.
+    #
+    # Before this the graph replacement committed on its own and the receipt was
+    # persisted in a SECOND transaction afterwards, so a crash (or any failure)
+    # between them left the state applied and unreceipted while the caller saw an
+    # error — the overlay could not answer "which release put this state here"
+    # for the very apply that had actually happened. ``write_transaction`` is
+    # re-entrant, so ``save_graph`` and ``save_graph_delta`` below join THIS
+    # boundary instead of opening their own: graph rows and receipt row now land
+    # in the same commit, or neither does.
+    #
+    # NOTE (dispute with the review's framing): upstream metadata and the lock
+    # file are NOT writes to the state store. ``set_upstream_metadata`` rewrites
+    # ``.cruxible/instance.json`` and ``service_lock`` writes
+    # ``cruxible.lock.yaml`` — plain filesystem writes that cannot enlist in a
+    # SQLite transaction. They are therefore ordered AFTER the durable commit on
+    # purpose: a crash there leaves the graph applied and RECEIPTED with stale
+    # bookkeeping, which a re-run repairs, whereas doing them first would leave
+    # instance.json advertising a release whose graph had been rolled back.
+    with instance.write_transaction() as uow:
+        instance.save_graph(merged)
+        materialize_local_operator_auth_managed_entities(instance)
+        receipt_id = _record_state_pull_apply_receipt(
+            instance,
+            uow,
+            previous_release_id=upstream.release_id,
+            updated=updated,
+            apply_digest=preview.apply_digest,
+            pre_pull_snapshot_id=pre_pull_snapshot_id,
+            materialized_digests=materialized_digests,
+            actor_context=actor_context,
+        )
+
     instance.set_upstream_metadata(updated)
     service_lock(instance)
     return StatePullApplyResult(
         release_id=updated.release_id,
         apply_digest=preview.apply_digest,
         pre_pull_snapshot_id=pre_pull_snapshot_id,
+        receipt_id=receipt_id,
     )
+
+
+def _record_state_pull_apply_receipt(
+    instance: InstanceProtocol,
+    uow: UnitOfWorkProtocol,
+    *,
+    previous_release_id: str | None,
+    updated: UpstreamMetadata,
+    apply_digest: str,
+    pre_pull_snapshot_id: str,
+    materialized_digests: _MaterializedUpstreamDigests,
+    actor_context: GovernedActorContext | None,
+) -> str:
+    """Mint the audit receipt for a completed pull-apply.
+
+    Pull-apply replaces the active config AND the whole graph from an upstream
+    release. Before this it was the only write of that magnitude that left no
+    receipt, so an overlay could not answer "which release put this state here"
+    from its own audit trail. The receipt pins the release identity on both
+    sides of the move plus every materialized member digest, which is exactly
+    what ``snapshot.upstream_verification`` later re-checks reads against.
+
+    Persisted through the CALLER'S ``uow`` — never its own
+    ``write_transaction`` — so the receipt shares the commit boundary of the
+    graph replacement it describes. Taking a fresh boundary here is what made
+    the receipt separately losable.
+    """
+    builder = ReceiptBuilder(
+        query_name="state_pull_apply",
+        operation_type="state_pull_apply",
+        parameters={
+            "state_id": updated.state_id,
+            "previous_release_id": previous_release_id,
+            "release_id": updated.release_id,
+            "snapshot_id": updated.snapshot_id,
+            "transport_ref": updated.transport_ref,
+            "apply_digest": apply_digest,
+            "pre_pull_snapshot_id": pre_pull_snapshot_id,
+            "members_digest": updated.members_digest,
+            **materialized_digests,
+        },
+        actor_context=actor_context,
+    )
+    try:
+        builder.stamp_state_coordinates(
+            head_snapshot_id=instance.get_head_snapshot_id(),
+            read_revision=instance.get_read_revision(),
+        )
+    except Exception:  # pragma: no cover - coordinate read is advisory
+        _logger.warning("Failed to read state coordinates for pull-apply receipt", exc_info=True)
+    builder.mark_committed()
+    receipt = builder.build()
+    uow.receipts.save_receipt(receipt)
+    return receipt.receipt_id
 
 
 def _pull_bundle(transport_ref: str) -> tuple[PulledReleaseBundle, list[str]]:

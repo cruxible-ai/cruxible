@@ -9,6 +9,18 @@ validated lifecycle and never hand-authors a metadata dict.
 Review safety: ``RelationshipLifecycleInput`` carries only ``status``/``reason``;
 mapping it to ``RelationshipLifecycleState`` cannot produce review/group_override
 state, and ``apply_relationship`` writes only ``assertion.lifecycle`` from it.
+
+Terminal statuses are NOT writable through this channel — see
+:data:`TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES` and
+:data:`TERMINAL_ENTITY_LIFECYCLE_STATUSES`.
+
+These mapper refusals are the EARLY, friendly ones: they fire on the contract
+payload, before any graph work, so an HTTP/MCP caller gets the teaching message
+attached to the field it supplied. They are NOT the guarantee. The guarantee
+lives at the graph write chokepoint (``graph/operations.py``:
+``apply_entity`` / ``apply_relationship``), which every free-write path shares
+including the exported service functions and the local CLI. Both refusals raise
+the same :class:`TerminalLifecycleWriteRefusedError`.
 """
 
 from __future__ import annotations
@@ -16,13 +28,28 @@ from __future__ import annotations
 from typing import Any
 
 from cruxible_client import contracts
+from cruxible_core.errors import TerminalLifecycleWriteRefusedError
+from cruxible_core.graph.assertion_state import (
+    TERMINAL_ENTITY_LIFECYCLE_STATUSES,
+    TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES,
+    WRITABLE_ENTITY_LIFECYCLE_STATUSES,
+    WRITABLE_RELATIONSHIP_LIFECYCLE_STATUSES,
+    RelationshipLifecycleState,
+)
 from cruxible_core.graph.assertion_state import (
     EntityLifecycleState as _EntityLifecycleState,
 )
-from cruxible_core.graph.assertion_state import (
-    RelationshipLifecycleState,
-)
 from cruxible_core.graph.types import EntityMetadata
+
+
+def _refuse_terminal_lifecycle(status: str, *, kind: str, writable: str) -> None:
+    """Refuse a terminal lifecycle status arriving on a contract payload.
+
+    The early, friendly half of the refusal — see this module's docstring. The
+    binding one is at the graph chokepoint; this one only saves an HTTP/MCP
+    caller a round trip through validation to reach the same answer.
+    """
+    raise TerminalLifecycleWriteRefusedError(kind, status, writable)
 
 
 def entity_metadata_with_lifecycle(
@@ -41,6 +68,12 @@ def entity_metadata_with_lifecycle(
     undecorated entity at its default ``live`` state.
     """
     extra = dict(metadata or {})
+    if lifecycle is not None and lifecycle.status in TERMINAL_ENTITY_LIFECYCLE_STATUSES:
+        _refuse_terminal_lifecycle(
+            lifecycle.status,
+            kind="entity",
+            writable=WRITABLE_ENTITY_LIFECYCLE_STATUSES,
+        )
     typed_lifecycle = (
         _EntityLifecycleState(status=lifecycle.status, reason=lifecycle.reason)
         if lifecycle is not None
@@ -59,10 +92,18 @@ def relationship_lifecycle_state(
     """
     if lifecycle is None:
         return None
+    if lifecycle.status in TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES:
+        _refuse_terminal_lifecycle(
+            lifecycle.status,
+            kind="relationship",
+            writable=WRITABLE_RELATIONSHIP_LIFECYCLE_STATUSES,
+        )
     return RelationshipLifecycleState(status=lifecycle.status, reason=lifecycle.reason)
 
 
 __all__ = [
+    "TERMINAL_ENTITY_LIFECYCLE_STATUSES",
+    "TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES",
     "entity_metadata_with_lifecycle",
     "relationship_lifecycle_state",
 ]

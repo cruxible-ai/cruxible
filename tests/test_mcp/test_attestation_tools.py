@@ -30,6 +30,29 @@ def test_attestation_tools_are_registered_with_prompt_descriptions_and_schemas()
     assert verdict["enum"] == ["upheld", "corrected", "invalidated"]
 
 
+def test_attest_surfaces_state_that_support_on_an_absent_claim_creates_it() -> None:
+    """D2 stands, but it must not be a surprise: attesting can WRITE a new claim.
+
+    A ``support`` stance on a tuple that does not exist creates it as a pending
+    claim. Every caller-facing description has to say so, or an agent reaches
+    for ``attest`` believing it is a pure observation.
+    """
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.commands.attestations import attest_record
+
+    mcp_description = tool_description("cruxible_attest")
+    assert "creates" in mcp_description.lower()
+    assert "pending" in mcp_description.lower()
+
+    registered = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
+    assert "pending" in registered["cruxible_attest"].description.lower()
+
+    cli_help = CliRunner().invoke(attest_record, ["--help"]).output
+    assert "creates" in cli_help.lower()
+    assert "pending" in cli_help.lower()
+
+
 def test_attestation_permission_map_matches_stage_d_tiers() -> None:
     assert TOOL_PERMISSIONS["cruxible_attest"] == PermissionMode.GOVERNED_WRITE
     assert TOOL_PERMISSIONS["cruxible_resolve_attestation"] == PermissionMode.GRAPH_WRITE

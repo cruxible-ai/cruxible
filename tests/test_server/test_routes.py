@@ -263,10 +263,22 @@ def _seed_car_parts_state(client: TestClient, instance_id: str) -> None:
     assert response.status_code == 200
 
 
-def test_health_endpoint_returns_ok(app_client: TestClient):
+def test_health_endpoint_returns_liveness_only(app_client: TestClient):
+    """/health is unauthenticated, so it must not disclose the capability ceiling."""
     response = app_client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "capability_ceiling": "admin"}
+    assert response.json() == {"status": "ok"}
+
+
+def test_health_and_version_honor_the_origin_allowlist(app_client: TestClient):
+    """Credential-free routes skip auth, not the cross-origin gate."""
+    for path in ("/health", "/version"):
+        allowed = app_client.get(path, headers={"Origin": "http://127.0.0.1:8100"})
+        assert allowed.status_code == 200, allowed.text
+
+        blocked = app_client.get(path, headers={"Origin": "http://evil.example"})
+        assert blocked.status_code == 403, blocked.text
+        assert blocked.json()["error_type"] == "OriginNotAllowedError"
 
 
 def test_request_validation_errors_use_error_response_envelope(app_client: TestClient):
@@ -362,6 +374,48 @@ def test_daemon_auth_defaults_to_disabled_for_local_server(
     response = client.post("/api/v1/validate", json={"config_yaml": CAR_PARTS_YAML})
     assert response.status_code == 200
     assert response.json()["valid"] is True
+
+
+def test_validate_config_path_is_confined_to_allowed_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POST /validate must not be a host file-existence oracle for READ_ONLY callers.
+
+    ``config_path`` is a caller-controlled absolute path that the service used to
+    resolve and load unconditionally. Distinguishable errors for "missing file"
+    vs "not YAML" vs "invalid config" leaked host layout, and a parse failure
+    could echo fragments of a file the caller may not read.
+    """
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    good = allowed / "config.yaml"
+    good.write_text(CAR_PARTS_YAML)
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "config.yaml"
+    secret.write_text(CAR_PARTS_YAML)
+
+    client = _make_app_client(tmp_path, monkeypatch)
+    monkeypatch.setenv("CRUXIBLE_ALLOWED_ROOTS", str(allowed.resolve()))
+    reset_permissions()
+
+    inside = client.post("/api/v1/validate", json={"config_path": str(good.resolve())})
+    assert inside.status_code == 200, inside.text
+    assert inside.json()["valid"] is True
+
+    refused = client.post("/api/v1/validate", json={"config_path": str(secret.resolve())})
+    assert refused.status_code == 400, refused.text
+    assert "not under any allowed root" in refused.json()["message"]
+
+    # The refusal is identical for a path that does not exist at all: no oracle.
+    missing = client.post(
+        "/api/v1/validate",
+        json={"config_path": str(outside / "does-not-exist.yaml")},
+    )
+    assert missing.status_code == 400
+    assert "not under any allowed root" in missing.json()["message"]
 
 
 def test_runtime_credential_gates_entire_daemon(
@@ -3454,12 +3508,24 @@ def test_http_entity_lifecycle_gating_parity(
     selector reaches the HTTP ``GET /list/entities`` route, while the by-id
     ``GET /entities/{type}/{id}`` route is NOT gated and reveals lifecycle status.
     """
+    from cruxible_core.errors import TerminalLifecycleWriteRefusedError
+    from cruxible_core.graph.assertion_state import EntityLifecycleState
+    from cruxible_core.graph.types import EntityMetadata
+    from cruxible_core.runtime.instance_manager import get_manager
+    from cruxible_core.service.mutations import service_batch_direct_write
+    from cruxible_core.service.types import BatchDirectWriteInput, EntityWriteInput
+    from tests.support.terminal_lifecycle import seed_entity_lifecycle
+
     instance_id = _init_instance(app_client, server_project)
     _seed_car_parts_state(app_client, instance_id)
 
-    # Retire BP-1001 via the batch-direct-write path using the typed lifecycle
-    # field (the only lifecycle write channel; no hand-authored metadata blob).
-    retire = app_client.post(
+    # Terminal lifecycle is not free-writable ANYWHERE any more: the HTTP route
+    # refuses it (below), and so does the exported service function the local CLI
+    # calls -- the refusal moved to the graph chokepoint every write path shares.
+    # The retired state is therefore seeded through the trusted capability the
+    # future receipted verbs will carry. The gating assertions below are about
+    # READS, not the write channel.
+    refused = app_client.post(
         f"/api/v1/{instance_id}/direct-writes/batch",
         json={
             "payload": {
@@ -3475,7 +3541,32 @@ def test_http_entity_lifecycle_gating_parity(
             "dry_run": False,
         },
     )
-    assert retire.status_code == 200
+    assert refused.status_code == 403, refused.text
+    assert "terminal lifecycle transitions require" in refused.json()["message"]
+
+    instance = get_manager().get(instance_id)
+
+    # The service layer refuses the SAME write the route just refused — that is
+    # the hole this closes: the route was gated but the service function under it
+    # (the local CLI's channel) was not.
+    with pytest.raises(TerminalLifecycleWriteRefusedError):
+        service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="Part",
+                        entity_id="BP-1001",
+                        properties={},
+                        metadata=EntityMetadata(
+                            lifecycle=EntityLifecycleState(status="retired")
+                        ).to_metadata_dict(),
+                    )
+                ]
+            ),
+        )
+
+    seed_entity_lifecycle(instance, "Part", "BP-1001", "retired")
 
     def _ids(params: dict[str, str]) -> set[str]:
         resp = app_client.get(f"/api/v1/{instance_id}/list/entities", params=params)

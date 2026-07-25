@@ -439,13 +439,21 @@ not a state you set.
 - **Default is `live`.** An entity with no `lifecycle` metadata is treated as
   live, so existing data needs no migration to keep current behavior.
 - Set it through the **typed lifecycle write channel** — `entity update
-  --lifecycle-status retired [--lifecycle-reason "…"]`, or `batch-direct-write`
+  --lifecycle-status … [--lifecycle-reason "…"]`, or `batch-direct-write`
   with the typed `lifecycle` field on the entity input. The status is validated
   against the entity lifecycle vocabulary; lifecycle is a **typed field**, not a
   free-form metadata blob. A `lifecycle` key inside free-form `metadata` is **not**
   a way to set it — it is carried inertly as ordinary metadata (under the typed
   envelope's free-form slot) and never changes the entity's lifecycle. There is no
-  reserved metadata key and no special retire verb.
+  reserved metadata key.
+- **The terminal statuses are not writable on that channel.** `retired` and
+  `superseded` are refused on `entity add`/`update` and `batch-direct-write`
+  (`terminal_lifecycle_write_refused`) — retiring a claim is a governed
+  judgement, not a property edit. Only `live` is freely writable here (for
+  relationships: `active`/`inactive`). The dedicated receipted lifecycle verbs
+  land in `wi-lifecycle-verbs`; meanwhile record a contradiction with
+  `cruxible attest record --stance contradict` or use the review machinery
+  (`cruxible feedback`).
 - **Read gating is uniform.** Every read path (`query`, `list entities`,
   traversal/relationship reads, and the MCP/HTTP equivalents) defaults to
   **live-only**: a `retired`/`superseded` entity is hidden. The one

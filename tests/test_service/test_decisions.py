@@ -21,6 +21,7 @@ from cruxible_core.service import (
     service_list_decision_events,
     service_lock,
     service_query,
+    service_query_inline_surface,
     service_run,
 )
 from cruxible_core.service.decisions import digest_payload
@@ -176,6 +177,48 @@ def test_decision_event_actor_context_round_trips_through_store(
     assert events[0].actor_context.operation_id == "op_event"
 
 
+def test_inline_query_against_a_closed_record_is_refused(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """The inline-query surface carries the same guard as the named-query one."""
+    record = service_create_decision_record(
+        populated_instance,
+        question="Should we investigate this vehicle impact?",
+    ).record
+    service_finalize_decision_record(
+        populated_instance,
+        record.decision_record_id,
+        final_decision="No action",
+        decision_class="deferred",
+    )
+
+    with pytest.raises(ConfigError, match="is not open"):
+        service_query_inline_surface(
+            populated_instance,
+            {
+                "name": "all_parts",
+                "mode": "collection",
+                "returns": "Part",
+                "result_shape": "entity",
+            },
+            {},
+            context=OperationContext(decision_record_id=record.decision_record_id, surface="cli"),
+        )
+
+
+def test_query_against_a_missing_record_is_refused(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """Naming a record that does not exist is a caller error, not a silent no-op."""
+    with pytest.raises(ConfigError, match="not found"):
+        service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+            context=OperationContext(decision_record_id="DR-does-not-exist", surface="cli"),
+        )
+
+
 def test_query_decision_record_context_records_audit_event(
     populated_instance: CruxibleInstance,
 ) -> None:
@@ -323,9 +366,16 @@ def test_auto_log_store_open_failure_does_not_fail_underlying_workflow(
     assert result.output["decision"] == "approve"
 
 
-def test_closed_record_auto_log_race_is_best_effort(
+def test_query_against_a_closed_record_is_refused_like_the_workflow_path(
     populated_instance: CruxibleInstance,
 ) -> None:
+    """A read naming a closed record is refused up front, not silently unrecorded.
+
+    Before this guard the query ran, the event append failed inside a swallowed
+    handler, and the caller got a success with nothing in the record — the
+    closure meant nothing to the read path. Now it refuses exactly as the
+    workflow path does.
+    """
     record = service_create_decision_record(
         populated_instance,
         question="Should we investigate this vehicle impact?",
@@ -337,18 +387,18 @@ def test_closed_record_auto_log_race_is_best_effort(
         decision_class="deferred",
     )
 
-    query = service_query(
-        populated_instance,
-        "parts_for_vehicle",
-        {"vehicle_id": "V-2024-CIVIC-EX"},
-        context=OperationContext(decision_record_id=record.decision_record_id, surface="cli"),
-    )
+    with pytest.raises(ConfigError, match="is not open"):
+        service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+            context=OperationContext(decision_record_id=record.decision_record_id, surface="cli"),
+        )
 
     events = service_list_decision_events(
         populated_instance,
         decision_record_id=record.decision_record_id,
     ).items
-    assert query.receipt_id is not None
     assert events == []
 
     started_at = datetime.now(timezone.utc)

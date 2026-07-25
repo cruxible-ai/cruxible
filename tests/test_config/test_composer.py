@@ -955,3 +955,219 @@ named_queries:
             )
 
         assert not output_path.exists()
+
+
+class TestExtendsRootConfinement:
+    """Per-layer root confinement on the recursive ``extends`` chain.
+
+    Confining only the ENTRY config left the escape one hop away: an in-root file
+    (or inline YAML) whose ``extends`` points outside pulls an arbitrary host file
+    through ``load_config``, and the pre-load ``exists()`` probe is itself a
+    file-existence oracle. These tests drive the composer directly, which is the
+    layer every surface (``/validate``, ``init``, ``/config/reload``, the CLI)
+    shares.
+    """
+
+    _REFUSAL = "not under any allowed root"
+
+    @staticmethod
+    def _write_layer(
+        path: Path, *, name: str, entity_type: str, extends: str | None = None
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        extends_line = f"extends: {extends}\n" if extends is not None else ""
+        path.write_text(
+            "version: '1.0'\n"
+            f"name: {name}\n"
+            f"{extends_line}"
+            "entity_types:\n"
+            f"  {entity_type}:\n"
+            "    properties:\n"
+            f"      {entity_type.lower()}_id: {{type: string, primary_key: true}}\n"
+            "relationships: []\n"
+        )
+
+    @staticmethod
+    def _confine(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+        """Point ``CRUXIBLE_ALLOWED_ROOTS`` at ``root``, with the cache reset both ways.
+
+        The allowed-roots list is parsed once and cached at module level, so the
+        cache is cleared through ``monkeypatch.setattr`` (which restores it on
+        teardown) rather than by calling ``reset_permissions`` and leaking a
+        confined cache into the next test in this process.
+        """
+        root.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("CRUXIBLE_ALLOWED_ROOTS", str(root.resolve()))
+        monkeypatch.setattr(
+            "cruxible_core.runtime.permissions._cached_allowed_roots",
+            False,
+        )
+
+    def test_out_of_root_extends_from_an_in_root_file_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The transitive case: the entry config is in-root, its parent is not."""
+        allowed = tmp_path / "allowed"
+        outside = tmp_path / "outside"
+        self._write_layer(outside / "config.yaml", name="secret", entity_type="Secret")
+        self._write_layer(
+            allowed / "config.yaml",
+            name="entry",
+            entity_type="Actor",
+            extends="../outside/config.yaml",
+        )
+        entry = allowed / "config.yaml"
+        config = load_config(entry)
+
+        self._confine(monkeypatch, allowed)
+        with pytest.raises(ConfigError, match=self._REFUSAL):
+            resolve_config_layers(config, config_path=entry)
+
+    def test_transitive_second_hop_out_of_root_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Recursion means the check runs on every hop, not just the first."""
+        allowed = tmp_path / "allowed"
+        outside = tmp_path / "outside"
+        self._write_layer(outside / "config.yaml", name="secret", entity_type="Secret")
+        self._write_layer(
+            allowed / "mid" / "config.yaml",
+            name="mid",
+            entity_type="WorkItem",
+            extends="../../../outside/config.yaml",
+        )
+        self._write_layer(
+            allowed / "config.yaml",
+            name="entry",
+            entity_type="Actor",
+            extends="mid/config.yaml",
+        )
+        entry = allowed / "config.yaml"
+        config = load_config(entry)
+
+        self._confine(monkeypatch, allowed)
+        with pytest.raises(ConfigError, match=self._REFUSAL):
+            resolve_config_layers(config, config_path=entry)
+
+    def test_inline_absolute_extends_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Inline YAML with an ABSOLUTE extends cannot reach out of root either.
+
+        This is the shape a ``config_yaml`` upload takes: no file identity of its
+        own, so the only path the composer sees is the absolute one the caller
+        wrote.
+        """
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        outside = tmp_path / "outside"
+        self._write_layer(outside / "config.yaml", name="secret", entity_type="Secret")
+        inline = load_config_from_string(
+            "version: '1.0'\n"
+            "name: inline\n"
+            f"extends: {(outside / 'config.yaml').resolve()}\n"
+            "entity_types: {}\n"
+            "relationships: []\n"
+        )
+
+        self._confine(monkeypatch, allowed)
+        with pytest.raises(ConfigError, match=self._REFUSAL):
+            resolve_config_layers(inline, config_dir=allowed)
+
+    def test_symlink_escape_is_refused_on_its_resolved_target(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An in-root symlink pointing out of root is judged on where it POINTS."""
+        allowed = tmp_path / "allowed"
+        outside = tmp_path / "outside"
+        self._write_layer(outside / "config.yaml", name="secret", entity_type="Secret")
+        allowed.mkdir(exist_ok=True)
+        link = allowed / "base.yaml"
+        link.symlink_to((outside / "config.yaml").resolve())
+        self._write_layer(
+            allowed / "config.yaml",
+            name="entry",
+            entity_type="Actor",
+            extends="base.yaml",
+        )
+        entry = allowed / "config.yaml"
+        config = load_config(entry)
+
+        self._confine(monkeypatch, allowed)
+        with pytest.raises(ConfigError, match=self._REFUSAL):
+            resolve_config_layers(config, config_path=entry)
+
+    def test_refusal_is_identical_for_existing_and_missing_targets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No per-path oracle: presence out of root is indistinguishable from absence.
+
+        The confinement runs BEFORE ``exists()``, so both cases raise the same
+        message. A caller cannot use ``extends`` to probe host layout.
+        """
+        allowed = tmp_path / "allowed"
+        outside = tmp_path / "outside"
+        self._write_layer(outside / "present.yaml", name="secret", entity_type="Secret")
+        allowed.mkdir(exist_ok=True)
+
+        def _refusal_for(target: Path) -> str:
+            entry = allowed / "config.yaml"
+            self._write_layer(
+                entry,
+                name="entry",
+                entity_type="Actor",
+                extends=str(target),
+            )
+            config = load_config(entry)
+            with pytest.raises(ConfigError) as excinfo:
+                resolve_config_layers(config, config_path=entry)
+            return str(excinfo.value).replace(str(target), "<TARGET>")
+
+        self._confine(monkeypatch, allowed)
+        present = _refusal_for((outside / "present.yaml").resolve())
+        missing = _refusal_for((outside / "absent.yaml").resolve())
+        assert present == missing
+        assert self._REFUSAL in present
+
+    def test_in_root_extends_still_composes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The confinement is a fence, not a wall: in-root chains keep working."""
+        allowed = tmp_path / "allowed"
+        self._write_layer(allowed / "base" / "config.yaml", name="base", entity_type="Actor")
+        self._write_layer(
+            allowed / "overlay" / "config.yaml",
+            name="overlay",
+            entity_type="WorkItem",
+            extends="../base/config.yaml",
+        )
+        entry = allowed / "overlay" / "config.yaml"
+        config = load_config(entry)
+
+        self._confine(monkeypatch, allowed)
+        layers = resolve_config_layers(config, config_path=entry)
+        composed = compose_config_sequence(layers)
+        assert list(composed.entity_types) == ["Actor", "WorkItem"]
+
+    def test_unconfigured_roots_leave_extends_unrestricted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With ``CRUXIBLE_ALLOWED_ROOTS`` unset the local operator is unaffected."""
+        monkeypatch.delenv("CRUXIBLE_ALLOWED_ROOTS", raising=False)
+        monkeypatch.setattr(
+            "cruxible_core.runtime.permissions._cached_allowed_roots",
+            False,
+        )
+        outside = tmp_path / "outside"
+        entry_dir = tmp_path / "entry"
+        self._write_layer(outside / "config.yaml", name="base", entity_type="Actor")
+        self._write_layer(
+            entry_dir / "config.yaml",
+            name="entry",
+            entity_type="WorkItem",
+            extends="../outside/config.yaml",
+        )
+        entry = entry_dir / "config.yaml"
+        layers = resolve_config_layers(load_config(entry), config_path=entry)
+        composed = compose_config_sequence(layers)
+        assert list(composed.entity_types) == ["Actor", "WorkItem"]

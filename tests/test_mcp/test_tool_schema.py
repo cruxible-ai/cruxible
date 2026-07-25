@@ -380,6 +380,8 @@ class TestOutputSchema:
                 {
                     "relationship_type",
                     "feedback_count",
+                    "feedback_population_count",
+                    "truncated",
                     "action_counts",
                     "source_counts",
                     "reason_code_counts",
@@ -398,6 +400,8 @@ class TestOutputSchema:
                 {
                     "anchor_type",
                     "outcome_count",
+                    "outcome_population_count",
+                    "truncated",
                     "outcome_counts",
                     "outcome_code_counts",
                     "coded_groups",

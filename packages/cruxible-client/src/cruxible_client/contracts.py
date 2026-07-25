@@ -1771,6 +1771,7 @@ class StatePullApplyResult(BaseModel):
     release_id: str
     apply_digest: str
     pre_pull_snapshot_id: str
+    receipt_id: str | None = None
 
 
 class ProposeGroupToolResult(BaseModel):
@@ -1857,6 +1858,8 @@ class ProviderFixCandidate(BaseModel):
 class AnalyzeFeedbackResult(BaseModel):
     relationship_type: str
     feedback_count: int
+    feedback_population_count: int = 0
+    truncated: bool = False
     action_counts: dict[str, int] = Field(default_factory=dict)
     source_counts: dict[str, int] = Field(default_factory=dict)
     reason_code_counts: dict[str, int] = Field(default_factory=dict)
@@ -1947,6 +1950,8 @@ class DebugPackage(BaseModel):
 class AnalyzeOutcomesResult(BaseModel):
     anchor_type: OutcomeAnchorType
     outcome_count: int
+    outcome_population_count: int = 0
+    truncated: bool = False
     outcome_counts: dict[str, int] = Field(default_factory=dict)
     outcome_code_counts: dict[str, int] = Field(default_factory=dict)
     coded_groups: list[OutcomeGroupSummary] = Field(default_factory=list)

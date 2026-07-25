@@ -184,7 +184,6 @@ class TestCheckPermission:
         check_permission("cruxible_add_constraint")
         check_permission("cruxible_add_decision_policy")
         check_permission("cruxible_create_snapshot")
-        check_permission("cruxible_state_pull_apply")
 
     def test_graph_write_tools_denied_in_governed_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
@@ -196,6 +195,20 @@ class TestCheckPermission:
             check_permission("cruxible_resolve_group")
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_apply_workflow")
+
+    def test_state_pull_apply_requires_admin(self, monkeypatch):
+        """Pull-apply replaces the active config and the whole graph — ADMIN, not governed."""
+        for mode in ("governed_write", "graph_write"):
+            monkeypatch.setenv("CRUXIBLE_MODE", mode)
+            reset_permissions()
+            init_permissions()
+            with pytest.raises(PermissionDeniedError):
+                check_permission("cruxible_state_pull_apply")
+
+        monkeypatch.setenv("CRUXIBLE_MODE", "admin")
+        reset_permissions()
+        init_permissions()
+        check_permission("cruxible_state_pull_apply")
 
     def test_admin_tool_denied_in_graph_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
@@ -280,6 +293,29 @@ class TestAuditLogging:
         check_permission("cruxible_schema")
         output = self._log_buffer.getvalue()
         assert "mutation_allowed" not in output
+
+    def test_batch_direct_write_audits_the_operation_actually_invoked(self, monkeypatch):
+        """The audit record names batch_direct_write, not add_entity/add_relationship.
+
+        The facade used to gate on the two component tools, so every allow and
+        deny record described an operation the caller never called, while the
+        registered ``cruxible_batch_direct_write`` entry was never exercised.
+        """
+        from cruxible_client import contracts
+        from cruxible_core.runtime import api
+
+        monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+        reset_permissions()
+        init_permissions()
+
+        with pytest.raises(PermissionDeniedError) as denied:
+            api.batch_direct_write("inst-audit", contracts.BatchDirectWritePayload())
+
+        assert denied.value.tool_name == "cruxible_batch_direct_write"
+        output = self._log_buffer.getvalue()
+        assert "cruxible_batch_direct_write" in output
+        assert "cruxible_add_entity" not in output
+        assert "cruxible_add_relationship" not in output
 
     def test_denial_logged_as_warning(self, monkeypatch):
         """Blocked call emits warning-level log."""
@@ -467,6 +503,111 @@ class TestAllowedRoots:
         reset_permissions()
         with pytest.raises(ConfigError, match="relative path"):
             init_permissions()
+
+
+class TestConfigPathConfinement:
+    """``config_path`` on the sibling entrypoints, not just ``validate``.
+
+    ``validate`` was confined in the preceding batch, but ``init_local`` and
+    ``reload_config`` take the same caller-supplied ``config_path`` and read (and
+    for reload, ACTIVATE) whatever it points at. Both were unconfined, so the
+    escape ``validate`` closed stayed open next door.
+    """
+
+    _CONFIG = (
+        "version: '1.0'\n"
+        "name: confinement\n"
+        "entity_types:\n"
+        "  Actor:\n"
+        "    properties:\n"
+        "      actor_id: {type: string, primary_key: true}\n"
+        "relationships: []\n"
+    )
+
+    @staticmethod
+    def _confine(monkeypatch, root):
+        monkeypatch.setenv("CRUXIBLE_ALLOWED_ROOTS", str(root.resolve()))
+        reset_permissions()
+        init_permissions()
+
+    def test_init_local_refuses_out_of_root_config_path(self, monkeypatch, tmp_path):
+        from cruxible_core.runtime import api
+
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        secret = outside / "config.yaml"
+        secret.write_text(self._CONFIG)
+
+        self._confine(monkeypatch, allowed)
+        with pytest.raises(ConfigError, match="not under any allowed root"):
+            api.init_local(str(allowed / "inst"), config_path=str(secret))
+
+    def test_init_local_refusal_is_identical_for_a_missing_config_path(self, monkeypatch, tmp_path):
+        """No oracle: the refusal does not reveal whether the file is there."""
+        from cruxible_core.runtime import api
+
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        present = outside / "config.yaml"
+        present.write_text(self._CONFIG)
+        absent = outside / "absent.yaml"
+
+        self._confine(monkeypatch, allowed)
+
+        def _message(path):
+            with pytest.raises(ConfigError) as excinfo:
+                api.init_local(str(allowed / "inst"), config_path=str(path))
+            return str(excinfo.value).replace(str(path), "<TARGET>")
+
+        assert _message(present) == _message(absent)
+
+    def test_init_local_accepts_an_in_root_config_path(self, monkeypatch, tmp_path):
+        """The confinement is a fence, not a wall."""
+        from cruxible_core.runtime import api
+        from cruxible_core.runtime.instance_manager import get_manager
+
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        config = allowed / "config.yaml"
+        config.write_text(self._CONFIG)
+
+        self._confine(monkeypatch, allowed)
+        get_manager().clear()
+        try:
+            result = api.init_local(str(allowed / "inst"), config_path=str(config))
+            assert result.status == "initialized"
+        finally:
+            get_manager().clear()
+
+    def test_reload_config_refuses_out_of_root_config_path(self, monkeypatch, tmp_path):
+        """Repointing the ACTIVE config is the same escape with a write behind it."""
+        from cruxible_core.runtime import api
+        from cruxible_core.runtime.instance_manager import get_manager
+
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        config = allowed / "config.yaml"
+        config.write_text(self._CONFIG)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        secret = outside / "config.yaml"
+        secret.write_text(self._CONFIG)
+
+        self._confine(monkeypatch, allowed)
+        get_manager().clear()
+        try:
+            instance = api.init_local(
+                str(allowed / "inst"),
+                config_path=str(config),
+            )
+            with pytest.raises(ConfigError, match="not under any allowed root"):
+                api.reload_config(instance.instance_id, config_path=str(secret))
+        finally:
+            get_manager().clear()
 
 
 # ── ContextVar isolation ──────────────────────────────────────────────

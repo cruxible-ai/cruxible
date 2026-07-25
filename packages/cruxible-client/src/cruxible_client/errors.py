@@ -284,6 +284,24 @@ class DirectWriteRefusedError(CoreError):
         )
 
 
+class TerminalLifecycleWriteRefusedError(CoreError):
+    """A terminal lifecycle status was refused on a free-form add/update."""
+
+    error_code = "terminal_lifecycle_write_refused"
+
+    def __init__(self, kind: str, status: str, writable: str, message: str | None = None):
+        self.kind = kind
+        self.status = status
+        self.writable = writable
+        super().__init__(
+            message
+            or (
+                f"Refusing to write terminal {kind} lifecycle status '{status}' through "
+                "a plain add/update."
+            )
+        )
+
+
 class PendingEdgeWriteRefusedError(CoreError):
     """A non-pending write was refused because the target edge is still PENDING."""
 
@@ -352,6 +370,13 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             context.get("kind", "unknown"),
             context.get("type_name", "unknown"),
             context.get("source", "unknown"),
+            message=body.message,
+        )
+    elif body.error_type == "TerminalLifecycleWriteRefusedError":
+        exc = TerminalLifecycleWriteRefusedError(
+            context.get("kind", "unknown"),
+            context.get("status", "unknown"),
+            context.get("writable", "unknown"),
             message=body.message,
         )
     elif body.error_type == "PendingEdgeWriteRefusedError":

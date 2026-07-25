@@ -205,6 +205,34 @@ unresponsive. Restart scripts and supervisor configs should preserve:
 If you intentionally need unauthenticated scratch mode, use a separate state
 directory.
 
+## Where Permission Tiers Are Enforced
+
+The four `CRUXIBLE_MODE` tiers (`read_only` ⊂ `governed_write` ⊂ `graph_write`
+⊂ `admin`) do **not** gate every session equally. Be precise about which surface
+you are on:
+
+| Surface | Who fixes the tier | Is it a boundary? |
+|---|---|---|
+| Daemon (HTTP API) | the daemon process at startup, as an immutable capability ceiling; runtime credentials may narrow it further | **Yes.** No request can raise it. |
+| MCP server | the MCP server process at startup | **Yes.** The agent talks to the server; it does not own the process. |
+| Local CLI | the operator's own shell environment | **No.** Whoever can run `cruxible` can also set `CRUXIBLE_MODE`. |
+
+The local CLI is an **operator console at operator tier by design**. It is built
+for the human who already owns the machine, the state directory, and the
+environment — restricting it against that same human would be theatre, not
+security. `CRUXIBLE_MODE` on the CLI is an ergonomic guard rail (a way to keep
+yourself from fat-fingering an apply), not an authorization boundary.
+
+The deployment this implies:
+
+- agents get MCP or the daemon, with a scoped runtime credential;
+- agents never get a shell on the state host;
+- if an agent can run `cruxible` locally, it holds operator tier, whatever
+  `CRUXIBLE_MODE` says — because it can change `CRUXIBLE_MODE`.
+
+Reviewer-independence guarantees are provable only on auth-ON daemons; auth-off
+surfaces resolve all actors to the local operator.
+
 ## Local Boundary
 
 Local auth is a product boundary, not a hardened OS sandbox. A local machine

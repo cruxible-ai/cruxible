@@ -140,6 +140,25 @@ def resolve_config_layer_sequence(
     return layers
 
 
+def _confine_extends_target(base_path: Path) -> None:
+    """Refuse an ``extends`` target outside the configured allowed roots.
+
+    A no-op when ``CRUXIBLE_ALLOWED_ROOTS`` is unset (the local-operator default),
+    exactly like every other confinement in the codebase. Imported lazily: the
+    config layer must not take a hard dependency on the runtime package just to
+    read one env-derived setting, and the import is cheap and cached.
+
+    Scope note: this confines the ``extends`` chain — caller-influenced
+    filesystem paths. It deliberately does NOT confine the overlay-kit base layer
+    resolved in :func:`resolve_overlay_kit_base_layer`, whose path comes from a
+    manifest-declared ``target_state`` kit id resolved through the kit catalog
+    (which legitimately lives outside any workspace root, e.g. in site-packages).
+    """
+    from cruxible_core.runtime.permissions import validate_root_dir
+
+    validate_root_dir(str(base_path))
+
+
 def _resolve_parent_layers(layer: ResolvedConfigLayer) -> list[ResolvedConfigLayer]:
     source_dir = layer.source_dir
     if layer.config.extends is None:
@@ -158,6 +177,20 @@ def _resolve_parent_layers(layer: ResolvedConfigLayer) -> list[ResolvedConfigLay
         if source_dir is None:
             raise ConfigError(_INLINE_RELATIVE_EXTENDS_ERROR)
         base_path = source_dir / base_path
+    # Confine EVERY resolved extends target, per layer, BEFORE touching the
+    # filesystem. Confining only the top-level ``config_path`` left the escape
+    # one hop away: an in-root file (or inline YAML) whose ``extends`` points
+    # outside pulls an arbitrary host file through ``load_config``, and the
+    # ``exists()`` probe below is itself a file-existence oracle. Recursion means
+    # the check must run on the transitive chain, not just the entry layer.
+    #
+    # Deliberately the SAME call — and so the same message — as the top-level
+    # ``validate_root_dir`` confinement, and it runs before ``exists()``: a
+    # caller cannot distinguish "out of root and present" from "out of root and
+    # absent", so probing for host files learns nothing. ``validate_root_dir``
+    # resolves symlinks and ``..`` itself, so an in-root symlink pointing out of
+    # root is refused on its resolved target, not its name.
+    _confine_extends_target(base_path)
     if not base_path.exists():
         raise ConfigError(f"Base config for extends not found: {base_path}")
 

@@ -1,6 +1,7 @@
 """Tests for SQLite receipt storage."""
 
 import json
+import sqlite3
 from datetime import datetime, timezone
 
 import pytest
@@ -64,12 +65,6 @@ class TestSQLiteReceiptStore:
 
     def test_get_nonexistent(self, store: SQLiteReceiptStore):
         assert store.get_receipt("RCP-nonexistent") is None
-
-    def test_save_overwrites(self, store: SQLiteReceiptStore, sample_receipt: Receipt):
-        store.save_receipt(sample_receipt)
-        store.save_receipt(sample_receipt)
-        loaded = store.get_receipt(sample_receipt.receipt_id)
-        assert loaded is not None
 
     def test_list_receipts(self, store: SQLiteReceiptStore, sample_receipt: Receipt):
         store.save_receipt(sample_receipt)
@@ -256,7 +251,10 @@ class TestSQLiteReceiptStore:
         """Receipts persisted before ``read_revision`` existed must still work.
 
         Loading them is only half the contract: they also have to survive the
-        payload-retention machinery, which rewrites ``parameters`` and re-saves.
+        payload-retention machinery, which rewrites ``parameters`` before the
+        receipt is persisted. Each retention mode is saved under its own id —
+        ``save_receipt`` is a plain INSERT, so overwriting an existing receipt
+        is not a supported operation.
         """
         legacy = {
             "receipt_id": "RCP-legacy",
@@ -304,24 +302,34 @@ class TestSQLiteReceiptStore:
         for retention in ("full", "preview", "metadata"):
             retained, metadata = retain_mutation_payload(loaded.parameters, retention=retention)
             assert metadata.payload_digest.startswith("sha256:")
-            store.save_receipt(loaded.model_copy(update={"parameters": retained}))
-            reloaded = store.get_receipt("RCP-legacy")
+            receipt_id = f"RCP-legacy-{retention}"
+            store.save_receipt(
+                loaded.model_copy(update={"parameters": retained, "receipt_id": receipt_id})
+            )
+            reloaded = store.get_receipt(receipt_id)
             assert reloaded is not None
             assert reloaded.read_revision is None
             assert reloaded.parameters == retained
 
-    def test_delete_receipt(self, store: SQLiteReceiptStore, sample_receipt: Receipt):
+    def test_resaving_a_receipt_id_is_refused(
+        self,
+        store: SQLiteReceiptStore,
+        sample_receipt: Receipt,
+    ):
+        """Receipts are immutable: a second save of the same id must not replace."""
         store.save_receipt(sample_receipt)
-        assert store.delete_receipt(sample_receipt.receipt_id) is True
-        assert store.get_receipt(sample_receipt.receipt_id) is None
-        row = store._conn.execute(
-            "SELECT COUNT(*) AS count FROM receipt_entities WHERE receipt_id = ?",
-            (sample_receipt.receipt_id,),
-        ).fetchone()
-        assert row["count"] == 0
+        overwrite = sample_receipt.model_copy(update={"query_name": "tampered"})
 
-    def test_delete_nonexistent(self, store: SQLiteReceiptStore):
-        assert store.delete_receipt("RCP-nonexistent") is False
+        with pytest.raises(sqlite3.IntegrityError):
+            store.save_receipt(overwrite)
+
+        stored = store.get_receipt(sample_receipt.receipt_id)
+        assert stored is not None
+        assert stored.query_name == sample_receipt.query_name
+
+    def test_store_exposes_no_receipt_deletion(self, store: SQLiteReceiptStore):
+        """There is no supported way to remove a receipt through the store."""
+        assert not hasattr(store, "delete_receipt")
 
     def test_list_empty(self, store: SQLiteReceiptStore):
         assert store.list_receipts() == []
@@ -441,17 +449,22 @@ class TestSQLiteReceiptStore:
         row = store._conn.execute("SELECT COUNT(*) AS count FROM receipt_entities").fetchone()
         assert row["count"] == 0
 
-    def test_receipt_entity_index_replaces_old_rows(self, store: SQLiteReceiptStore):
+    def test_receipt_entity_index_survives_an_attempted_overwrite(
+        self,
+        store: SQLiteReceiptStore,
+    ):
+        """The reverse index is not erasable by re-saving a receipt with no nodes."""
         builder = ReceiptBuilder(query_name="q", parameters={})
         builder.record_entity_lookup(entity_type="Vehicle", entity_id="V-1")
         first = builder.build(results=[])
         receipt_id = store.save_receipt(first)
         assert store.get_receipts_for_entity("Vehicle", "V-1") == [receipt_id]
 
-        updated = first.model_copy()
-        updated.nodes = []
-        store.save_receipt(updated)
-        assert store.get_receipts_for_entity("Vehicle", "V-1") == []
+        stripped = first.model_copy()
+        stripped.nodes = []
+        with pytest.raises(sqlite3.IntegrityError):
+            store.save_receipt(stripped)
+        assert store.get_receipts_for_entity("Vehicle", "V-1") == [receipt_id]
 
     def test_file_persistence(self, tmp_path):
         db_path = tmp_path / "test.db"

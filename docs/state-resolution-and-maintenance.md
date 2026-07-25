@@ -139,16 +139,30 @@ The runtime enforces four cumulative tiers via `CRUXIBLE_MODE`
 
 | Tier | Can do |
 |---|---|
-| `read_only` | queries, receipts, traces, inspect, `group list`/`get`/`status`, state health, workflow planning |
-| `governed_write` | propose groups, run/test/propose workflows, feedback and outcomes, decision records, snapshots, constraints and decision policies, state pulls |
+| `read_only` | queries, receipts, traces, inspect, `group list`/`get`/`status`, state health, workflow planning, `state pull-preview` |
+| `governed_write` | propose groups, run/test/propose workflows, feedback and outcomes, decision records, snapshots, constraints and decision policies |
 | `graph_write` | `entity add`/`update`, `relationship add`, batch direct write, **canonical workflow apply**, **group resolve**, **group trust** |
-| `admin` | config reload, locks, clones, backup/restore, state publish, overlays, credentials |
+| `admin` | config reload, locks, clones, backup/restore, state publish, overlays, credentials, `state pull-apply` |
 
 The split to notice: an agent at `governed_write` can *propose* anything but
 *commit* nothing — resolving a group, applying a canonical preview, and
 adjusting trust all sit at `graph_write`. When `CRUXIBLE_MODE` is unset the
 local default is `admin` (deliberate, for local UX; set
 `CRUXIBLE_DEFAULT_READ_ONLY=1` or an explicit mode to change it).
+
+The two halves of a state pull sit at opposite ends of that table. `state
+pull-preview` is a pure read (`read_only`), while `state pull-apply` replaces
+the active config *and* the whole graph with an upstream release — the same
+authority as `config reload` plus a graph rewrite — so it sits at `admin` with
+the other instance-lifecycle operations, not with the governed proposal verbs.
+
+These tiers are enforced as a boundary on the **daemon and MCP surfaces**, where
+the serving process fixes its ceiling at startup and no request can raise it.
+The **local CLI runs in the operator's own process and reads the operator's own
+`CRUXIBLE_MODE`** — it is an operator console at operator tier by design, not a
+sandbox against the person at the shell. Agents are expected to reach state
+through MCP or the daemon, never through a shell on the state host. See
+[Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md#where-permission-tiers-are-enforced).
 
 ### Write policies are orthogonal to tiers
 
@@ -229,9 +243,21 @@ reads but stays fetchable by id, with `reason`, `closed_at`/`closed_by`, and
 supersession links preserved. Lifecycle is set only through the typed channel:
 
 ```bash
-cruxible entity update --type Matter --id M-104 \
-  --lifecycle-status retired --lifecycle-reason "Matter closed 2026-06-30"
+cruxible relationship update --relationship SupportedBy \
+  --from-type Matter --from-id M-104 --to-type Precedent --to-id P-7 \
+  --lifecycle-status inactive --lifecycle-reason "no longer relied on"
 ```
+
+**Terminal statuses are not writable through `add`/`update`.** Retiring or
+superseding an entity, and retracting or superseding a relationship, are
+governed judgements about a claim's standing rather than property edits, so
+plain `entity add`/`update` and `relationship add`/`update` refuse them
+(`terminal_lifecycle_write_refused`). What stays freely writable on those verbs
+is the reversible half: `active`/`inactive` for relationships, `live` for
+entities. The dedicated receipted lifecycle verbs land in `wi-lifecycle-verbs`;
+until then, record a contradiction with `cruxible attest record --stance
+contradict` or move the claim through the review machinery
+(`cruxible feedback`).
 
 Hand-authored `metadata={"lifecycle": ...}` is inert free-form data — it can
 never become the typed state. The lifecycle write is a direct-write verb, so a
@@ -294,10 +320,15 @@ agents. Five sections, plus `captured_at` and the current `head_snapshot_id`:
 Wrong state that passed review is fixed in the open, not rewritten. The
 sequence:
 
-1. **Retire the wrong fact with a reason.**
-   `cruxible relationship update ... --lifecycle-status retracted
-   --lifecycle-reason "..."` (or `entity update --lifecycle-status retired`).
-   The edge leaves live reads; its history, provenance, and receipts remain.
+1. **Take the wrong fact out of live reads, with a reason.** Terminal lifecycle
+   statuses (`retracted`/`superseded` on an edge, `retired`/`superseded` on an
+   entity) are refused on plain `add`/`update` until the receipted lifecycle
+   verbs land in `wi-lifecycle-verbs`. Today: record the contradiction
+   (`cruxible attest record --stance contradict --evidence-ref '{...}'`) or
+   reject the claim through `cruxible feedback`, which moves the edge out of
+   live review state. `--lifecycle-status inactive` remains available for a
+   reversible participation flip. Either way its history, provenance, and
+   receipts remain.
 2. **Demote the precedent that admitted it.**
    `cruxible group trust --resolution <id> --status invalidated --reason "..."`
    so future matches of the same thesis re-review instead of auto-resolving.

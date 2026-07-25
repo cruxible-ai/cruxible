@@ -110,9 +110,15 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
             self._conn.executescript(_SCHEMA)
 
     def save_receipt(self, receipt: Receipt) -> str:
-        """Persist a receipt. Returns the receipt_id."""
+        """Persist a receipt. Returns the receipt_id.
+
+        Plain ``INSERT``, deliberately: a receipt is an immutable record of an
+        act that already happened, so re-saving one id is never a legitimate
+        update — it is a bug or an overwrite attempt, and it must surface as an
+        ``IntegrityError`` rather than silently replace the evidence.
+        """
         self._conn.execute(
-            "INSERT OR REPLACE INTO receipts "
+            "INSERT INTO receipts "
             "(receipt_id, query_name, parameters, receipt_json, created_at, duration_ms, "
             "operation_type) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -126,10 +132,6 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
                 receipt.operation_type,
             ),
         )
-        self._conn.execute(
-            "DELETE FROM receipt_entities WHERE receipt_id = ?",
-            (receipt.receipt_id,),
-        )
         indexed: set[tuple[str, str, str]] = set()
         for node in receipt.nodes:
             for entity_type, entity_id in self._node_index_endpoints(node):
@@ -138,7 +140,7 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
                     continue
                 indexed.add(key)
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO receipt_entities "
+                    "INSERT INTO receipt_entities "
                     "(receipt_id, entity_type, entity_id) VALUES (?, ?, ?)",
                     key,
                 )
@@ -485,18 +487,6 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
             (entity_type, entity_id),
         ).fetchall()
         return [str(r["receipt_id"]) for r in rows]
-
-    def delete_receipt(self, receipt_id: str) -> bool:
-        """Delete a receipt. Returns True if it existed."""
-        self._conn.execute(
-            "DELETE FROM receipt_entities WHERE receipt_id = ?",
-            (receipt_id,),
-        )
-        cursor = self._conn.execute(
-            "DELETE FROM receipts WHERE receipt_id = ?",
-            (receipt_id,),
-        )
-        return cursor.rowcount > 0
 
     def close(self) -> None:
         """Close the database connection."""

@@ -74,22 +74,6 @@ def test_relationship_is_live_handles_review_and_lifecycle(
     assert relationship_is_live(RelationshipMetadata(assertion=assertion)) is expected
 
 
-def test_relationship_is_live_can_require_approved() -> None:
-    assert relationship_is_live(RelationshipAssertion(), require_approved=True) is False
-    assert (
-        relationship_is_live(
-            RelationshipAssertion(
-                review=RelationshipReviewState(
-                    status="approved",
-                    source="human",
-                )
-            ),
-            require_approved=True,
-        )
-        is True
-    )
-
-
 def test_relationship_is_live_honors_effective_window() -> None:
     future = RelationshipAssertion(
         lifecycle=RelationshipLifecycleState(

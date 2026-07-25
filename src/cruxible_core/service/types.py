@@ -606,6 +606,14 @@ class ProviderFixCandidate:
 class AnalyzeFeedbackResult:
     relationship_type: str
     feedback_count: int
+    """Rows actually analyzed — the sample, which may be smaller than the population."""
+
+    feedback_population_count: int = 0
+    """Rows matching the filters in the store, regardless of the analysis window."""
+
+    truncated: bool = False
+    """True when the window did not cover the population; every count is a sample."""
+
     action_counts: dict[str, int] = field(default_factory=dict)
     source_counts: dict[str, int] = field(default_factory=dict)
     reason_code_counts: dict[str, int] = field(default_factory=dict)
@@ -689,6 +697,14 @@ class DebugPackage:
 class AnalyzeOutcomesResult:
     anchor_type: OutcomeAnchorType
     outcome_count: int
+    """Rows actually analyzed — the sample, which may be smaller than the population."""
+
+    outcome_population_count: int = 0
+    """Rows matching the filters in the store, regardless of the analysis window."""
+
+    truncated: bool = False
+    """True when the window did not cover the population; every count is a sample."""
+
     outcome_counts: dict[str, int] = field(default_factory=dict)
     outcome_code_counts: dict[str, int] = field(default_factory=dict)
     coded_groups: list[OutcomeGroupSummary] = field(default_factory=list)
@@ -974,6 +990,7 @@ class StatePullApplyResult:
     release_id: str
     apply_digest: str
     pre_pull_snapshot_id: str
+    receipt_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

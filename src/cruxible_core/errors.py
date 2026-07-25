@@ -34,6 +34,7 @@ errors (runtime data), making it easy to catch by category.
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
     ├── PermissionDeniedError (MCP permission mode)
     ├── DirectWriteRefusedError (governed proposal_only direct-write refusal)
+    ├── TerminalLifecycleWriteRefusedError (terminal lifecycle via a free write)
     └── PendingEdgeWriteRefusedError (non-pending write onto a pending proposal)
 """
 
@@ -483,6 +484,35 @@ class DirectWriteRefusedError(CoreError):
         super().__init__(
             f"Direct write to {kind} '{type_name}' is refused "
             f"(write_policy=proposal_only). {forward}"
+        )
+
+
+class TerminalLifecycleWriteRefusedError(CoreError):
+    """A terminal lifecycle status was refused on a free-form add/update.
+
+    Retracting, superseding, or retiring is a governed judgement about a claim's
+    standing, not a property edit. Reachable from a plain add/update it was a
+    one-call way to make live state vanish from every live-gated read with no
+    reviewer, no required reason, and nothing recording who decided it.
+
+    Interim posture (Robert's 2026-07-25 ruling) until the dedicated receipted
+    verbs land in ``wi-lifecycle-verbs``: refuse and teach. Non-terminal statuses
+    (relationship ``active``/``inactive``, entity ``live``) stay freely writable
+    because they are reversible participation flips, not terminations.
+    """
+
+    error_code = "terminal_lifecycle_write_refused"
+
+    def __init__(self, kind: str, status: str, writable: str):
+        self.kind = kind
+        self.status = status
+        self.writable = writable
+        super().__init__(
+            f"Refusing to write terminal {kind} lifecycle status '{status}' through a "
+            "plain add/update: terminal lifecycle transitions require the dedicated "
+            "receipted verbs (coming in wi-lifecycle-verbs). Meanwhile attest a "
+            "contradiction against the claim or use the review machinery. "
+            f"Writable here: {writable}."
         )
 
 

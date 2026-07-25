@@ -51,10 +51,17 @@ signal mapping; they should not be copied into proposal properties.
 ## Daily Triage
 
 A daily triage pass should refresh only through the instance's tracked upstream
-state path. Use `cruxible state status`, `cruxible state pull-preview`, and
-`cruxible state pull-apply` as the command-help surfaces. If the instance is
-not tracking the expected upstream reference, or the preview shows conflicts,
-breaking compatibility, or an unexpected delta, stop and ask.
+state path. Use `cruxible state status` and `cruxible state pull-preview` as the
+command-help surfaces. If the instance is not tracking the expected upstream
+reference, or the preview shows conflicts, breaking compatibility, or an
+unexpected delta, stop and ask.
+
+Applying a pull is an operator escalation, not a triage step. `cruxible state
+pull-apply` replaces the active config and the whole graph, so it sits at the
+ADMIN tier and a governed-tier agent is denied it. Run the preview, surface the
+delta it reports, and hand off: an operator applies it from the local CLI
+operator console or with an ADMIN-tier credential. Resume triage against the
+applied state afterwards.
 
 Run the proposal-producing workflow surfaces shown by generated config views.
 Do not restate the proposal-chain order here; the config already records which

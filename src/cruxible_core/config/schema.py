@@ -31,6 +31,7 @@ Hierarchy:
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Annotated, Any, Literal, cast, get_args
 
@@ -1039,6 +1040,12 @@ FeedbackRemediationHint = Literal[
 """Bounded remediation lane assigned to a feedback reason code."""
 
 
+def _profile_body_digest(profile: BaseModel) -> str:
+    """Stable sha256 over a feedback/outcome profile body, ignoring ``version``."""
+    payload = profile.model_dump(mode="json", exclude={"version"})
+    return "sha256:" + hashlib.sha256(canonical_json(payload).encode()).hexdigest()
+
+
 class FeedbackReasonCodeSchema(BaseModel):
     """Structured feedback code used by agents and analysis."""
 
@@ -1051,8 +1058,20 @@ class FeedbackProfileSchema(BaseModel):
     """Relationship-scoped feedback vocabulary and grouping metadata."""
 
     version: int = 1
+    """Operator-declared label. Informational ONLY — see :meth:`body_digest`."""
+
     reason_codes: dict[str, FeedbackReasonCodeSchema] = Field(default_factory=dict)
     scope_keys: dict[str, FeedbackPathRef] = Field(default_factory=dict)
+
+    def body_digest(self) -> str:
+        """Content digest of the profile body, excluding the declared ``version``.
+
+        Drift detection binds to THIS, not to ``version``. The version number is
+        hand-maintained, so editing a reason code's remediation lane without
+        bumping it left stored rows silently reinterpreted under a vocabulary
+        that had changed underneath them. A digest cannot be forgotten.
+        """
+        return _profile_body_digest(self)
 
     @model_validator(mode="after")
     def validate_required_scope_keys(self) -> FeedbackProfileSchema:
@@ -1111,12 +1130,22 @@ class OutcomeProfileSchema(BaseModel):
 
     anchor_type: OutcomeAnchorType
     version: int = 1
+    """Operator-declared label. Informational ONLY — see :meth:`body_digest`."""
+
     relationship_type: str | None = None
     workflow_name: str | None = None
     surface_type: SurfaceType | None = None
     surface_name: str | None = None
     outcome_codes: dict[str, OutcomeCodeSchema] = Field(default_factory=dict)
     scope_keys: dict[str, OutcomePathRef] = Field(default_factory=dict)
+
+    def body_digest(self) -> str:
+        """Content digest of the profile body, excluding the declared ``version``.
+
+        Drift detection binds to this rather than the hand-maintained version
+        number; see :meth:`FeedbackProfileSchema.body_digest`.
+        """
+        return _profile_body_digest(self)
 
     @model_validator(mode="after")
     def validate_shape(self) -> OutcomeProfileSchema:

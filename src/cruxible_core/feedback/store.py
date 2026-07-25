@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS feedback (
     scope_hints TEXT NOT NULL DEFAULT '{}',
     feedback_profile_key TEXT,
     feedback_profile_version INTEGER,
+    feedback_profile_digest TEXT,
     decision_context TEXT NOT NULL DEFAULT '{}',
     context_snapshot TEXT NOT NULL DEFAULT '{}',
     decision_surface_type TEXT,
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS outcomes (
     scope_hints TEXT NOT NULL DEFAULT '{}',
     outcome_profile_key TEXT,
     outcome_profile_version INTEGER,
+    outcome_profile_digest TEXT,
     decision_context TEXT NOT NULL DEFAULT '{}',
     lineage_snapshot TEXT NOT NULL DEFAULT '{}',
     relationship_type TEXT,
@@ -94,6 +96,7 @@ class FeedbackStore(FeedbackStoreProtocol):
 
     def _ensure_feedback_schema(self) -> None:
         self._ensure_actor_context_columns()
+        self._ensure_profile_digest_columns()
         self._ensure_feedback_receipt_nullable()
 
     def _ensure_actor_context_columns(self) -> None:
@@ -107,6 +110,24 @@ class FeedbackStore(FeedbackStoreProtocol):
         }
         if "actor_context" not in outcome_columns:
             self._conn.execute("ALTER TABLE outcomes ADD COLUMN actor_context TEXT")
+
+    def _ensure_profile_digest_columns(self) -> None:
+        """Add the profile-body digest columns to stores created before them.
+
+        Rows written before this column keep NULL: the profile body they were
+        coded under is unrecoverable, so drift is honestly unknown for them
+        rather than assumed absent.
+        """
+        feedback_columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(feedback)").fetchall()
+        }
+        if "feedback_profile_digest" not in feedback_columns:
+            self._conn.execute("ALTER TABLE feedback ADD COLUMN feedback_profile_digest TEXT")
+        outcome_columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(outcomes)").fetchall()
+        }
+        if "outcome_profile_digest" not in outcome_columns:
+            self._conn.execute("ALTER TABLE outcomes ADD COLUMN outcome_profile_digest TEXT")
 
     def _ensure_feedback_receipt_nullable(self) -> None:
         rows = self._conn.execute("PRAGMA table_info(feedback)").fetchall()
@@ -134,6 +155,7 @@ CREATE TABLE feedback (
     scope_hints TEXT NOT NULL DEFAULT '{}',
     feedback_profile_key TEXT,
     feedback_profile_version INTEGER,
+    feedback_profile_digest TEXT,
     decision_context TEXT NOT NULL DEFAULT '{}',
     context_snapshot TEXT NOT NULL DEFAULT '{}',
     decision_surface_type TEXT,
@@ -148,7 +170,7 @@ INSERT INTO feedback (
     feedback_id, receipt_id, action, target_json, target_relationship,
     target_from_type, target_from_id, target_to_type, target_to_id, target_edge_key,
     reason, reason_code, reason_remediation_hint, scope_hints,
-    feedback_profile_key, feedback_profile_version,
+    feedback_profile_key, feedback_profile_version, feedback_profile_digest,
     decision_context, context_snapshot, decision_surface_type,
     decision_surface_name, source, model_id, corrections, actor_context, created_at
 )
@@ -156,7 +178,7 @@ SELECT
     feedback_id, receipt_id, action, target_json, target_relationship,
     target_from_type, target_from_id, target_to_type, target_to_id, target_edge_key,
     reason, reason_code, reason_remediation_hint, scope_hints,
-    feedback_profile_key, feedback_profile_version,
+    feedback_profile_key, feedback_profile_version, feedback_profile_digest,
     decision_context, context_snapshot, decision_surface_type,
     decision_surface_name, source, model_id, corrections, actor_context, created_at
 FROM feedback_receipt_not_null_old;
@@ -189,10 +211,10 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
             "(feedback_id, receipt_id, action, target_json, target_relationship, "
             "target_from_type, target_from_id, target_to_type, target_to_id, target_edge_key, "
             "reason, reason_code, reason_remediation_hint, scope_hints, "
-            "feedback_profile_key, feedback_profile_version, "
+            "feedback_profile_key, feedback_profile_version, feedback_profile_digest, "
             "decision_context, context_snapshot, decision_surface_type, "
             "decision_surface_name, source, model_id, corrections, actor_context, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.feedback_id,
                 record.receipt_id,
@@ -210,6 +232,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
                 json.dumps(record.scope_hints),
                 record.feedback_profile_key,
                 record.feedback_profile_version,
+                record.feedback_profile_digest,
                 json.dumps(record.decision_context),
                 json.dumps(record.context_snapshot),
                 decision_surface_type,
@@ -245,9 +268,36 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
         offset: int = 0,
     ) -> list[FeedbackRecord]:
         """List feedback records with optional filter."""
+        clauses, params = self._feedback_filters(
+            receipt_id=receipt_id,
+            relationship_type=relationship_type,
+            action=action,
+            decision_surface_type=decision_surface_type,
+            decision_surface_name=decision_surface_name,
+        )
+
+        sql = "SELECT * FROM feedback"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC, feedback_id DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        rows = self._conn.execute(sql, tuple(params)).fetchall()
+
+        return [self._row_to_feedback(r) for r in rows]
+
+    @staticmethod
+    def _feedback_filters(
+        *,
+        receipt_id: str | None,
+        relationship_type: str | None,
+        action: str | None,
+        decision_surface_type: str | None,
+        decision_surface_name: str | None,
+    ) -> tuple[list[str], list[object]]:
+        """Build the shared WHERE conditions for feedback list/count reads."""
         clauses: list[str] = []
         params: list[object] = []
-
         if receipt_id is not None:
             clauses.append("receipt_id = ?")
             params.append(receipt_id)
@@ -263,16 +313,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
         if decision_surface_name is not None:
             clauses.append("decision_surface_name = ?")
             params.append(decision_surface_name)
-
-        sql = "SELECT * FROM feedback"
-        if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY created_at DESC, feedback_id DESC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
-
-        rows = self._conn.execute(sql, tuple(params)).fetchall()
-
-        return [self._row_to_feedback(r) for r in rows]
+        return clauses, params
 
     def list_feedback_by_entity_ids(
         self,
@@ -293,15 +334,31 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
         ).fetchall()
         return [self._row_to_feedback(r) for r in rows]
 
-    def count_feedback(self, *, receipt_id: str | None = None) -> int:
-        """Count feedback records with optional receipt filter."""
-        if receipt_id is None:
-            row = self._conn.execute("SELECT COUNT(*) AS count FROM feedback").fetchone()
-        else:
-            row = self._conn.execute(
-                "SELECT COUNT(*) AS count FROM feedback WHERE receipt_id = ?",
-                (receipt_id,),
-            ).fetchone()
+    def count_feedback(
+        self,
+        *,
+        receipt_id: str | None = None,
+        relationship_type: str | None = None,
+        action: str | None = None,
+        decision_surface_type: str | None = None,
+        decision_surface_name: str | None = None,
+    ) -> int:
+        """Count feedback records matching the same filters as :meth:`list_feedback`.
+
+        This is the POPULATION behind a windowed read: analysis surfaces need it
+        to say whether the rows they looked at were all of them.
+        """
+        clauses, params = self._feedback_filters(
+            receipt_id=receipt_id,
+            relationship_type=relationship_type,
+            action=action,
+            decision_surface_type=decision_surface_type,
+            decision_surface_name=decision_surface_name,
+        )
+        sql = "SELECT COUNT(*) AS count FROM feedback"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        row = self._conn.execute(sql, tuple(params)).fetchone()
         return int(row["count"]) if row else 0
 
     @staticmethod
@@ -317,6 +374,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
             scope_hints=json.loads(row["scope_hints"] or "{}"),
             feedback_profile_key=row["feedback_profile_key"],
             feedback_profile_version=row["feedback_profile_version"],
+            feedback_profile_digest=row["feedback_profile_digest"],
             decision_context=json.loads(row["decision_context"] or "{}"),
             context_snapshot=json.loads(row["context_snapshot"] or "{}"),
             source=row["source"],
@@ -340,10 +398,11 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
             "INSERT OR REPLACE INTO outcomes "
             "(outcome_id, receipt_id, anchor_type, anchor_id, outcome, outcome_code, "
             "outcome_remediation_hint, scope_hints, outcome_profile_key, "
-            "outcome_profile_version, decision_context, lineage_snapshot, "
+            "outcome_profile_version, outcome_profile_digest, "
+            "decision_context, lineage_snapshot, "
             "relationship_type, decision_surface_type, decision_surface_name, source, "
             "detail, actor_context, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.outcome_id,
                 record.receipt_id,
@@ -355,6 +414,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
                 json.dumps(record.scope_hints),
                 record.outcome_profile_key,
                 record.outcome_profile_version,
+                record.outcome_profile_digest,
                 json.dumps(record.decision_context),
                 json.dumps(record.lineage_snapshot),
                 record.relationship_type,
@@ -391,6 +451,35 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
         offset: int = 0,
     ) -> list[OutcomeRecord]:
         """List outcome records with optional filter."""
+        clauses, params = self._outcome_filters(
+            receipt_id=receipt_id,
+            anchor_type=anchor_type,
+            anchor_id=anchor_id,
+            relationship_type=relationship_type,
+            decision_surface_type=decision_surface_type,
+            decision_surface_name=decision_surface_name,
+        )
+
+        sql = "SELECT * FROM outcomes"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC, outcome_id DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        rows = self._conn.execute(sql, tuple(params)).fetchall()
+        return [self._row_to_outcome(r) for r in rows]
+
+    @staticmethod
+    def _outcome_filters(
+        *,
+        receipt_id: str | None,
+        anchor_type: str | None,
+        anchor_id: str | None,
+        relationship_type: str | None,
+        decision_surface_type: str | None,
+        decision_surface_name: str | None,
+    ) -> tuple[list[str], list[object]]:
+        """Build the shared WHERE conditions for outcome list/count reads."""
         clauses: list[str] = []
         params: list[object] = []
         if receipt_id is not None:
@@ -411,25 +500,31 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
         if decision_surface_name is not None:
             clauses.append("decision_surface_name = ?")
             params.append(decision_surface_name)
+        return clauses, params
 
-        sql = "SELECT * FROM outcomes"
+    def count_outcomes(
+        self,
+        *,
+        receipt_id: str | None = None,
+        anchor_type: str | None = None,
+        anchor_id: str | None = None,
+        relationship_type: str | None = None,
+        decision_surface_type: str | None = None,
+        decision_surface_name: str | None = None,
+    ) -> int:
+        """Count outcome records matching the same filters as :meth:`list_outcomes`."""
+        clauses, params = self._outcome_filters(
+            receipt_id=receipt_id,
+            anchor_type=anchor_type,
+            anchor_id=anchor_id,
+            relationship_type=relationship_type,
+            decision_surface_type=decision_surface_type,
+            decision_surface_name=decision_surface_name,
+        )
+        sql = "SELECT COUNT(*) AS count FROM outcomes"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY created_at DESC, outcome_id DESC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
-
-        rows = self._conn.execute(sql, tuple(params)).fetchall()
-        return [self._row_to_outcome(r) for r in rows]
-
-    def count_outcomes(self, *, receipt_id: str | None = None) -> int:
-        """Count outcome records with optional receipt filter."""
-        if receipt_id is None:
-            row = self._conn.execute("SELECT COUNT(*) AS count FROM outcomes").fetchone()
-        else:
-            row = self._conn.execute(
-                "SELECT COUNT(*) AS count FROM outcomes WHERE receipt_id = ?",
-                (receipt_id,),
-            ).fetchone()
+        row = self._conn.execute(sql, tuple(params)).fetchone()
         return int(row["count"]) if row else 0
 
     @staticmethod
@@ -445,6 +540,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
             scope_hints=json.loads(row["scope_hints"] or "{}"),
             outcome_profile_key=row["outcome_profile_key"],
             outcome_profile_version=row["outcome_profile_version"],
+            outcome_profile_digest=row["outcome_profile_digest"],
             decision_context=json.loads(row["decision_context"] or "{}"),
             lineage_snapshot=json.loads(row["lineage_snapshot"] or "{}"),
             relationship_type=row["relationship_type"],

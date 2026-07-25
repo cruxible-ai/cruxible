@@ -828,6 +828,19 @@
             "type": "integer"
           }
         },
+        "feedback_population_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "feedback_population_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Feedback Population Count",
+            "type": "integer"
+          }
+        },
         "provider_fix_candidates": {
           "has_default": false,
           "has_default_factory": true,
@@ -888,6 +901,19 @@
             },
             "title": "Source Counts",
             "type": "object"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "uncoded_examples": {
@@ -1270,6 +1296,11 @@
             "title": "Feedback Count",
             "type": "integer"
           },
+          "feedback_population_count": {
+            "default": 0,
+            "title": "Feedback Population Count",
+            "type": "integer"
+          },
           "provider_fix_candidates": {
             "items": {
               "$ref": "#/$defs/ProviderFixCandidate"
@@ -1301,6 +1332,11 @@
             },
             "title": "Source Counts",
             "type": "object"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           },
           "uncoded_examples": {
             "items": {
@@ -1412,6 +1448,19 @@
             "type": "object"
           }
         },
+        "outcome_population_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "outcome_population_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Outcome Population Count",
+            "type": "integer"
+          }
+        },
         "provider_fix_candidates": {
           "has_default": false,
           "has_default_factory": true,
@@ -1436,6 +1485,19 @@
             },
             "title": "Query Policy Suggestions",
             "type": "array"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "trust_adjustment_suggestions": {
@@ -1950,6 +2012,11 @@
             "title": "Outcome Counts",
             "type": "object"
           },
+          "outcome_population_count": {
+            "default": 0,
+            "title": "Outcome Population Count",
+            "type": "integer"
+          },
           "provider_fix_candidates": {
             "items": {
               "$ref": "#/$defs/OutcomeProviderFixCandidate"
@@ -1963,6 +2030,11 @@
             },
             "title": "Query Policy Suggestions",
             "type": "array"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           },
           "trust_adjustment_suggestions": {
             "items": {
@@ -12245,6 +12317,11 @@
                 "title": "Feedback Count",
                 "type": "integer"
               },
+              "feedback_population_count": {
+                "default": 0,
+                "title": "Feedback Population Count",
+                "type": "integer"
+              },
               "provider_fix_candidates": {
                 "items": {
                   "$ref": "#/$defs/ProviderFixCandidate"
@@ -12276,6 +12353,11 @@
                 },
                 "title": "Source Counts",
                 "type": "object"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
               },
               "uncoded_examples": {
                 "items": {
@@ -12346,6 +12428,11 @@
                 "title": "Outcome Counts",
                 "type": "object"
               },
+              "outcome_population_count": {
+                "default": 0,
+                "title": "Outcome Population Count",
+                "type": "integer"
+              },
               "provider_fix_candidates": {
                 "items": {
                   "$ref": "#/$defs/OutcomeProviderFixCandidate"
@@ -12359,6 +12446,11 @@
                 },
                 "title": "Query Policy Suggestions",
                 "type": "array"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
               },
               "trust_adjustment_suggestions": {
                 "items": {
@@ -29459,6 +29551,26 @@
             "type": "string"
           }
         },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
         "release_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -29479,6 +29591,18 @@
           "pre_pull_snapshot_id": {
             "title": "Pre Pull Snapshot Id",
             "type": "string"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
           },
           "release_id": {
             "title": "Release Id",
