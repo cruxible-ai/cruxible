@@ -439,6 +439,15 @@ def service_run_procedure(
             config,
         )
         _require_procedure_execution_tier(effective_tier)
+        # Ordered after the definition-vs-config checks on purpose: when the
+        # config drift is one those checks already name precisely (a provider
+        # de-exported, removed, or tier-raised), the operator is better served by
+        # that specific refusal than by the generic pin mismatch.
+        _verify_acceptance_pins(
+            procedure,
+            executed_config_digest=executed_config_digest,
+            executed_lock_digest=executed_lock_digest,
+        )
         plan = compile_plan_definition(
             config,
             lock,
@@ -686,6 +695,49 @@ def service_run_procedure(
         receipt=receipt,
         step_outputs=execution.step_outputs,
         evidence_refs=evidence_refs,
+    )
+
+
+def _verify_acceptance_pins(
+    procedure: ProcedureRecord,
+    *,
+    executed_config_digest: str,
+    executed_lock_digest: str,
+) -> None:
+    """Refuse a run whose config/lock differ from the ones acceptance pinned.
+
+    Acceptance records the config and lock digests the reviewer recompiled the
+    definition against, and every run receipt reports ``accepted_against`` beside
+    ``executed_against``. Recompiling at run time proves the definition still
+    compiles -- it does not prove it compiles against the same modelled world the
+    reviewer approved. A provider re-pointed at a different endpoint, an entity
+    type redefined, a query rewritten: each recompiles cleanly while changing
+    what the approved procedure actually does. The pins are compared here so that
+    divergence is a refusal on the receipt rather than a field nobody reads.
+    """
+    mismatches = [
+        (label, accepted, executed)
+        for label, accepted, executed in (
+            ("config_digest", procedure.acceptance_config_digest, executed_config_digest),
+            ("lock_digest", procedure.acceptance_lock_digest, executed_lock_digest),
+        )
+        if accepted is not None and accepted != executed
+    ]
+    if not mismatches:
+        return
+    detail = "; ".join(
+        f"{label}: accepted against {accepted}, now {executed}"
+        for label, accepted, executed in mismatches
+    )
+    raise ConfigError(
+        f"Procedure '{procedure.procedure_id}' is pinned to the config and lock it was "
+        f"accepted against, which no longer match this instance ({detail}). The run is "
+        "refused rather than executed against an unreviewed model. Recover by "
+        "re-proposing the definition and having an independent reviewer accept it "
+        "against the current config and lock (`cruxible procedure propose <file> "
+        f"--supersedes {procedure.procedure_id}`, then `cruxible procedure resolve "
+        "<new-id> --action accept`), or by restoring the accepted config and "
+        "re-running `cruxible lock`."
     )
 
 

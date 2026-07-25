@@ -10,6 +10,17 @@ from cruxible_core.errors import ConfigError, TransportError
 from cruxible_core.snapshot.types import PublishedStateManifest, StateSnapshot
 from cruxible_core.transport.types import PulledReleaseBundle, ReleaseTransport
 
+RELEASE_MEMBER_DIGESTS_FILE = "members.json"
+"""Sidecar pinning the sha256 of every other file in a published release bundle."""
+
+RELEASE_BUNDLE_MEMBERS = (
+    "snapshot.json",
+    "config.yaml",
+    "graph.json",
+    "cruxible.lock.yaml",
+)
+"""Snapshot artifacts copied into a release bundle alongside its manifest."""
+
 
 def _load_bundle(root_dir: Path) -> PulledReleaseBundle:
     manifest_path = root_dir / "manifest.json"
@@ -69,6 +80,8 @@ class OciReleaseTransport:
         ]
         if (bundle_dir / "cruxible.lock.yaml").exists():
             files.append("cruxible.lock.yaml:text/yaml")
+        if (bundle_dir / RELEASE_MEMBER_DIGESTS_FILE).exists():
+            files.append(f"{RELEASE_MEMBER_DIGESTS_FILE}:application/json")
         args = ["oras", "push", ref]
         args.extend(files)
         self._run(args=args, cwd=bundle_dir)

@@ -666,18 +666,66 @@ def test_input_contract_is_validated_before_provider_execution(
     )
 
 
-def test_run_receipt_records_accepted_and_drifted_execution_digests(
+def test_run_refuses_when_config_drifts_from_the_accepted_pins(
+    procedure_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance pins are compared at run, not merely reported on the receipt.
+
+    The drift here (a provider's own config value) still compiles and still
+    passes every definition-vs-config check, so nothing but the acceptance pins
+    can catch it: the definition now runs against a model no reviewer approved.
+    """
+    procedure_id = _accept(
+        procedure_instance,
+        provider_definition("drift_visible"),
+    )
+    called = False
+
+    def should_not_run(payload: dict[str, Any]) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        return payload
+
+    config = procedure_instance.load_config()
+    config.providers["exported_action"].config["timeout_s"] = 4
+    procedure_instance.save_config(config)
+    service_lock(procedure_instance)
+    _stub_provider(monkeypatch, should_not_run)
+
+    with pytest.raises(ConfigError, match="pinned to the config and lock") as exc_info:
+        service_run_procedure(
+            procedure_instance,
+            procedure_id,
+            {"value": 5},
+            actor("runner"),
+        )
+
+    message = str(exc_info.value)
+    assert "accepted against" in message
+    assert "cruxible procedure resolve" in message
+    assert called is False
+
+    run = _run(procedure_instance, getattr(exc_info.value, "procedure_run_id"))
+    assert run.verdict == "refused"
+    assert run.budget_spent.provider_calls == 0
+    assert run.receipt_id is not None
+    receipt = _receipt(procedure_instance, run.receipt_id)
+    root = receipt.nodes[0].detail
+    assert root["accepted_against"]["config_digest"] != root["executed_against"]["config_digest"]
+    assert root["accepted_against"]["lock_digest"] != root["executed_against"]["lock_digest"]
+    assert receipt.operation_type == "procedure"
+    assert root["procedure_id"] == procedure_id
+
+
+def test_run_receipt_records_matching_accepted_and_executed_digests(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     procedure_id = _accept(
         procedure_instance,
-        provider_definition("drift_visible"),
+        provider_definition("undrifted"),
     )
-    config = procedure_instance.load_config()
-    config.providers["exported_action"].config["timeout_s"] = 4
-    procedure_instance.save_config(config)
-    service_lock(procedure_instance)
     _stub_provider(monkeypatch, lambda payload: payload)
 
     result = service_run_procedure(
@@ -688,8 +736,8 @@ def test_run_receipt_records_accepted_and_drifted_execution_digests(
     )
 
     root = result.receipt.nodes[0].detail
-    assert root["accepted_against"]["config_digest"] != root["executed_against"]["config_digest"]
-    assert root["accepted_against"]["lock_digest"] != root["executed_against"]["lock_digest"]
+    assert root["accepted_against"]["config_digest"] == root["executed_against"]["config_digest"]
+    assert root["accepted_against"]["lock_digest"] == root["executed_against"]["lock_digest"]
     assert result.receipt.operation_type == "procedure"
     assert root["procedure_id"] == procedure_id
     assert root["definition_digest"] == result.procedure.definition_digest

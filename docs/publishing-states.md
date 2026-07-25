@@ -124,3 +124,36 @@ cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> 
   --rationale "Reviewed source evidence and accepted the proposed mappings"
 ```
 
+## What Gets Verified On Pull, And How To Recover
+
+A published bundle is a directory: `manifest.json`, `snapshot.json`,
+`config.yaml`, `graph.json`, `cruxible.lock.yaml`, and `members.json`.
+`members.json` pins the sha256 of every other member. Publishing writes it;
+pulling verifies it, before the release is materialized and before any
+`state pull apply` touches your graph.
+
+A mismatch is always a refusal — never a warning, never a silent overwrite:
+
+| Refusal | What it means | How to recover |
+| --- | --- | --- |
+| `failed digest verification for member '<name>'` | A bundle member's bytes are not what the publisher pinned. | Re-publish the release upstream under a **new** `--release-id`, then pull that. Never edit a pulled bundle in place. |
+| `carries members that members.json does not pin` | The bundle gained a file after publication. | Re-publish upstream and pull again. |
+| `Release '<id>' was already materialized ... but the transport now resolves that same release_id to <other digest>` | A release ID was rewritten upstream. Release IDs are immutable. | Publish the changed state under a **new** release ID and pull that. If the local copy is what drifted, delete `.cruxible/upstream/releases/<id>/` and pull again. |
+| `no longer matches its recorded '<member>' digest` | The materialized upstream under `.cruxible/upstream/` was edited locally. | Restore the file from the published release, or re-create the overlay with `state create-overlay`. |
+
+### Bundles published before `members.json` existed
+
+`members.json` is a later addition, so older bundles do not carry it. Those
+still verify `graph.json` and `cruxible.lock.yaml` against the digests
+`snapshot.json` has always recorded — a mismatch there is a refusal exactly as
+above. Only `config.yaml` has no pre-existing digest, so it is the one member
+that cannot be verified in an old bundle. The pull reports this rather than
+implying the bundle was checked: `state pull preview` returns a warning
+(`predates per-member digests ... config.yaml could not be verified`), and
+`state create-overlay` logs the same warning. Re-publish the release from a
+current Cruxible to get full verification.
+
+Verify-if-present, refuse-if-mismatch, warn-only-if-absent applies **only** to
+pre-field bundles. Once a bundle carries `members.json`, every member is
+verified and any mismatch refuses.
+

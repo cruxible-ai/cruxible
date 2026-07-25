@@ -709,6 +709,38 @@ def _compute_provider_entrypoint_sha256(
     return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
 
 
+def verify_provider_entrypoint_digest(
+    provider_name: str,
+    config: CoreConfig,
+    *,
+    expected_digest: str | None,
+    config_base_path: Path | None = None,
+) -> None:
+    """Refuse a provider whose entrypoint no longer matches its locked digest.
+
+    Compilation pins each provider's entrypoint digest into the plan, but the
+    plan is executed later -- after other steps have run, after repeat attempts,
+    and for procedures under a wall-clock budget measured in minutes. The file
+    that will actually be imported and called is only known at invocation, so
+    the locked digest is compared again here, immediately before the call.
+    """
+    current_digest = _compute_provider_entrypoint_sha256(
+        provider_name=provider_name,
+        config=config,
+        config_base_path=config_base_path,
+    )
+    if current_digest == expected_digest:
+        return
+    raise ConfigError(
+        f"Provider '{provider_name}' entrypoint does not match its locked digest at "
+        f"invocation: lock records {expected_digest or '(none)'}, found "
+        f"{current_digest or '(none)'}. The provider code changed after the plan was "
+        "compiled, so the call is refused rather than executed against unpinned code. "
+        "Re-run `cruxible lock` to pin the current provider code, or restore the "
+        "locked entrypoint, then re-run."
+    )
+
+
 def _collect_canonical_artifact_names(config: CoreConfig) -> set[str]:
     artifact_names: set[str] = set()
     for workflow in config.workflows.values():

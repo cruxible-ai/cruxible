@@ -1452,6 +1452,7 @@ class TestArchiveExclusion:
         assert "manifest.json" in members  # a real bundle was produced
         assert members <= {
             "manifest.json",
+            "members.json",
             "snapshot.json",
             "graph.json",
             "config.yaml",

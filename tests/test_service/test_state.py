@@ -32,6 +32,7 @@ from cruxible_core.service import (
 from cruxible_core.snapshot.types import UpstreamMetadata
 from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.apply import apply_entity_set, apply_relationship_set
+from tests.support.workflow_helpers import write_placeholder_kit_lock
 
 STATE_MODEL_YAML = """\
 version: "1.0"
@@ -128,9 +129,7 @@ def _write_overlay_kit_manifest(
         )
         + "\n"
     )
-    (kit_dir / "cruxible.lock.yaml").write_text(
-        "version: '1'\nconfig_digest: test\nartifacts: {}\nproviders: {}\n"
-    )
+    write_placeholder_kit_lock(kit_dir)
 
 
 def test_publish_overlay_and_pull_apply_preserves_overlay_overlay(

@@ -26,6 +26,8 @@ KIT_MANIFEST_FILE = "cruxible-kit.yaml"
 KIT_METADATA_FILE = "kit.json"
 KIT_SCHEMA_VERSION = "cruxible.kit.v1"
 LOCK_FILE_NAME = "cruxible.lock.yaml"
+OCI_PIN_FILE = "oci-pins.json"
+OCI_REPIN_ENV = "CRUXIBLE_OCI_REPIN"
 
 _IGNORED_DIRS = {"__pycache__", ".cruxible", ".ruff_cache", ".pytest_cache"}
 _IGNORED_FILES = {".DS_Store"}
@@ -152,7 +154,9 @@ def resolve_kit_ref(kit: str) -> KitBundle:
         return _install_kit_cache(source)
     if normalized.startswith("oci://"):
         pulled = _pull_oci_kit(normalized.removeprefix("oci://"))
-        return _install_kit_cache(pulled)
+        bundle = _install_kit_cache(pulled)
+        _pin_oci_kit_digest(normalized, bundle.digest)
+        return bundle
     raise ConfigError("Kit refs must be aliases, file:// refs, or oci:// refs")
 
 
@@ -442,6 +446,60 @@ def _pull_oci_kit(ref: str) -> Path:
     return dest
 
 
+def _oci_pin_path() -> Path:
+    return _kit_cache_dir() / OCI_PIN_FILE
+
+
+def _load_oci_pins() -> dict[str, str]:
+    path = _oci_pin_path()
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text())
+    except ValueError as exc:
+        raise ConfigError(
+            f"OCI kit pin file at {path} is unreadable: {exc}. Delete it to re-pin "
+            "every oci:// kit ref on its next resolution."
+        ) from exc
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"OCI kit pin file at {path} must contain a JSON object mapping refs to "
+            "digests. Delete it to re-pin every oci:// kit ref on its next resolution."
+        )
+    return {str(key): str(value) for key, value in raw.items()}
+
+
+def _pin_oci_kit_digest(ref: str, digest: str) -> None:
+    """Pin an oci:// kit tag to the content it first resolved to, or verify it.
+
+    An ``oci://`` tag is mutable at the registry: the same ref can be re-pushed
+    to point at different bytes. The first resolution records the content digest
+    of what the tag delivered; every later resolution must match it. A repointed
+    tag is refused -- silently accepting new content under an unchanged ref is
+    exactly the substitution a digest is supposed to catch.
+    """
+    pin_path = _oci_pin_path()
+    pin_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = pin_path.with_suffix(".json.lock")
+    with _file_lock(lock_path):
+        pins = _load_oci_pins()
+        recorded = pins.get(ref)
+        repin_requested = os.environ.get(OCI_REPIN_ENV) == "1"
+        if recorded is not None and recorded != digest and not repin_requested:
+            raise ConfigError(
+                f"Kit ref '{ref}' is pinned to content digest {recorded}, but the "
+                f"registry now serves {digest} for that same tag. The mutable tag was "
+                "repointed at different content, so the pull is refused rather than "
+                "silently accepted. If the new content is expected, re-pin explicitly "
+                f"with {OCI_REPIN_ENV}=1 and re-run the command (or pull the immutable "
+                f"digest ref directly); the pin file is {pin_path}."
+            )
+        if recorded == digest:
+            return
+        pins[ref] = digest
+        pin_path.write_text(json.dumps(pins, indent=2, sort_keys=True) + "\n")
+
+
 def _kit_cache_dir() -> Path:
     configured = os.environ.get("CRUXIBLE_KIT_CACHE_DIR")
     if configured:
@@ -500,9 +558,47 @@ def _iter_bundle_files(root: Path) -> list[Path]:
 
 
 def _verify_bundled_lock(root: Path) -> None:
-    if not (root / LOCK_FILE_NAME).exists():
+    """Verify the lock a kit bundle ships, not merely that it is present.
+
+    A kit lock pins the kit's providers and artifacts by digest, and every
+    downstream consumer treats it as the authority on what the kit executes.
+    The lock records its own content digest, so a lock whose body no longer
+    hashes to that digest was rewritten after it was generated -- pinning
+    something other than what the kit author locked. That is refused here,
+    before the kit is registered as materialized.
+    """
+    lock_path = root / LOCK_FILE_NAME
+    if not lock_path.exists():
         raise ConfigError(
             f"Kit bundle is missing {LOCK_FILE_NAME}; run `cruxible lock` before publishing"
+        )
+    # Imported lazily: workflow.compiler imports this module for kit:// provider
+    # digests, so a module-level import here would close the cycle.
+    from cruxible_core.workflow.compiler import compute_lock_digest, load_lock
+
+    try:
+        lock = load_lock(lock_path)
+    except ConfigError as exc:
+        raise ConfigError(
+            f"Kit bundle lock at {lock_path} is unreadable: {exc}. Re-run "
+            "`cruxible lock --kit-dir <kit>` upstream and re-publish the kit."
+        ) from exc
+    expected = compute_lock_digest(lock)
+    if lock.lock_digest is None:
+        raise ConfigError(
+            f"Kit bundle lock at {lock_path} records no lock_digest, so its pinned "
+            f"providers and artifacts cannot be verified (its contents hash to "
+            f"{expected}). Re-run `cruxible lock --kit-dir <kit>` upstream and "
+            "re-publish the kit."
+        )
+    if lock.lock_digest != expected:
+        raise ConfigError(
+            f"Kit bundle lock at {lock_path} failed digest verification: the lock "
+            f"records lock_digest={lock.lock_digest}, but its contents hash to "
+            f"{expected}. The lock was edited after it was generated, so the kit is "
+            "refused rather than materialized against unverified pins. Re-run "
+            "`cruxible lock --kit-dir <kit>` upstream, re-publish the kit, and "
+            "materialize again -- never hand-edit a lock file."
         )
 
 

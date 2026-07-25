@@ -199,9 +199,13 @@ Bundle behavior:
 - Bundles are cached under `CRUXIBLE_KIT_CACHE_DIR` or
   `${XDG_CACHE_HOME:-~/.cache}/cruxible/kits`.
 - Cache installs are locked and atomic by bundle digest.
+- `oci://` refs are pinned in `oci-pins.json` in that same cache directory: the
+  first resolution records the content digest, later resolutions verify it, and
+  a repointed tag refuses until `CRUXIBLE_OCI_REPIN=1` re-pins it explicitly.
 - Materialization copies the cached kit into the instance root.
 - Kit bundles carry `cruxible.lock.yaml` at the kit root as a portable bundle
-  artifact.
+  artifact, and materialization verifies that lock against its recorded
+  `lock_digest` before installing the kit.
 - Initialized Cruxible instances execute workflows from
   `.cruxible/cruxible.lock.yaml`; kit-backed initialization imports the bundled
   lock there when it matches the active config, or regenerates the instance-local
@@ -319,6 +323,43 @@ with URIs kept relative to the kit root — so an overlay kit locks without its
 `target_state` base present. Base-layer content is pinned by the base kit's
 own lock. CI asserts every bundled kit's committed lock matches a fresh regen,
 so run this after any config, provider, or seed-data change.
+
+A lock records its own content digest, and materializing a kit verifies the
+bundled lock against it. A lock whose body no longer hashes to its recorded
+`lock_digest` was edited after generation — it pins something other than what
+the kit author locked — so materialization refuses rather than installing a kit
+against unverified pins:
+
+```
+Kit bundle lock at <path> failed digest verification: the lock records
+lock_digest=sha256:..., but its contents hash to sha256:...
+```
+
+Recover by re-running `cruxible lock --kit-dir <kit>` upstream, re-publishing
+the kit, and materializing again. Never hand-edit a lock file.
+
+### `oci://` kit refs are pinned to the content they first resolved to
+
+An `oci://` tag is mutable: the same ref can be re-pushed to point at different
+bytes. The first resolution of a ref records the bundle content digest it
+delivered, in `oci-pins.json` under the kit cache directory. Every later
+resolution of that ref must match. A repointed tag refuses:
+
+```
+Kit ref 'oci://.../kit:1.0.0' is pinned to content digest sha256:..., but the
+registry now serves sha256:... for that same tag.
+```
+
+If the new content is expected, re-pin **explicitly** — there is no silent
+acceptance path:
+
+```bash
+CRUXIBLE_OCI_REPIN=1 cruxible init --kit <name>
+```
+
+The re-pin applies to that one command; subsequent resolutions verify against
+the newly recorded digest. Pulling an immutable digest ref (`...@sha256:...`)
+instead of a tag avoids the situation entirely.
 
 Vocabulary:
 

@@ -27,6 +27,7 @@ from cruxible_core.query.types import dump_query_row
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.artifacts import resolve_local_artifact_path
+from cruxible_core.workflow.compiler import verify_provider_entrypoint_digest
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
 from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.step_helpers import (
@@ -294,6 +295,12 @@ def execute_provider_step(
         provider_config=locked_provider.config,
         deterministic=locked_provider.deterministic,
         artifact=artifact,
+    )
+    verify_provider_entrypoint_digest(
+        compiled_step.provider_name,
+        config,
+        expected_digest=locked_provider.provider_entrypoint_digest,
+        config_base_path=config_base_path,
     )
     timeout_ceiling_s = (
         before_provider_invocation() if before_provider_invocation is not None else None

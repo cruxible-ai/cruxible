@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 import tempfile
 from pathlib import Path
@@ -17,7 +18,7 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.kits import materialize_kit
+from cruxible_core.kits import compute_bundle_digest, materialize_kit
 from cruxible_core.kits.state_refs import resolve_state_source
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.server.auth_managed_entities import (
@@ -37,8 +38,17 @@ from cruxible_core.snapshot.types import (
     StateCompatibility,
     UpstreamMetadata,
 )
-from cruxible_core.transport.backends import resolve_transport
+from cruxible_core.transport.backends import (
+    RELEASE_BUNDLE_MEMBERS,
+    RELEASE_MEMBER_DIGESTS_FILE,
+    resolve_transport,
+)
 from cruxible_core.transport.types import PulledReleaseBundle
+
+_logger = logging.getLogger(__name__)
+
+MEMBER_DIGESTS_FORMAT_VERSION = 1
+"""Format version of the per-member digest sidecar written into release bundles."""
 
 
 def service_publish_state(
@@ -85,7 +95,9 @@ def service_create_state_overlay(
         raise ConfigError(f"Instance already exists at {root}")
 
     resolved = resolve_state_source(transport_ref=transport_ref, state_ref=state_ref)
-    pulled = _pull_bundle(resolved.pull_transport_ref)
+    pulled, bundle_warnings = _pull_bundle(resolved.pull_transport_ref)
+    for warning in bundle_warnings:
+        _logger.warning("%s", warning)
 
     normalized_kit = (kit or "").strip() or None
     if normalized_kit is not None and no_kit:
@@ -162,8 +174,13 @@ def service_pull_state_preview(instance: InstanceProtocol) -> StatePullPreviewRe
     if upstream is None:
         raise ConfigError("Instance is not tracking an upstream state release")
 
-    pulled = _pull_bundle(upstream.transport_ref)
-    return _build_state_pull_preview(instance, upstream=upstream, pulled=pulled)
+    pulled, bundle_warnings = _pull_bundle(upstream.transport_ref)
+    return _build_state_pull_preview(
+        instance,
+        upstream=upstream,
+        pulled=pulled,
+        bundle_warnings=bundle_warnings,
+    )
 
 
 def _build_state_pull_preview(
@@ -171,16 +188,19 @@ def _build_state_pull_preview(
     *,
     upstream: UpstreamMetadata,
     pulled: PulledReleaseBundle,
+    bundle_warnings: list[str],
 ) -> StatePullPreviewResult:
     """Evaluate a materialized upstream bundle against the current overlay."""
-    warnings: list[str] = []
+    root = instance.get_root_path()
+    _verify_tracked_upstream(root, upstream)
+    _verify_release_immutability(root, pulled.root_dir, pulled.manifest.release_id)
+    warnings: list[str] = list(bundle_warnings)
     conflicts: list[str] = []
     if pulled.manifest.release_id == upstream.release_id:
         warnings.append("Already at latest pulled release")
     if pulled.manifest.compatibility == "breaking":
         conflicts.append("Target release is marked breaking and cannot be pulled in v1")
 
-    root = instance.get_root_path()
     try:
         # The target release's content is still in the pulled temp dir, but the
         # overlay's config extends the materialized upstream path — compose the
@@ -228,8 +248,13 @@ def service_pull_state_apply(
     if upstream is None:
         raise ConfigError("Instance is not tracking an upstream state release")
 
-    pulled = _pull_bundle(upstream.transport_ref)
-    preview = _build_state_pull_preview(instance, upstream=upstream, pulled=pulled)
+    pulled, bundle_warnings = _pull_bundle(upstream.transport_ref)
+    preview = _build_state_pull_preview(
+        instance,
+        upstream=upstream,
+        pulled=pulled,
+        bundle_warnings=bundle_warnings,
+    )
     if preview.apply_digest != expected_apply_digest:
         raise ConfigError("State pull apply digest mismatch; rerun pull preview before apply")
     if preview.conflicts:
@@ -323,10 +348,13 @@ def service_pull_state_apply(
     )
 
 
-def _pull_bundle(transport_ref: str) -> PulledReleaseBundle:
+def _pull_bundle(transport_ref: str) -> tuple[PulledReleaseBundle, list[str]]:
+    """Pull a release bundle and digest-verify every member before returning it."""
     transport, resolved_ref = resolve_transport(transport_ref)
     temp_root = Path(tempfile.mkdtemp(prefix="cruxible_release_"))
-    return transport.pull(resolved_ref, temp_root)
+    pulled = transport.pull(resolved_ref, temp_root)
+    warnings = verify_release_bundle(pulled, transport_ref=transport_ref)
+    return pulled, warnings
 
 
 def build_release_bundle(
@@ -346,7 +374,7 @@ def build_release_bundle(
     if callable(export_snapshot):
         snapshot_dir = export_snapshot(snapshot_id)
     bundle_dir = Path(tempfile.mkdtemp(prefix="cruxible_bundle_"))
-    for name in ("snapshot.json", "config.yaml", "graph.json", "cruxible.lock.yaml"):
+    for name in RELEASE_BUNDLE_MEMBERS:
         source = snapshot_dir / name
         if source.exists():
             shutil.copy2(source, bundle_dir / name)
@@ -363,12 +391,226 @@ def build_release_bundle(
     (bundle_dir / "manifest.json").write_text(
         json.dumps(manifest.model_dump(mode="json"), indent=2, sort_keys=True)
     )
+    _write_release_member_digests(bundle_dir)
     return bundle_dir
+
+
+def _write_release_member_digests(bundle_dir: Path) -> None:
+    """Emit the per-member digest sidecar that pull-side verification compares against.
+
+    Every file already written into the bundle -- ``manifest.json`` included --
+    is pinned by the sha256 of its exact bytes. The sidecar cannot pin itself,
+    so it is the one member excluded; it is the bundle's digest root, and the
+    transport is the trust boundary that delivers it.
+    """
+    digests = {
+        path.name: _sha256_bytes(path.read_bytes())
+        for path in sorted(bundle_dir.iterdir())
+        if path.is_file() and path.name != RELEASE_MEMBER_DIGESTS_FILE
+    }
+    (bundle_dir / RELEASE_MEMBER_DIGESTS_FILE).write_text(
+        json.dumps(
+            {"format_version": MEMBER_DIGESTS_FORMAT_VERSION, "digests": digests},
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+def verify_release_bundle(pulled: PulledReleaseBundle, *, transport_ref: str) -> list[str]:
+    """Digest-verify every member of a pulled release bundle before it is used.
+
+    Refuses (never warns, never silently accepts) when a member's bytes do not
+    match the digest the publisher recorded for it. Returns the warnings that a
+    caller must surface: bundles published before ``members.json`` existed carry
+    no digest for ``config.yaml``, so that one member stays unverifiable until
+    the upstream re-publishes.
+    """
+    root = pulled.root_dir
+    label = f"{pulled.manifest.state_id}:{pulled.manifest.release_id}"
+    warnings: list[str] = []
+    sidecar_path = root / RELEASE_MEMBER_DIGESTS_FILE
+    if sidecar_path.exists():
+        _verify_release_member_digests(root, sidecar_path, label=label, ref=transport_ref)
+    else:
+        warnings.append(
+            f"Release bundle {label} pulled from {transport_ref} predates per-member "
+            f"digests ({RELEASE_MEMBER_DIGESTS_FILE} is absent): graph.json and "
+            "cruxible.lock.yaml were still verified against snapshot.json, but "
+            "config.yaml could not be verified. Re-publish the release upstream with "
+            "a current Cruxible to get full bundle verification."
+        )
+
+    # snapshot.json has always recorded raw-byte digests for the graph and lock
+    # members. Verify them for every bundle, pre-field ones included.
+    _verify_recorded_member_digest(
+        root / "graph.json",
+        expected=pulled.snapshot.graph_digest,
+        member="graph.json",
+        source="snapshot.json",
+        label=label,
+        ref=transport_ref,
+    )
+    _verify_recorded_member_digest(
+        root / "cruxible.lock.yaml",
+        expected=pulled.snapshot.lock_digest,
+        member="cruxible.lock.yaml",
+        source="snapshot.json",
+        label=label,
+        ref=transport_ref,
+    )
+    return warnings
+
+
+def _verify_release_member_digests(
+    root: Path,
+    sidecar_path: Path,
+    *,
+    label: str,
+    ref: str,
+) -> None:
+    try:
+        raw = json.loads(sidecar_path.read_text())
+    except ValueError as exc:
+        raise ConfigError(
+            f"Release bundle {label} pulled from {ref} has an unreadable "
+            f"{RELEASE_MEMBER_DIGESTS_FILE}: {exc}. The bundle is not usable as "
+            "pulled; re-publish the release upstream and pull again."
+        ) from exc
+    digests = raw.get("digests") if isinstance(raw, dict) else None
+    if not isinstance(digests, dict) or not digests:
+        raise ConfigError(
+            f"Release bundle {label} pulled from {ref} has a malformed "
+            f"{RELEASE_MEMBER_DIGESTS_FILE}: expected a non-empty 'digests' mapping. "
+            "Re-publish the release upstream and pull again."
+        )
+
+    for member in sorted(digests):
+        expected = digests[member]
+        path = root / member
+        if not path.exists():
+            raise ConfigError(
+                f"Release bundle {label} pulled from {ref} is missing member "
+                f"'{member}', which {RELEASE_MEMBER_DIGESTS_FILE} pins at {expected}. "
+                "The bundle is incomplete or was altered in transit; re-publish the "
+                "release upstream and pull again."
+            )
+        actual = _sha256_bytes(path.read_bytes())
+        if actual != expected:
+            raise ConfigError(
+                f"Release bundle {label} pulled from {ref} failed digest verification "
+                f"for member '{member}': expected {expected}, found {actual}. The "
+                "published bundle was altered after it was signed off; nothing from it "
+                "is applied. Re-publish the release upstream under a new release_id, "
+                "then pull again -- never edit a pulled bundle in place."
+            )
+
+    unpinned = sorted(
+        path.name
+        for path in root.iterdir()
+        if path.is_file() and path.name != RELEASE_MEMBER_DIGESTS_FILE and path.name not in digests
+    )
+    if unpinned:
+        raise ConfigError(
+            f"Release bundle {label} pulled from {ref} carries members that "
+            f"{RELEASE_MEMBER_DIGESTS_FILE} does not pin: {', '.join(unpinned)}. "
+            "Unpinned content is refused rather than trusted; re-publish the release "
+            "upstream and pull again."
+        )
+
+
+def _verify_recorded_member_digest(
+    path: Path,
+    *,
+    expected: str | None,
+    member: str,
+    source: str,
+    label: str,
+    ref: str,
+) -> None:
+    if expected is None:
+        return
+    if not path.exists():
+        raise ConfigError(
+            f"Release bundle {label} pulled from {ref} is missing member '{member}', "
+            f"which {source} pins at {expected}. The bundle is incomplete; re-publish "
+            "the release upstream and pull again."
+        )
+    actual = _sha256_bytes(path.read_bytes())
+    if actual != expected:
+        raise ConfigError(
+            f"Release bundle {label} pulled from {ref} failed digest verification for "
+            f"member '{member}': {source} records {expected}, found {actual}. Nothing "
+            "from the bundle is applied. Re-publish the release upstream under a new "
+            "release_id, then pull again."
+        )
+
+
+def _verify_release_immutability(root: Path, bundle_dir: Path, release_id: str) -> None:
+    """Refuse a release_id that now resolves to different content than it did.
+
+    The transport ref an overlay tracks is a moving tag by design -- new releases
+    arrive through it -- so the tag itself cannot be pinned. A release_id can:
+    it names immutable published content. Resolving one to different bytes than
+    were already materialized means the release was rewritten upstream, and
+    overwriting the local copy would launder that rewrite into the overlay.
+    """
+    releases_dir = root / ".cruxible" / "upstream" / "releases" / release_id
+    if not releases_dir.exists():
+        return
+    already = compute_bundle_digest(releases_dir)
+    incoming = compute_bundle_digest(bundle_dir)
+    if already == incoming:
+        return
+    raise ConfigError(
+        f"Release '{release_id}' was already materialized at {releases_dir} with content "
+        f"digest {already}, but the transport now resolves that same release_id to "
+        f"{incoming}. Published releases are immutable, so the rewritten bundle is "
+        "refused rather than applied. Publish the changed state upstream under a NEW "
+        "release_id and pull that; if the local copy is what drifted, delete the "
+        "materialized release directory and pull again."
+    )
+
+
+def _verify_tracked_upstream(root: Path, upstream: UpstreamMetadata) -> None:
+    """Verify the materialized upstream still matches the digests tracking recorded.
+
+    ``UpstreamMetadata`` pins the manifest and graph of the release this overlay
+    tracks. Both are read back on every preview and apply -- the composed config
+    extends the materialized upstream config, and the pull delta is computed
+    against the materialized upstream graph -- so a local edit to either would
+    otherwise silently re-scope the pull.
+    """
+    for relative_path, expected, member in (
+        (upstream.manifest_path, upstream.manifest_digest, "manifest.json"),
+        (upstream.graph_path, upstream.graph_digest, "graph.json"),
+    ):
+        if expected is None:
+            continue
+        path = root / relative_path
+        if not path.exists():
+            raise ConfigError(
+                f"Tracked upstream release {upstream.state_id}:{upstream.release_id} is "
+                f"missing its materialized '{member}' at {relative_path}, which upstream "
+                f"tracking pins at {expected}. Re-create the overlay from the published "
+                "release; a pull cannot proceed against a missing upstream."
+            )
+        actual = _sha256_file(path)
+        if actual != expected:
+            raise ConfigError(
+                f"Tracked upstream release {upstream.state_id}:{upstream.release_id} no "
+                f"longer matches its recorded '{member}' digest: expected {expected}, "
+                f"found {actual} at {relative_path}. The materialized upstream was edited "
+                "locally, and pulled state must stay byte-identical to what was published. "
+                "Restore the file from the published release (or re-create the overlay), "
+                "then retry the pull."
+            )
 
 
 def _materialize_upstream_bundle(root: Path, bundle_dir: Path, release_id: str) -> Path:
     releases_dir = root / ".cruxible" / "upstream" / "releases" / release_id
     current_dir = root / ".cruxible" / "upstream" / "current"
+    _verify_release_immutability(root, bundle_dir, release_id)
     shutil.copytree(bundle_dir, releases_dir, dirs_exist_ok=True)
     shutil.rmtree(current_dir, ignore_errors=True)
     shutil.copytree(releases_dir, current_dir)
@@ -397,10 +639,14 @@ def _load_graph_from_bundle(bundle_dir: Path) -> EntityGraph:
     return EntityGraph.from_dict(json.loads((bundle_dir / "graph.json").read_text()))
 
 
+def _sha256_bytes(payload: bytes) -> str:
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
 def _sha256_file(path: Path) -> str | None:
     if not path.exists():
         return None
-    return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+    return _sha256_bytes(path.read_bytes())
 
 
 def _lock_text(path: Path) -> str | None:

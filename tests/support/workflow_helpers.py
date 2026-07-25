@@ -8,11 +8,21 @@ from textwrap import dedent, indent
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.workflow import build_lock, get_lock_path, write_lock
+from cruxible_core.workflow.types import WorkflowLock
 
 
 def write_lock_for_instance(instance: CruxibleInstance) -> None:
     config = instance.load_config()
     write_lock(build_lock(config, instance.get_config_path().parent), get_lock_path(instance))
+
+
+def write_placeholder_kit_lock(kit_dir: Path, *, config_digest: str = "test") -> None:
+    """Write an empty but self-consistent kit lock for kit-materialization fixtures.
+
+    Kit materialization verifies a bundled lock against its own recorded
+    ``lock_digest``, so fixtures cannot hand-write a lock body without one.
+    """
+    write_lock(WorkflowLock(config_digest=config_digest), kit_dir / "cruxible.lock.yaml")
 
 
 def json_contract_workflow_yaml(

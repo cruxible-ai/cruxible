@@ -244,6 +244,21 @@ loaders in Python, over HTTP, or as commands — are pinned, not trusted: the
 kit lockfile (`cruxible.lock.yaml`) records each one's version, content
 digest, and declared side effects, and every call leaves an execution trace.
 
+The pin is checked twice: once when the plan compiles, and again at each
+invocation, immediately before the provider is called. Compilation alone is not
+enough — a plan runs after other steps have already executed, across repeat
+attempts, and for procedures under a budget measured in minutes, so the file
+that will actually be imported is only known at call time. A provider whose
+entrypoint no longer matches its locked digest is refused rather than executed:
+
+```
+Provider 'x' entrypoint does not match its locked digest at invocation: lock
+records sha256:..., found sha256:...
+```
+
+Re-run `cruxible lock` to pin the current provider code, or restore the locked
+entrypoint, then re-run.
+
 Canonical workflows are **preview-first**:
 
 ```bash
