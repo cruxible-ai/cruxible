@@ -1478,7 +1478,7 @@ The `git-pre-push` kind evaluates merge commits only: squash merges mint new SHA
 **Usage:**
 
 ```bash
-cruxible attest record --relationship REL_TYPE --from-type TYPE --from-id ID --to-type TYPE --to-id ID --stance support|contradict|unsure --observed-at ISO_TIME [--evidence-ref JSON]... [--edge-key INTEGER] [--properties JSON] [--note TEXT] [--idempotency-key KEY] [--json]
+cruxible attest record --relationship REL_TYPE --from-type TYPE --from-id ID --to-type TYPE --to-id ID --stance support|contradict|unsure --observed-at ISO_TIME [--evidence-ref JSON]... [--edge-key INTEGER] [--claim-id CLAIM_ID] [--properties JSON] [--note TEXT] [--idempotency-key KEY] [--json]
 ```
 
 **Purpose:** Record one observation against a tuple-first relationship claim.
@@ -1496,6 +1496,7 @@ cruxible attest record --relationship REL_TYPE --from-type TYPE --from-id ID --t
 | `--observed-at` | yes |  | text | ISO-8601 time when the world was observed. |
 | `--evidence-ref` | no |  | JSON | Evidence pointer; repeatable and required for support or contradict. |
 | `--edge-key` | no |  | integer | Disambiguation hint; tuple coordinates remain authoritative. |
+| `--claim-id` | no |  | text | Stable claim identity; the preferred disambiguator, taking precedence over `--edge-key`. Supplying both with disagreeing values is refused. |
 | `--properties` | no |  | JSON | Properties used only when absent support creates a pending claim. |
 | `--note` | no |  | text | Optional note, encouraged for unsure. |
 | `--idempotency-key` | no |  | text | Retry-safe key scoped to actor and claim tuple. |
