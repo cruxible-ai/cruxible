@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -9,13 +10,20 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError, DataValidationError, GroupNotFoundError
+from cruxible_core.errors import (
+    ConfigError,
+    DataValidationError,
+    GroupNotFoundError,
+    PermissionDeniedError,
+)
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
 from cruxible_core.service import (
     ResolveGroupResult,
+    service_attest,
     service_get_relationship_lineage,
     service_propose_group,
     service_resolve_group,
@@ -1533,3 +1541,109 @@ class TestCacheInvalidation:
         ) as mock_invalidate:
             service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
             mock_invalidate.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# The service seam is gated at GRAPH_WRITE (Codex F1)
+# ---------------------------------------------------------------------------
+
+
+class TestServiceSeamGovernanceRail:
+    """``service_resolve_group`` is exported, so the facade cannot be the seam.
+
+    ``cruxible_resolve_group`` has always required GRAPH_WRITE, but that check
+    lives in the runtime facade — a direct library caller reaching
+    ``service_resolve_group`` got no tier check at all, and with
+    ``stamp_existing=True`` could bless a pending edge from GOVERNED_WRITE.
+    wi-feedback-approval-rail chose the SERVICE layer as the enforcement seam
+    for adjudication; group resolution now matches it, refusal receipted.
+    """
+
+    @pytest.mark.parametrize("action", ["approve", "reject"])
+    def test_governed_write_service_resolve_refused(
+        self, instance: CruxibleInstance, action: str
+    ) -> None:
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+
+        with request_permission_scope(PermissionMode.GOVERNED_WRITE):
+            with pytest.raises(PermissionDeniedError) as exc:
+                service_resolve_group(instance, group_id, action, expected_pending_version=1)
+
+        assert exc.value.required_mode == "GRAPH_WRITE"
+        assert exc.value.current_mode == "GOVERNED_WRITE"
+        # Receipted, like every other refusal at a mutation chokepoint.
+        assert exc.value.mutation_receipt_id is not None
+        # Rolled back: the group is still awaiting review.
+        store = instance.get_group_store()
+        try:
+            group = store.get_group(group_id)
+            assert group is not None
+            assert group.status == "pending_review"
+        finally:
+            store.close()
+
+    def test_graph_write_service_resolve_allowed(self, instance: CruxibleInstance) -> None:
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+
+        with request_permission_scope(PermissionMode.GRAPH_WRITE):
+            result = service_resolve_group(
+                instance, group_id, "approve", expected_pending_version=1
+            )
+
+        assert result.action == "approve"
+        assert result.edges_created == 1
+
+    def test_governed_write_cannot_attest_then_bless_own_claim(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """The group-shaped twin of the feedback self-approval loop.
+
+        A GOVERNED_WRITE actor attests support on an absent claim (legitimate —
+        it stages a PENDING edge), proposes a group over that same tuple, then
+        blesses it with ``stamp_existing``. Steps one and two still work; the
+        blessing is refused, so the edge never leaves ``pending``.
+        """
+        actor = _actor()
+        attested = service_attest(
+            instance,
+            relationship_type="fits",
+            from_type="Part",
+            from_id="BP-1",
+            to_type="Vehicle",
+            to_id="V-1",
+            stance="support",
+            evidence_refs=[{"source": "test", "source_record_id": "self-bless"}],
+            observed_at=datetime(2026, 1, 1, tzinfo=UTC),
+            actor_context=actor,
+        )
+        assert attested.created_claim is True
+        staged = instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+        assert staged is not None
+        assert staged.metadata.assertion.review.status == "pending"
+
+        proposed = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="self-bless",
+            thesis_facts={"style": "casual"},
+            actor_context=actor,
+        )
+
+        with request_permission_scope(PermissionMode.GOVERNED_WRITE):
+            with pytest.raises(PermissionDeniedError, match="GRAPH_WRITE") as exc:
+                service_resolve_group(
+                    instance,
+                    proposed.group_id,
+                    "approve",
+                    expected_pending_version=1,
+                    actor_context=actor,
+                    stamp_existing=True,
+                )
+        assert exc.value.mutation_receipt_id is not None
+
+        still_pending = instance.load_graph().get_relationship(
+            "Part", "BP-1", "Vehicle", "V-1", "fits"
+        )
+        assert still_pending is not None
+        assert still_pending.metadata.assertion.review.status == "pending"

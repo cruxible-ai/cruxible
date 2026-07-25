@@ -33,7 +33,8 @@ errors (runtime data), making it easy to catch by category.
     ├── AuthenticationError (HTTP/API credential failure)
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
     ├── PermissionDeniedError (MCP permission mode)
-    └── DirectWriteRefusedError (governed proposal_only direct-write refusal)
+    ├── DirectWriteRefusedError (governed proposal_only direct-write refusal)
+    └── PendingEdgeWriteRefusedError (non-pending write onto a pending proposal)
 """
 
 from __future__ import annotations
@@ -432,6 +433,12 @@ class DirectWriteRefusedError(CoreError):
     only enter through the governed proposal/workflow path; relationship writes
     may also be staged with ``pending=true``. State for a ``mint_only`` type may
     only enter through runtime credential minting.
+
+    ``kind="feedback"`` is the feedback-channel arm of the same
+    ``CRUXIBLE_REFUSE_DIRECT_WRITES`` kill-switch: an ``approve``/``correct``
+    feedback action transitions an edge INTO accepted state, which is the same
+    governance event as a direct live write, so the daemon-wide kill-switch
+    refuses it too. ``source`` carries the feedback action.
     """
 
     error_code = "direct_write_refused"
@@ -448,6 +455,14 @@ class DirectWriteRefusedError(CoreError):
         self.type_name = type_name
         self.source = source
         self.policy = policy
+        if kind == "feedback":
+            super().__init__(
+                f"Feedback action '{source}' on relationship '{type_name}' is refused: "
+                "it transitions the edge into accepted state while "
+                "CRUXIBLE_REFUSE_DIRECT_WRITES is set daemon-wide. Clear the "
+                "kill-switch to adjudicate, or leave the edge staged for review."
+            )
+            return
         if policy == "mint_only":
             super().__init__(
                 f"Direct write to {kind} '{type_name}' is refused "
@@ -468,4 +483,45 @@ class DirectWriteRefusedError(CoreError):
         super().__init__(
             f"Direct write to {kind} '{type_name}' is refused "
             f"(write_policy=proposal_only). {forward}"
+        )
+
+
+class PendingEdgeWriteRefusedError(CoreError):
+    """A non-pending write was refused because the target edge is still PENDING.
+
+    ``graph.get_relationship`` is state-blind, so before this refusal a plain
+    direct write onto a tuple whose edge was awaiting review resolved to
+    ``is_update=True`` and silently replaced the proposal's properties in place
+    (wi-pending-edge-clobber). The proposal a reviewer was asked to adjudicate
+    is then not the proposal they approve.
+
+    The refusal is a STATE conflict, not a tier or policy problem: the same
+    actor may write the tuple freely once the proposal is resolved. It is raised
+    at the single relationship chokepoint, so every write path inherits it.
+    """
+
+    error_code = "pending_edge_write_refused"
+
+    def __init__(
+        self,
+        relationship_type: str,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+    ):
+        self.relationship_type = relationship_type
+        self.from_type = from_type
+        self.from_id = from_id
+        self.to_type = to_type
+        self.to_id = to_id
+        super().__init__(
+            f"Write to relationship '{relationship_type}' "
+            f"({from_type}:{from_id} -> {to_type}:{to_id}) is refused: the edge is a "
+            "PENDING proposal awaiting review, and a non-pending write would replace "
+            "the proposal's content while a reviewer is adjudicating it. "
+            "If you proposed it: withdraw the proposal, or re-propose the corrected "
+            "edge through the pending path (pass pending=true). "
+            "If you are reviewing it: resolve it through the review machinery "
+            "(feedback approve/reject, or group resolve) and write afterwards."
         )

@@ -53,7 +53,6 @@ from cruxible_core.service.feedback import (
     service_get_feedback_profile,
     service_get_outcome_profile,
     service_outcome,
-    service_resolve_feedback_query_target,
 )
 from cruxible_core.service.gates import service_evaluate_gate
 from cruxible_core.service.groups import (
@@ -383,7 +382,6 @@ __all__ = [
     "service_feedback_batch",
     "service_feedback_from_query_result",
     "service_feedback_input",
-    "service_resolve_feedback_query_target",
     "service_get_feedback_profile",
     "service_get_outcome_profile",
     "service_outcome",

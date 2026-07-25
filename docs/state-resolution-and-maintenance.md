@@ -160,9 +160,21 @@ overrides, including `admin`:
   `direct_write_refused`; state enters only through the governed verbs
   (`workflow_apply`, `group_resolve`) or, for relationships, staged with
   `pending=true`. The `CRUXIBLE_REFUSE_DIRECT_WRITES` env kill-switch forces
-  this instance-wide.
+  this instance-wide, and while it is set the acceptance-transitioning feedback
+  actions (`approve` / `correct`) are refused too.
 - `mint_only` — refuses **every** writer including the governed verbs; only
   the `token_mint` source may write.
+
+Two further rails are hard constraints at the same chokepoints:
+
+- **Adjudication tier.** `feedback approve` / `reject` / `correct` require
+  `graph_write` even though the feedback tools sit at `governed_write`:
+  promoting a claim to live is the same authority as a direct write. `flag`
+  stays `governed_write`.
+- **Pending proposals are immutable while staged.** A non-pending write onto a
+  tuple whose edge is `pending` is refused with `pending_edge_write_refused`
+  (HTTP **409**) rather than silently replacing the proposal's content under a
+  reviewer. Withdraw and re-propose, or resolve the proposal first.
 
 ### Mutation guards refuse with reasons and receipts
 

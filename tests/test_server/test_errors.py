@@ -18,6 +18,7 @@ from cruxible_core.errors import (
     InstanceNotFoundError,
     MutationError,
     OutcomeNotFoundError,
+    PendingEdgeWriteRefusedError,
     PermissionDeniedError,
     QueryExecutionError,
     QueryNotFoundError,
@@ -130,6 +131,21 @@ from cruxible_core.server.errors import (
         ),
         (IngestionError("ingest failed"), client_errors.IngestionError, {}),
         (MutationError("mutation failed"), client_errors.MutationError, {}),
+        (
+            # wi-pending-edge-clobber: the refusal a client sees must survive
+            # the wire with its edge coordinates AND its two-exit message —
+            # that message is the whole remediation, so a lossy round-trip
+            # would strand the caller.
+            PendingEdgeWriteRefusedError("fits", "Part", "BP-1", "Vehicle", "V-1"),
+            client_errors.PendingEdgeWriteRefusedError,
+            {
+                "relationship_type": "fits",
+                "from_type": "Part",
+                "from_id": "BP-1",
+                "to_type": "Vehicle",
+                "to_id": "V-1",
+            },
+        ),
     ],
 )
 def test_error_round_trip_preserves_subclass_and_context(
@@ -149,6 +165,21 @@ def test_error_round_trip_preserves_subclass_and_context(
         assert body.error_code == "customer_code_execution_unsupported"
     for key, value in attrs.items():
         assert getattr(restored, key) == value
+
+
+def test_pending_edge_refusal_is_a_409_conflict_with_both_exits_intact() -> None:
+    """The refusal is a STATE conflict (409), not a tier/policy 403, and its
+    message is the remediation: withdraw/re-propose, or resolve first."""
+    error = PendingEdgeWriteRefusedError("fits", "Part", "BP-1", "Vehicle", "V-1")
+    status, body = error_to_response(error)
+
+    assert status == 409
+    assert body.error_code == "pending_edge_write_refused"
+
+    restored = client_errors.response_to_error(status, body)
+    assert isinstance(restored, client_errors.PendingEdgeWriteRefusedError)
+    assert "pending=true" in str(restored)
+    assert "feedback approve/reject, or group resolve" in str(restored)
 
 
 def test_request_validation_envelope_decodes_with_field_errors():

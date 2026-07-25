@@ -66,9 +66,21 @@ _GOVERNED_SOURCES: frozenset[str] = frozenset({"workflow_apply", "group_resolve"
 TOKEN_MINT_SOURCE = "token_mint"
 
 # Env kill-switch: daemon-wide override forcing proposal_only for the direct-write
-# verbs at the chokepoint (overrides per-type opt-outs + the default). Scope: governs
-# the write chokepoint only -- the feedback review/promotion channel is separate.
+# verbs at the chokepoint (overrides per-type opt-outs + the default).
+#
+# Scope: the write chokepoint AND the acceptance-transitioning feedback actions
+# (``approve``/``correct``). The switch previously disclaimed the feedback
+# channel, which made it a half-switch: an operator who flipped it to freeze
+# live writes could still have state promoted into accepted/live through
+# feedback approve, and a proposal_only type could be made live that way with no
+# direct write at all (wi-feedback-approval-rail). ``reject``/``flag`` are NOT
+# covered -- they move an edge OUT of live state, which is the direction the
+# kill-switch wants, and refusing them would strand pending edges.
 _ENV_REFUSE_DIRECT_WRITES = "CRUXIBLE_REFUSE_DIRECT_WRITES"
+
+# Feedback actions that transition an edge INTO accepted state. Both promote the
+# review status to ``approved`` in ``feedback/applier.py``.
+FEEDBACK_ACCEPTANCE_ACTIONS: frozenset[str] = frozenset({"approve", "correct"})
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -90,6 +102,19 @@ def env_refuses_direct_writes(environ: Mapping[str, str] | None = None) -> bool:
     """
     env = environ if environ is not None else os.environ
     return _is_truthy(env.get(_ENV_REFUSE_DIRECT_WRITES))
+
+
+def env_refuses_feedback_acceptance(
+    action: str,
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    """Return whether the kill-switch refuses this feedback action.
+
+    Same env var and same truthy spellings as
+    :func:`env_refuses_direct_writes`, read per-call, applied to the feedback
+    actions that transition an edge into accepted state.
+    """
+    return action in FEEDBACK_ACCEPTANCE_ACTIONS and env_refuses_direct_writes(environ)
 
 
 def _resolve(

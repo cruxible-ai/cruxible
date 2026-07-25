@@ -62,6 +62,19 @@ tier meaning "may propose but may not direct-add."
   See [Direct-Write Governance](config-reference.md#direct-write-governance-refuse_direct_writes)
   for the precedence table and the three knobs.
 
+- **Adjudication tier** — `feedback approve` / `reject` / `correct` decide a
+  claim's fate, so they require `graph_write` regardless of the feedback tool's
+  own `governed_write` tier. A `governed_write` agent may stage evidence
+  (`attest`, `--pending`, `group propose`) and `flag` an edge for review, but it
+  cannot approve its own proposal. Escalating is a human's call: hand the
+  proposal to a reviewer rather than retrying.
+
+- **Pending proposals are immutable while staged** — writing onto a tuple whose
+  edge is still `pending` is refused (`pending_edge_write_refused`, HTTP 409)
+  instead of quietly replacing what the reviewer is looking at. Withdraw and
+  re-propose (or stage a corrected edge with `pending=true` after the current
+  one is resolved) rather than overwriting.
+
 There is **no** `CRUXIBLE_AGENT_MODE` env var — if older docs or skills mention
 it, they are stale. The real knobs are `CRUXIBLE_MODE` and the
 `refuse_direct_writes` policy above.

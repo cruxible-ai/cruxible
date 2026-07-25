@@ -22,6 +22,7 @@ from cruxible_core.config.schema import (
 from cruxible_core.errors import (
     ConfigError,
     DataValidationError,
+    DirectWriteRefusedError,
     ReceiptNotFoundError,
     RelationshipAmbiguityError,
 )
@@ -37,6 +38,13 @@ from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.runtime.permissions import (
+    FEEDBACK_ACTION_PERMISSIONS,
+    FEEDBACK_ADJUDICATION_OPERATION,
+    PermissionMode,
+    check_permission,
+)
+from cruxible_core.service.direct_write_policy import env_refuses_feedback_acceptance
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.queries import service_get_receipt
 from cruxible_core.service.types import (
@@ -891,6 +899,53 @@ def _feedback_target_from_query_result(
     raise ConfigError(f"Unsupported query result shape at result_index {result_index}")
 
 
+def _enforce_feedback_governance(records: Iterable[FeedbackRecord]) -> None:
+    """Gate the adjudication actions carried by a feedback payload.
+
+    Two governance rails the per-TOOL permission map cannot express, both keyed
+    on the payload's ``action`` (wi-feedback-approval-rail):
+
+    1. **Tier.** ``approve``/``reject``/``correct`` adjudicate a claim and
+       require GRAPH_WRITE (see ``FEEDBACK_ACTION_PERMISSIONS``). Without this,
+       one GOVERNED_WRITE actor could attest an edge into ``pending`` and then
+       approve their own proposal — a live approved claim on a proposal_only
+       type with no reviewer above them. ``action`` is a closed Literal with no
+       action-less variant, so ``flag`` is the ONLY action left at the tools'
+       GOVERNED_WRITE floor (which the facades already checked); recording is
+       the half of an action that a refusal here rolls back with it.
+    2. **Kill-switch.** ``CRUXIBLE_REFUSE_DIRECT_WRITES`` refuses the actions
+       that transition an edge INTO accepted state, so freezing live writes
+       daemon-wide cannot be walked around through feedback approve.
+
+    Called INSIDE the ``mutation_receipt`` block so a refusal is receipted (and
+    the open write transaction rolls back), exactly like a chokepoint refusal.
+    That receipted position is the whole reason this is the ONLY feedback tier
+    rail: the facade pre-gate it replaced could never bind more tightly than an
+    action-level GRAPH_WRITE floor, and its denials landed unreceipted. A batch
+    is gated at its strictest member: one adjudication action lifts the whole
+    batch's requirement, and the batch stays all-or-nothing.
+    """
+    materialized = list(records)
+    required = max(
+        (
+            FEEDBACK_ACTION_PERMISSIONS[record.action]
+            for record in materialized
+            if record.action in FEEDBACK_ACTION_PERMISSIONS
+        ),
+        default=PermissionMode.GOVERNED_WRITE,
+    )
+    if required > PermissionMode.GOVERNED_WRITE:
+        check_permission(FEEDBACK_ADJUDICATION_OPERATION, required_override=required)
+
+    for record in materialized:
+        if env_refuses_feedback_acceptance(record.action):
+            raise DirectWriteRefusedError(
+                "feedback",
+                record.target.relationship_type,
+                record.action,
+            )
+
+
 def _apply_feedback_record(
     graph: EntityGraph,
     record: FeedbackRecord,
@@ -960,35 +1015,6 @@ def service_feedback_input(
         group_override=item.group_override,
         actor_context=actor_context,
     )
-
-
-def service_resolve_feedback_query_target(
-    instance: InstanceProtocol,
-    *,
-    receipt_id: str,
-    result_index: int,
-    path_index: int | None = None,
-    path_alias: str | None = None,
-) -> RelationshipInstance:
-    """Resolve the relationship target a query-receipt feedback call selects.
-
-    Read-only companion to ``service_feedback_from_query_result`` so the
-    runtime facade can tier-gate ``correct`` property corrections against the
-    resolved relationship type BEFORE any mutation happens. Uses the same
-    receipt/result selection rules as the mutating path.
-    """
-    receipt = service_get_receipt(instance, receipt_id)
-    if receipt.operation_type != "query":
-        raise ConfigError(
-            f"Receipt '{receipt_id}' has operation_type '{receipt.operation_type}', not 'query'"
-        )
-    target, _ = _feedback_target_from_query_result(
-        receipt,
-        result_index=result_index,
-        path_index=path_index,
-        path_alias=path_alias,
-    )
-    return target
 
 
 def service_feedback_from_query_result(
@@ -1125,6 +1151,7 @@ def service_feedback(
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None
+        _enforce_feedback_governance([record])
         ctx.uow.feedback.save_feedback_batch([record])
 
         applied = _apply_feedback_record(
@@ -1223,6 +1250,7 @@ def service_feedback_batch(
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None
+        _enforce_feedback_governance(records)
         for index, record in enumerate(records, start=1):
             ctx.builder.record_validation(
                 passed=True,

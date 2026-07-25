@@ -117,20 +117,21 @@ def test_runtime_api_does_not_construct_graph_or_feedback_domain_models():
 # Config-declared write tiers (``write_tier``) make the direct-write facades'
 # effective requirement payload-dependent: they pre-gate at the GOVERNED_WRITE
 # floor (scope first, before any instance access), then check the payload's
-# computed requirement via ``_direct_write_tier_gate``. Feedback ``correct``
-# applies edge property corrections — the same mutation as a direct
-# relationship write — so ``_feedback_correction_tier_gate`` holds the same
-# power for the feedback facades (wi-feedback-write-tier-bypass): after the
-# facades' audited static check, it gates corrections at the strictest
-# corrected type's ``write_tier``. Nothing else in the facade may adjust a
-# tier — additions to this set need an architecture review.
+# computed requirement via ``_direct_write_tier_gate``. Nothing else in the
+# facade may adjust a tier — additions to this set need an architecture review.
+#
+# The feedback facades used to hold this power too (``_feedback_correction_tier_gate``,
+# wi-feedback-write-tier-bypass). They no longer do: wi-feedback-approval-rail
+# floors every ``correct`` at GRAPH_WRITE by ACTION, which the facade pre-gate
+# could never bind more tightly than, and a facade-side denial landed
+# UNRECEIPTED. The rail moved wholly into the service chokepoint
+# (``_ADJUDICATION_ENFORCEMENT_SEAMS`` below) so refusals are receipted.
 _TIER_OVERRIDE_FUNCTIONS = frozenset(
     {
         "add_entities",
         "add_relationships_with_provenance",
         "batch_direct_write",
         "_direct_write_tier_gate",
-        "_feedback_correction_tier_gate",
     }
 )
 
@@ -190,16 +191,36 @@ def test_runtime_api_tier_branching_confined_to_the_gate():
     assert offenders == []
 
 
+# The service-layer files allowed to raise a tier for an ADJUDICATION act.
+# Some governance requirements are properties of the PAYLOAD's action, not of
+# the tool name, so the per-tool permission map cannot express them and the
+# facade cannot enforce them: feedback ``approve``/``reject``/``correct``, and
+# group ``resolve`` reached through the exported service function rather than
+# the GRAPH_WRITE-gated tool. Both are enforced INSIDE the mutation-receipt
+# scope of their service chokepoint so the refusal is receipted and rolls the
+# open write transaction back. This is a deliberately short list - adding a
+# file needs an architecture review, and the check must stay inside a
+# ``mutation_receipt`` block (pinned by
+# ``test_service_seam_tier_checks_sit_inside_a_mutation_receipt``).
+_ADJUDICATION_ENFORCEMENT_SEAMS = frozenset(
+    {
+        "cruxible_core/service/feedback.py",
+        "cruxible_core/service/group_transitions.py",
+    }
+)
+
+
 def test_gate_powers_never_leave_the_permission_module_and_api_gates():
     """Repo-wide: required_override / audit_success appear only in the
-    permission module (definition) and runtime/api.py (the gates) - closes
-    the import-check_permission-elsewhere hole the api.py-only AST walk
-    leaves open."""
+    permission module (definition), runtime/api.py (the facade gates), and the
+    sanctioned service-layer adjudication seams - closes the
+    import-check_permission-elsewhere hole the api.py-only AST walk leaves
+    open."""
     src_root = _repo_root() / "src"
     allowed = {
         src_root / "cruxible_core" / "runtime" / "permissions.py",
         src_root / "cruxible_core" / "runtime" / "api.py",
-    }
+    } | {src_root / relative for relative in _ADJUDICATION_ENFORCEMENT_SEAMS}
     offenders: list[str] = []
     for path in src_root.rglob("*.py"):
         if path in allowed:
@@ -210,15 +231,69 @@ def test_gate_powers_never_leave_the_permission_module_and_api_gates():
     assert offenders == []
 
 
-def test_feedback_channel_mutates_relationships_only():
-    """The feedback correction tier gate covers relationship types only.
+def test_service_seam_tier_checks_are_reached_only_inside_a_mutation_receipt():
+    """A service-seam tier check earns its exemption ONLY by being receipted.
 
-    That is sound ONLY while the feedback channel cannot write entity
-    properties. Pin both halves: every feedback target is a relationship
-    instance, and the channel's sole graph WRITE verb is
-    ``update_relationship_state``. If feedback ever grows entity corrections,
-    this fails loudly and ``_feedback_correction_tier_gate`` must gain
-    entity-side coverage before the assertion is relaxed."""
+    The whole reason the adjudication rails moved out of the facade is that a
+    facade-side denial landed before any receipt existed - the changelog
+    promises a receipted refusal, so the check must run with the write
+    transaction already open. Pin exactly that: in each sanctioned seam, the
+    helper carrying the ``required_override`` check is called ONLY from inside
+    a ``with mutation_receipt(...)`` block (and is actually called at all)."""
+    src_root = _repo_root() / "src"
+    offenders: list[str] = []
+    for relative in sorted(_ADJUDICATION_ENFORCEMENT_SEAMS):
+        path = src_root / relative
+        tree = ast.parse(path.read_text(), filename=str(path))
+
+        gate_functions = {
+            function.name
+            for function in ast.walk(tree)
+            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "check_permission"
+            and any(keyword.arg == "required_override" for keyword in node.keywords)
+        }
+        assert gate_functions, f"{relative} is listed as a seam but carries no tier check"
+
+        receipted: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.With) and any(
+                isinstance(item.context_expr, ast.Call)
+                and isinstance(item.context_expr.func, ast.Name)
+                and item.context_expr.func.id == "mutation_receipt"
+                for item in node.items
+            ):
+                receipted.update(id(inner) for inner in ast.walk(node))
+
+        called: set[str] = set()
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in gate_functions
+            ):
+                continue
+            called.add(node.func.id)
+            if id(node) not in receipted:
+                offenders.append(f"{relative}:{node.lineno} ({node.func.id})")
+        assert called == gate_functions, f"{relative}: uncalled tier gate {gate_functions - called}"
+    assert offenders == []
+
+
+def test_feedback_channel_mutates_relationships_only():
+    """The feedback channel's blast radius is relationship state only.
+
+    The adjudication rail reasons about the ACTION, not about which types a
+    payload touches, and every governance story told about feedback
+    (write_tier's ``correct`` carve-out, the kill-switch scope, the
+    pending-edge rail) assumes the channel cannot reach entity properties. Pin
+    both halves: every feedback target is a relationship instance, and the
+    channel's sole graph WRITE verb is ``update_relationship_state``. If
+    feedback ever grows entity corrections, this fails loudly and the entity
+    side of the governance story must be written before it is relaxed."""
     from cruxible_core.feedback.types import FeedbackBatchItem, FeedbackRecord
     from cruxible_core.graph.types import RelationshipInstance
     from cruxible_core.service.types import FeedbackItemInput, RelationshipTargetInput

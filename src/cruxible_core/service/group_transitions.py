@@ -36,6 +36,11 @@ from cruxible_core.group.types import (
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.primitives import ordered_unique
 from cruxible_core.receipt.builder import ReceiptBuilder
+from cruxible_core.runtime.permissions import (
+    GROUP_RESOLUTION_OPERATION,
+    GROUP_RESOLUTION_PERMISSION,
+    check_permission,
+)
 from cruxible_core.service.mutation_guards import (
     evaluate_relationship_mutation_guards,
     record_guard_evaluation,
@@ -110,6 +115,29 @@ _VALID_RESOLVE_SOURCES = ("human", "agent")
 _VALID_TRUST_STATUSES = ("trusted", "watch", "invalidated")
 
 
+def _enforce_group_resolution_governance() -> None:
+    """Gate the group-resolution adjudication act at the service seam.
+
+    Resolving a candidate group decides a claim's fate exactly as feedback
+    ``approve``/``reject`` does — approve mints live edges, and
+    ``stamp_existing`` blesses a pending proposal into the resolution — so it
+    carries the same GRAPH_WRITE requirement. The runtime facade already checks
+    ``cruxible_resolve_group``, but ``service_resolve_group`` is exported: a
+    direct library caller at GOVERNED_WRITE would otherwise reach the
+    transition with no tier check at all (Codex F1). wi-feedback-approval-rail
+    picked the service layer as the enforcement seam for adjudication; this
+    makes group resolution consistent with it.
+
+    Called INSIDE the ``mutation_receipt`` block so a refusal is receipted and
+    the open write transaction rolls back, exactly like the feedback rail
+    (pinned by ``test_service_seam_tier_checks_are_reached_only_inside_a_mutation_receipt``).
+    """
+    check_permission(
+        GROUP_RESOLUTION_OPERATION,
+        required_override=GROUP_RESOLUTION_PERMISSION,
+    )
+
+
 def validate_resolve_request(
     *,
     action: str,
@@ -159,6 +187,7 @@ def resolve_group_transition(
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None
+        _enforce_group_resolution_governance()
         _validate_resolve_pending_version(
             group=target.group,
             expected_pending_version=expected_pending_version,

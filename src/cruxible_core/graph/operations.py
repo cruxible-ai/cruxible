@@ -16,12 +16,17 @@ from typing import Any
 
 from cruxible_core.config.property_validation import validate_property_payload
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import DataValidationError, DirectWriteRefusedError
+from cruxible_core.errors import (
+    DataValidationError,
+    DirectWriteRefusedError,
+    PendingEdgeWriteRefusedError,
+)
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     RelationshipAssertion,
     RelationshipLifecycleState,
     RelationshipReviewState,
+    relationship_assertion_from_metadata,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import (
@@ -257,6 +262,55 @@ def _pending_assertion(
     )
 
 
+def _refuse_write_onto_pending_edge(
+    existing_rel: RelationshipInstance | None,
+    *,
+    pending: bool,
+) -> None:
+    """Refuse a non-pending write landing on an unresolved PENDING edge.
+
+    ``graph.get_relationship`` is state-blind: it returns a pending proposal
+    exactly like a live edge, so ``validate_relationship`` reports
+    ``is_update=True`` and the update branch below would replace the proposal's
+    properties in place while a reviewer is still adjudicating it
+    (wi-pending-edge-clobber). Robert's ruling is REFUSE, not silently-clobber.
+
+    Scope of the refusal, and why:
+
+    * ``pending=True`` writes are NOT refused here -- pending-onto-pending stays
+      governed by the existing create-only rule in ``service/mutations.py``
+      ("pending relationship writes can only create new edges"), which is the
+      layer that owns it.
+    * Governed verbs are NOT exempt. ``workflow_apply`` reaches the update
+      branch with ordinary upsert semantics, so an unattended canonical workflow
+      would otherwise overwrite a human's staged proposal; that is exactly the
+      clobber being closed. ``group_resolve`` never reaches this branch --
+      group approval skips every tuple that already carries an edge
+      (``relationship_count_between > 0``) and blesses those through
+      ``_stamp_existing_edges``, the reviewer-side resolution machinery, which
+      does not funnel through this chokepoint.
+    * The typed ``lifecycle`` write is covered too: it also replaces properties
+      via ``replace_relationship_state``, so it clobbers a proposal just as a
+      plain property write does.
+    """
+    # Multi-edge invariant: ``existing_rel`` is the FIRST match for the tuple,
+    # and the update branch below writes through the SAME first-match
+    # resolution — so the edge checked here is always the edge written. A
+    # sibling edge on the same tuple can never be silently clobbered in its
+    # place.
+    if existing_rel is None or pending:
+        return
+    if relationship_assertion_from_metadata(existing_rel.metadata).review.status != "pending":
+        return
+    raise PendingEdgeWriteRefusedError(
+        existing_rel.relationship_type,
+        existing_rel.from_type,
+        existing_rel.from_id,
+        existing_rel.to_type,
+        existing_rel.to_id,
+    )
+
+
 def apply_relationship(
     graph: EntityGraph,
     validated: ValidatedRelationship,
@@ -294,6 +348,10 @@ def apply_relationship(
     live. The typed lifecycle write carries the same ``source`` and so is covered
     by this one predicate (no extra hook). Resolved INSIDE the chokepoint
     (callers pass ``config``) to keep the decision in one funnel.
+
+    The same chokepoint refuses a non-pending write whose target edge is an
+    unresolved PENDING proposal (:func:`_refuse_write_onto_pending_edge`), so no
+    write path can replace a proposal's content while it awaits review.
     """
     # Deferred import: service/__init__ -> ... -> graph.operations, so a
     # top-level import would be circular. Importing the resolver module here
@@ -316,6 +374,7 @@ def apply_relationship(
             rel.to_id,
             rel.relationship_type,
         )
+        _refuse_write_onto_pending_edge(existing_rel, pending=pending)
         replace_props = dict(rel.properties)
         if existing_rel:
             metadata = existing_rel.metadata

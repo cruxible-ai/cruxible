@@ -284,6 +284,35 @@ class DirectWriteRefusedError(CoreError):
         )
 
 
+class PendingEdgeWriteRefusedError(CoreError):
+    """A non-pending write was refused because the target edge is still PENDING."""
+
+    error_code = "pending_edge_write_refused"
+
+    def __init__(
+        self,
+        relationship_type: str,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        message: str | None = None,
+    ):
+        self.relationship_type = relationship_type
+        self.from_type = from_type
+        self.from_id = from_id
+        self.to_type = to_type
+        self.to_id = to_id
+        super().__init__(
+            message
+            or (
+                f"Write to relationship '{relationship_type}' "
+                f"({from_type}:{from_id} -> {to_type}:{to_id}) is refused: the edge is a "
+                "PENDING proposal awaiting review."
+            )
+        )
+
+
 class ErrorResponse(BaseModel):
     """Structured error payload returned by the HTTP server."""
 
@@ -323,6 +352,15 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             context.get("kind", "unknown"),
             context.get("type_name", "unknown"),
             context.get("source", "unknown"),
+            message=body.message,
+        )
+    elif body.error_type == "PendingEdgeWriteRefusedError":
+        exc = PendingEdgeWriteRefusedError(
+            context.get("relationship_type", "unknown"),
+            context.get("from_type", "unknown"),
+            context.get("from_id", "unknown"),
+            context.get("to_type", "unknown"),
+            context.get("to_id", "unknown"),
             message=body.message,
         )
     elif body.error_type == "EntityTypeNotFoundError":

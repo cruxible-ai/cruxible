@@ -823,7 +823,13 @@ def service_batch_direct_write(
     source_ref: str = SOURCE_REF_BATCH_DIRECT_WRITE,
     actor_context: GovernedActorContext | None = None,
 ) -> BatchDirectWriteResult:
-    """Validate or apply one direct entity/relationship write payload."""
+    """Validate or apply one direct entity/relationship write payload.
+
+    ``dry_run`` previews: refusals raised here (pending-edge, write-policy,
+    validation) carry identical semantics to the applied path but are NOT
+    receipted — a preview persists nothing, and receipts record what happened,
+    not what was previewed.
+    """
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
         entity_types=[entity.entity_type for entity in payload.entities],
@@ -1186,6 +1192,11 @@ def service_add_relationships(
     batch direct-write path). When supplied per edge it is threaded to
     ``apply_relationship`` which sets ONLY ``assertion.lifecycle``; the review axis
     and group override are never touched from here.
+
+    ``dry_run`` previews: refusals raised here (pending-edge, write-policy,
+    validation) carry identical semantics to the applied path but are NOT
+    receipted — a preview persists nothing, and receipts record what happened,
+    not what was previewed.
     """
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
