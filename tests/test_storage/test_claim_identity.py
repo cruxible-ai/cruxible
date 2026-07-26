@@ -17,20 +17,26 @@ import hashlib
 import json
 import multiprocessing
 import sqlite3
+import threading
+import time
 from pathlib import Path
+from typing import cast
 
 import pytest
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
+import cruxible_core.storage.sqlite as sqlite_storage
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.legacy_identity import load_legacy_identity_map
 from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
     mint_claim_id,
 )
 from cruxible_core.service.snapshots import (
+    _INSTANCE_BACKUP_MANIFEST_V2,
     service_backup_instance,
     service_restore_instance,
 )
@@ -41,6 +47,7 @@ from cruxible_core.snapshot.types import (
 from cruxible_core.sqlite_ddl import split_schema_statements
 from cruxible_core.storage.sqlite import (
     CLAIM_IDENTITY_MIGRATION,
+    LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY,
     SQLiteStorageBackend,
 )
 
@@ -192,6 +199,164 @@ def test_concurrent_initializers_do_not_race_the_migration(tmp_path: Path) -> No
     assert len(set(ids)) == 5
     # No rebuild scaffolding survived a concurrent upgrade.
     assert "graph_relationships_pre_0004" not in tables
+
+
+def test_migration_seeds_the_reconcile_map_with_what_it_minted(tmp_path: Path) -> None:
+    """The ids 0004 mints must be the ids the NEXT pull reuses.
+
+    Without a seeded map, an upgraded overlay whose upstream is still
+    pre-identity finds an empty map on its next pull and re-mints an id for
+    every upstream tuple it had just been given one for -- staling every
+    record-time stamp while every recorded content digest stays identical.
+    """
+    db_path = tmp_path / "state.db"
+    _write_pre_identity_db(db_path, edges=3)
+
+    SQLiteStorageBackend(db_path).initialize()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        minted = [
+            row["claim_id"]
+            for row in conn.execute("SELECT claim_id FROM graph_relationships ORDER BY edge_key")
+        ]
+        raw = conn.execute(
+            "SELECT value_json FROM instance_state WHERE key = ?",
+            (LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert raw is not None
+    reconcile = load_legacy_identity_map(json.loads(raw["value_json"]))
+    # All three rows share one 5-tuple: the map records them as an ORDERED LIST,
+    # in edge_key order, which is the order a later backfill assigns positions.
+    assert reconcile == {("fits", "Part", "BP-1", "Vehicle", "V-1"): minted}
+
+
+def test_the_upgrade_rolls_back_wholly_when_it_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash mid-upgrade leaves the database wholly-OLD, never half-rebuilt."""
+    db_path = tmp_path / "state.db"
+    _write_pre_identity_db(db_path)
+    real_migrate = SQLiteStorageBackend._migrate_claim_identity
+
+    def _rebuild_then_crash(conn: sqlite3.Connection) -> None:
+        real_migrate(conn)
+        raise RuntimeError("crash mid-upgrade")
+
+    monkeypatch.setattr(
+        SQLiteStorageBackend, "_migrate_claim_identity", staticmethod(_rebuild_then_crash)
+    )
+    with pytest.raises(RuntimeError, match="crash mid-upgrade"):
+        SQLiteStorageBackend(db_path).initialize()
+
+    columns = _columns(db_path, "graph_relationships")
+    assert "claim_id" not in columns
+    assert "relationship_id" in columns
+    conn = sqlite3.connect(db_path)
+    try:
+        migrations = {row[0] for row in conn.execute("SELECT migration_id FROM storage_migrations")}
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+    finally:
+        conn.close()
+    assert CLAIM_IDENTITY_MIGRATION not in migrations
+    assert "graph_relationships_pre_0004" not in tables
+
+
+def test_a_concurrent_reader_sees_wholly_old_schema_during_the_upgrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lock is held across rebuild + stamp: no reader observes the middle."""
+    db_path = tmp_path / "state.db"
+    _write_pre_identity_db(db_path)
+    real_migrate = SQLiteStorageBackend._migrate_claim_identity
+    mid_upgrade = threading.Event()
+    reader_done = threading.Event()
+    observed: dict[str, set[str]] = {}
+
+    def _pause_mid_upgrade(conn: sqlite3.Connection) -> None:
+        real_migrate(conn)
+        mid_upgrade.set()
+        reader_done.wait(timeout=30)
+
+    monkeypatch.setattr(
+        SQLiteStorageBackend, "_migrate_claim_identity", staticmethod(_pause_mid_upgrade)
+    )
+
+    def _read() -> None:
+        try:
+            assert mid_upgrade.wait(timeout=30)
+            observed["columns"] = _columns(db_path, "graph_relationships")
+        finally:
+            reader_done.set()
+
+    reader = threading.Thread(target=_read)
+    reader.start()
+    try:
+        SQLiteStorageBackend(db_path).initialize()
+    finally:
+        reader_done.set()
+        reader.join(timeout=30)
+
+    assert observed["columns"] >= {"relationship_id"}
+    assert "claim_id" not in observed["columns"]
+    # ...and once the lock is released the upgrade is wholly visible.
+    assert "claim_id" in _columns(db_path, "graph_relationships")
+
+
+def test_reads_never_queue_behind_a_writer_on_an_up_to_date_database(tmp_path: Path) -> None:
+    """The steady state takes NO write lock.
+
+    Initialization runs on every read path. When it took ``BEGIN IMMEDIATE``
+    unconditionally, an ordinary read failed ``database is locked`` as soon as
+    any writer held a transaction longer than ``busy_timeout`` -- a five-second
+    stall then an error, for a database that needed no upgrade at all.
+    """
+    db_path = tmp_path / "state.db"
+    backend = SQLiteStorageBackend(db_path)
+    backend.initialize()
+
+    holder = sqlite3.connect(db_path)
+    try:
+        holder.execute("PRAGMA busy_timeout = 5000")
+        holder.execute("BEGIN IMMEDIATE")
+        holder.execute(
+            "INSERT OR REPLACE INTO instance_state(key, value_json, updated_at) "
+            "VALUES ('probe', '1', 'now')"
+        )
+        started = time.monotonic()
+        with backend.graph_repository() as repo:
+            repo.load_graph()
+        with backend.snapshot_repository():
+            pass
+        assert backend.has_migration(CLAIM_IDENTITY_MIGRATION)
+        elapsed = time.monotonic() - started
+    finally:
+        holder.rollback()
+        holder.close()
+
+    assert elapsed < 1.0, f"reads waited {elapsed:.2f}s on an up-to-date database"
+
+
+def test_wal_switch_refuses_a_silent_no_op(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``PRAGMA journal_mode = WAL`` reports the OLD mode instead of raising."""
+
+    class _StubResult:
+        def fetchone(self) -> tuple[str]:
+            return ("delete",)
+
+    class _StubConnection:
+        def execute(self, sql: str) -> _StubResult:
+            return _StubResult()
+
+    monkeypatch.setattr(sqlite_storage, "_WAL_SWITCH_TIMEOUT_SECONDS", 0.0)
+    with pytest.raises(sqlite3.OperationalError, match="journal_mode"):
+        sqlite_storage._ensure_wal_journal(cast(sqlite3.Connection, _StubConnection()))
 
 
 def test_schema_scripts_never_use_executescript() -> None:
@@ -384,11 +549,13 @@ def test_restore_refuses_a_backup_that_needs_a_newer_reader(
 
     with zipfile.ZipFile(artifact) as archive:
         contents = {name: archive.read(name) for name in archive.namelist()}
-    manifest = InstanceBackupManifest.model_validate_json(contents["manifest.json"])
+    manifest = InstanceBackupManifest.model_validate_json(contents[_INSTANCE_BACKUP_MANIFEST_V2])
     bumped = manifest.model_copy(
         update={"min_reader_format_version": INSTANCE_BACKUP_FORMAT_VERSION + 1}
     )
-    contents["manifest.json"] = json.dumps(bumped.model_dump(mode="json")).encode("utf-8")
+    contents[_INSTANCE_BACKUP_MANIFEST_V2] = json.dumps(bumped.model_dump(mode="json")).encode(
+        "utf-8"
+    )
     with zipfile.ZipFile(artifact, "w") as archive:
         for name, payload in contents.items():
             archive.writestr(name, payload)
@@ -408,3 +575,54 @@ def test_backup_manifest_declares_the_bumped_format(instance: CruxibleInstance, 
     assert result.manifest.format_version == INSTANCE_BACKUP_FORMAT_VERSION
     assert result.manifest.min_reader_format_version == INSTANCE_BACKUP_FORMAT_VERSION
     assert INSTANCE_BACKUP_FORMAT_VERSION >= 2
+
+
+def test_format_2_renames_the_manifest_so_old_readers_fail_before_installing(
+    instance: CruxibleInstance, tmp_path: Path
+) -> None:
+    """The downgrade refusal has to work in readers that never heard of it.
+
+    ``min_reader_format_version`` only refuses in a build that reads the field.
+    Every already-shipped pre-identity reader does not -- it would install a
+    post-0004 ``state.db`` and fail later, on a dropped column, with a broken
+    instance on disk. The renamed member trips that reader's required-members
+    check instead, which runs before anything is written.
+    """
+    import zipfile
+
+    artifact = tmp_path / "backup.zip"
+    service_backup_instance(instance, instance_id="inst-1", artifact_path=artifact)
+    with zipfile.ZipFile(artifact) as archive:
+        names = set(archive.namelist())
+    assert _INSTANCE_BACKUP_MANIFEST_V2 in names
+    # A pre-identity reader requires "manifest.json" and will not find it.
+    assert "manifest.json" not in names
+
+
+def test_a_v1_backup_still_restores(instance: CruxibleInstance, tmp_path: Path) -> None:
+    """The rename is forward-only: existing v1 artifacts keep working."""
+    import zipfile
+
+    artifact = tmp_path / "backup.zip"
+    service_backup_instance(instance, instance_id="inst-1", artifact_path=artifact)
+    with zipfile.ZipFile(artifact) as archive:
+        contents = {name: archive.read(name) for name in archive.namelist()}
+    contents["manifest.json"] = contents.pop(_INSTANCE_BACKUP_MANIFEST_V2)
+    with zipfile.ZipFile(artifact, "w") as archive:
+        for name, payload in contents.items():
+            archive.writestr(name, payload)
+
+    result = service_restore_instance(artifact_path=artifact, root_dir=tmp_path / "restored-v1")
+    assert result.manifest.format_version == INSTANCE_BACKUP_FORMAT_VERSION
+    assert (tmp_path / "restored-v1" / "config.yaml").exists()
+
+
+def test_a_manifest_less_artifact_is_refused_by_name(tmp_path: Path) -> None:
+    import zipfile
+
+    artifact = tmp_path / "backup.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("state.db", b"")
+    with pytest.raises(ConfigError, match="missing its manifest"):
+        service_restore_instance(artifact_path=artifact, root_dir=tmp_path / "nope")
+    assert not (tmp_path / "nope").exists()

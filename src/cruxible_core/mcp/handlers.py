@@ -801,6 +801,7 @@ def handle_feedback(
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
     group_override: bool = False,
+    claim_id: str | None = None,
 ) -> contracts.FeedbackResult:
     """Record feedback on an edge."""
     return _dispatch_remote_or_local(
@@ -815,6 +816,7 @@ def handle_feedback(
             to_type=to_type,
             to_id=to_id,
             edge_key=edge_key,
+            claim_id=claim_id,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,
@@ -832,6 +834,7 @@ def handle_feedback(
             to_type=to_type,
             to_id=to_id,
             edge_key=edge_key,
+            claim_id=claim_id,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,

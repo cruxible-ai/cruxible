@@ -1414,7 +1414,7 @@ class TestArchiveExclusion:
         # service_backup_instance -> service_restore_instance, so any member
         # this pin excludes can never ride along a transfer either.
         assert set(members) <= {
-            "manifest.json",
+            "backup-manifest-v2.json",
             "state.db",
             "config.yaml",
             "instance.json",

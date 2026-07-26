@@ -13,6 +13,13 @@ When BOTH are supplied and they disagree, this REFUSES rather than silently
 preferring either: a caller holding two contradictory references to a claim does
 not know which claim it means, and picking one for it would attach an
 observation or a correction to a claim the caller never chose.
+
+The same reasoning covers a ``claim_id`` this instance does not know while the
+requested TUPLE is live: that is the precise shape of a caller working from a
+STALE id -- the claim it named is gone and a different claim now occupies the
+tuple. Falling back to the tuple would silently retarget the write onto a claim
+the caller has never seen, which is exactly the failure the disambiguator exists
+to prevent, so it refuses and names both ids.
 """
 
 from __future__ import annotations
@@ -50,8 +57,9 @@ def resolve_claim_target(
     """Resolve one claim reference, with ``claim_id`` taking precedence.
 
     Raises :class:`ClaimTargetConflictError` when the supplied disambiguators
-    contradict each other (different claims), or when a supplied ``claim_id``
-    resolves to a claim whose identity tuple is not the one asked for.
+    contradict each other (different claims), when a supplied ``claim_id``
+    resolves to a claim whose identity tuple is not the one asked for, or when
+    an unknown ``claim_id`` is supplied for a tuple that IS live here.
     """
     tuple_match = graph.get_relationship(
         from_type,
@@ -66,9 +74,25 @@ def resolve_claim_target(
 
     by_id = graph.find_relationship_by_claim_id(claim_id)
     if by_id is None:
-        # An unknown id is an unresolved target, not a conflict: the claim may
-        # have been removed, or the reference may come from another instance.
-        # Callers treat "no relationship" as they always have.
+        if tuple_match is not None:
+            # STALE ID. The caller named a claim this instance does not have,
+            # for a tuple that is live -- so the claim it meant is gone and a
+            # different claim now occupies that tuple. Resolving to the tuple
+            # would silently retarget the write onto a claim the caller never
+            # chose, which is the one thing supplying a claim_id is meant to
+            # rule out. Name BOTH ids so the caller can see what its cached
+            # reference has become.
+            raise ClaimTargetConflictError(
+                f"claim_id '{claim_id}' is not a claim in this instance, but "
+                f"{from_type}:{from_id} -[{relationship_type}]-> {to_type}:{to_id} "
+                f"currently resolves to claim_id '{tuple_match.claim_id}'. The supplied "
+                "id is stale; re-read the claim and retry with its current id (or omit "
+                "claim_id to target the tuple deliberately)."
+            )
+        # An unknown id with NO live tuple is an unresolved target, not a
+        # conflict: the claim may have been removed, or the reference may come
+        # from another instance. Callers treat "no relationship" as they always
+        # have.
         return ClaimTarget(None, "claim_id")
     if by_id.identity_tuple() != (from_type, from_id, to_type, to_id, relationship_type):
         raise ClaimTargetConflictError(

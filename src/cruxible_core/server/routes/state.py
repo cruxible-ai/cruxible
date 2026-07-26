@@ -10,6 +10,7 @@ from cruxible_core.server.request_models import (
     StateOverlayRequest,
     StatePublishRequest,
     StatePullApplyRequest,
+    StatePullPreviewRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
 
@@ -62,10 +63,16 @@ async def state_health(instance_id: str) -> contracts.StateHealthResult:
     "/{instance_id}/state/pull/preview",
     response_model=contracts.StatePullPreviewResult,
 )
-async def state_pull_preview(instance_id: str) -> contracts.StatePullPreviewResult:
+async def state_pull_preview(
+    instance_id: str,
+    req: StatePullPreviewRequest | None = None,
+) -> contracts.StatePullPreviewResult:
     """Preview pulling a new upstream release into an overlay."""
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return api.state_pull_preview(resolved_instance_id)
+    return api.state_pull_preview(
+        resolved_instance_id,
+        force_repair=req.force_repair if req is not None else False,
+    )
 
 
 @router.post(
@@ -82,4 +89,5 @@ async def state_pull_apply(
         resolved_instance_id,
         expected_apply_digest=req.expected_apply_digest,
         actor_context=req.actor_context,
+        force_repair=req.force_repair,
     )

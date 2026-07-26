@@ -1528,7 +1528,10 @@ cruxible attest record --relationship REL_TYPE --from-type TYPE --from-id ID --t
 | `--json` | no | `False` | boolean | Output as a standard list envelope. |
 
 **Output And Side Effects:** Read-only. Items include latest disposition plus
-`unresolved_target`, `edge_key_mismatch`, and `stale_content` markers.
+`unresolved_target`, `target_identity_mismatch` (with
+`target_identity_mismatch_kind` naming which comparison ran: `claim_id` where
+both sides carry a minted id, `edge_key` for legacy records that carry only the
+per-load key), and `stale_content` markers.
 
 ## cruxible attest queue
 
@@ -3476,6 +3479,7 @@ cruxible source dereference \
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--apply-digest` | yes | `Sentinel.UNSET` | text | Apply digest returned by pull-preview. |
+| `--repair` | no | `False` | boolean | Repair mode: re-apply the release ALREADY tracked, to restore a materialized upstream that was damaged locally. Normally refused as a no-op; the local copy's digest verification is skipped because that is the check the damage trips. Claim ids are preserved. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -3490,6 +3494,12 @@ cruxible source dereference \
 **Usage:** `cruxible state pull-preview [OPTIONS]`
 
 **Purpose:** Preview pulling a newer upstream release into the current overlay.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--repair` | no | `False` | boolean | Repair mode: re-apply the release ALREADY tracked, to restore a materialized upstream that was damaged locally. Normally refused as a no-op; the local copy's digest verification is skipped because that is the check the damage trips. Claim ids are preserved. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.

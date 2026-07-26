@@ -903,3 +903,67 @@ class TestFeedbackQueryIntegration:
         result_ids = {r.entity_id for r in result2.results}
         assert "P-1" in result_ids
         assert "P-2" not in result_ids
+
+
+def test_receipt_nullable_rebuild_carries_the_target_claim_id(tmp_path) -> None:
+    """The rebuild copies COLUMN BY COLUMN: an omitted column silently NULLs.
+
+    ``target_claim_id`` was declared on the rebuilt table but absent from the
+    INSERT...SELECT, so it survived only because the column-add migration
+    happened to run first. Ordering is not an invariant; naming the column is.
+    """
+    import sqlite3
+
+    db_path = tmp_path / "feedback.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        # A store built before receipt_id became nullable, but already carrying
+        # the record-time claim stamp.
+        conn.executescript(
+            """
+CREATE TABLE feedback (
+    feedback_id TEXT PRIMARY KEY,
+    receipt_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_json TEXT NOT NULL,
+    target_relationship TEXT NOT NULL DEFAULT '',
+    target_from_type TEXT NOT NULL DEFAULT '',
+    target_from_id TEXT NOT NULL DEFAULT '',
+    target_to_type TEXT NOT NULL DEFAULT '',
+    target_to_id TEXT NOT NULL DEFAULT '',
+    target_edge_key INTEGER,
+    target_claim_id TEXT,
+    reason TEXT NOT NULL DEFAULT '',
+    reason_code TEXT,
+    reason_remediation_hint TEXT,
+    scope_hints TEXT NOT NULL DEFAULT '{}',
+    feedback_profile_key TEXT,
+    feedback_profile_version INTEGER,
+    feedback_profile_digest TEXT,
+    decision_context TEXT NOT NULL DEFAULT '{}',
+    context_snapshot TEXT NOT NULL DEFAULT '{}',
+    decision_surface_type TEXT,
+    decision_surface_name TEXT,
+    source TEXT NOT NULL DEFAULT 'human',
+    model_id TEXT,
+    corrections TEXT NOT NULL DEFAULT '{}',
+    actor_context TEXT,
+    created_at TEXT NOT NULL
+);
+INSERT INTO feedback (
+    feedback_id, receipt_id, action, target_json, target_claim_id, created_at
+) VALUES ('FB-1', 'RCP-1', 'approve', '{}', 'CLM-carried00000001', '2026-07-24T00:00:00Z');
+"""
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    store = FeedbackStore(db_path)
+    try:
+        row = store._conn.execute(
+            "SELECT target_claim_id FROM feedback WHERE feedback_id = 'FB-1'"
+        ).fetchone()
+    finally:
+        store.close()
+    assert row["target_claim_id"] == "CLM-carried00000001"

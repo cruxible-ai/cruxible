@@ -17,6 +17,7 @@ from cruxible_core.decision.store import DecisionStore
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.governance.actors import dump_actor_context, load_actor_context
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.legacy_identity import dump_legacy_identity_map
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.store import GroupStore
 from cruxible_core.primitives import canonical_json
@@ -177,6 +178,19 @@ SNAPSHOT_SCHEMA_MIGRATION = "0002_snapshot_tables"
 READ_REVISION_MIGRATION = "0003_read_revision"
 CLAIM_IDENTITY_MIGRATION = "0004_claim_identity"
 
+# Every migration ``_initialize_connection`` knows how to apply. The steady-state
+# pre-check compares against this set to decide whether it needs the write lock
+# at all; a new migration MUST be added here or initialization silently stops
+# running it on already-stamped databases.
+_ALL_STORAGE_MIGRATIONS = frozenset(
+    {
+        _UNIFIED_STATE_MIGRATION,
+        SNAPSHOT_SCHEMA_MIGRATION,
+        READ_REVISION_MIGRATION,
+        CLAIM_IDENTITY_MIGRATION,
+    }
+)
+
 # Per-instance reconcile map for LEGACY (pre-identity) upstream images, stored in
 # ``instance_state``. Keyed by the claim 5-tuple, valued by the id this instance
 # minted for it, so re-pulling the SAME pre-upgrade release reuses the ids
@@ -231,6 +245,13 @@ def _ensure_wal_journal(conn: sqlite3.Connection) -> None:
     mid-migration would otherwise die on connect, before it ever got the chance
     to wait for the lock. A database ALREADY in WAL needs no switch at all,
     which is the overwhelmingly common case.
+
+    ``PRAGMA journal_mode = WAL`` also fails QUIETLY: when the switch is
+    refused it returns the CURRENT (unchanged) mode as its result row instead
+    of raising. Checking the returned row is therefore the only way to tell a
+    real switch from a silent no-op, and a silent no-op here would leave the
+    database in rollback-journal mode where readers block behind writers --
+    precisely the contention this module is arranged to avoid.
     """
     current = conn.execute("PRAGMA journal_mode").fetchone()[0]
     if str(current).lower() == "wal":
@@ -238,12 +259,18 @@ def _ensure_wal_journal(conn: sqlite3.Connection) -> None:
     deadline = time.monotonic() + _WAL_SWITCH_TIMEOUT_SECONDS
     while True:
         try:
-            conn.execute("PRAGMA journal_mode = WAL")
-            return
-        except sqlite3.OperationalError:
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(0.05)
+            row = conn.execute("PRAGMA journal_mode = WAL").fetchone()
+            if row is not None and str(row[0]).lower() == "wal":
+                return
+            switch_error: Exception = sqlite3.OperationalError(
+                "could not switch journal_mode to WAL "
+                f"(mode is still {None if row is None else row[0]!r})"
+            )
+        except sqlite3.OperationalError as exc:
+            switch_error = exc
+        if time.monotonic() >= deadline:
+            raise switch_error
+        time.sleep(0.05)
 
 
 def backup_sqlite_database(source: Path, target: Path) -> None:
@@ -358,7 +385,7 @@ class SQLiteGraphRepository:
     def _relationship_row(relationship: RelationshipInstance) -> tuple[Any, ...]:
         """Validate one relationship and render its durable row tuple."""
         claim_id = relationship.claim_id
-        if not claim_id:
+        if not claim_id or not claim_id.strip():
             raise ValueError(
                 "Durable relationship writes require a claim_id "
                 f"({relationship.relationship_label()}); it is minted by "
@@ -1004,6 +1031,32 @@ class SQLiteStorageBackend:
         return row is not None
 
     @staticmethod
+    def _schema_is_current(conn: sqlite3.Connection) -> bool:
+        """Cheap, lock-free "is this database already at this version?" check.
+
+        Deliberately reads only what the upgrade path WRITES: every migration
+        id it stamps, plus the one column whose presence proves the 0004 table
+        rebuild actually ran (the migration row alone would be satisfied by a
+        half-applied rebuild that a torn write left behind, and the column alone
+        would be satisfied by a fresh-schema database that never stamped).
+
+        Any missing table (a brand-new file has no ``storage_migrations``)
+        answers "not current" rather than raising -- absence is exactly the
+        signal that initialization has work to do.
+        """
+        try:
+            applied = {
+                str(row["migration_id"])
+                for row in conn.execute("SELECT migration_id FROM storage_migrations")
+            }
+        except sqlite3.OperationalError:
+            return False
+        if not applied.issuperset(_ALL_STORAGE_MIGRATIONS):
+            return False
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(graph_relationships)")}
+        return "claim_id" in columns
+
+    @staticmethod
     def mark_migration_on_connection(conn: sqlite3.Connection, migration_id: str) -> None:
         conn.execute(
             "INSERT OR IGNORE INTO storage_migrations(migration_id, applied_at) VALUES (?, ?)",
@@ -1029,10 +1082,27 @@ class SQLiteStorageBackend:
         instead. ``_configure_connection`` runs BEFORE ``BEGIN`` because
         ``PRAGMA journal_mode`` / ``foreign_keys`` are no-ops inside a
         transaction.
+
+        THE LOCK IS TAKEN ONLY WHEN THERE IS WORK TO DO. Every read path runs
+        through here (``graph_repository``, ``snapshot_repository``, and the
+        ~15 ``_ensure_state_initialized`` call sites), so taking a write lock
+        unconditionally made an ORDINARY READ fail ``database is locked``
+        whenever any writer held a transaction longer than ``busy_timeout``.
+        ``_schema_is_current`` is a cheap read OUTSIDE any transaction; when it
+        says the database is already at this version we return having begun
+        nothing. The check is repeated INSIDE the lock so a second initializer
+        that queued behind the real upgrade still does nothing, which is what
+        keeps the wholly-old/wholly-new atomicity property intact.
         """
         _configure_connection(conn)
+        if self._schema_is_current(conn):
+            return
         if not conn.in_transaction:
             conn.execute("BEGIN IMMEDIATE")
+            if self._schema_is_current(conn):
+                # Another initializer won the race and completed the upgrade
+                # while we queued on the lock. Nothing left to do.
+                return
         execute_schema_script(conn, _GRAPH_SCHEMA)
         execute_schema_script(conn, _SNAPSHOT_SCHEMA)
         SQLiteReceiptStore(self.db_path, connection=conn)
@@ -1084,6 +1154,13 @@ class SQLiteStorageBackend:
         A database created fresh on this version already has the new shape (the
         schema above declares it); this runs only for a database that still
         carries the old PK.
+
+        THE MINTED IDS ARE SEEDED INTO THE RECONCILE MAP, in this same
+        transaction. Without that, an upgraded overlay whose upstream is still
+        pre-identity would find an EMPTY map on its next pull and re-mint an id
+        for every upstream tuple it had just been given one for -- staling every
+        record-time stamp while every recorded content digest stayed identical.
+        The map is what makes the id this migration mints the id that survives.
         """
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(graph_relationships)")}
         if "claim_id" in columns:
@@ -1093,6 +1170,7 @@ class SQLiteStorageBackend:
             "SELECT edge_key, from_type, from_id, to_type, to_id, relationship_type, "
             "properties_json, metadata_json FROM graph_relationships ORDER BY edge_key"
         ).fetchall()
+        identity_map: dict[tuple[str, str, str, str, str], list[str]] = {}
         conn.execute("ALTER TABLE graph_relationships RENAME TO graph_relationships_pre_0004")
         # Indexes follow the table on RENAME, so drop them before recreating the
         # canonical names on the rebuilt table.
@@ -1105,13 +1183,26 @@ class SQLiteStorageBackend:
             conn.execute(f"DROP INDEX IF EXISTS {index_name}")
         execute_schema_script(conn, _GRAPH_RELATIONSHIPS_SCHEMA)
         for row in rows:
+            claim_id = mint_claim_id()
+            # Rows arrive ORDER BY edge_key, so parallel edges on one tuple are
+            # seeded in the same positional order a later backfill assigns.
+            identity_map.setdefault(
+                (
+                    row["relationship_type"],
+                    row["from_type"],
+                    row["from_id"],
+                    row["to_type"],
+                    row["to_id"],
+                ),
+                [],
+            ).append(claim_id)
             conn.execute(
                 "INSERT INTO graph_relationships "
                 "(claim_id, edge_key, from_type, from_id, to_type, to_id, "
                 "relationship_type, properties_json, metadata_json) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    mint_claim_id(),
+                    claim_id,
                     row["edge_key"],
                     row["from_type"],
                     row["from_id"],
@@ -1123,3 +1214,14 @@ class SQLiteStorageBackend:
                 ),
             )
         conn.execute("DROP TABLE graph_relationships_pre_0004")
+        if identity_map:
+            conn.execute(
+                "INSERT INTO instance_state(key, value_json, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET "
+                "value_json = excluded.value_json, updated_at = excluded.updated_at",
+                (
+                    LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY,
+                    json.dumps(dump_legacy_identity_map(identity_map), sort_keys=True),
+                    format_datetime(utc_now()),
+                ),
+            )

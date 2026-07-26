@@ -38,11 +38,30 @@ from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.primitives import canonical_json
 
 LegacyIdentityKey = tuple[str, str, str, str, str]
+LegacyIdentityMap = dict[LegacyIdentityKey, list[str]]
+
+# The map values are ORDERED LISTS, not single ids, because the graph is a
+# MULTIGRAPH: a legacy image may carry several PARALLEL edges on one 5-tuple.
+# A tuple->single-id map can only ever reconcile one of them, so every re-pull
+# re-minted the rest -- the exact forever-churn the map exists to stop. The
+# list position is assigned deterministically at backfill (by ``edge_key``
+# within the tuple), so the Nth parallel edge of a tuple keeps the Nth id
+# across re-pulls.
 
 
-def load_legacy_identity_map(raw: Any) -> dict[LegacyIdentityKey, str]:
+def _identity_key(relationship: RelationshipInstance) -> LegacyIdentityKey:
+    return (
+        relationship.relationship_type,
+        relationship.from_type,
+        relationship.from_id,
+        relationship.to_type,
+        relationship.to_id,
+    )
+
+
+def load_legacy_identity_map(raw: Any) -> LegacyIdentityMap:
     """Decode the persisted reconcile map; tolerate absent/garbage as empty."""
-    entries: dict[LegacyIdentityKey, str] = {}
+    entries: LegacyIdentityMap = {}
     if not isinstance(raw, list):
         return entries
     for item in raw:
@@ -56,15 +75,18 @@ def load_legacy_identity_map(raw: Any) -> dict[LegacyIdentityKey, str]:
                 str(item["to_type"]),
                 str(item["to_id"]),
             )
-            claim_id = str(item["claim_id"])
+            raw_ids = item["claim_ids"]
         except (KeyError, TypeError):
             continue
-        if claim_id:
-            entries[key] = claim_id
+        if not isinstance(raw_ids, list):
+            continue
+        claim_ids = [str(value) for value in raw_ids if isinstance(value, str) and value]
+        if claim_ids:
+            entries[key] = claim_ids
     return entries
 
 
-def dump_legacy_identity_map(entries: dict[LegacyIdentityKey, str]) -> list[dict[str, str]]:
+def dump_legacy_identity_map(entries: LegacyIdentityMap) -> list[dict[str, Any]]:
     """Encode the reconcile map in a deterministic, sorted, JSON-safe shape."""
     return [
         {
@@ -73,49 +95,61 @@ def dump_legacy_identity_map(entries: dict[LegacyIdentityKey, str]) -> list[dict
             "from_id": key[2],
             "to_type": key[3],
             "to_id": key[4],
-            "claim_id": claim_id,
+            "claim_ids": list(claim_ids),
         }
-        for key, claim_id in sorted(entries.items())
+        for key, claim_ids in sorted(entries.items())
+        if claim_ids
     ]
 
 
-def legacy_identity_map_digest(entries: dict[LegacyIdentityKey, str]) -> str:
+def legacy_identity_map_digest(entries: LegacyIdentityMap) -> str:
     """Digest the normalized reconcile map so id churn is VISIBLE when it happens.
 
     Recorded on the upstream metadata beside the member digests: two pulls of
     the same release whose upstream ids moved produce different digests here
-    even though every content digest is identical.
+    even though every content digest is identical. The canonicalization runs
+    over the same sorted, list-valued encoding that is persisted, so parallel
+    edges reordering within a tuple is itself churn the digest reports.
     """
     payload = canonical_json(dump_legacy_identity_map(entries)).encode("utf-8")
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
 def record_minted_identities(
-    entries: dict[LegacyIdentityKey, str],
+    entries: LegacyIdentityMap,
     minted: Sequence[RelationshipInstance],
-) -> dict[LegacyIdentityKey, str]:
-    """Fold freshly minted legacy ids into the reconcile map."""
-    updated = dict(entries)
+) -> LegacyIdentityMap:
+    """Fold the ids a backfill assigned into the reconcile map, POSITIONALLY.
+
+    ``minted`` carries every edge the backfill gave an id to (reused ones
+    included), in the order the backfill assigned them, so folding it in by
+    position is what makes the Nth parallel edge of a tuple keep the Nth id.
+    Positions beyond what this image covered are LEFT ALONE: an upstream
+    release that temporarily drops one of three parallel edges must not forget
+    the id of the third, or restoring that edge later would churn it.
+    """
+    grouped: LegacyIdentityMap = {}
     for relationship in minted:
         claim_id = relationship.claim_id
         if claim_id is None:
             continue
-        updated[
-            (
-                relationship.relationship_type,
-                relationship.from_type,
-                relationship.from_id,
-                relationship.to_type,
-                relationship.to_id,
-            )
-        ] = claim_id
+        grouped.setdefault(_identity_key(relationship), []).append(claim_id)
+
+    updated: LegacyIdentityMap = {key: list(value) for key, value in entries.items()}
+    for key, claim_ids in grouped.items():
+        existing = updated.setdefault(key, [])
+        for index, claim_id in enumerate(claim_ids):
+            if index < len(existing):
+                existing[index] = claim_id
+            else:
+                existing.append(claim_id)
     return updated
 
 
 def backfill_legacy_graph(
     graph: EntityGraph,
     *,
-    reuse: dict[LegacyIdentityKey, str] | None = None,
+    reuse: LegacyIdentityMap | None = None,
 ) -> list[RelationshipInstance]:
     """Mint the missing claim ids on one materialized legacy image, in memory.
 
@@ -128,6 +162,7 @@ def backfill_legacy_graph(
 
 __all__ = [
     "LegacyIdentityKey",
+    "LegacyIdentityMap",
     "backfill_legacy_graph",
     "dump_legacy_identity_map",
     "legacy_identity_map_digest",

@@ -14,8 +14,14 @@ from cruxible_core.graph.assertion_state import (
     SupersessionPointer,
     relationship_is_live,
 )
+from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import RelationshipProvenance
-from cruxible_core.graph.types import RelationshipMetadata
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    RelationshipMetadata,
+    mint_claim_id,
+)
 
 
 def test_default_assertion_is_unreviewed_active() -> None:
@@ -141,6 +147,62 @@ def test_supersession_pointer_stays_open_for_future_kinds() -> None:
 def test_supersession_pointer_refuses_incoherent_shapes(payload: dict) -> None:
     with pytest.raises(ValueError):
         SupersessionPointer.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"entity_type": "Part"},
+        {"entity_id": "BP-1"},
+        {"claim_id": "CLM-abc", "entity_type": "Part", "entity_id": "BP-1"},
+        "not-even-a-mapping",
+    ],
+)
+def test_a_stored_incoherent_pointer_loads_as_none_instead_of_bricking_the_graph(
+    payload: object,
+) -> None:
+    """LOAD tolerance. The write-path refusal must not become an unloadable graph.
+
+    Lifecycle state is decoded out of persisted metadata on every graph load, so
+    a refusal here is not "one bad write rejected" -- it is an instance whose
+    graph can no longer be read at all, by any path, including the ones you
+    would use to repair it.
+    """
+    state = RelationshipLifecycleState.model_validate(
+        {"status": "superseded", "superseded_by": payload, "supersedes": payload}
+    )
+    assert state.superseded_by is None
+    assert state.supersedes is None
+    # ...and the write path still refuses the same shapes loudly.
+    if isinstance(payload, dict):
+        with pytest.raises(ValueError):
+            SupersessionPointer.model_validate(payload)
+
+
+def test_a_graph_with_a_stored_empty_supersession_pointer_loads_clean() -> None:
+    """The end-to-end shape of the tolerance: one stray value, graph still loads."""
+    graph = EntityGraph()
+    graph.add_entity(EntityInstance(entity_type="Part", entity_id="BP-1", properties={}))
+    graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="fits",
+            from_type="Part",
+            from_id="BP-1",
+            to_type="Vehicle",
+            to_id="V-1",
+            claim_id=mint_claim_id(),
+        )
+    )
+    payload = graph.to_dict()
+    for edge in payload["edges"]:
+        edge["metadata"]["assertion"]["lifecycle"]["supersedes"] = {}
+
+    reloaded = EntityGraph.from_dict(payload)
+    edge_instance = reloaded.get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+    assert edge_instance is not None
+    assert edge_instance.metadata.assertion.lifecycle.supersedes is None
 
 
 def test_lifecycle_serialization_is_unchanged_when_no_pointer_is_set() -> None:

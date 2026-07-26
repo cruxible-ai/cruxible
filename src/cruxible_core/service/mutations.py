@@ -163,6 +163,7 @@ def _group_interaction_payload(
         "group_signature": interaction.group_signature,
         "source_workflow_name": interaction.source_workflow_name,
         "edge_key": interaction.edge_key,
+        "claim_id": interaction.claim_id,
     }
 
 
@@ -172,7 +173,17 @@ def _group_interaction_from_relationship(
     group_id: str,
     group: CandidateGroup | None,
     edge_key: int | None,
+    claim_id: str | None = None,
 ) -> DirectWriteGroupInteraction:
+    """Describe one group interaction a direct write ran into.
+
+    ``edge_key`` and ``claim_id`` both name the EXISTING durable edge, never the
+    incoming write: an update names the edge it is about to change, while a
+    pending-group conflict names no edge at all (there is none yet), so both are
+    None there. The pair travels together -- ``claim_id`` was declared on this
+    shape and left unwritten, which is worse than absent: a consumer reading the
+    field would conclude the interaction had no stable identity.
+    """
     return DirectWriteGroupInteraction(
         relationship_type=relationship.relationship_type,
         from_type=relationship.from_type,
@@ -184,6 +195,7 @@ def _group_interaction_from_relationship(
         group_signature=group.signature if group is not None else None,
         source_workflow_name=group.source_workflow_name if group is not None else None,
         edge_key=edge_key,
+        claim_id=claim_id,
     )
 
 
@@ -252,6 +264,7 @@ def _detect_direct_write_group_interactions(
                     group_id=group_id,
                     group=group_cache[group_id],
                     edge_key=existing.edge_key,
+                    claim_id=existing.claim_id,
                 )
             )
     finally:

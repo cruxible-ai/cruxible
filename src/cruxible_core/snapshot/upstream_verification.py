@@ -75,9 +75,12 @@ def verify_tracked_upstream(
             raise ConfigError(
                 f"Tracked upstream release {upstream.state_id}:{upstream.release_id} is "
                 f"missing its materialized '{member}' at {relative_path}, which upstream "
-                f"tracking pins at {expected}. Re-pull the release "
-                "(`cruxible state pull preview` then `apply`) or re-create the overlay "
-                "from the published release; nothing may be read from a missing upstream."
+                f"tracking pins at {expected}. Re-pull the release in REPAIR mode "
+                "(`cruxible state pull-preview --repair` then "
+                "`cruxible state pull-apply --repair --apply-digest ...`) or re-create the "
+                "overlay from the published release; nothing may be read from a missing "
+                "upstream. Repair preserves claim ids -- a plain re-pull of the release "
+                "already tracked is refused as a no-op."
             )
         actual = sha256_file(path)
         if actual != expected:
@@ -86,7 +89,9 @@ def verify_tracked_upstream(
                 f"longer matches its recorded '{member}' digest: expected {expected}, "
                 f"found {actual} at {relative_path}. The materialized upstream was edited "
                 "locally, and pulled state must stay byte-identical to what was published. "
-                "Restore the file from the published release -- re-pull it "
-                "(`cruxible state pull preview` then `apply`) or re-create the overlay -- "
-                "then retry."
+                "Restore the file from the published release -- re-pull it in REPAIR mode "
+                "(`cruxible state pull-preview --repair` then "
+                "`cruxible state pull-apply --repair --apply-digest ...`) or re-create the "
+                "overlay -- then retry. Repair preserves claim ids; a plain re-pull of the "
+                "release already tracked is refused as a no-op."
             )

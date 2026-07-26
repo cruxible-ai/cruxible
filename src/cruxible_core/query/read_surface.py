@@ -47,10 +47,13 @@ class ReadInspectNeighbor:
     direction: str
     relationship_type: str
     edge_key: int | None
-    claim_id: str | None = None
     properties: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     entity: EntityInstance | None = None
+    # APPENDED, never inserted: a new field placed mid-signature silently shifts
+    # every positional caller's arguments one slot to the right, and a dataclass
+    # gives no error for it -- the wrong value simply lands in the wrong field.
+    claim_id: str | None = None
 
 
 @dataclass
@@ -78,9 +81,10 @@ class ReadNeighborhoodEdge:
     to_type: str
     to_id: str
     edge_key: int | None
-    claim_id: str | None = None
     properties: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # APPENDED, never inserted -- see ReadInspectNeighbor.claim_id.
+    claim_id: str | None = None
 
 
 @dataclass

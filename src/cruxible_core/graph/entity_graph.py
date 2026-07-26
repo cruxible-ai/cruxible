@@ -11,7 +11,7 @@ Node ID format: "{entity_type}:{entity_id}" (e.g., "Vehicle:V-2024-CIVIC-EX")
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import count
 from typing import Any
@@ -102,7 +102,7 @@ class EntityGraph:
     def backfill_missing_claim_ids(
         self,
         *,
-        reuse: Mapping[tuple[str, str, str, str, str], str] | None = None,
+        reuse: Mapping[tuple[str, str, str, str, str], Sequence[str]] | None = None,
     ) -> list[RelationshipInstance]:
         """Mint claim ids for edges that carry none, IN MEMORY only.
 
@@ -119,15 +119,26 @@ class EntityGraph:
           snapshot artifacts stay byte-identical, because pull verification and
           same-release immutability hash those exact bytes.
 
-        ``reuse`` is the legacy tuple->id reconcile map: when a tuple appears in
-        it, its previously-minted id is reused instead of a fresh mint, so
+        ``reuse`` is the legacy tuple->ids reconcile map: when a tuple appears in
+        it, its previously-minted ids are reused instead of fresh mints, so
         re-pulling the same pre-upgrade upstream release does not silently
         re-mint every upstream identity and stale every record-time stamp.
 
-        Returns the durable relationships that received an id, in iteration
-        order, for the caller to persist.
+        The map is tuple->ORDERED LIST because this is a MULTIGRAPH: one tuple
+        can carry several PARALLEL edges, and a single id could only ever
+        reconcile one of them, leaving the rest to churn on every pull forever.
+        Position within a tuple is the order the id-less parallel edges are
+        encountered, which is edge insertion order -- the same order the
+        per-load ``edge_key`` counter follows, and the order a re-materialized
+        image reproduces exactly. So the Nth parallel edge takes the Nth id,
+        stably across re-pulls. The returned list is in that same order, which
+        is what lets ``record_minted_identities`` fold it back positionally.
+
+        Returns the durable relationships that received an id -- reused AND
+        freshly minted -- for the caller to persist.
         """
         backfilled: list[RelationshipInstance] = []
+        seen_per_identity: dict[tuple[str, str, str, str, str], int] = {}
         for u, v, key, edge_data in self._graph.edges(keys=True, data=True):
             if isinstance(edge_data.get("claim_id"), str):
                 continue
@@ -135,8 +146,11 @@ class EntityGraph:
             to_type, to_id = split_node_id(v)
             rel_type = str(edge_data.get("relationship_type"))
             identity = (rel_type, from_type, from_id, to_type, to_id)
-            claim_id = (reuse or {}).get(identity) or mint_claim_id()
-            if claim_id in self._claim_ids:
+            position = seen_per_identity.get(identity, 0)
+            seen_per_identity[identity] = position + 1
+            reusable = (reuse or {}).get(identity) or ()
+            claim_id = reusable[position] if position < len(reusable) else ""
+            if not claim_id or claim_id in self._claim_ids:
                 # A reconcile-map entry that collides with a live id would
                 # silently retarget an existing identity; mint past it instead
                 # of adopting the collision.
@@ -168,12 +182,31 @@ class EntityGraph:
         Deliberately unindexed: ``claim_id`` is a disambiguator on read paths
         that already hold the tuple, so the id lookup never has to be the
         primary access path. If that changes, index it then -- not speculatively.
+
+        The scan runs over RAW edge data and materializes a
+        ``RelationshipInstance`` only for the edge that matches: building (and
+        discarding) a validated pydantic model for every edge in the graph to
+        find one is the kind of cost an "unindexed but cheap" lookup must not
+        quietly carry.
         """
         if claim_id not in self._claim_ids:
             return None
-        for relationship in self.iter_relationships():
-            if relationship.claim_id == claim_id:
-                return relationship
+        for u, v, key, data in self._graph.edges(keys=True, data=True):
+            if data.get("claim_id") != claim_id:
+                continue
+            from_type, from_id = split_node_id(u)
+            to_type, to_id = split_node_id(v)
+            return RelationshipInstance(
+                relationship_type=str(data.get("relationship_type")),
+                from_type=from_type,
+                from_id=from_id,
+                to_type=to_type,
+                to_id=to_id,
+                edge_key=key if isinstance(key, int) else None,
+                claim_id=claim_id,
+                properties=dict(data.get("properties", {})),
+                metadata=_relationship_metadata(data),
+            )
         return None
 
     # -------------------------------------------------------------------------
@@ -342,7 +375,7 @@ class EntityGraph:
         instance is normal (candidates, wire references, dry-run previews);
         ADDING one is the bug this refusal names.
         """
-        if rel.claim_id is None:
+        if not rel.claim_id or not rel.claim_id.strip():
             raise ValueError(
                 "Relationship added to a graph is missing claim_id "
                 f"({rel.relationship_label()}). Edges enter the graph through "

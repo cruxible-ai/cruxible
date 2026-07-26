@@ -28,7 +28,10 @@ from cruxible_core.service import (
     service_reload_config,
     service_state_status,
 )
-from cruxible_core.storage.sqlite import LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY
+from cruxible_core.storage.sqlite import (
+    LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY,
+    SQLiteSnapshotRepository,
+)
 from tests.test_service.test_state import (  # noqa: F401 - fixture import
     STATE_MODEL_YAML,
     _case,
@@ -143,6 +146,53 @@ def test_same_release_reapply_is_refused(
         service_pull_state_apply(overlay, expected_apply_digest=preview.apply_digest)
 
 
+def test_repair_re_pull_restores_a_damaged_upstream_without_moving_claim_ids(
+    published_release_fixture: tuple[CruxibleInstance, Path],  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The no-op refusal must not kill the documented repair.
+
+    ``snapshot.upstream_verification`` sends operators here BY NAME when a
+    materialized member no longer matches its recorded digest: re-pull the
+    release. Refusing every same-release apply left that instance with no read
+    path and no supported fix. Repair goes through the same reconcile map, so it
+    restores bytes without re-identifying a single claim.
+    """
+    root_instance, release_dir = published_release_fixture
+    overlay = _overlay_with_local_edge(release_dir, tmp_path / "overlay")
+    del root_instance
+    before = {edge.claim_id for edge in overlay.load_graph().iter_relationships()}
+    assert before and None not in before
+
+    # Damage the materialized upstream the way an out-of-band edit would.
+    materialized_graph = (
+        overlay.get_root_path() / ".cruxible" / "upstream" / "current" / "graph.json"
+    )
+    original_bytes = materialized_graph.read_bytes()
+    materialized_graph.write_text('{"nodes": [], "edges": []}')
+
+    # Every ordinary read of the tracked upstream now refuses, and names repair.
+    with pytest.raises(ConfigError, match="--repair"):
+        service_pull_state_preview(overlay)
+    # ...and a plain same-release apply is still refused, also naming repair.
+    repair_preview = service_pull_state_preview(overlay, force_repair=True)
+    with pytest.raises(ConfigError, match="--repair"):
+        service_pull_state_apply(overlay, expected_apply_digest=repair_preview.apply_digest)
+
+    service_pull_state_apply(
+        overlay,
+        expected_apply_digest=repair_preview.apply_digest,
+        force_repair=True,
+    )
+
+    assert materialized_graph.read_bytes() == original_bytes
+    overlay.invalidate_graph_cache()
+    after = {edge.claim_id for edge in overlay.load_graph().iter_relationships()}
+    assert after == before
+    # The repaired upstream verifies again, so ordinary reads resume.
+    service_pull_state_preview(overlay)
+
+
 def test_upstream_claim_ids_are_stable_and_the_map_digest_is_recorded(
     published_release_fixture: tuple[CruxibleInstance, Path],  # noqa: F811
     tmp_path: Path,
@@ -241,7 +291,66 @@ def test_legacy_upstream_bundle_is_backfilled_without_rewriting_its_bytes(
     reconcile = load_legacy_identity_map(
         overlay.get_instance_state(LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY)
     )
-    assert reconcile[("cites", "Case", "CASE-A", "Case", "CASE-B")] == edge.claim_id
+    assert reconcile[("cites", "Case", "CASE-A", "Case", "CASE-B")] == [edge.claim_id]
+
+
+def test_overlay_create_never_persists_ids_without_their_reconcile_map(
+    published_release_fixture: tuple[CruxibleInstance, Path],  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The backfill and the map that explains it share ONE commit boundary.
+
+    ``save_graph`` opens its own transaction when there is none, so writing the
+    graph first and the map second left a crash window that stranded minted ids
+    with no map -- and the next pull of a still-pre-identity upstream would
+    re-mint every one of them.
+    """
+    root_instance, release_dir = published_release_fixture
+    service_add_relationships(
+        root_instance,
+        [
+            RelationshipInstance(
+                from_type="Case",
+                from_id="CASE-A",
+                relationship_type="cites",
+                to_type="Case",
+                to_id="CASE-B",
+            )
+        ],
+        source="test",
+        source_ref="root",
+    )
+    _publish_successor(root_instance, release_dir, tmp_path, release_id="v1.1.0")
+    graph_path = release_dir / "graph.json"
+    payload = json.loads(graph_path.read_text())
+    for edge in payload["edges"]:
+        edge.pop("claim_id", None)
+    graph_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    _rewrite_member_digests(release_dir)
+
+    real_set = SQLiteSnapshotRepository.set_instance_state
+
+    def _fail_on_the_map(self, key: str, value: object) -> None:
+        if key == LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY:
+            raise RuntimeError("crash between the graph and its map")
+        real_set(self, key, value)
+
+    monkeypatch.setattr(SQLiteSnapshotRepository, "set_instance_state", _fail_on_the_map)
+
+    overlay_root = tmp_path / "overlay"
+    with pytest.raises(RuntimeError, match="crash between the graph and its map"):
+        service_create_state_overlay(
+            transport_ref=f"file://{release_dir}",
+            root_dir=overlay_root,
+        )
+
+    monkeypatch.undo()
+    # The graph write went down with the map write: no stranded ids survive.
+    overlay = CruxibleInstance.load(overlay_root)
+    overlay.invalidate_graph_cache()
+    assert overlay.load_graph().edge_count() == 0
+    assert overlay.get_instance_state(LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY) is None
 
 
 def _rewrite_member_digests(release_dir: Path) -> None:

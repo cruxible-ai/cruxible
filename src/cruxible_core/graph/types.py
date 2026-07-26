@@ -14,6 +14,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -269,6 +270,26 @@ class RelationshipInstance(BaseModel):
     claim_id: str | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: RelationshipMetadata = Field(default_factory=RelationshipMetadata)
+
+    @field_validator("claim_id")
+    @classmethod
+    def _reject_blank_claim_id(cls, value: str | None) -> str | None:
+        """A claim identity is either absent or real; a blank one is neither.
+
+        ``None`` is the honest "this instance is not a durable claim" and stays
+        legal. ``""`` and ``"   "`` are not that -- they are a mint that went
+        wrong, and they used to slip through every guard that tested for
+        ``None`` while the durable INSERT tested for falsiness, so an empty id
+        failed late at persistence and a whitespace-only one became durable as
+        an identity nothing could ever look up. One rule, stated once, at the
+        boundary every construction site crosses.
+        """
+        if value is not None and not value.strip():
+            raise ValueError(
+                "claim_id must be a non-empty identifier; omit it entirely "
+                "(None) for a reference, candidate, wire, or dry-run instance"
+            )
+        return value
 
     def from_node_id(self) -> str:
         """Return the source node ID."""

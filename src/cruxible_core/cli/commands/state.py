@@ -257,13 +257,25 @@ def _fmt_age(value: Any) -> str:
     return f"{value:.0f}"
 
 
+_REPAIR_HELP = (
+    "Repair mode: re-apply the release ALREADY tracked, to restore a "
+    "materialized upstream that was damaged locally. Normally refused as a "
+    "no-op; the local copy's digest verification is skipped because that is "
+    "the check the damage trips. Claim ids are preserved."
+)
+
+
 @state_group.command("pull-preview")
+@click.option("--repair", is_flag=True, default=False, help=_REPAIR_HELP)
 @handle_errors
-def state_pull_preview_cmd() -> None:
+def state_pull_preview_cmd(repair: bool) -> None:
     """Preview pulling a newer upstream release into the current overlay."""
     result = _dispatch_cli_instance(
-        lambda client, instance_id: client.state_pull_preview(instance_id),
-        service_pull_state_preview,
+        lambda client, instance_id: client.state_pull_preview(
+            instance_id,
+            force_repair=repair,
+        ),
+        lambda instance: service_pull_state_preview(instance, force_repair=repair),
     )
     click.echo(f"Current release: {result.current_release_id or '(none)'}")
     click.echo(f"Target release: {result.target_release_id}")
@@ -283,15 +295,21 @@ def state_pull_preview_cmd() -> None:
 
 @state_group.command("pull-apply")
 @click.option("--apply-digest", required=True, help="Apply digest returned by pull-preview.")
+@click.option("--repair", is_flag=True, default=False, help=_REPAIR_HELP)
 @handle_errors
-def state_pull_apply_cmd(apply_digest: str) -> None:
+def state_pull_apply_cmd(apply_digest: str, repair: bool) -> None:
     """Apply a previewed upstream release into the current overlay."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.state_pull_apply(
             instance_id,
             expected_apply_digest=apply_digest,
+            force_repair=repair,
         ),
-        lambda instance: service_pull_state_apply(instance, expected_apply_digest=apply_digest),
+        lambda instance: service_pull_state_apply(
+            instance,
+            expected_apply_digest=apply_digest,
+            force_repair=repair,
+        ),
         allow_local=False,
         command_name="state pull-apply",
     )

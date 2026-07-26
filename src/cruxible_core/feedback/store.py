@@ -145,10 +145,22 @@ class FeedbackStore(FeedbackStoreProtocol):
             self._conn.execute("ALTER TABLE outcomes ADD COLUMN outcome_profile_digest TEXT")
 
     def _ensure_feedback_receipt_nullable(self) -> None:
+        """Rebuild ``feedback`` to drop the NOT NULL on ``receipt_id``.
+
+        The rebuild copies rows column-by-column, so EVERY column the new table
+        declares must be named in the INSERT...SELECT or it silently arrives
+        NULL. ``target_claim_id`` is copied conditionally because the rebuild
+        can run against an old table that predates the column -- selecting a
+        column the source lacks is a hard SQL error, and the column arriving
+        NULL for those rows is correct (they never had a claim id to carry).
+        """
         rows = self._conn.execute("PRAGMA table_info(feedback)").fetchall()
         receipt_column = next((row for row in rows if row["name"] == "receipt_id"), None)
         if receipt_column is None or not receipt_column["notnull"]:
             return
+        claim_id_source = (
+            "target_claim_id" if any(row["name"] == "target_claim_id" for row in rows) else "NULL"
+        )
 
         self._conn.execute("ALTER TABLE feedback RENAME TO feedback_receipt_not_null_old")
         execute_schema_script(
@@ -186,6 +198,7 @@ CREATE TABLE feedback (
 INSERT INTO feedback (
     feedback_id, receipt_id, action, target_json, target_relationship,
     target_from_type, target_from_id, target_to_type, target_to_id, target_edge_key,
+    target_claim_id,
     reason, reason_code, reason_remediation_hint, scope_hints,
     feedback_profile_key, feedback_profile_version, feedback_profile_digest,
     decision_context, context_snapshot, decision_surface_type,
@@ -194,6 +207,7 @@ INSERT INTO feedback (
 SELECT
     feedback_id, receipt_id, action, target_json, target_relationship,
     target_from_type, target_from_id, target_to_type, target_to_id, target_edge_key,
+    :TARGET_CLAIM_ID_SOURCE:,
     reason, reason_code, reason_remediation_hint, scope_hints,
     feedback_profile_key, feedback_profile_version, feedback_profile_digest,
     decision_context, context_snapshot, decision_surface_type,
@@ -201,7 +215,7 @@ SELECT
 FROM feedback_receipt_not_null_old;
 DROP TABLE feedback_receipt_not_null_old;
 CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
-""",
+""".replace(":TARGET_CLAIM_ID_SOURCE:", claim_id_source),
         )
 
     # -----------------------------------------------------------------

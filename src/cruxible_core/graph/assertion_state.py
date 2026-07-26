@@ -6,6 +6,7 @@ Cruxible should treat the edge in live graph semantics.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Generic, Literal, TypeVar
 
@@ -13,6 +14,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    ValidationError,
     field_serializer,
     field_validator,
     model_validator,
@@ -105,6 +107,15 @@ class SupersessionPointer(BaseModel):
     three shapes that can only be mistakes: an empty pointer, a half entity
     pair, and a pointer that names BOTH a claim and an entity.
 
+    THE REFUSAL IS A WRITE-PATH REFUSAL. Constructing or validating a pointer
+    directly -- what a lifecycle verb does when it writes one -- raises on those
+    shapes. Reaching this model through a stored ``LifecycleState`` does NOT:
+    that path runs on EVERY graph load, so a single stray persisted value would
+    make the whole graph unloadable, turning a bad pointer into a bricked
+    instance. ``LifecycleState`` therefore coerces an incoherent stored pointer
+    to ``None`` (see ``_tolerate_incoherent_stored_pointer``): the damage stays
+    the size of the one field.
+
     Nothing writes these today. The dedicated receipted lifecycle verbs
     (``wi-lifecycle-verbs``) are the first writer; this pass only gives the
     field a shape those verbs can target.
@@ -165,6 +176,30 @@ class LifecycleState(BaseModel, Generic[StatusT]):
     closed_by: str | None = None
     supersedes: SupersessionPointer | None = None
     superseded_by: SupersessionPointer | None = None
+
+    @field_validator("supersedes", "superseded_by", mode="before")
+    @classmethod
+    def _tolerate_incoherent_stored_pointer(cls, value: Any) -> Any:
+        """Coerce an unusable STORED pointer to None instead of failing the load.
+
+        This validator runs on every graph load, because lifecycle state is
+        decoded out of persisted relationship/entity metadata. If it propagated
+        ``SupersessionPointer``'s refusals, one stray persisted ``{}`` -- from a
+        hand-edited image, a future writer's bug, a partially-written payload --
+        would make the ENTIRE graph unloadable, with no read path left to
+        diagnose or repair it from. A pointer that names nothing resolvable is
+        worth exactly nothing, so dropping it costs nothing and keeps the blast
+        radius at one field. The write path (constructing or validating a
+        ``SupersessionPointer`` directly) still refuses those shapes loudly.
+        """
+        if value is None or isinstance(value, SupersessionPointer):
+            return value
+        if not isinstance(value, Mapping):
+            return None
+        try:
+            return SupersessionPointer.model_validate(dict(value))
+        except ValidationError:
+            return None
 
     @field_validator("effective_from", "effective_until", "closed_at")
     @classmethod

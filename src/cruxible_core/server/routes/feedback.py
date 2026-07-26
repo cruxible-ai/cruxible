@@ -33,6 +33,7 @@ async def feedback(instance_id: str, req: FeedbackRequest) -> contracts.Feedback
         to_type=req.to_type,
         to_id=req.to_id,
         edge_key=req.edge_key,
+        claim_id=req.claim_id,
         reason=req.reason,
         reason_code=req.reason_code,
         scope_hints=req.scope_hints,

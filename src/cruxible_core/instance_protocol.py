@@ -683,8 +683,26 @@ class InstanceProtocol(ABC):
     def get_head_snapshot_id(self) -> str | None: ...
     @abstractmethod
     def get_read_revision(self) -> int: ...
-    @abstractmethod
-    def get_instance_state(self, key: str) -> Any | None: ...
+
+    def get_instance_state(self, key: str) -> Any | None:
+        """Read a raw ``instance_state`` value, or None when unsupported.
+
+        DELIBERATELY NOT ABSTRACT. Adding an abstract method to a published
+        protocol breaks every embedded implementor at import time, and this one
+        arrived for a single internal reader -- the legacy claim-identity
+        reconcile map on the pull path -- which already treats an absent map as
+        an empty one. A default of ``None`` therefore degrades exactly the way
+        that caller is written to expect (a pre-identity upstream's ids get
+        re-minted, as they would have been anyway on an instance that never
+        stored a map) rather than turning a missing optional accessor into an
+        import-time failure for code that never asked for this feature.
+
+        An implementor that DOES persist instance state should override it:
+        without the override the reconcile map can be written and never read
+        back, and the churn it exists to bound returns.
+        """
+        return None
+
     @abstractmethod
     def get_upstream_metadata(self) -> UpstreamMetadata | None: ...
     @abstractmethod

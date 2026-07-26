@@ -540,6 +540,7 @@ happened; they never prove its inputs are still current.
 | `scope_hints` | no | object | null |  |
 | `corrections` | no | object | null |  |
 | `group_override` | no | boolean |  |
+| `claim_id` | no | string | null | Stable claim identity; preferred disambiguator, takes precedence over `edge_key`, disagreement refused. |
 
 **Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`
 

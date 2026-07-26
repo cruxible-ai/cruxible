@@ -13,6 +13,7 @@ The invariants under test, stated once:
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import CoreConfig
@@ -109,6 +110,25 @@ def test_adding_an_id_less_relationship_to_a_graph_raises() -> None:
                 to_type="Vehicle",
                 to_id="V1",
             )
+        )
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_a_blank_claim_id_is_refused_at_the_model(blank: str) -> None:
+    """Blank is not "absent". It used to slip past every ``is None`` guard.
+
+    The add-side guard tested ``is None`` and the durable INSERT tested
+    falsiness, so ``""`` failed late at persistence and whitespace-only became
+    DURABLE -- an identity no lookup could ever match.
+    """
+    with pytest.raises(ValidationError, match="non-empty identifier"):
+        RelationshipInstance(
+            relationship_type="fits",
+            from_type="Part",
+            from_id="P1",
+            to_type="Vehicle",
+            to_id="V1",
+            claim_id=blank,
         )
 
 
@@ -265,6 +285,76 @@ def test_backfill_reuses_the_reconcile_map_across_re_pulls(config: CoreConfig) -
     assert first_edge.claim_id == second_edge.claim_id
 
 
+def _parallel_legacy_payload(config: CoreConfig, *, count: int) -> dict:
+    """A PRE-IDENTITY image carrying ``count`` parallel edges on ONE 5-tuple.
+
+    The multigraph has always permitted these (``apply_relationship`` upserts by
+    tuple, but pre-identity images were written by anything that could add an
+    edge), and they are exactly the shape a tuple-keyed reconcile map cannot
+    represent with a single id.
+    """
+    source = _seeded_graph()
+    _apply(source, config, confidence=0.1)
+    payload = _legacy_graph_dict(source)
+    template = payload["edges"][0]
+    payload["edges"] = [
+        {
+            **template,
+            "key": index,
+            "properties": {**template.get("properties", {}), "confidence": 0.1 * (index + 1)},
+        }
+        for index in range(count)
+    ]
+    return payload
+
+
+def test_parallel_legacy_edges_keep_their_ids_across_re_pulls(config: CoreConfig) -> None:
+    """PARALLEL edges are why the map value is a LIST.
+
+    A tuple->single-id map can reconcile exactly one of a tuple's parallel
+    edges, so every other one re-mints on every pull, forever -- unbounded churn
+    dressed up as a bounded fix. With an ordered list, the Nth parallel edge
+    keeps the Nth id across arbitrarily many re-pulls.
+    """
+    legacy_payload = _parallel_legacy_payload(config, count=3)
+
+    def ids_of(graph: EntityGraph) -> list[str | None]:
+        return [edge.claim_id for edge in graph.iter_relationships("fits")]
+
+    first = EntityGraph.from_dict(legacy_payload)
+    reconcile = record_minted_identities({}, backfill_legacy_graph(first))
+    original = ids_of(first)
+    assert len(original) == 3
+    assert len(set(original)) == 3
+    assert reconcile[("fits", "Part", "P1", "Vehicle", "V1")] == original
+
+    # Three further re-pulls of the same pre-identity release: nothing churns.
+    for _ in range(3):
+        repulled = EntityGraph.from_dict(legacy_payload)
+        reconcile = record_minted_identities({}, backfill_legacy_graph(repulled, reuse=reconcile))
+        assert ids_of(repulled) == original
+    assert reconcile[("fits", "Part", "P1", "Vehicle", "V1")] == original
+
+
+def test_the_map_remembers_a_parallel_edge_that_briefly_disappears(config: CoreConfig) -> None:
+    """A release that drops one of three parallel edges must not forget its id."""
+    full_payload = _parallel_legacy_payload(config, count=3)
+
+    first = EntityGraph.from_dict(full_payload)
+    reconcile = record_minted_identities({}, backfill_legacy_graph(first))
+    original = reconcile[("fits", "Part", "P1", "Vehicle", "V1")]
+
+    shrunk_payload = _parallel_legacy_payload(config, count=3)
+    shrunk_payload["edges"] = shrunk_payload["edges"][:-1]
+    shrunk = EntityGraph.from_dict(shrunk_payload)
+    reconcile = record_minted_identities(reconcile, backfill_legacy_graph(shrunk, reuse=reconcile))
+    assert reconcile[("fits", "Part", "P1", "Vehicle", "V1")] == original
+
+    restored = EntityGraph.from_dict(full_payload)
+    backfill_legacy_graph(restored, reuse=reconcile)
+    assert [edge.claim_id for edge in restored.iter_relationships("fits")] == original
+
+
 def test_identity_map_digest_changes_when_ids_churn(config: CoreConfig) -> None:
     source = _seeded_graph()
     _apply(source, config, confidence=0.5)
@@ -333,7 +423,8 @@ def test_claim_id_from_another_tuple_refuses(config: CoreConfig) -> None:
         )
 
 
-def test_unknown_claim_id_is_unresolved_not_a_conflict() -> None:
+def test_unknown_claim_id_with_no_live_tuple_is_unresolved_not_a_conflict() -> None:
+    """Nothing to be confused WITH: the absent-claim path is unchanged."""
     graph = _seeded_graph()
     resolved = resolve_claim_target(
         graph,
@@ -345,6 +436,33 @@ def test_unknown_claim_id_is_unresolved_not_a_conflict() -> None:
         claim_id="CLM-doesnotexist",
     )
     assert resolved.relationship is None
+
+
+def test_a_stale_claim_id_over_a_live_tuple_refuses_and_names_both_ids(
+    config: CoreConfig,
+) -> None:
+    """The exact situation the disambiguator exists to surface.
+
+    The caller holds an id this instance does not have while the tuple IS live:
+    its claim is gone and a different one now occupies that tuple. Falling back
+    to the tuple would retarget the write onto a claim the caller never saw --
+    silently, and with a fabricated "raced" warning to explain it.
+    """
+    graph = _seeded_graph()
+    live = _apply(graph, config, confidence=0.5)
+    with pytest.raises(ClaimTargetConflictError) as excinfo:
+        resolve_claim_target(
+            graph,
+            relationship_type="fits",
+            from_type="Part",
+            from_id="P1",
+            to_type="Vehicle",
+            to_id="V1",
+            claim_id="CLM-staleref00000",
+        )
+    message = str(excinfo.value)
+    assert "CLM-staleref00000" in message
+    assert live.claim_id is not None and live.claim_id in message
 
 
 # ------------------------------------------------------------------- ordering

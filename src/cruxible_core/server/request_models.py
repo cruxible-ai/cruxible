@@ -137,6 +137,8 @@ class FeedbackRequest(BaseModel):
     to_type: str
     to_id: str
     edge_key: int | None = None
+    claim_id: str | None = None
+    """Stable claim identity; takes precedence over ``edge_key``, disagreement refused."""
     reason: str = ""
     reason_code: str | None = None
     scope_hints: dict[str, Any] | None = None
@@ -469,6 +471,13 @@ class StateOverlayRequest(BaseModel):
         return self
 
 
+class StatePullPreviewRequest(BaseModel):
+    force_repair: bool = False
+    """Preview repairing a DAMAGED materialized upstream (same-release re-apply)."""
+
+
 class StatePullApplyRequest(BaseModel):
     expected_apply_digest: str
     actor_context: contracts.GovernedActorContext | None = None
+    force_repair: bool = False
+    """Permit the same-release re-apply that repairs a damaged materialized upstream."""

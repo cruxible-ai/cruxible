@@ -626,6 +626,7 @@ class CruxibleClient:
         group_override: bool = False,
         receipt_id: str | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+        claim_id: str | None = None,
     ) -> contracts.FeedbackResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/feedback",
@@ -640,6 +641,7 @@ class CruxibleClient:
                     "to_type": to_type,
                     "to_id": to_id,
                     "edge_key": edge_key,
+                    "claim_id": claim_id,
                     "reason": reason,
                     "reason_code": reason_code,
                     "scope_hints": scope_hints,
@@ -1473,8 +1475,16 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/state/health")
         return self._parse_model(response, contracts.StateHealthResult)
 
-    def state_pull_preview(self, instance_id: str) -> contracts.StatePullPreviewResult:
-        response = self._client.post(f"/api/v1/{instance_id}/state/pull/preview")
+    def state_pull_preview(
+        self,
+        instance_id: str,
+        *,
+        force_repair: bool = False,
+    ) -> contracts.StatePullPreviewResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/state/pull/preview",
+            json={"force_repair": force_repair},
+        )
         return self._parse_model(response, contracts.StatePullPreviewResult)
 
     def state_pull_apply(
@@ -1483,11 +1493,15 @@ class CruxibleClient:
         *,
         expected_apply_digest: str,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+        force_repair: bool = False,
     ) -> contracts.StatePullApplyResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/state/pull/apply",
             json=self._with_actor_context(
-                {"expected_apply_digest": expected_apply_digest},
+                {
+                    "expected_apply_digest": expected_apply_digest,
+                    "force_repair": force_repair,
+                },
                 actor_context,
             ),
         )

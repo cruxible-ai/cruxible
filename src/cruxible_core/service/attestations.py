@@ -107,6 +107,23 @@ def service_attest(
             builder=ctx.builder,
         )
 
+        # Target resolution runs BEFORE the idempotency check, because the
+        # resolved target is part of what a replay has to match. A key that was
+        # first used against one claim and is replayed against a DIFFERENT claim
+        # on the same tuple is not a replay at all -- it is a second, distinct
+        # observation wearing the first one's key -- and returning the original
+        # record as "idempotent" would silently drop it.
+        graph = ctx.uow.graph.load_graph()
+        try:
+            relationship = _resolve_target(
+                graph,
+                claim_key,
+                claim_id=claim_id,
+                edge_key=edge_key,
+            )
+        except ClaimTargetConflictError as exc:
+            _refuse(ctx.builder, str(exc))
+
         if idempotency_key is not None:
             original = ctx.uow.attestations.find_idempotent_attestation(
                 idempotency_key=idempotency_key,
@@ -122,6 +139,16 @@ def service_attest(
                 request_evidence = [ref.model_dump(mode="json") for ref in normalized_evidence]
                 if original_evidence != request_evidence:
                     divergences.append("evidence_refs")
+                resolved_claim_id = relationship.claim_id if relationship is not None else None
+                if (
+                    original.claim_id is not None
+                    and resolved_claim_id is not None
+                    and original.claim_id != resolved_claim_id
+                ):
+                    divergences.append(
+                        f"claim target (original '{original.claim_id}', "
+                        f"request '{resolved_claim_id}')"
+                    )
                 if divergences:
                     _refuse(
                         ctx.builder,
@@ -139,16 +166,6 @@ def service_attest(
                 return result
 
         config = instance.load_config()
-        graph = ctx.uow.graph.load_graph()
-        try:
-            relationship = _resolve_target(
-                graph,
-                claim_key,
-                claim_id=claim_id,
-                edge_key=edge_key,
-            )
-        except ClaimTargetConflictError as exc:
-            _refuse(ctx.builder, str(exc))
         created_claim = False
         warnings: list[str] = []
 
@@ -208,7 +225,11 @@ def service_attest(
                     },
                     claim_id=relationship.claim_id,
                 )
-        elif properties is not None:
+        # Placed OUTSIDE the create branch on purpose. As an ``elif`` it was
+        # skipped whenever the create branch ended up ATTACHING to an existing
+        # claim rather than creating one, which is precisely the case where the
+        # caller's properties were silently discarded with no warning at all.
+        if properties is not None and not created_claim:
             warnings.append("properties ignored because the claim tuple already exists")
 
         assert relationship is not None
