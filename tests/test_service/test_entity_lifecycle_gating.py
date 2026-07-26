@@ -310,7 +310,7 @@ def test_retired_entity_cannot_be_reactivated_through_the_service(
     _retire_part(populated_instance, "BP-1002", "retired")
     with pytest.raises(
         DataValidationError,
-        match=r"Part:BP-1002.*cruxible entity reinstate",
+        match=r"Part:BP-1002 is retired.*deferred reinstate adjudication",
     ):
         service_batch_direct_write(
             populated_instance,

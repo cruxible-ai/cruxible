@@ -21,6 +21,14 @@ from cruxible_core.service import (
 
 
 def _evidence_ref(raw: str | None) -> contracts.EvidenceRef | None:
+    """Parse ``--evidence-ref`` into the typed contract model, or None.
+
+    The two dispatch branches want different shapes, and all four verbs use them
+    IDENTICALLY (an earlier split between the claim and entity verbs was an
+    inconsistency, not a design): the HTTP client takes the typed model and
+    serializes it wire-safely itself, while the local service takes a plain
+    mapping for :func:`normalize_evidence_ref`.
+    """
     if raw is None:
         return None
     try:
@@ -86,7 +94,7 @@ def relationship_supersede_cmd(
             claim_id,
             successor_claim_id,
             reason,
-            evidence_ref=(evidence.model_dump(mode="python") if evidence else None),
+            evidence_ref=evidence,
         ),
         lambda instance: service_supersede_claim(
             instance,
@@ -120,7 +128,7 @@ def relationship_retract_cmd(
             instance_id,
             claim_id,
             reason,
-            evidence_ref=(evidence.model_dump(mode="python") if evidence else None),
+            evidence_ref=evidence,
         ),
         lambda instance: service_retract_claim(
             instance,

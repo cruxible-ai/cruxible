@@ -3469,6 +3469,7 @@ def supersede_claim(
     actor_context: Any | None = None,
 ) -> contracts.ClaimLifecycleResult:
     """Settle a claim as superseded by an existing live same-type claim."""
+    check_permission("cruxible_supersede_claim", instance_id=instance_id)
     result = service_supersede_claim(
         get_manager().get(instance_id),
         claim_id,
@@ -3495,6 +3496,7 @@ def retract_claim(
     actor_context: Any | None = None,
 ) -> contracts.ClaimLifecycleResult:
     """Settle a claim as retracted without a successor."""
+    check_permission("cruxible_retract_claim", instance_id=instance_id)
     result = service_retract_claim(
         get_manager().get(instance_id),
         claim_id,
@@ -3522,6 +3524,7 @@ def supersede_entity(
     actor_context: Any | None = None,
 ) -> contracts.EntityLifecycleResult:
     """Settle an entity as superseded; its inbound edges do not migrate."""
+    check_permission("cruxible_supersede_entity", instance_id=instance_id)
     result = service_supersede_entity(
         get_manager().get(instance_id),
         entity_type,
@@ -3551,6 +3554,7 @@ def retire_entity(
     actor_context: Any | None = None,
 ) -> contracts.EntityLifecycleResult:
     """Settle an entity as retired without cascading attached edges."""
+    check_permission("cruxible_retire_entity", instance_id=instance_id)
     result = service_retire_entity(
         get_manager().get(instance_id),
         entity_type,

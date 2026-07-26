@@ -500,20 +500,32 @@ class TerminalLifecycleWriteRefusedError(CoreError):
     The dedicated receipted lifecycle verbs own these transitions. Non-terminal
     statuses (relationship ``active``/``inactive``, entity ``live``) stay freely
     writable because they are reversible participation flips, not settled acts.
+
+    The teaching message is KIND-AWARE: a refused entity write names the entity
+    verbs and a refused relationship write names the relationship verbs. Naming
+    all four sent the caller to read half a message that could not apply to the
+    write they made.
     """
 
     error_code = "terminal_lifecycle_write_refused"
+
+    _VERBS: dict[str, str] = {
+        "entity": "'cruxible entity supersede' or 'cruxible entity retire'",
+        "relationship": ("'cruxible relationship supersede' or 'cruxible relationship retract'"),
+    }
 
     def __init__(self, kind: str, status: str, writable: str):
         self.kind = kind
         self.status = status
         self.writable = writable
+        verbs = self._VERBS.get(
+            kind,
+            "the dedicated receipted lifecycle verbs",
+        )
         super().__init__(
             f"Refusing to write terminal {kind} lifecycle status '{status}' through a "
-            "plain add/update: use 'cruxible relationship supersede' or 'cruxible "
-            "relationship retract' for claims, and 'cruxible entity supersede' or "
-            "'cruxible entity retire' for entities. These settled lifecycle transitions require "
-            "a reason, actor attribution, and a mutation receipt. "
+            f"plain add/update: terminal lifecycle transitions require {verbs}, which "
+            "carry a required reason, actor attribution, and a mutation receipt. "
             f"Writable here: {writable}."
         )
 

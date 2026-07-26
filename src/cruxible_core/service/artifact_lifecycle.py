@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any, NoReturn
 
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, CoreError, EntityNotFoundError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     EntityLifecycleState,
@@ -18,10 +18,10 @@ from cruxible_core.graph.assertion_state import (
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
 from cruxible_core.graph.operations import (
+    ValidatedRelationship,
     apply_entity,
     apply_relationship,
     validate_entity,
-    validate_relationship,
 )
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -89,9 +89,16 @@ def service_supersede_claim(
                 f"status '{successor_status}'",
             )
 
+        successor_assertion = relationship_assertion_from_metadata(successor.metadata)
+        _refuse_reused_successor(
+            successor_assertion.lifecycle.supersedes,
+            builder=ctx.builder,
+            successor_label=f"claim '{successor_claim_id}'",
+            predecessor_label=f"claim '{claim_id}'",
+        )
+
         predecessor_pointer = SupersessionPointer(claim_id=claim_id)
         successor_pointer = SupersessionPointer(claim_id=successor_claim_id)
-        successor_assertion = relationship_assertion_from_metadata(successor.metadata)
         updated_successor_lifecycle = successor_assertion.lifecycle.model_copy(
             update={"supersedes": predecessor_pointer}
         )
@@ -292,6 +299,16 @@ def service_supersede_entity(
                 entity_id=successor_entity_id,
             )
 
+        successor_lifecycle = successor.metadata.lifecycle or EntityLifecycleState()
+        _refuse_reused_successor(
+            successor_lifecycle.supersedes,
+            builder=ctx.builder,
+            successor_label=f"entity {successor_entity_type}:{successor_entity_id}",
+            predecessor_label=f"entity {entity_type}:{entity_id}",
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
+
         predecessor_pointer = SupersessionPointer(
             entity_type=entity_type,
             entity_id=entity_id,
@@ -300,7 +317,6 @@ def service_supersede_entity(
             entity_type=successor_entity_type,
             entity_id=successor_entity_id,
         )
-        successor_lifecycle = successor.metadata.lifecycle or EntityLifecycleState()
         updated_successor = _apply_entity_lifecycle(
             graph,
             config=config,
@@ -507,11 +523,17 @@ def _get_entity(
 ) -> EntityInstance:
     entity = graph.get_entity(entity_type, entity_id)
     if entity is None:
+        # The standard not-found class, not a bare ConfigError: "you named
+        # something that does not exist" is a 404, not a 400, and the HTTP
+        # mapper already routes EntityNotFoundError there. The role-aware
+        # phrasing stays in the refusal RECEIPT, which is where the audit value
+        # of "predecessor vs successor" actually lives.
         _refuse(
             builder,
             f"{role} entity {entity_type}:{entity_id} not found",
             entity_type=entity_type,
             entity_id=entity_id,
+            error=EntityNotFoundError(entity_type, entity_id),
         )
     return entity
 
@@ -551,6 +573,47 @@ def _require_entity_predecessor_eligible(
         )
 
 
+def _refuse_reused_successor(
+    existing: SupersessionPointer | None,
+    *,
+    builder: ReceiptBuilder,
+    successor_label: str,
+    predecessor_label: str,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+) -> None:
+    """Refuse a successor that is already the successor of something else.
+
+    ``supersedes`` is a SINGLE pointer, so a second supersession onto the same
+    successor would overwrite the first one's back-reference and leave the
+    original predecessor holding a ``superseded_by`` that nothing points back at
+    — exactly the unpaired corpus D3's both-direction pointers exist to prevent.
+    The honest answer is to refuse and name the supersession already recorded,
+    so the adjudicator can decide whether THAT one was wrong rather than
+    silently displacing it.
+    """
+    if existing is None:
+        return
+    _refuse(
+        builder,
+        f"{successor_label} already supersedes {_pointer_label(existing)}; a successor "
+        "can record only one predecessor. Adjudicate the existing supersession "
+        f"before superseding {predecessor_label} onto it.",
+        entity_type=entity_type,
+        entity_id=entity_id,
+    )
+
+
+def _pointer_label(pointer: SupersessionPointer) -> str:
+    if pointer.claim_id is not None:
+        return f"claim '{pointer.claim_id}'"
+    if pointer.entity_type is not None:
+        return f"entity {pointer.entity_type}:{pointer.entity_id}"
+    # The pointer model is deliberately OPEN, so a pointer kind this build does
+    # not know about must still be nameable in the refusal.
+    return str(pointer.model_dump(mode="json", exclude_none=True))
+
+
 def _apply_claim_lifecycle(
     graph: EntityGraph,
     *,
@@ -561,19 +624,38 @@ def _apply_claim_lifecycle(
     actor_context: GovernedActorContext,
     receipt_id: str,
 ) -> RelationshipInstance:
-    validated = validate_relationship(
-        config,
-        graph,
-        relationship.from_type,
-        relationship.from_id,
-        relationship.relationship_type,
-        relationship.to_type,
-        relationship.to_id,
-        dict(relationship.properties),
+    """Move ONE edge's lifecycle axis, carrying its content verbatim.
+
+    Deliberately does NOT re-run :func:`validate_relationship`. Two reasons, both
+    load-bearing:
+
+    * **Exact-edge fidelity.** ``validate_relationship`` seeds its property
+      payload from ``graph.get_relationship``'s FIRST tuple match. On a tuple
+      carrying parallel edges that is a SIBLING of the edge being adjudicated,
+      so retracting one edge would have rewritten its properties from the
+      other's. The adjudication addresses its subject by ``edge_key`` /
+      ``claim_id``; its content must come from that same subject.
+    * **Schema drift must not block settlement.** A required property added to
+      the type's schema after the edge was written would make that edge
+      permanently un-adjudicable — the corpus would be unable to retract
+      exactly the stale claims that motivated the schema change.
+
+    A lifecycle transition introduces no new content, so there is nothing to
+    validate: ``is_update=True`` by construction (the edge is loaded from the
+    graph inside the receipt boundary), and the properties are copied through
+    unchanged.
+    """
+    candidate = RelationshipInstance(
+        relationship_type=relationship.relationship_type,
+        from_type=relationship.from_type,
+        from_id=relationship.from_id,
+        to_type=relationship.to_type,
+        to_id=relationship.to_id,
+        edge_key=relationship.edge_key,
+        claim_id=relationship.claim_id,
+        properties=dict(relationship.properties),
     )
-    candidate = validated.relationship
-    candidate.edge_key = relationship.edge_key
-    candidate.claim_id = relationship.claim_id
+    validated = ValidatedRelationship(relationship=candidate, is_update=True)
     return apply_relationship(
         graph,
         validated,
@@ -687,14 +769,22 @@ def _refuse(
     *,
     entity_type: str | None = None,
     entity_id: str | None = None,
+    error: CoreError | None = None,
 ) -> NoReturn:
+    """Record the refusal on the open receipt, then raise.
+
+    Always inside the ``mutation_receipt`` boundary, so the raise both persists a
+    refusal receipt and rolls the open write transaction back. ``error`` selects
+    a more precise exception class than the ``ConfigError`` default — used for
+    not-found, which is a 404 rather than a 400.
+    """
     builder.record_validation(
         passed=False,
         detail={"reason": reason},
         entity_type=entity_type,
         entity_id=entity_id,
     )
-    raise ConfigError(reason)
+    raise error if error is not None else ConfigError(reason)
 
 
 __all__ = [

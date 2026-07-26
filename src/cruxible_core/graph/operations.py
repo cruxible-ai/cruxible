@@ -267,16 +267,37 @@ def apply_entity(
         validated.entity.entity_type,
         validated.entity.entity_id,
     )
+    # The v3 forward-compatibility requirement: a retired entity_id must not be
+    # quietly re-occupied by a DIRECT write. Re-adding the id would mint a
+    # doppelganger carrying the identity but none of the retired original's
+    # history, foreclosing the deferred reinstate verb.
+    #
+    # SCOPED TO DIRECT WRITES on purpose. The seam cannot tell a "re-add" from an
+    # "update" — the row exists either way, so ``is_update`` is True for both —
+    # which means the only honest axis to narrow on is the SOURCE. Refusing every
+    # source would have made one retirement permanently break the governed
+    # ingest paths: a KEV-shaped ``workflow_apply`` that re-ingests a retired id
+    # (unattended, on a schedule, one row among thousands) would fail the WHOLE
+    # apply forever, since the apply loop raises out rather than reporting
+    # per-row outcomes — there is no partial-failure shape to route a per-row
+    # refusal into. Governed sources therefore pass through unchanged and a
+    # retired entity's governed updates remain possible; that is a KNOWN, stated
+    # gap pending the reinstate verb, and it is the smaller one: a governed
+    # re-ingest is receipted and attributable, an unreviewed direct re-add is not.
     if (
         validated.is_update
         and existing_entity is not None
         and existing_entity.metadata.lifecycle_status() == "retired"
         and not trusted_lifecycle_transition
+        and not is_governed_source(source)
+        and source != TOKEN_MINT_SOURCE
     ):
         raise DataValidationError(
-            f"Entity {entity_type}:{validated.entity.entity_id} is retired and cannot be "
-            "re-added or updated. Preserve this identity and use the future "
-            "'cruxible entity reinstate' adjudication path when it becomes available."
+            f"Entity {entity_type}:{validated.entity.entity_id} is retired: a direct "
+            "add/update would re-occupy a settled identity with none of its history. "
+            "Retirement is reversed by the deferred reinstate adjudication, which no "
+            "verb performs in this release; 'cruxible entity supersede' links a live "
+            "predecessor to a successor and does not apply to an already-retired one."
         )
 
     # Ordered AFTER the write-policy refusals on purpose: "you may not direct-write

@@ -512,6 +512,13 @@ QUERY_RUN_STANDARD = {
     "result_shape": "path",
     "dedupe": "path",
     "relationship_state": "live",
+    # DELIBERATE ADDITIVE REPIN (wi-lifecycle-verbs): the query response envelope
+    # gained the optional ``lifecycle_status`` echo alongside the existing
+    # ``relationship_state`` echo, so a reader can see which lifecycle filter (if
+    # any) shaped the rows it is holding. Additive and null by default — no
+    # existing key moved, no existing value changed — but this pin is a COMPLETE
+    # shape assertion, so the new key is recorded here on purpose.
+    "lifecycle_status": None,
     "param_hints": {
         "entry_point": "Part",
         "required_params": ["part_number"],

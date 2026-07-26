@@ -414,6 +414,68 @@ class GovernedLocalClient:
     def add_entities(self, instance_id: str, entities, *, dry_run: bool = False):
         return api.add_entities(instance_id, entities, dry_run=dry_run)
 
+    # Lifecycle verbs. Their MCP handlers are ``allow_local=False`` (a settled
+    # adjudication wants the daemon's actor context), so the MCP path is only
+    # reachable in tests through this adapter — which routes to the SAME gated
+    # runtime facade the daemon route uses.
+    def supersede_claim(
+        self,
+        instance_id: str,
+        claim_id: str,
+        successor_claim_id: str,
+        reason: str,
+        *,
+        evidence_ref=None,
+    ):
+        return api.supersede_claim(
+            instance_id,
+            claim_id,
+            successor_claim_id,
+            reason,
+            evidence_ref=evidence_ref,
+        )
+
+    def retract_claim(self, instance_id: str, claim_id: str, reason: str, *, evidence_ref=None):
+        return api.retract_claim(instance_id, claim_id, reason, evidence_ref=evidence_ref)
+
+    def supersede_entity(
+        self,
+        instance_id: str,
+        entity_type: str,
+        entity_id: str,
+        successor_entity_type: str,
+        successor_entity_id: str,
+        reason: str,
+        *,
+        evidence_ref=None,
+    ):
+        return api.supersede_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            successor_entity_type,
+            successor_entity_id,
+            reason,
+            evidence_ref=evidence_ref,
+        )
+
+    def retire_entity(
+        self,
+        instance_id: str,
+        entity_type: str,
+        entity_id: str,
+        reason: str,
+        *,
+        evidence_ref=None,
+    ):
+        return api.retire_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            reason,
+            evidence_ref=evidence_ref,
+        )
+
     def register_source_artifact(
         self,
         instance_id: str,

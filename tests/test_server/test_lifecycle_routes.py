@@ -151,3 +151,45 @@ def test_lifecycle_routes_are_hidden_from_frozen_openapi() -> None:
     assert all("/claims/{claim_id}/retract" not in path for path in paths)
     assert all("/{entity_id}/supersede" not in path for path in paths)
     assert all("/{entity_id}/retire" not in path for path in paths)
+
+
+def test_http_lifecycle_routes_refuse_an_empty_reason_and_change_nothing(
+    lifecycle_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    """A blank reason is refused over HTTP, on both kinds, with no state change.
+
+    The required reason is a governance property, not client-side politeness:
+    a settled transition with no reason is the corpus starving itself. Pin that
+    the daemon enforces it (whitespace does not satisfy it) and that the refused
+    call leaves the subject exactly as it found it.
+    """
+    instance_id, claims = _init_and_seed(lifecycle_client, tmp_path / "workspace")
+
+    refused_claim = lifecycle_client.post(
+        f"/api/v1/{instance_id}/claims/{claims[('svc-2', 'ctl-1')]}/retract",
+        json={"reason": "   "},
+    )
+    assert refused_claim.status_code == 400, refused_claim.text
+    assert "requires a non-empty reason" in refused_claim.json()["message"]
+
+    refused_entity = lifecycle_client.post(
+        f"/api/v1/{instance_id}/entities/Service/svc-2/retire",
+        json={"reason": ""},
+    )
+    assert refused_entity.status_code == 400, refused_entity.text
+    assert "requires a non-empty reason" in refused_entity.json()["message"]
+
+    # Nothing moved: the claim is still active and the entity still live.
+    edges = lifecycle_client.get(
+        f"/api/v1/{instance_id}/list/edges",
+        params={"relationship_state": "all"},
+    ).json()
+    claim_row = next(
+        item for item in edges["items"] if item["claim_id"] == claims[("svc-2", "ctl-1")]
+    )
+    assert claim_row["metadata"]["assertion"]["lifecycle"]["status"] == "active"
+
+    entity = lifecycle_client.get(f"/api/v1/{instance_id}/entities/Service/svc-2").json()
+    lifecycle = entity["metadata"].get("lifecycle")
+    assert lifecycle is None or lifecycle["status"] == "live"

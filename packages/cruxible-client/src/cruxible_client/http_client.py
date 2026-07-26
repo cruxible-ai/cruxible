@@ -358,9 +358,14 @@ class CruxibleClient:
             "limit": limit,
             "offset": offset,
             "relationship_state": relationship_state,
-            "lifecycle_status": lifecycle_status,
             "decision_record_id": decision_record_id,
         }
+        # Omitted, never sent as null: an older server built before this filter
+        # rejects unknown keys (extra="forbid"), so an always-present
+        # ``lifecycle_status: null`` would break every query against it. The
+        # key is only added when the caller actually asked for the filter.
+        if lifecycle_status is not None:
+            payload["lifecycle_status"] = lifecycle_status
         if profile is not None:
             payload["profile"] = profile
         if layout is not None:
@@ -430,9 +435,11 @@ class CruxibleClient:
             "params": params,
             "limit": limit,
             "relationship_state": relationship_state,
-            "lifecycle_status": lifecycle_status,
             "decision_record_id": decision_record_id,
         }
+        # Omitted when unset — see :meth:`query` for the version-skew rationale.
+        if lifecycle_status is not None:
+            payload["lifecycle_status"] = lifecycle_status
         if profile is not None:
             payload["profile"] = profile
         if layout is not None:

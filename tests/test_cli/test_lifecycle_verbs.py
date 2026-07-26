@@ -19,8 +19,13 @@ def test_lifecycle_noun_verbs_dispatch_with_reason_and_optional_evidence(monkeyp
             self, instance_id, claim_id, successor_claim_id, reason, *, evidence_ref=None
         ):
             calls.append(("supersede_claim", reason))
-            assert evidence_ref["source"] == "test"
-            assert evidence_ref["source_record_id"] == "cli-evidence"
+            # All four verbs hand the client the TYPED model (the claim verbs
+            # used to hand it a `mode="python"` dict — an inconsistency, and one
+            # that can carry non-JSON values into the request body). The client
+            # serializes it wire-safely itself.
+            assert isinstance(evidence_ref, contracts.EvidenceRef)
+            assert evidence_ref.source == "test"
+            assert evidence_ref.source_record_id == "cli-evidence"
             return contracts.ClaimLifecycleResult(
                 action="supersede",
                 claim={"claim_id": claim_id},
