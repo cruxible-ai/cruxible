@@ -114,6 +114,10 @@ class SourceEvidenceInput(BaseModel):
     """Unresolved source locator supplied by an agent or user."""
 
     source_artifact_id: str
+    # Optional PIN to one immutable revision. Absent means "whatever revision is
+    # current", which is the right default for a fresh locator and the wrong one
+    # for replaying a citation made earlier.
+    artifact_revision_id: str | None = None
     chunk_id: str | None = None
     heading_path: list[str] | None = None
     block_selector: str | None = None
@@ -212,5 +216,12 @@ class DereferenceSourceEvidenceResult(BaseModel):
     body: str | None = None
     reason: str | None = None
     chunk: SourceArtifactChunk | None = None
+    # The revision this read actually resolved against, always reported.
+    artifact_revision_id: str | None = None
+    # True when the caller pinned no revision and the read fell back to the
+    # CURRENT one. An unpinned dereference is not wrong, but it is not a replay
+    # of the citation either, and the difference must be visible rather than
+    # inferred from a matching hash.
+    revision_unpinned: bool = False
 
     model_config = ConfigDict(extra="forbid")

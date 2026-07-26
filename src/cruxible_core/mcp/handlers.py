@@ -2345,6 +2345,7 @@ def handle_dereference_source_evidence(
     instance_id: str,
     *,
     source_artifact_id: str,
+    artifact_revision_id: str | None = None,
     chunk_id: str | None = None,
     heading_path: list[str] | None = None,
     block_selector: str | None = None,
@@ -2355,6 +2356,7 @@ def handle_dereference_source_evidence(
         lambda client: client.dereference_source_evidence(
             instance_id,
             source_artifact_id=source_artifact_id,
+            artifact_revision_id=artifact_revision_id,
             chunk_id=chunk_id,
             heading_path=heading_path,
             block_selector=block_selector,
@@ -2363,6 +2365,7 @@ def handle_dereference_source_evidence(
         lambda: api.dereference_source_evidence(
             instance_id,
             source_artifact_id=source_artifact_id,
+            artifact_revision_id=artifact_revision_id,
             chunk_id=chunk_id,
             heading_path=heading_path,
             block_selector=block_selector,

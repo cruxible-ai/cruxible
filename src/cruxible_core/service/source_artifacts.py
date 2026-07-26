@@ -319,14 +319,25 @@ def service_dereference_source_evidence(
     instance: InstanceProtocol,
     *,
     source_artifact_id: str,
+    artifact_revision_id: str | None = None,
     chunk_id: str | None = None,
     heading_path: list[str] | None = None,
     block_selector: str | None = None,
     expected_content_hash: str | None = None,
 ) -> DereferenceSourceEvidenceResult:
-    """Resolve a source-evidence locator and return drift-aware source text."""
+    """Resolve a source-evidence locator and return drift-aware source text.
+
+    ``artifact_revision_id`` PINS the read to one immutable revision. Without it
+    the read resolves against whatever revision is current, which meant a
+    citation made against revision 1 could not retrieve the content it was made
+    against once revision 2 existed — even though revision 1's chunks, manifest,
+    and archived bytes were all still stored. Unpinned reads still work (old refs
+    carry no revision) but say so via ``revision_unpinned``: falling back is
+    acceptable, doing it silently is not.
+    """
     source_evidence = SourceEvidenceInput(
         source_artifact_id=source_artifact_id,
+        artifact_revision_id=artifact_revision_id,
         chunk_id=chunk_id,
         heading_path=heading_path,
         block_selector=block_selector,
@@ -334,10 +345,9 @@ def service_dereference_source_evidence(
     )
     store = instance.get_source_artifact_store()
     try:
-        artifact = store.get_artifact(source_evidence.source_artifact_id)
-        if artifact is None:
-            raise ConfigError(f"Source artifact '{source_evidence.source_artifact_id}' not found")
-        chunk = _resolve_chunk(store, source_evidence)
+        artifact = _resolve_artifact_revision(store, source_evidence)
+        unpinned = source_evidence.artifact_revision_id is None
+        chunk = _resolve_chunk(store, source_evidence, artifact=artifact)
         if (
             source_evidence.expected_content_hash is not None
             and source_evidence.expected_content_hash != chunk.content_hash
@@ -350,6 +360,8 @@ def service_dereference_source_evidence(
                 expected_artifact_hash=artifact.content_hash,
                 reason="expected_content_hash does not match registered chunk",
                 chunk=chunk,
+                artifact_revision_id=artifact.artifact_revision_id,
+                revision_unpinned=unpinned,
             )
 
         content = _resolve_artifact_content(store, artifact)
@@ -363,6 +375,8 @@ def service_dereference_source_evidence(
                 current_artifact_hash=content.current_artifact_hash,
                 reason=content.reason,
                 chunk=chunk,
+                artifact_revision_id=artifact.artifact_revision_id,
+                revision_unpinned=unpinned,
             )
         return DereferenceSourceEvidenceResult(
             status="available",
@@ -374,9 +388,35 @@ def service_dereference_source_evidence(
             body_origin=content.body_origin,
             body=_chunk_body(content.content, chunk),
             chunk=chunk,
+            artifact_revision_id=artifact.artifact_revision_id,
+            revision_unpinned=unpinned,
         )
     finally:
         store.close()
+
+
+def _resolve_artifact_revision(
+    store: SourceArtifactStoreProtocol,
+    locator: SourceEvidenceInput,
+) -> SourceArtifactRecord:
+    """Return the pinned revision, or the current one when nothing is pinned."""
+    if locator.artifact_revision_id is None:
+        artifact = store.get_artifact(locator.source_artifact_id)
+        if artifact is None:
+            raise ConfigError(f"Source artifact '{locator.source_artifact_id}' not found")
+        return artifact
+    revision = store.get_artifact_revision(locator.artifact_revision_id)
+    if revision is None:
+        raise ConfigError(f"Source artifact revision '{locator.artifact_revision_id}' not found")
+    if revision.source_artifact_id != locator.source_artifact_id:
+        # A pin naming a different logical artifact is a corrupt citation, not a
+        # stale one: silently honoring either half would return content from a
+        # document the citation never referred to.
+        raise ConfigError(
+            f"Source artifact revision '{locator.artifact_revision_id}' does not belong "
+            f"to '{locator.source_artifact_id}'"
+        )
+    return revision
 
 
 def resolve_source_evidence_refs(
@@ -397,10 +437,8 @@ def resolve_source_evidence_refs(
                 if isinstance(item, SourceEvidenceInput)
                 else SourceEvidenceInput.model_validate(item)
             )
-            artifact = store.get_artifact(locator.source_artifact_id)
-            if artifact is None:
-                raise ConfigError(f"Source artifact '{locator.source_artifact_id}' not found")
-            chunk = _resolve_chunk(store, locator)
+            artifact = _resolve_artifact_revision(store, locator)
+            chunk = _resolve_chunk(store, locator, artifact=artifact)
             if (
                 locator.expected_content_hash is not None
                 and locator.expected_content_hash != chunk.content_hash
@@ -413,6 +451,10 @@ def resolve_source_evidence_refs(
                     source="source_artifact",
                     source_record_id=chunk.chunk_id,
                     artifact_id=artifact.source_artifact_id,
+                    # PIN the revision at citation time. Without it the citation
+                    # dereferences against whatever revision is current when it
+                    # is read, which is a different claim from the one made.
+                    artifact_revision_id=artifact.artifact_revision_id,
                     label=locator.label or chunk.label or artifact.label,
                     metadata={
                         "chunk_id": chunk.chunk_id,
@@ -571,7 +613,18 @@ def _resolve_artifact_content(
 def _resolve_chunk(
     store: SourceArtifactStoreProtocol,
     locator: SourceEvidenceInput,
+    *,
+    artifact: SourceArtifactRecord | None = None,
 ) -> SourceArtifactChunk:
+    """Resolve the locator's chunk, scoped to ``artifact``'s revision when pinned.
+
+    ``get_chunk`` / ``find_chunks`` join on ``superseded_by IS NULL``, i.e. they
+    only ever see the CURRENT revision — so a pinned read has to go through the
+    revision-scoped chunk listing instead, or the pin would select the right
+    manifest and the wrong chunks.
+    """
+    if artifact is not None and locator.artifact_revision_id is not None:
+        return _resolve_revision_chunk(store, locator, artifact)
     if locator.chunk_id is not None:
         chunk = store.get_chunk(locator.source_artifact_id, locator.chunk_id)
         if chunk is None:
@@ -591,6 +644,39 @@ def _resolve_chunk(
         raise ConfigError(
             "Source evidence locator did not match any registered chunk: "
             f"{locator.source_artifact_id} {locator.heading_path} "
+            f"{locator.block_selector}"
+        )
+    if len(matches) > 1:
+        raise ConfigError("Source evidence locator matched multiple chunks; use chunk_id instead")
+    return matches[0]
+
+
+def _resolve_revision_chunk(
+    store: SourceArtifactStoreProtocol,
+    locator: SourceEvidenceInput,
+    artifact: SourceArtifactRecord,
+) -> SourceArtifactChunk:
+    chunks = store.list_revision_chunks(artifact.artifact_revision_id)
+    if locator.chunk_id is not None:
+        for chunk in chunks:
+            if chunk.chunk_id == locator.chunk_id:
+                return chunk
+        raise ConfigError(
+            f"Source artifact chunk '{locator.chunk_id}' not found "
+            f"in revision '{artifact.artifact_revision_id}'"
+        )
+    assert locator.heading_path is not None
+    assert locator.block_selector is not None
+    matches = [
+        chunk
+        for chunk in chunks
+        if chunk.heading_path == locator.heading_path
+        and chunk.block_selector == locator.block_selector
+    ]
+    if not matches:
+        raise ConfigError(
+            "Source evidence locator did not match any chunk in revision "
+            f"'{artifact.artifact_revision_id}': {locator.heading_path} "
             f"{locator.block_selector}"
         )
     if len(matches) > 1:

@@ -697,3 +697,137 @@ def test_detected_drift_is_persisted_and_visible_to_later_reads(tmp_path: Path) 
     restored = service_get_source_artifact(instance, source_artifact_id="drifting_evidence")
     assert restored.content_available is True
     assert restored.drift_observed_hash is None
+
+
+# ---------------------------------------------------------------------------
+# Revision-pinned dereference
+# ---------------------------------------------------------------------------
+
+
+def test_a_revision_1_citation_still_retrieves_revision_1_content(tmp_path: Path) -> None:
+    """The whole point of keeping revisions is being able to read them back.
+
+    ``EvidenceRef`` retained only the LOGICAL artifact id, and dereference always
+    resolved to the current revision — so a citation made against revision 1
+    silently returned revision 2's text once the document was re-registered,
+    even though revision 1's chunks and archived bytes were still stored.
+    """
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Fitment\n\nOriginal BP-1001 claim.\n")
+    first = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_retention="archive",
+    )
+    assert first.artifact_revision_id.endswith("@1")
+
+    source_path.write_text("# Fitment\n\nRevised BP-1001 claim.\n")
+    second = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_retention="archive",
+        source_artifact_id=first.source_artifact_id,
+    )
+    assert second.artifact_revision_id.endswith("@2")
+
+    pinned = service_dereference_source_evidence(
+        instance,
+        source_artifact_id=first.source_artifact_id,
+        artifact_revision_id=first.artifact_revision_id,
+        heading_path=["Fitment"],
+        block_selector="paragraph:1",
+    )
+    assert pinned.status == "available"
+    assert pinned.body == "Original BP-1001 claim."
+    assert pinned.artifact_revision_id == first.artifact_revision_id
+    assert pinned.revision_unpinned is False
+
+
+def test_an_unpinned_dereference_says_so_instead_of_pretending(tmp_path: Path) -> None:
+    """Falling back to the current revision is fine; doing it silently is not."""
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Fitment\n\nOriginal BP-1001 claim.\n")
+    first = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_retention="archive",
+    )
+    source_path.write_text("# Fitment\n\nRevised BP-1001 claim.\n")
+    second = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_retention="archive",
+        source_artifact_id=first.source_artifact_id,
+    )
+
+    unpinned = service_dereference_source_evidence(
+        instance,
+        source_artifact_id=first.source_artifact_id,
+        heading_path=["Fitment"],
+        block_selector="paragraph:1",
+    )
+    assert unpinned.status == "available"
+    assert unpinned.body == "Revised BP-1001 claim."
+    assert unpinned.artifact_revision_id == second.artifact_revision_id
+    assert unpinned.revision_unpinned is True
+
+
+def test_resolved_evidence_refs_pin_the_revision_they_were_made_against(
+    tmp_path: Path,
+) -> None:
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Fitment\n\nOriginal BP-1001 claim.\n")
+    first = service_register_source_artifact(instance, source_path=str(source_path))
+
+    refs = resolve_evidence_refs(
+        instance,
+        evidence_refs=[],
+        source_evidence=[
+            {
+                "source_artifact_id": first.source_artifact_id,
+                "heading_path": ["Fitment"],
+                "block_selector": "paragraph:1",
+            }
+        ],
+    )
+
+    assert [ref.artifact_revision_id for ref in refs] == [first.artifact_revision_id]
+
+
+def test_a_pin_naming_another_artifact_is_refused(tmp_path: Path) -> None:
+    """A cross-artifact pin is a corrupt citation, not a stale one."""
+    instance = _instance(tmp_path)
+    first_path = tmp_path / "first.md"
+    first_path.write_text("# One\n\nFirst claim.\n")
+    first = service_register_source_artifact(instance, source_path=str(first_path))
+    second_path = tmp_path / "second.md"
+    second_path.write_text("# Two\n\nSecond claim.\n")
+    second = service_register_source_artifact(instance, source_path=str(second_path))
+
+    with pytest.raises(ConfigError, match="does not belong to"):
+        service_dereference_source_evidence(
+            instance,
+            source_artifact_id=first.source_artifact_id,
+            artifact_revision_id=second.artifact_revision_id,
+            heading_path=["One"],
+            block_selector="paragraph:1",
+        )
+
+
+def test_an_unknown_revision_pin_is_refused(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Fitment\n\nOriginal BP-1001 claim.\n")
+    first = service_register_source_artifact(instance, source_path=str(source_path))
+
+    with pytest.raises(ConfigError, match="revision .* not found"):
+        service_dereference_source_evidence(
+            instance,
+            source_artifact_id=first.source_artifact_id,
+            artifact_revision_id=f"{first.source_artifact_id}@99",
+            heading_path=["Fitment"],
+            block_selector="paragraph:1",
+        )

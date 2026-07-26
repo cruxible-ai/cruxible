@@ -81,6 +81,7 @@ async def dereference_source_evidence(
     return api.dereference_source_evidence(
         instance_id=resolved_instance_id,
         source_artifact_id=req.source_artifact_id,
+        artifact_revision_id=req.artifact_revision_id,
         chunk_id=req.chunk_id,
         heading_path=req.heading_path,
         block_selector=req.block_selector,

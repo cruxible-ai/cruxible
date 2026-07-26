@@ -1286,7 +1286,7 @@ without it, only the active materialized digest is checked.
 | `subject_type` | no | string | null |  |
 | `subject_id` | no | string | null |  |
 
-**Returns:** Top-level fields: `record`, `events`
+**Returns:** Top-level fields: `record`, `events`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1309,7 +1309,7 @@ without it, only the active materialized digest is checked.
 | `decision_record_id` | yes | string |  |
 | `include_events` | no | boolean |  |
 
-**Returns:** Top-level fields: `record`, `events`
+**Returns:** Top-level fields: `record`, `events`, `receipt_id`
 
 **Side Effects:** Read-only.
 
@@ -1388,7 +1388,7 @@ without it, only the active materialized digest is checked.
 | `decision_class` | yes | enum: recommended, rejected, deferred, escalated |  |
 | `rationale` | no | string |  |
 
-**Returns:** Top-level fields: `record`, `events`
+**Returns:** Top-level fields: `record`, `events`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1411,7 +1411,7 @@ without it, only the active materialized digest is checked.
 | `decision_record_id` | yes | string |  |
 | `reason` | no | string |  |
 
-**Returns:** Top-level fields: `record`, `events`
+**Returns:** Top-level fields: `record`, `events`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1765,6 +1765,7 @@ without it, only the active materialized digest is checked.
 | `analysis_state` | no | object | null |  |
 | `signal_sources_used` | no | array | null |  |
 | `suggested_priority` | no | string | null |  |
+| `expected_pending_version` | no | integer | null | Optimistic guard. A re-propose REWRITES the live pending group; pass the version you computed your delta against to have a bucket that moved underneath you refused instead of overwritten. Omit for an unconditional refresh. |
 
 **Returns:** Top-level fields: `group_id`, `signature`, `status`, `review_priority`, `member_count`, `prior_resolution`, `suppressed`, `suppressed_members`, `policy_summary`, `receipt_id`
 
@@ -1859,7 +1860,7 @@ without it, only the active materialized digest is checked.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `relationship_type` | no | string | null |  |
-| `status` | no | enum: pending_review, auto_resolved, applying, resolved | null |  |
+| `status` | no | enum: pending_review, applying, resolved, withdrawn, auto_resolved | null | `auto_resolved` is DEPRECATED and read-only: nothing writes it any more, and it is filterable only so an operator upgrading from 0.2.x can find the rows it left behind. |
 | `limit` | no | integer |  |
 | `offset` | no | integer |  |
 
@@ -2030,12 +2031,13 @@ without it, only the active materialized digest is checked.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `source_artifact_id` | yes | string | Artifact ID returned by `cruxible_register_source_artifact`. |
+| `artifact_revision_id` | no | string | null | Pin the read to one immutable revision (`{source_artifact_id}@{revision}`), as carried on the evidence ref you are replaying. Omit to read the current revision, which is reported as `revision_unpinned`. |
 | `chunk_id` | no | string | null | Chunk ID locator. |
 | `heading_path` | no | array | null | Heading-path locator (used with `block_selector`). |
 | `block_selector` | no | string | null | Block selector within the heading path. |
 | `expected_content_hash` | no | string | null | Expected chunk content hash for drift detection. |
 
-**Returns:** Top-level fields: `status` (one of `available`, `drifted`, `unavailable`), `source_artifact_id`, `chunk_id`, `content_hash`, `expected_artifact_hash`, `current_artifact_hash`, `body_origin`, `body`, `reason`, `chunk`
+**Returns:** Top-level fields: `status` (one of `available`, `drifted`, `unavailable`), `source_artifact_id`, `chunk_id`, `content_hash`, `expected_artifact_hash`, `current_artifact_hash`, `body_origin`, `body`, `reason`, `chunk`, `artifact_revision_id`, `revision_unpinned`
 
 **Side Effects:** Read-only.
 

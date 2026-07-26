@@ -175,6 +175,12 @@ def register_source_artifact(
 
 @source_group.command("dereference")
 @click.option("--artifact", "source_artifact_id", required=True, help="Source artifact ID.")
+@click.option(
+    "--revision",
+    "artifact_revision_id",
+    default=None,
+    help="Pin to one revision ('{artifact}@{n}'); omit to read the current revision.",
+)
 @click.option("--chunk", "chunk_id", default=None, help="Registered chunk ID.")
 @click.option(
     "--heading",
@@ -188,6 +194,7 @@ def register_source_artifact(
 @handle_errors
 def dereference_source_evidence(
     source_artifact_id: str,
+    artifact_revision_id: str | None,
     chunk_id: str | None,
     heading_path: tuple[str, ...],
     block_selector: str | None,
@@ -200,6 +207,7 @@ def dereference_source_evidence(
         lambda client, instance_id: client.dereference_source_evidence(
             instance_id,
             source_artifact_id=source_artifact_id,
+            artifact_revision_id=artifact_revision_id,
             chunk_id=chunk_id,
             heading_path=heading,
             block_selector=block_selector,
@@ -208,6 +216,7 @@ def dereference_source_evidence(
         lambda instance: service_dereference_source_evidence(
             instance,
             source_artifact_id=source_artifact_id,
+            artifact_revision_id=artifact_revision_id,
             chunk_id=chunk_id,
             heading_path=heading,
             block_selector=block_selector,
@@ -218,6 +227,9 @@ def dereference_source_evidence(
         _emit_json(result.model_dump(mode="json"))
         return
     click.echo(f"Status: {result.status}")
+    click.echo(f"Revision: {result.artifact_revision_id or '(unknown)'}")
+    if result.revision_unpinned:
+        click.echo("Revision was not pinned; read the current revision.")
     if result.reason:
         click.echo(f"Reason: {result.reason}")
     if result.body is not None:

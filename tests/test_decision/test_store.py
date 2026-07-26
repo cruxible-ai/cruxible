@@ -109,7 +109,7 @@ class TestDecisionRecordsAreAppendOnly:
             }
         )
         with pytest.raises(ConfigError) as excinfo:
-            store.update_record(reopened)
+            store._close_record(reopened)
 
         message = str(excinfo.value)
         assert record.decision_record_id in message
@@ -122,27 +122,27 @@ class TestDecisionRecordsAreAppendOnly:
         abandoned = store.abandon_record(record.decision_record_id, reason="superseded")
 
         with pytest.raises(ConfigError) as excinfo:
-            store.update_record(abandoned.model_copy(update={"status": "open"}))
+            store._close_record(abandoned.model_copy(update={"status": "open"}))
 
         message = str(excinfo.value)
         assert record.decision_record_id in message
         assert "abandoned" in message
 
-    def test_update_record_refuses_to_rewrite_the_opening_claim(self, store: DecisionStore) -> None:
+    def test_close_record_refuses_to_rewrite_the_opening_claim(self, store: DecisionStore) -> None:
         record = DecisionRecord(question="Ship it?", subject_type="Release", subject_id="R-1")
         store.save_record(record)
 
         with pytest.raises(ConfigError, match="cannot rewrite question"):
-            store.update_record(record.model_copy(update={"question": "Something else"}))
+            store._close_record(record.model_copy(update={"question": "Something else"}))
 
         with pytest.raises(ConfigError, match="cannot rewrite subject_id"):
-            store.update_record(record.model_copy(update={"subject_id": "R-2"}))
+            store._close_record(record.model_copy(update={"subject_id": "R-2"}))
 
         assert store.get_record(record.decision_record_id).question == "Ship it?"
 
-    def test_update_record_still_rejects_unknown_records(self, store: DecisionStore) -> None:
+    def test_close_record_still_rejects_unknown_records(self, store: DecisionStore) -> None:
         with pytest.raises(ConfigError, match="not found"):
-            store.update_record(DecisionRecord(question="Never stored"))
+            store._close_record(DecisionRecord(question="Never stored"))
 
 
 class TestTerminalEvents:
@@ -230,3 +230,88 @@ class TestDerivedOpenedBy:
 
     def test_records_no_longer_carry_a_declared_opener(self) -> None:
         assert "opened_by" not in DecisionRecord.model_fields
+
+
+class TestTerminalTransitionIsRaceSafe:
+    """The status check must hold in SQL, not only in the preceding read."""
+
+    def test_a_concurrent_close_loses_instead_of_overwriting(self, tmp_path) -> None:
+        """SQLite serializes writers, not read-then-write pairs across connections.
+
+        The status check used to live only in a separate SELECT, so two writers
+        could both read ``open`` and both UPDATE — the second silently
+        overwriting the first's terminal state and leaving a record whose status
+        contradicted its own event log.
+        """
+        db = tmp_path / "state.db"
+        first = DecisionStore(db)
+        second = DecisionStore(db)
+        try:
+            record = DecisionRecord(question="Ship it?")
+            first.save_record(record)
+            first._conn.commit()
+
+            # Both writers observe an OPEN record before either transition lands.
+            assert first.get_record(record.decision_record_id).status == "open"
+            assert second.get_record(record.decision_record_id).status == "open"
+
+            first.finalize_record(
+                record.decision_record_id,
+                final_decision="ship",
+                decision_class="recommended",
+            )
+            first._conn.commit()
+
+            with pytest.raises(ConfigError):
+                second.abandon_record(record.decision_record_id, reason="superseded")
+
+            assert second.get_record(record.decision_record_id).status == "finalized"
+            assert second.get_record(record.decision_record_id).final_decision == "ship"
+        finally:
+            first.close()
+            second.close()
+
+    def test_the_sql_guard_holds_when_the_preceding_read_is_stale(self, tmp_path) -> None:
+        """The UPDATE refuses on its own, without help from the read.
+
+        The read is forced to report ``open`` — exactly what the losing writer of
+        a real race observes — so the only thing left to refuse the write is the
+        ``AND status = 'open'`` predicate and the rowcount check on it.
+        """
+        db = tmp_path / "state.db"
+        writer = DecisionStore(db)
+        racer = DecisionStore(db)
+        try:
+            record = DecisionRecord(question="Ship it?")
+            writer.save_record(record)
+            writer._conn.commit()
+            stale = racer.get_record(record.decision_record_id)
+            assert stale.status == "open"
+
+            writer.finalize_record(
+                record.decision_record_id,
+                final_decision="ship",
+                decision_class="recommended",
+            )
+            writer._conn.commit()
+
+            racer.get_record = lambda _decision_record_id: stale  # type: ignore[method-assign]
+            closed = stale.model_copy(
+                update={
+                    "status": "abandoned",
+                    "abandoned_reason": "superseded",
+                    "finalized_at": utc_now(),
+                }
+            )
+            with pytest.raises(ConfigError, match="closed by another writer"):
+                racer._close_record(closed)
+        finally:
+            writer.close()
+            racer.close()
+
+        reader = DecisionStore(db)
+        try:
+            assert reader.get_record(record.decision_record_id).status == "finalized"
+            assert reader.get_record(record.decision_record_id).final_decision == "ship"
+        finally:
+            reader.close()

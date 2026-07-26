@@ -1458,9 +1458,11 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         """List candidate groups with optional filters.
 
         Results are sorted by review_priority descending (critical first).
-        Use ``status`` to filter by lifecycle state (pending_review,
-        auto_resolved, applying, resolved). Use ``relationship_type``
-        to filter by edge type.
+        Use ``status`` to filter by lifecycle state (pending_review, applying,
+        resolved, withdrawn). ``auto_resolved`` is a DEPRECATED read-only
+        status: nothing writes it any more, and it is filterable only so an
+        operator upgrading from 0.2.x can find the rows it left behind. Use
+        ``relationship_type`` to filter by edge type.
         """
         return handlers.handle_list_groups(
             instance_id,
@@ -1601,15 +1603,22 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
     def cruxible_dereference_source_evidence(
         instance_id: str,
         source_artifact_id: str,
+        artifact_revision_id: str | None = None,
         chunk_id: str | None = None,
         heading_path: list[str] | None = None,
         block_selector: str | None = None,
         expected_content_hash: str | None = None,
     ) -> contracts.DereferenceSourceEvidenceResult:
-        """Return source text for a registered source-evidence locator."""
+        """Return source text for a registered source-evidence locator.
+
+        Pass ``artifact_revision_id`` (from the evidence ref you are replaying)
+        to read the revision the citation was MADE against. Without it the read
+        resolves against the current revision and reports ``revision_unpinned``.
+        """
         return handlers.handle_dereference_source_evidence(
             instance_id,
             source_artifact_id=source_artifact_id,
+            artifact_revision_id=artifact_revision_id,
             chunk_id=chunk_id,
             heading_path=heading_path,
             block_selector=block_selector,

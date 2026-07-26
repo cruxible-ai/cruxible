@@ -205,8 +205,14 @@ class DecisionStore(DecisionStoreProtocol):
         ).fetchone()
         return int(row["count"]) if row else 0
 
-    def update_record(self, record: DecisionRecord) -> None:
+    def _close_record(self, record: DecisionRecord) -> None:
         """Apply the one legitimate transition: an open record moving to terminal.
+
+        PRIVATE. The only callers are :meth:`finalize_record` and
+        :meth:`abandon_record`, which log the terminal event first. It used to be
+        public (and on ``DecisionStoreProtocol``), which meant any holder of a
+        store handle could flip a record's status with no matching event in the
+        log — the record said "finalized" and its own event history did not.
 
         Deliberately narrow. Only the closing columns move, and only while the
         stored record is still open, so a decision that has been finalized or
@@ -231,10 +237,16 @@ class DecisionStore(DecisionStoreProtocol):
                 f"Decision record '{record.decision_record_id}' cannot rewrite "
                 f"{', '.join(rewritten)}"
             )
-        self._conn.execute(
+        # ``AND status = 'open'`` is the check that actually holds. The read
+        # above is a separate statement, so between it and this UPDATE another
+        # connection can close the same record — SQLite serializes writers, not
+        # read-then-write pairs across connections. Without the predicate the
+        # loser of that race silently overwrote the winner's terminal state,
+        # producing a record whose status contradicts its own event log.
+        cursor = self._conn.execute(
             "UPDATE decision_records SET status = ?, finalized_at = ?, final_decision = ?, "
             "decision_class = ?, rationale = ?, abandoned_reason = ?, record_json = ? "
-            "WHERE decision_record_id = ?",
+            "WHERE decision_record_id = ? AND status = 'open'",
             (
                 record.status,
                 format_datetime(record.finalized_at),
@@ -246,6 +258,11 @@ class DecisionStore(DecisionStoreProtocol):
                 record.decision_record_id,
             ),
         )
+        if cursor.rowcount != 1:
+            raise ConfigError(
+                f"Decision record '{record.decision_record_id}' was closed by another "
+                "writer during this transition; decision records are append-only"
+            )
 
     def append_event(self, event: DecisionEvent) -> str:
         self._require_open(event.decision_record_id)
@@ -397,7 +414,7 @@ class DecisionStore(DecisionStoreProtocol):
                 "finalized_actor_context": actor_context,
             }
         )
-        self.update_record(updated)
+        self._close_record(updated)
         return updated
 
     def abandon_record(
@@ -422,7 +439,7 @@ class DecisionStore(DecisionStoreProtocol):
                 "finalized_actor_context": actor_context,
             }
         )
-        self.update_record(updated)
+        self._close_record(updated)
         return updated
 
     def _require_open(self, decision_record_id: str) -> DecisionRecord:

@@ -648,7 +648,6 @@ def test_instance_store_getters_are_not_used_for_direct_writes() -> None:
         "save_trace",
         "update_group",
         "update_group_status",
-        "update_record",
         "update_resolution_trust_status",
     }
     offenders: list[str] = []

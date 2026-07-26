@@ -778,6 +778,7 @@ def test_source_artifact_methods_use_expected_routes_and_payloads():
         "path": "/api/v1/inst_123/source-evidence/dereference",
         "payload": {
             "source_artifact_id": "SRC-1",
+            "artifact_revision_id": None,
             "chunk_id": None,
             "heading_path": ["Evidence"],
             "block_selector": "paragraph:1",
@@ -955,6 +956,7 @@ def test_add_relationships_serializes_evidence_fields():
                             "source": "roadmap_doc",
                             "source_record_id": "section-p0",
                             "artifact_id": None,
+                            "artifact_revision_id": None,
                             "table": None,
                             "row_index": None,
                             "label": None,
@@ -964,6 +966,7 @@ def test_add_relationships_serializes_evidence_fields():
                     "source_evidence": [
                         {
                             "source_artifact_id": "SRC-1",
+                            "artifact_revision_id": None,
                             "chunk_id": "CHK-1",
                             "heading_path": None,
                             "block_selector": None,

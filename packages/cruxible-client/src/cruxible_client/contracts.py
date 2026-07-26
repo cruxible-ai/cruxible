@@ -280,6 +280,14 @@ class EvidenceRef(BaseModel):
     artifact_id: str | None = Field(
         default=None, description="Optional registered source-artifact id."
     )
+    artifact_revision_id: str | None = Field(
+        default=None,
+        description=(
+            "Physical revision ('{source_artifact_id}@{revision}') this citation was "
+            "made against. Absent refs dereference against the current revision and "
+            "report revision_unpinned."
+        ),
+    )
     table: str | None = Field(
         default=None, description="Optional table name when the source is tabular."
     )
@@ -371,6 +379,13 @@ class SourceEvidenceInput(BaseModel):
     source_artifact_id: str = Field(
         description="Id of the registered source artifact this evidence points into."
     )
+    artifact_revision_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). "
+            "Absent resolves against the current revision."
+        ),
+    )
     chunk_id: str | None = Field(
         default=None,
         description="Chunk id within the artifact; provide this or heading_path+block_selector.",
@@ -461,6 +476,8 @@ class DereferenceSourceEvidenceResult(BaseModel):
     body: str | None = None
     reason: str | None = None
     chunk: SourceArtifactChunk | None = None
+    artifact_revision_id: str | None = None
+    revision_unpinned: bool = False
 
 
 class SourceArtifactListItem(BaseModel):

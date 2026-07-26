@@ -342,6 +342,7 @@ class RegisterSourceArtifactRequest(BaseModel):
 
 class DereferenceSourceEvidenceRequest(BaseModel):
     source_artifact_id: str
+    artifact_revision_id: str | None = None
     chunk_id: str | None = None
     heading_path: list[str] | None = None
     block_selector: str | None = None

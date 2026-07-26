@@ -4205,6 +4205,7 @@ def register_source_artifact(
 def dereference_source_evidence(
     instance_id: str,
     source_artifact_id: str,
+    artifact_revision_id: str | None = None,
     chunk_id: str | None = None,
     heading_path: list[str] | None = None,
     block_selector: str | None = None,
@@ -4216,6 +4217,7 @@ def dereference_source_evidence(
     result = service_dereference_source_evidence(
         instance,
         source_artifact_id=source_artifact_id,
+        artifact_revision_id=artifact_revision_id,
         chunk_id=chunk_id,
         heading_path=heading_path,
         block_selector=block_selector,

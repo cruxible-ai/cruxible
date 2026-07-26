@@ -196,6 +196,30 @@ the project's own state instance.
   edited and then exactly restored still read as drifted forever. History of each
   excursion lives in receipts, not in live state.
 
+- **Decision-record terminal transitions are race-safe, and the raw setter is
+  private.** `update_record`'s "is it still open?" check lived only in a
+  preceding SELECT, so two writers on separate connections could both read
+  `open` and both UPDATE — SQLite serializes writers, not read-then-write pairs.
+  The loser silently overwrote the winner's terminal state, leaving a record
+  whose status contradicted its own event log. The predicate now lives in the
+  UPDATE (`AND status = 'open'`) with a rowcount refusal. The method is also
+  renamed `_close_record` and removed from `DecisionStoreProtocol`: it was public,
+  so any holder of a store handle could flip a record's status with no matching
+  terminal event. `finalize_record` / `abandon_record` are the only paths.
+
+- **Evidence refs pin the artifact revision they were made against.**
+  `EvidenceRef` retained only the LOGICAL `artifact_id`, and dereference always
+  resolved to the CURRENT revision — so a citation made against revision 1
+  silently returned revision 2's text once the document was re-registered, even
+  though revision 1's chunks, manifest, and archived bytes were all still stored.
+  `EvidenceRef` and `SourceEvidenceInput` gain an optional `artifact_revision_id`
+  (`{source_artifact_id}@{revision}`), which `resolve_source_evidence_refs` now
+  stamps at citation time; `dereference_source_evidence` reads revision-scoped
+  when pinned. Additive: old refs carry no revision and still work, falling back
+  to the current one — but the result says so via `revision_unpinned` rather than
+  letting a caller infer it from a matching hash. Exposed on the HTTP route, the
+  MCP tool, the client, and `cruxible source dereference --revision`.
+
 ### Deprecated
 
 Deprecate-then-remove applies to every shipped surface: these all still work,

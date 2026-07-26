@@ -23,6 +23,15 @@ class EvidenceRef(BaseModel):
     source: str
     source_record_id: str
     artifact_id: str | None = None
+    # The PHYSICAL revision (``{source_artifact_id}@{revision}``) this citation
+    # was made against. ``artifact_id`` alone is the LOGICAL artifact, and
+    # dereference resolved it to whatever revision happens to be current — so a
+    # citation made against revision 1 could not retrieve the content it was
+    # actually made against once revision 2 existed, even though revision 1's
+    # chunks and archived bytes are still stored. Optional: refs written before
+    # this field stay valid and dereference falls back to the current revision
+    # with an explicit ``revision_unpinned`` marker, never silently.
+    artifact_revision_id: str | None = None
     table: str | None = None
     row_index: int | None = None
     label: str | None = None
@@ -66,6 +75,8 @@ class EvidenceRef(BaseModel):
         }
         if self.artifact_id is not None:
             payload["artifact_id"] = self.artifact_id
+        if self.artifact_revision_id is not None:
+            payload["artifact_revision_id"] = self.artifact_revision_id
         if self.table is not None:
             payload["table"] = self.table
         if self.row_index is not None:

@@ -1405,6 +1405,7 @@ class CruxibleClient:
         instance_id: str,
         *,
         source_artifact_id: str,
+        artifact_revision_id: str | None = None,
         chunk_id: str | None = None,
         heading_path: builtins.list[str] | None = None,
         block_selector: str | None = None,
@@ -1414,6 +1415,7 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/source-evidence/dereference",
             json={
                 "source_artifact_id": source_artifact_id,
+                "artifact_revision_id": artifact_revision_id,
                 "chunk_id": chunk_id,
                 "heading_path": heading_path,
                 "block_selector": block_selector,

@@ -1787,6 +1787,7 @@ Text output labels an interrupted record as
 | `--thesis-facts` | no | `` | text | Optional JSON object used as agent-supplied direct proposal scope. |
 | `--analysis-state` | no | `` | text | JSON object of opaque analysis state. |
 | `--signal-source` | no | `()` | text | Deprecated and hidden; signal sources are derived from member signals. Optional, repeatable. |
+| `--expected-pending-version` | no | `` | integer | Optimistic guard: refuse the re-propose if the live pending group is not at this version. Omit for an unconditional refresh. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -3180,6 +3181,7 @@ cruxible source register \
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--artifact` | yes | `Sentinel.UNSET` | text | Source artifact ID returned by `source register`. |
+| `--revision` | no | `` | text | Pin the read to one immutable revision (`{artifact}@{n}`). Omit to read the current revision, which is reported as `revision_unpinned`. |
 | `--chunk` | no | `` | text | Deterministic chunk ID from the registered manifest. |
 | `--heading` | no | `` | text | Heading path segment. Repeat for nested headings. |
 | `--block-selector` | no | `` | text | Block selector under the heading path, such as `paragraph:1`. |

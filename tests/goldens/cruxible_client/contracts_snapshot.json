@@ -2490,6 +2490,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -2612,6 +2625,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -3247,6 +3273,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -3347,6 +3386,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -5502,6 +5554,26 @@
     },
     "DereferenceSourceEvidenceResult": {
       "fields": {
+        "artifact_revision_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_revision_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Revision Id"
+          }
+        },
         "body": {
           "default": null,
           "default_json_serializable": true,
@@ -5635,6 +5707,19 @@
             "title": "Reason"
           }
         },
+        "revision_unpinned": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "revision_unpinned",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Revision Unpinned",
+            "type": "boolean"
+          }
+        },
         "source_artifact_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -5734,6 +5819,18 @@
           }
         },
         "properties": {
+          "artifact_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Revision Id"
+          },
           "body": {
             "anyOf": [
               {
@@ -5808,6 +5905,11 @@
             ],
             "default": null,
             "title": "Reason"
+          },
+          "revision_unpinned": {
+            "default": false,
+            "title": "Revision Unpinned",
+            "type": "boolean"
           },
           "source_artifact_id": {
             "title": "Source Artifact Id",
@@ -7149,6 +7251,27 @@
             "title": "Artifact Id"
           }
         },
+        "artifact_revision_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_revision_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+            "title": "Artifact Revision Id"
+          }
+        },
         "label": {
           "default": null,
           "default_json_serializable": true,
@@ -7262,6 +7385,19 @@
             "default": null,
             "description": "Optional registered source-artifact id.",
             "title": "Artifact Id"
+          },
+          "artifact_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+            "title": "Artifact Revision Id"
           },
           "label": {
             "anyOf": [
@@ -14244,6 +14380,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -14422,6 +14571,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -24131,6 +24293,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -24231,6 +24406,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -25923,6 +26111,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -25988,6 +26189,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -26324,6 +26538,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -26435,6 +26662,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -28508,6 +28748,27 @@
     },
     "SourceEvidenceInput": {
       "fields": {
+        "artifact_revision_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_revision_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+            "title": "Artifact Revision Id"
+          }
+        },
         "block_selector": {
           "default": null,
           "default_json_serializable": true,
@@ -28630,6 +28891,19 @@
       },
       "json_schema": {
         "properties": {
+          "artifact_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+            "title": "Artifact Revision Id"
+          },
           "block_selector": {
             "anyOf": [
               {
