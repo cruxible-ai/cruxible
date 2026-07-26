@@ -7,6 +7,7 @@ from typing import Any
 from cruxible_client.errors import ErrorResponse, response_to_error
 from cruxible_core.errors import (
     AuthenticationError,
+    ConcurrentStateDriftError,
     ConfigError,
     ConstraintViolationError,
     CoreError,
@@ -98,7 +99,12 @@ def _status_for_error(exc: CoreError) -> int:
         return 404
     if isinstance(
         exc,
-        (RelationshipAmbiguityError, StaleContinuationError, PendingEdgeWriteRefusedError),
+        (
+            RelationshipAmbiguityError,
+            StaleContinuationError,
+            PendingEdgeWriteRefusedError,
+            ConcurrentStateDriftError,
+        ),
     ):
         # 409: a pending-edge refusal is a STATE conflict, not a policy or tier
         # denial -- the same write succeeds once the proposal is resolved.
@@ -175,6 +181,9 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["credential_id"] = exc.credential_id
     if isinstance(exc, InvalidContinuationError):
         context["reason"] = exc.reason
+    if isinstance(exc, ConcurrentStateDriftError):
+        context["opening_revision"] = exc.opening_revision
+        context["closing_revision"] = exc.closing_revision
     if isinstance(exc, StaleContinuationError):
         context["reason"] = exc.reason
         context["token_read_revision"] = exc.token_read_revision

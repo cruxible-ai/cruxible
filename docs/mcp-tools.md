@@ -2092,6 +2092,36 @@ without it, only the active materialized digest is checked.
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
+## cruxible_state_diff
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need the structured difference between two state coordinates - a snapshot vs current, current vs the materialized upstream release, or two snapshots. The complete body is persisted and content-addressed by diff_digest; treat the result as a reviewable plan only when artifact_complete is true, and re-read the whole body with artifact_digest.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `from_coordinate` | no | string | `current`, a `snap_` id, `upstream`, or `origin`; defaults to the parent of the head snapshot. |
+| `to_coordinate` | no | string | Defaults to `current`. `added` means present here only. |
+| `sections` | no | array | Restrict to `entities` / `edges` / `procedures`. |
+| `entity_types` | no | array | Restrict entities to these types. |
+| `relationship_types` | no | array | Restrict edges to these relationship types. |
+| `buckets` | no | array | Report only these buckets; counts stay whole. |
+| `changed_only` | no | boolean | Suppress added/removed items. |
+| `max_items_per_bucket` | no | integer | Per-bucket cap for the returned view (default 500, minimum 1); the persisted artifact is never capped. |
+| `artifact_digest` | no | string | Re-read a persisted artifact by content address instead of computing a diff. |
+
+**Returns:** Top-level fields: `diff_digest`, `view_digest`, `artifact_complete`, `artifact_ref`, `diff_engine_version`, `artifact_schema_version`, `artifact_trust`, `normalizations`, `liveness`, `selector`, `from_coordinate`, `to_coordinate`, `omitted_sections`, `context`, `sections`, `summary`, `view`, `default_basis`, `receipt_id`
+
+**Side Effects:** Reads are not side-effect-free: persists a `state_diff` receipt and a content-addressed artifact under `.cruxible/diffs/`. Neither touches graph state or advances `read_revision`. Both persistence failures fail the read.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
 ## cruxible_state_pull_preview
 
 **Permission:** `READ_ONLY`

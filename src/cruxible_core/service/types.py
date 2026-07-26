@@ -1028,6 +1028,66 @@ class StatePullApplyResult:
     receipt_id: str | None = None
 
 
+@dataclass
+class StateDiffArtifactRef:
+    """Where the complete canonical diff artifact was persisted."""
+
+    path: str
+    diff_digest: str
+    byte_count: int
+
+
+@dataclass
+class StateDiffResult:
+    """One state-diff read: the plan digest, plus the BOUNDED view of it.
+
+    ``sections`` is the ``returned_view`` -- bounded by per-bucket caps with
+    oversized values elided -- and ``view_digest`` covers exactly those bytes.
+    ``diff_digest`` covers the complete unelided logical body, always,
+    regardless of what the view returned; only an ``artifact_complete: true``
+    result may be treated as a reviewed plan.
+    """
+
+    diff_digest: str
+    view_digest: str
+    artifact_complete: bool
+    artifact_ref: StateDiffArtifactRef
+    diff_engine_version: str
+    artifact_schema_version: int
+    artifact_trust: str
+    normalizations: list[str]
+    liveness: str
+    selector: dict[str, Any]
+    from_coordinate: dict[str, Any]
+    to_coordinate: dict[str, Any]
+    omitted_sections: list[dict[str, Any]]
+    context: dict[str, Any]
+    sections: dict[str, Any]
+    summary: dict[str, int]
+    view: dict[str, Any]
+    default_basis: str | None = None
+    receipt_id: str | None = None
+
+
+@dataclass
+class StateDiffArtifactResult:
+    """A persisted diff artifact returned by content-addressed retrieval.
+
+    ``content_bytes`` is the file's EXACT UTF-8 text and is what a caller
+    re-digests: hashing it reproduces ``diff_digest`` with no serializer of the
+    caller's own involved. ``content`` is the same body parsed, for callers
+    that only want to read it -- re-serializing that dict reproduces the digest
+    only under Cruxible's exact canonical form, which is not a burden a
+    verifier should have to carry.
+    """
+
+    diff_digest: str
+    path: str
+    byte_count: int
+    content_bytes: str
+    content: dict[str, Any]
+
+
 # ---------------------------------------------------------------------------
 # Group result types
 # ---------------------------------------------------------------------------

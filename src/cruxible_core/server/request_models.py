@@ -538,6 +538,26 @@ class StatePullPreviewRequest(BaseModel):
     """Preview repairing a DAMAGED materialized upstream (same-release re-apply)."""
 
 
+class StateDiffRequest(BaseModel):
+    """POST body for a state diff.
+
+    POST, not GET, for two reasons: the selector is structured and
+    ORDER-SENSITIVE (it rides inside the digest preimage, so it needs one
+    canonical encoding), and the call has deliberate durable side effects -- a
+    persisted receipt and a persisted artifact -- so it is not safe in the HTTP
+    sense. Artifact RETRIEVAL is a GET: content-addressed, safe, cacheable.
+    """
+
+    from_coordinate: str | None = None
+    to_coordinate: str | None = None
+    sections: list[str] | None = None
+    entity_types: list[str] | None = None
+    relationship_types: list[str] | None = None
+    buckets: list[str] | None = None
+    changed_only: bool = False
+    max_items_per_bucket: int | None = Field(default=None, ge=1)
+
+
 class StatePullApplyRequest(BaseModel):
     expected_apply_digest: str
     actor_context: contracts.GovernedActorContext | None = None

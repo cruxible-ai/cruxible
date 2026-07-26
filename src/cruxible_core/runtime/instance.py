@@ -67,6 +67,9 @@ _HEAD_SNAPSHOT_STATE_KEY = "head_snapshot_id"
 _READ_REVISION_STATE_KEY = "read_revision"
 _ORIGIN_SNAPSHOT_STATE_KEY = "origin_snapshot_id"
 _PROCEDURES_SNAPSHOT_ARTIFACT = "procedures.json"
+UPSTREAM_SNAPSHOT_ARTIFACT = "upstream.json"
+"""Snapshot artifact member pinning the upstream ownership boundary at write time."""
+_UPSTREAM_SNAPSHOT_ARTIFACT = UPSTREAM_SNAPSHOT_ARTIFACT
 _PROCEDURES_SNAPSHOT_FORMAT_VERSION = 1
 CONFIG_INTEGRITY_OVERRIDE_ENV = "CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH"
 
@@ -428,6 +431,18 @@ class CruxibleInstance(InstanceProtocol):
         value = self._get_snapshot_state(_ORIGIN_SNAPSHOT_STATE_KEY)
         return value if isinstance(value, str) else None
 
+    def get_origin_snapshot_id(self) -> str | None:
+        """Return the clone-lineage origin snapshot id, if this instance is a clone."""
+        return self._get_origin_snapshot_id()
+
+    def get_snapshot_artifact(self, snapshot_id: str, artifact_name: str) -> bytes | None:
+        """Return one stored snapshot artifact's exact bytes, or None if absent."""
+        if self._active_uow is not None:
+            return self._active_uow.snapshots.get_snapshot_artifact(snapshot_id, artifact_name)
+        self._ensure_state_initialized()
+        with self._storage_backend().snapshot_repository() as snapshots:
+            return snapshots.get_snapshot_artifact(snapshot_id, artifact_name)
+
     def _mirror_snapshot_state_to_metadata(
         self,
         *,
@@ -528,9 +543,23 @@ class CruxibleInstance(InstanceProtocol):
         config_path = self.get_config_path()
         graph_json = json.dumps(graph.to_dict(), indent=2, sort_keys=True).encode("utf-8")
         graph_digest = f"sha256:{hashlib.sha256(graph_json).hexdigest()}"
+        upstream = self.get_upstream_metadata()
         artifacts: dict[str, bytes] = {
             "graph.json": graph_json,
             "config.yaml": config_path.read_bytes(),
+            # PINNED OWNERSHIP BASIS. Upstream ownership lives only in mutable
+            # instance metadata, so a diff against a snapshot would otherwise
+            # have to annotate a two-year-old image with today's boundary --
+            # individually plausible, jointly meaningless. Recording it here
+            # fixes nothing retroactively (older snapshots stay
+            # ``ownership: unknown`` forever) but stops the hole growing. This
+            # is a new key in the existing artifacts dict, NOT a field on the
+            # pinned ``StateSnapshot`` model: additive, no migration.
+            _UPSTREAM_SNAPSHOT_ARTIFACT: json.dumps(
+                upstream.model_dump(mode="json") if upstream is not None else None,
+                indent=2,
+                sort_keys=True,
+            ).encode("utf-8"),
         }
 
         lock_path = resolve_lock_path(self)

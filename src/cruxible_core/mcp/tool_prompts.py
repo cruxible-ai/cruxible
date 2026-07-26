@@ -368,6 +368,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need to see whether an overlay is connected to an upstream state "
         "and whether pulls are available."
     ),
+    "cruxible_state_diff": (
+        "Use when you need the structured difference between two state coordinates - "
+        "a snapshot vs current, current vs the materialized upstream release, or two "
+        "snapshots. The complete body is persisted and content-addressed by "
+        "diff_digest; treat the result as a reviewable plan only when "
+        "artifact_complete is true, and re-read the whole body with artifact_digest."
+    ),
     "cruxible_state_pull_preview": (
         "Use when you need to preview upstream state changes before applying them."
     ),

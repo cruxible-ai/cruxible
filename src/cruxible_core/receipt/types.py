@@ -46,6 +46,13 @@ OperationType = Literal[
     "group_resolve",
     "group_trust_update",
     "state_pull_apply",
+    # Reads are not side-effect-free: a state diff persists BOTH a receipt row
+    # and a content-addressed artifact, and its coordinates + diff_digest ride
+    # in ``parameters`` so "every diff taken against release R" is listable
+    # without a schema change. Additive and untracked: the client types
+    # ``operation_type`` as a plain ``str`` and the freeze guardrail pins
+    # receipt FIELD NAMES, exempting the receipt shape.
+    "state_diff",
     "config_add_constraint",
     "config_add_decision_policy",
     "decision_record_open",

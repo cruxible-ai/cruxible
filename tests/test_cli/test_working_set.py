@@ -1442,8 +1442,13 @@ class TestArchiveExclusion:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Snapshot producer pin: _write_snapshot builds an explicit artifact
-        dict (graph/config/optional lock/procedures/snapshot) — never a directory
-        sweep of the instance root."""
+        dict (graph/config/upstream/optional lock/procedures/snapshot) — never a
+        directory sweep of the instance root.
+
+        ``upstream.json`` joined the set with ``wi-full-state-diffs``: it pins
+        the upstream ownership boundary at snapshot time so a later diff can
+        annotate ownership from what was true THEN rather than from today's
+        mutable instance metadata."""
         from cruxible_core.service.snapshots import service_create_snapshot
 
         self._plant_cache_in_root(runner, populated_instance, monkeypatch)
@@ -1456,6 +1461,7 @@ class TestArchiveExclusion:
             "config.yaml",
             "cruxible.lock.yaml",
             "procedures.json",
+            "upstream.json",
         }
 
     def test_state_publish_bundle_never_includes_working_set(

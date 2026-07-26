@@ -37,11 +37,15 @@ errors (runtime data), making it easy to catch by category.
     │   ├── GroupApprovedContentWriteRefusedError (content change to an approved edge)
     │   └── GovernedSourceSpoofRefusedError (direct write naming a governed verb)
     ├── TerminalLifecycleWriteRefusedError (terminal lifecycle via a free write)
-    └── PendingEdgeWriteRefusedError (non-pending write onto a pending proposal)
+    ├── PendingEdgeWriteRefusedError (non-pending write onto a pending proposal)
+    └── ConcurrentStateDriftError (live state moved under a `current` diff coordinate)
 """
 
 from __future__ import annotations
 
+from cruxible_client._error_base import (
+    ConcurrentStateDriftError as _ConcurrentStateDriftError,
+)
 from cruxible_client._error_base import (
     CoreError as CoreError,
 )
@@ -55,6 +59,7 @@ from cruxible_client._error_base import (
 # The base is an identity alias, not a parallel subclass. Every reconstructed
 # client exception and every locally raised core exception therefore shares the
 # exact same catch surface in-process.
+ConcurrentStateDriftError = _ConcurrentStateDriftError
 InvalidContinuationError = _InvalidContinuationError
 StaleContinuationError = _StaleContinuationError
 

@@ -400,8 +400,13 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "Generate a workflow lock file for the current instance config.",
     ),
     "state": _group(
-        "Publish immutable states and manage pullable overlays.",
+        "Compare, publish, and track state across coordinates.",
         {
+            "diff": _command(
+                "state",
+                "state_diff_cmd",
+                "Diff state between two coordinates (snapshot, current, upstream, origin).",
+            ),
             "publish": _command(
                 "state",
                 "state_publish_cmd",

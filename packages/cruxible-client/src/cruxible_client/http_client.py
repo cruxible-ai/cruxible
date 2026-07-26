@@ -1467,6 +1467,44 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/state/health")
         return self._parse_model(response, contracts.StateHealthResult)
 
+    def state_diff(
+        self,
+        instance_id: str,
+        *,
+        from_coordinate: str | None = None,
+        to_coordinate: str | None = None,
+        sections: builtins.list[str] | None = None,
+        entity_types: builtins.list[str] | None = None,
+        relationship_types: builtins.list[str] | None = None,
+        buckets: builtins.list[str] | None = None,
+        changed_only: bool = False,
+        max_items_per_bucket: int | None = None,
+    ) -> contracts.StateDiffResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/state/diff",
+            json=self._omit_none_params(
+                {
+                    "from_coordinate": from_coordinate,
+                    "to_coordinate": to_coordinate,
+                    "sections": sections,
+                    "entity_types": entity_types,
+                    "relationship_types": relationship_types,
+                    "buckets": buckets,
+                    "changed_only": changed_only,
+                    "max_items_per_bucket": max_items_per_bucket,
+                }
+            ),
+        )
+        return self._parse_model(response, contracts.StateDiffResult)
+
+    def state_diff_artifact(
+        self,
+        instance_id: str,
+        diff_digest: str,
+    ) -> contracts.StateDiffArtifactResult:
+        response = self._client.get(f"/api/v1/{instance_id}/state/diff/artifacts/{diff_digest}")
+        return self._parse_model(response, contracts.StateDiffArtifactResult)
+
     def state_pull_preview(
         self,
         instance_id: str,

@@ -710,6 +710,35 @@ class InstanceProtocol(ABC):
         """
         return None
 
+    def get_origin_snapshot_id(self) -> str | None:
+        """Return the clone-lineage origin snapshot id, or None.
+
+        Origin is CLONE provenance, not "where I started": the only writer of a
+        non-None value is ``clone_from_snapshot``, so on an init-created
+        instance it is None forever. Promoted to the protocol because ``origin``
+        survives as a named ``state diff`` coordinate even though it is not the
+        bare default.
+
+        DELIBERATELY NOT ABSTRACT, for the reason spelled out on
+        ``get_instance_state``: adding an abstract method to a published
+        protocol breaks every embedded implementor at import time. The default
+        degrades to "this instance has no clone origin", which is exactly what
+        the ``origin`` coordinate's refusal already says.
+        """
+        return None
+
+    def get_snapshot_artifact(self, snapshot_id: str, artifact_name: str) -> bytes | None:
+        """Return one stored snapshot artifact's exact bytes, or None.
+
+        Generic on purpose, not graph-only: ``state diff`` reads ``graph.json``,
+        ``procedures.json``, and ``upstream.json`` through this one accessor.
+        It bridges the storage-repository-level ``get_snapshot_artifact`` up to
+        the instance protocol. Non-abstract for the ``get_instance_state``
+        reason; the default makes every snapshot coordinate refuse with the
+        named missing-member message rather than failing at import.
+        """
+        return None
+
     @abstractmethod
     def get_upstream_metadata(self) -> UpstreamMetadata | None: ...
     @abstractmethod
