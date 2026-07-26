@@ -672,6 +672,62 @@ class TestConfigMutationServices:
 
         assert config_path.read_bytes() == before
 
+    def test_a_failed_receipt_commit_restores_a_materialized_config_exactly(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The restore has to put back the BYTES and the provenance, together.
+
+        On a materialized instance ``save_config`` also re-records the
+        materialized digest. Restoring the prior bytes while leaving that digest
+        pointing at bytes no longer on disk would trade an unreceipted config
+        for one that fails ``verify_config_integrity`` — i.e. an instance that
+        refuses to start, reporting a hand-edit nobody made. Both halves are
+        captured before the receipt boundary and restored together.
+        """
+        source = tmp_path / "source.yaml"
+        source.write_text(CAR_PARTS_YAML)
+        instance = service_init(tmp_path / "instance", config_yaml=source.read_text()).instance
+        _composed, source_manifest = compose_file_with_source_manifest(source)
+        instance.set_config_provenance(
+            record_materialized_provenance(source_manifest, instance.get_config_path())
+        )
+
+        config_path = instance.get_config_path()
+        bytes_before = config_path.read_bytes()
+        provenance_before = instance.get_config_provenance()
+        assert provenance_before is not None
+        instance.verify_config_integrity()
+
+        def _fail_to_save(self, receipt):  # type: ignore[no-untyped-def]
+            raise RuntimeError("receipt store is unavailable")
+
+        monkeypatch.setattr(
+            "cruxible_core.receipt.store.SQLiteReceiptStore.save_receipt",
+            _fail_to_save,
+        )
+
+        with pytest.raises(MutationError, match="Failed to persist mutation receipt"):
+            service_add_constraint(
+                instance,
+                name="unreceipted_constraint",
+                rule="fits.FROM.category == fits.TO.make",
+            )
+
+        assert config_path.read_bytes() == bytes_before
+        restored = instance.get_config_provenance()
+        assert restored == provenance_before
+        assert restored is not None
+        assert restored.materialized_digest == provenance_before.materialized_digest
+        # The pair is consistent on disk, not merely equal in memory.
+        instance.verify_config_integrity()
+        CruxibleInstance.load(instance.root).verify_config_integrity()
+        assert all(
+            constraint.name != "unreceipted_constraint"
+            for constraint in instance.load_config().constraints
+        )
+
     def test_add_constraint_rejects_duplicate_names(
         self,
         populated_instance: CruxibleInstance,
