@@ -208,14 +208,12 @@ class GovernedLocalClient:
         question: str,
         subject_type: str | None = None,
         subject_id: str | None = None,
-        opened_by: str = "human",
     ):
         return api.create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         )
 
     def get_decision_record(
@@ -322,8 +320,8 @@ class GovernedLocalClient:
     def feedback(self, instance_id: str, **kwargs):
         return api.feedback(instance_id, **kwargs)
 
-    def feedback_batch(self, instance_id: str, *, items, source: str):
-        return api.feedback_batch(instance_id, items=items, source=source)
+    def feedback_batch(self, instance_id: str, *, items):
+        return api.feedback_batch(instance_id, items=items)
 
     def feedback_from_query(self, instance_id: str, **kwargs):
         return api.feedback_from_query(instance_id, **kwargs)
@@ -538,7 +536,6 @@ class GovernedLocalClient:
         thesis_facts: dict | None = None,
         analysis_state: dict | None = None,
         signal_sources_used: list[str] | None = None,
-        proposed_by: str = "agent",
         suggested_priority: str | None = None,
     ):
         return api.propose_group(
@@ -549,7 +546,6 @@ class GovernedLocalClient:
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
             signal_sources_used=signal_sources_used,
-            proposed_by=proposed_by,
             suggested_priority=suggested_priority,
         )
 
@@ -560,7 +556,6 @@ class GovernedLocalClient:
         *,
         action: str,
         rationale: str = "",
-        resolved_by: str = "human",
         expected_pending_version: int = 1,
         stamp_existing: bool = False,
     ):
@@ -569,7 +564,6 @@ class GovernedLocalClient:
             group_id=group_id,
             action=action,
             rationale=rationale,
-            resolved_by=resolved_by,
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
         )

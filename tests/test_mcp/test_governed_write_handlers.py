@@ -153,7 +153,6 @@ def test_feedback_batch_tool(server, instance_id):
         "cruxible_feedback_batch",
         {
             "instance_id": instance_id,
-            "source": "human",
             "items": [
                 {
                     "receipt_id": receipt_id,
@@ -227,7 +226,6 @@ def test_decision_record_tools_and_workflow_context_round_trip(
             "question": "Should the promo run?",
             "subject_type": "Product",
             "subject_id": "SKU-123",
-            "opened_by": "agent",
         },
     )
     decision_record_id = created["record"]["decision_record_id"]

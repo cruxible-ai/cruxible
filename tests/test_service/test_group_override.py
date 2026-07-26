@@ -149,7 +149,6 @@ class TestGroupOverride:
             instance,
             receipt_id,
             "approve",
-            "human",
             target,
             group_override=True,
         )
@@ -174,7 +173,6 @@ class TestGroupOverride:
                 instance,
                 receipt_id,
                 "approve",
-                "human",
                 target,
                 group_override=True,
             )
@@ -210,7 +208,6 @@ class TestGroupOverride:
                 instance,
                 receipt_id,
                 "approve",
-                "human",
                 target,
                 group_override=True,
             )
@@ -232,7 +229,6 @@ class TestGroupOverride:
             instance,
             receipt_id,
             "approve",
-            "human",
             target,
             group_override=True,
         )
@@ -272,7 +268,7 @@ class TestGroupOverride:
             to_type="Vehicle",
             to_id="V-1",
         )
-        service_feedback(instance, receipt_id, "approve", "human", target)
+        service_feedback(instance, receipt_id, "approve", target)
         graph = instance.load_graph()
         rel = graph.get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
         assert rel is not None

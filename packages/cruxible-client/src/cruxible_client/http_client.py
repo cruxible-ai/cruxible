@@ -445,7 +445,6 @@ class CruxibleClient:
         question: str,
         subject_type: str | None = None,
         subject_id: str | None = None,
-        opened_by: str = "human",
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.DecisionRecordResult:
         response = self._client.post(
@@ -455,7 +454,6 @@ class CruxibleClient:
                     "question": question,
                     "subject_type": subject_type,
                     "subject_id": subject_id,
-                    "opened_by": opened_by,
                 },
                 actor_context,
             ),
@@ -612,7 +610,6 @@ class CruxibleClient:
         instance_id: str,
         *,
         action: contracts.FeedbackAction,
-        source: contracts.FeedbackSource,
         from_type: str,
         from_id: str,
         relationship_type: str,
@@ -634,7 +631,6 @@ class CruxibleClient:
                 {
                     "receipt_id": receipt_id,
                     "action": action,
-                    "source": source,
                     "from_type": from_type,
                     "from_id": from_id,
                     "relationship_type": relationship_type,
@@ -658,14 +654,12 @@ class CruxibleClient:
         instance_id: str,
         *,
         items: list[contracts.FeedbackBatchItemInput],
-        source: contracts.FeedbackSource,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.FeedbackBatchResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/feedback/batch",
             json=self._with_actor_context(
                 {
-                    "source": source,
                     "items": [item.model_dump(mode="json") for item in items],
                 },
                 actor_context,
@@ -680,7 +674,6 @@ class CruxibleClient:
         receipt_id: str,
         result_index: int,
         action: contracts.FeedbackAction,
-        source: contracts.FeedbackSource = "human",
         reason: str = "",
         reason_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
@@ -697,7 +690,6 @@ class CruxibleClient:
                     "receipt_id": receipt_id,
                     "result_index": result_index,
                     "action": action,
-                    "source": source,
                     "reason": reason,
                     "reason_code": reason_code,
                     "scope_hints": scope_hints,
@@ -719,7 +711,6 @@ class CruxibleClient:
         outcome: contracts.OutcomeValue,
         anchor_type: contracts.OutcomeAnchorType = "receipt",
         anchor_id: str | None = None,
-        source: contracts.FeedbackSource = "human",
         outcome_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
         outcome_profile_key: str | None = None,
@@ -734,7 +725,6 @@ class CruxibleClient:
                     "anchor_type": anchor_type,
                     "anchor_id": anchor_id,
                     "outcome": outcome,
-                    "source": source,
                     "outcome_code": outcome_code,
                     "scope_hints": scope_hints,
                     "outcome_profile_key": outcome_profile_key,
@@ -1417,6 +1407,7 @@ class CruxibleClient:
         instance_id: str,
         *,
         source_artifact_id: str,
+        artifact_revision_id: str | None = None,
         chunk_id: str | None = None,
         heading_path: builtins.list[str] | None = None,
         block_selector: str | None = None,
@@ -1426,6 +1417,7 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/source-evidence/dereference",
             json={
                 "source_artifact_id": source_artifact_id,
+                "artifact_revision_id": artifact_revision_id,
                 "chunk_id": chunk_id,
                 "heading_path": heading_path,
                 "block_selector": block_selector,
@@ -1993,8 +1985,8 @@ class CruxibleClient:
         thesis_facts: dict[str, Any] | None = None,
         analysis_state: dict[str, Any] | None = None,
         signal_sources_used: builtins.list[str] | None = None,
-        proposed_by: contracts.GroupProposedBy = "agent",
         suggested_priority: str | None = None,
+        expected_pending_version: int | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.ProposeGroupToolResult:
         response = self._client.post(
@@ -2007,8 +1999,8 @@ class CruxibleClient:
                     "thesis_facts": thesis_facts,
                     "analysis_state": analysis_state,
                     "signal_sources_used": signal_sources_used,
-                    "proposed_by": proposed_by,
                     "suggested_priority": suggested_priority,
+                    "expected_pending_version": expected_pending_version,
                 },
                 actor_context,
             ),
@@ -2022,7 +2014,6 @@ class CruxibleClient:
         *,
         action: contracts.GroupAction,
         rationale: str = "",
-        resolved_by: contracts.GroupResolvedBy = "human",
         expected_pending_version: int,
         stamp_existing: bool = False,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
@@ -2033,7 +2024,6 @@ class CruxibleClient:
                 {
                     "action": action,
                     "rationale": rationale,
-                    "resolved_by": resolved_by,
                     "expected_pending_version": expected_pending_version,
                     "stamp_existing": stamp_existing,
                 },

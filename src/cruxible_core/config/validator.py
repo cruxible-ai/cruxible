@@ -378,6 +378,7 @@ def _validate_outcome_profiles(config: CoreConfig, errors: list[str]) -> None:
             "action",
             "trust_status",
             "resolved_by",
+            "resolution_source",
         },
         "GROUP": {"group_signature"},
         "WORKFLOW": {"name", "receipt_id", "trace_ids"},

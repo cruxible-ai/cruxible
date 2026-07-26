@@ -1206,7 +1206,8 @@ def create_snapshot(
     instance = get_manager().get(instance_id)
     result = service_create_snapshot(instance, label=label, actor_context=actor)
     return contracts.SnapshotCreateResult(
-        snapshot=contracts.SnapshotMetadata.model_validate(result.snapshot.model_dump(mode="json"))
+        snapshot=contracts.SnapshotMetadata.model_validate(result.snapshot.model_dump(mode="json")),
+        receipt_id=result.receipt_id,
     )
 
 
@@ -1442,7 +1443,6 @@ def create_decision_record(
     question: str,
     subject_type: str | None = None,
     subject_id: str | None = None,
-    opened_by: str = "human",
     actor_context: Any | None = None,
 ) -> contracts.DecisionRecordResult:
     check_permission("cruxible_create_decision_record", instance_id=instance_id)
@@ -1453,10 +1453,13 @@ def create_decision_record(
         question=question,
         subject_type=subject_type,
         subject_id=subject_id,
-        opened_by=opened_by,
         actor_context=actor,
     )
-    return contracts.DecisionRecordResult(record=result.record.model_dump(mode="json"))
+    return contracts.DecisionRecordResult(
+        record=result.record.model_dump(mode="json"),
+        events=[event.model_dump(mode="json") for event in result.events],
+        receipt_id=result.receipt_id,
+    )
 
 
 def get_decision_record(
@@ -1475,6 +1478,7 @@ def get_decision_record(
     return contracts.DecisionRecordResult(
         record=result.record.model_dump(mode="json"),
         events=[event.model_dump(mode="json") for event in result.events],
+        receipt_id=result.receipt_id,
     )
 
 
@@ -1565,6 +1569,7 @@ def finalize_decision_record(
     return contracts.DecisionRecordResult(
         record=result.record.model_dump(mode="json"),
         events=[event.model_dump(mode="json") for event in result.events],
+        receipt_id=result.receipt_id,
     )
 
 
@@ -1587,6 +1592,7 @@ def abandon_decision_record(
     return contracts.DecisionRecordResult(
         record=result.record.model_dump(mode="json"),
         events=[event.model_dump(mode="json") for event in result.events],
+        receipt_id=result.receipt_id,
     )
 
 
@@ -1909,7 +1915,6 @@ def list_traces(
 def feedback(
     instance_id: str,
     action: contracts.FeedbackAction,
-    source: contracts.FeedbackSource,
     from_type: str,
     from_id: str,
     relationship_type: str,
@@ -1959,7 +1964,6 @@ def feedback(
             corrections=corrections,
             group_override=group_override,
         ),
-        source=source,
         actor_context=actor,
     )
     return contracts.FeedbackResult(
@@ -1973,7 +1977,6 @@ def feedback_batch(
     instance_id: str,
     items: list[contracts.FeedbackBatchItemInput],
     *,
-    source: contracts.FeedbackSource,
     actor_context: Any | None = None,
 ) -> contracts.FeedbackBatchResult:
     """Record batch edge feedback tied to prior receipts."""
@@ -2010,7 +2013,6 @@ def feedback_batch(
             )
             for item in items
         ],
-        source=source,
         actor_context=actor,
     )
     return contracts.FeedbackBatchResult(
@@ -2027,7 +2029,6 @@ def feedback_from_query(
     receipt_id: str,
     result_index: int,
     action: contracts.FeedbackAction,
-    source: contracts.FeedbackSource = "human",
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
@@ -2049,7 +2050,6 @@ def feedback_from_query(
         receipt_id=receipt_id,
         result_index=result_index,
         action=action,
-        source=source,
         reason=reason,
         reason_code=reason_code,
         scope_hints=scope_hints,
@@ -2072,7 +2072,6 @@ def outcome(
     outcome: contracts.OutcomeValue,
     anchor_type: contracts.OutcomeAnchorType = "receipt",
     anchor_id: str | None = None,
-    source: contracts.FeedbackSource = "human",
     outcome_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     outcome_profile_key: str | None = None,
@@ -2089,7 +2088,6 @@ def outcome(
         outcome=outcome,
         anchor_type=anchor_type,
         anchor_id=anchor_id,
-        source=source,
         outcome_code=outcome_code,
         scope_hints=scope_hints,
         outcome_profile_key=outcome_profile_key,
@@ -2255,11 +2253,12 @@ def state_health(instance_id: str) -> contracts.StateHealthResult:
         groups=contracts.StateHealthGroupsSection(
             pending_review_count=result.groups.pending_review_count,
             applying_count=result.groups.applying_count,
-            auto_resolved_count=result.groups.auto_resolved_count,
+            withdrawn_count=result.groups.withdrawn_count,
             resolved_count=result.groups.resolved_count,
             total_count=result.groups.total_count,
             oldest_unresolved_age_seconds=result.groups.oldest_unresolved_age_seconds,
             newest_unresolved_age_seconds=result.groups.newest_unresolved_age_seconds,
+            auto_resolved_count=result.groups.auto_resolved_count,
         ),
         signals=contracts.StateHealthSignalsSection(
             unevidenced_support_by_source=result.signals.unevidenced_support_by_source,
@@ -3457,7 +3456,7 @@ def add_constraint(
 ) -> contracts.AddConstraintResult:
     """Add a constraint rule to the config and write back to YAML."""
     check_permission("cruxible_add_constraint", instance_id=instance_id)
-    _hosted_actor_context(actor_context)
+    resolved_actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_add_constraint(
         instance,
@@ -3465,12 +3464,14 @@ def add_constraint(
         rule=rule,
         severity=severity,
         description=description,
+        actor_context=resolved_actor,
     )
     return contracts.AddConstraintResult(
         name=result.name,
         added=result.added,
         config_updated=result.config_updated,
         warnings=result.warnings,
+        receipt_id=result.receipt_id,
     )
 
 
@@ -3491,7 +3492,7 @@ def add_decision_policy(
 ) -> contracts.AddDecisionPolicyResult:
     """Add a decision policy to the config and write back to YAML."""
     check_permission("cruxible_add_decision_policy", instance_id=instance_id)
-    _hosted_actor_context(actor_context)
+    resolved_actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_add_decision_policy(
         instance,
@@ -3505,12 +3506,14 @@ def add_decision_policy(
         query_name=query_name,
         workflow_name=workflow_name,
         expires_at=expires_at,
+        actor_context=resolved_actor,
     )
     return contracts.AddDecisionPolicyResult(
         name=result.name,
         added=result.added,
         config_updated=result.config_updated,
         warnings=result.warnings,
+        receipt_id=result.receipt_id,
     )
 
 
@@ -4161,8 +4164,8 @@ def propose_group(
     thesis_facts: dict[str, Any] | None = None,
     analysis_state: dict[str, Any] | None = None,
     signal_sources_used: list[str] | None = None,
-    proposed_by: contracts.GroupProposedBy = "agent",
     suggested_priority: str | None = None,
+    expected_pending_version: int | None = None,
     actor_context: Any | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""
@@ -4212,8 +4215,8 @@ def propose_group(
         thesis_facts=thesis_facts,
         analysis_state=analysis_state,
         signal_sources_used=signal_sources_used,
-        proposed_by=proposed_by,
         suggested_priority=suggested_priority,
+        expected_pending_version=expected_pending_version,
         actor_context=actor,
     )
     return contracts.ProposeGroupToolResult(
@@ -4234,6 +4237,8 @@ def propose_group(
         ],
         policy_summary=result.policy_summary,
         receipt_id=result.receipt_id,
+        resolution_id=result.resolution_id,
+        auto_resolve_deferred_reason=result.auto_resolve_deferred_reason,
     )
 
 
@@ -4321,6 +4326,7 @@ def register_source_artifact(
 def dereference_source_evidence(
     instance_id: str,
     source_artifact_id: str,
+    artifact_revision_id: str | None = None,
     chunk_id: str | None = None,
     heading_path: list[str] | None = None,
     block_selector: str | None = None,
@@ -4332,6 +4338,7 @@ def dereference_source_evidence(
     result = service_dereference_source_evidence(
         instance,
         source_artifact_id=source_artifact_id,
+        artifact_revision_id=artifact_revision_id,
         chunk_id=chunk_id,
         heading_path=heading_path,
         block_selector=block_selector,
@@ -4345,7 +4352,6 @@ def resolve_group(
     group_id: str,
     action: contracts.GroupAction,
     rationale: str = "",
-    resolved_by: contracts.GroupResolvedBy = "human",
     expected_pending_version: int | None = None,
     actor_context: Any | None = None,
     stamp_existing: bool = False,
@@ -4360,7 +4366,6 @@ def resolve_group(
         group_id,
         action,
         rationale=rationale,
-        resolved_by=resolved_by,
         expected_pending_version=expected_pending_version,
         actor_context=actor,
         stamp_existing=stamp_existing,
@@ -4482,6 +4487,7 @@ def get_group_status(
                 tuple_count=item.tuple_count,
                 rationale=item.rationale,
                 resolved_by=item.resolved_by,
+                resolution_source=item.resolution_source,
                 resolved_actor=item.resolved_actor,
             )
             for item in result.approved_history

@@ -28,6 +28,10 @@ from cruxible_core.graph.evidence import (
     RelationshipEvidence,
     merge_evidence_ref_objects,
 )
+from cruxible_core.graph.group_drift import (
+    group_content_drift,
+    stamp_group_approval_drift,
+)
 from cruxible_core.graph.operations import (
     ValidatedEntity,
     ValidatedRelationship,
@@ -514,12 +518,27 @@ def apply_relationship_set(
         )
         if existing.properties != rel.properties or evidence_changed:
             update_count += 1
+            # Computed BEFORE the write, against the edge as it stands, so the
+            # approved baseline is not read back out of the overwritten edge.
+            drift = group_content_drift(rel, existing)
             durable = apply_relationship(
                 graph,
                 validated,
                 "workflow_apply",
                 source_ref,
                 config=config,
+                actor_context=actor_context,
+            )
+            # A workflow apply is a LEGITIMATE governed write, so it is not
+            # refused — but it can overwrite content a group approved just as a
+            # direct write can, and it used to do so leaving no trace on the
+            # edge at all (it never routed through the direct-write interaction
+            # detection). Same marker, same recompute-and-drop rule.
+            stamp_group_approval_drift(
+                graph,
+                rel,
+                drift,
+                receipt_id=receipt_builder.receipt_id if persist_writes else None,
                 actor_context=actor_context,
             )
             if persist_writes:

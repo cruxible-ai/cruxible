@@ -293,9 +293,27 @@ def test_trust_update_transition_receipt_and_downstream_auto_resolve(
         [_member("BP-2", "V-2")],
         thesis_facts={"scope": "trusted"},
     )
-    assert second.status == "auto_resolved"
+    # Promoting trust ARMS auto-resolution, and auto-resolution is a real
+    # receipted approve rather than a status label — so the downstream proposal
+    # comes back resolved, with edges and a resolution of its own.
+    assert second.status == "resolved"
+    assert second.resolution_id is not None
     assert second.prior_resolution is not None
     assert second.prior_resolution.trust_status == "trusted"
+
+    store = instance.get_group_store()
+    try:
+        auto = store.get_resolution(second.resolution_id)
+        assert auto is not None
+        assert auto.resolution_source == "auto_resolved"
+        assert auto.receipt_id is not None
+        # Trust is CARRIED, not re-decided, by the auto-approval.
+        assert auto.trust_status == "trusted"
+        # The pending bucket is genuinely gone, so a re-propose of the same
+        # signature cannot mint a duplicate pending row.
+        assert store.find_pending_group("fits", second.signature) is None
+    finally:
+        store.close()
 
 
 def test_approval_transition_rolls_back_group_resolution_graph_and_success_receipt(

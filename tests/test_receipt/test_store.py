@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from cruxible_core.errors import DataValidationError
+from cruxible_core.errors import DataValidationError, MutationError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.mutation_payloads import retain_mutation_payload
@@ -742,6 +743,70 @@ class TestSQLiteReceiptStore:
         ).fetchone()
         assert row["count"] == 0
 
+    def test_trace_round_trips_actor_context(self, store: SQLiteReceiptStore):
+        trace = ExecutionTrace(
+            workflow_name="wf",
+            step_id="side_effecting",
+            provider_name="provider",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.provider",
+            runtime="python",
+            deterministic=False,
+            side_effects=True,
+            actor_context=GovernedActorContext(
+                actor_type="service_account",
+                actor_id="agt_trace",
+                org_id="org_1",
+                operation_id="op_trace",
+                timestamp="2026-06-05T12:00:00Z",
+            ),
+            **_trace_timing(),
+        )
+
+        loaded = store.get_trace(store.save_trace(trace))
+
+        assert loaded is not None
+        assert loaded.actor_context is not None
+        assert loaded.actor_context.actor_id == "agt_trace"
+        assert loaded.actor_context.operation_id == "op_trace"
+        row = store._conn.execute(
+            "SELECT actor_id FROM execution_traces WHERE trace_id = ?",
+            (trace.trace_id,),
+        ).fetchone()
+        assert row["actor_id"] == "agt_trace"
+
+    def test_duplicate_trace_id_does_not_replace_the_recorded_execution(
+        self,
+        store: SQLiteReceiptStore,
+    ):
+        """A trace is evidence a run happened; a second run must not erase it."""
+        first = ExecutionTrace(
+            trace_id="TRC_collide",
+            workflow_name="wf",
+            step_id="step",
+            provider_name="provider",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.provider",
+            runtime="python",
+            deterministic=True,
+            side_effects=True,
+            output_payload={"run": "first"},
+            **_trace_timing(),
+        )
+        store.save_trace(first)
+
+        second = first.model_copy(update={"output_payload": {"run": "second"}}, deep=True)
+        with pytest.raises(MutationError, match="already exists"):
+            store.save_trace(second)
+
+        loaded = store.get_trace("TRC_collide")
+        assert loaded is not None
+        assert loaded.output_payload == {"run": "first"}
+        row = store._conn.execute(
+            "SELECT COUNT(*) AS count FROM execution_traces",
+        ).fetchone()
+        assert row["count"] == 1
+
     def test_list_traces(self, store: SQLiteReceiptStore):
         trace_a = ExecutionTrace(
             workflow_name="wf_a",
@@ -772,3 +837,41 @@ class TestSQLiteReceiptStore:
         assert len(listed) == 1
         assert listed[0]["provider_name"] == "provider_a"
         assert listed[0]["input_payload_metadata"]["stored_inline"] is True
+
+
+class TestLegacyOperationTypes:
+    """0.2.x wrote receipt rows this build must still be able to read."""
+
+    def test_stored_group_clear_receipt_loads(self, store: SQLiteReceiptStore) -> None:
+        """``group_clear`` was renamed ``group_withdraw``; stored rows survive.
+
+        Dropping the literal from ``OperationType`` made ``get_receipt`` raise on
+        every 0.2.x empty-delta-refresh receipt — receipts are the audit record,
+        so making them unreadable is the one thing a rename must not do.
+        """
+        builder = ReceiptBuilder(
+            operation_type="group_withdraw",
+            parameters={"group_id": "GRP-1"},
+        )
+        receipt = builder.build()
+        legacy_json = json.loads(receipt.model_dump_json())
+        legacy_json["operation_type"] = "group_clear"
+        store._conn.execute(
+            "INSERT INTO receipts "
+            "(receipt_id, query_name, parameters, receipt_json, created_at, duration_ms, "
+            "operation_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "RCP-legacy-clear",
+                receipt.query_name,
+                json.dumps(receipt.parameters),
+                json.dumps(legacy_json),
+                format_datetime(receipt.created_at),
+                receipt.duration_ms,
+                "group_clear",
+            ),
+        )
+        store._conn.commit()
+
+        loaded = store.get_receipt("RCP-legacy-clear")
+        assert loaded is not None
+        assert loaded.operation_type == "group_clear"

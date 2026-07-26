@@ -475,8 +475,13 @@ class TestApplyRelationship:
 
         prov = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits").metadata.provenance
         assert prov is not None
-        assert prov.source == "cli_add"
-        assert prov.source_ref == "add_relationship"
+        # The update did not create this edge, so it does not get to name itself
+        # as the origin. The origin is honestly unknown; the backfilling channel
+        # is recorded separately.
+        assert prov.source == "unknown_backfilled"
+        assert prov.source_ref == "unknown_backfilled"
+        assert prov.touched_by == "cli_add"
+        assert prov.backfilled_at is not None
         assert prov.last_modified_by == "cli_add"
         assert prov.last_modified_at is not None
 

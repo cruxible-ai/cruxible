@@ -149,7 +149,6 @@ def _feedback(instance_id: str, action: str, **overrides):
     kwargs = {
         "instance_id": instance_id,
         "action": action,
-        "source": "human",
         "from_type": "Task",
         "from_id": "t-1",
         "relationship_type": "task_blocks_task",
@@ -372,7 +371,7 @@ class TestFeedbackBatchTierGate:
         ]
         with request_permission_scope(PermissionMode.GOVERNED_WRITE):
             with pytest.raises(PermissionDeniedError, match="GRAPH_WRITE") as exc:
-                api.feedback_batch(feedback_tier_instance_id, items, source="human")
+                api.feedback_batch(feedback_tier_instance_id, items)
         # All-or-nothing: neither the graph_write edge nor the governed-tier
         # edge (which a per-item gate would have let through) may be touched.
         assert _blocks_edge_severity(feedback_tier_instance_id) == "high"
@@ -389,11 +388,11 @@ class TestFeedbackBatchTierGate:
         items = [_batch_item(note_receipt, on_note_edge=True, corrections={"confidence": 0.8})]
         with request_permission_scope(PermissionMode.GOVERNED_WRITE):
             with pytest.raises(PermissionDeniedError, match="GRAPH_WRITE"):
-                api.feedback_batch(feedback_tier_instance_id, items, source="human")
+                api.feedback_batch(feedback_tier_instance_id, items)
         assert _note_edge_confidence(feedback_tier_instance_id) != 0.8
 
         with request_permission_scope(PermissionMode.GRAPH_WRITE):
-            result = api.feedback_batch(feedback_tier_instance_id, items, source="human")
+            result = api.feedback_batch(feedback_tier_instance_id, items)
         assert result.applied_count == 1
 
 

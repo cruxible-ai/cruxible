@@ -26,7 +26,6 @@ async def feedback(instance_id: str, req: FeedbackRequest) -> contracts.Feedback
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
         action=req.action,
-        source=req.source,
         from_type=req.from_type,
         from_id=req.from_id,
         relationship_type=req.relationship_type,
@@ -52,7 +51,6 @@ async def feedback_batch(
     return api.feedback_batch(
         instance_id=resolved_instance_id,
         items=req.items,
-        source=req.source,
         actor_context=req.actor_context,
     )
 
@@ -68,7 +66,6 @@ async def feedback_from_query(
         receipt_id=req.receipt_id,
         result_index=req.result_index,
         action=req.action,
-        source=req.source,
         reason=req.reason,
         reason_code=req.reason_code,
         scope_hints=req.scope_hints,
@@ -122,7 +119,6 @@ async def outcome(instance_id: str, req: OutcomeRequest) -> contracts.OutcomeRes
         anchor_type=req.anchor_type,
         anchor_id=req.anchor_id,
         outcome=req.outcome,
-        source=req.source,
         outcome_code=req.outcome_code,
         scope_hints=req.scope_hints,
         outcome_profile_key=req.outcome_profile_key,

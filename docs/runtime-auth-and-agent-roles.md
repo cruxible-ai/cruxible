@@ -162,6 +162,24 @@ actor context. With server auth disabled, hosted write routes instead use a
 declared local operator context (`actor_type=human_user`, `actor_id=operator`,
 `org_id=local`) so local sandbox writes remain attributed without credentials.
 
+### Under auth-on, every actor derives to `agent` (Robert, 2026-07-25)
+
+A runtime credential is a `service_account`, so `derived_actor_kind` returns
+`agent` for every credentialed writer — there is no way to be a *human* on an
+auth-on daemon today. That is deliberate, and it is not an exemption: an actor
+that derives to `agent` **owes a `reason_code` wherever a feedback or outcome
+profile requires one of non-human writers**. The rule is not waived because the
+human behind the credential is obvious to whoever set it up; the record has to
+stand on its own.
+
+This is a known gap, not a permanent design: human-typed credentials (a
+credential whose `actor_type` is genuinely `human_user`, established at mint
+time rather than declared per request) are the future path. Until they exist,
+"who is the human here" is answered by credential custody and the role split
+above, not by anything the writer says about itself. The retired self-declared
+`human`/`agent` axis is not reopened — a caller-supplied claim was exactly what
+let an agent skip the accountability rule written for it.
+
 ## Agent Role Pattern
 
 For a review-gated agent workflow, create separate credentials for each role:

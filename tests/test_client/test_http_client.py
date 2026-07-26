@@ -680,7 +680,6 @@ def test_feedback_from_query_uses_expected_route_and_payload():
         receipt_id="RCP-QUERY-1",
         result_index=2,
         action="reject",
-        source="agent",
         reason="stale evidence",
         reason_code="vendor_mismatch",
         scope_hints={"vendor": "acme"},
@@ -695,7 +694,6 @@ def test_feedback_from_query_uses_expected_route_and_payload():
         "receipt_id": "RCP-QUERY-1",
         "result_index": 2,
         "action": "reject",
-        "source": "agent",
         "reason": "stale evidence",
         "reason_code": "vendor_mismatch",
         "scope_hints": {"vendor": "acme"},
@@ -722,6 +720,7 @@ def test_source_artifact_methods_use_expected_routes_and_payloads():
                 200,
                 json={
                     "source_artifact_id": "SRC-1",
+                    "artifact_revision_id": "SRC-1@1",
                     "source_kind": "markdown",
                     "source_retention": "archive",
                     "content_hash": "sha256:abc",
@@ -779,6 +778,7 @@ def test_source_artifact_methods_use_expected_routes_and_payloads():
         "path": "/api/v1/inst_123/source-evidence/dereference",
         "payload": {
             "source_artifact_id": "SRC-1",
+            "artifact_revision_id": None,
             "chunk_id": None,
             "heading_path": ["Evidence"],
             "block_selector": "paragraph:1",
@@ -825,6 +825,7 @@ def test_source_artifact_read_methods_use_expected_routes_and_params():
             200,
             json={
                 "source_artifact_id": "SRC-1",
+                "artifact_revision_id": "SRC-1@1",
                 "kind": "markdown",
                 "retention": "archive",
                 "original_uri": "docs/evidence.md",
@@ -955,6 +956,7 @@ def test_add_relationships_serializes_evidence_fields():
                             "source": "roadmap_doc",
                             "source_record_id": "section-p0",
                             "artifact_id": None,
+                            "artifact_revision_id": None,
                             "table": None,
                             "row_index": None,
                             "label": None,
@@ -964,6 +966,7 @@ def test_add_relationships_serializes_evidence_fields():
                     "source_evidence": [
                         {
                             "source_artifact_id": "SRC-1",
+                            "artifact_revision_id": None,
                             "chunk_id": "CHK-1",
                             "heading_path": None,
                             "block_selector": None,
@@ -1081,7 +1084,6 @@ def test_decision_record_client_routes_round_trip():
         question="Should we act?",
         subject_type="Incident",
         subject_id="I-1",
-        opened_by="agent",
     )
     fetched = client.get_decision_record("inst_123", "DR-1", include_events=False)
     listed = client.list_decision_records("inst_123", status="open", subject_type="Incident")
@@ -1108,7 +1110,6 @@ def test_decision_record_client_routes_round_trip():
             "question": "Should we act?",
             "subject_type": "Incident",
             "subject_id": "I-1",
-            "opened_by": "agent",
         },
     )
     assert captured[1][0:2] == ("GET", "/api/v1/inst_123/decision-records/DR-1")
@@ -2465,7 +2466,6 @@ def test_outcome_routes():
         "inst_123",
         receipt_id="RCP-1",
         outcome="incorrect",
-        source="agent",
         outcome_code="bad_result",
         scope_hints={"surface": "parts_for_vehicle"},
         outcome_profile_key="query_quality",
@@ -2747,6 +2747,7 @@ def test_governed_write_clients_serialize_actor_context_when_supplied():
                 200,
                 json={
                     "source_artifact_id": "SRC-1",
+                    "artifact_revision_id": "SRC-1@1",
                     "source_kind": "markdown",
                     "source_retention": "manifest_only",
                     "content_hash": "sha256:abc",
@@ -2774,7 +2775,6 @@ def test_governed_write_clients_serialize_actor_context_when_supplied():
         "inst_123",
         receipt_id="RCP-1",
         action="approve",
-        source="human",
         from_type="Part",
         from_id="P-1",
         relationship_type="fits",
@@ -2823,7 +2823,6 @@ def test_feedback_omits_source_receipt_by_default():
     result = client.feedback(
         "inst_123",
         action="approve",
-        source="human",
         from_type="Part",
         from_id="P-1",
         relationship_type="fits",
@@ -2844,6 +2843,7 @@ def test_register_source_artifact_sends_caller_supplied_id():
             200,
             json={
                 "source_artifact_id": "opinion_text_op_loper_bright",
+                "artifact_revision_id": "opinion_text_op_loper_bright@1",
                 "source_kind": "markdown",
                 "source_retention": "manifest_only",
                 "original_uri": None,

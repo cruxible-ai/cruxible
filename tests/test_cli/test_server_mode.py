@@ -1056,9 +1056,8 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
             question,
             subject_type=None,
             subject_id=None,
-            opened_by="human",
         ):
-            captured["create"] = (instance_id, question, subject_type, subject_id, opened_by)
+            captured["create"] = (instance_id, question, subject_type, subject_id)
             return contracts.DecisionRecordResult(
                 record={
                     "decision_record_id": "DR-1",
@@ -1172,8 +1171,6 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
             "Incident",
             "--subject-id",
             "I-1",
-            "--opened-by",
-            "agent",
             "--json",
         ],
     )
@@ -1263,7 +1260,6 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
         "Should we act?",
         "Incident",
         "I-1",
-        "agent",
     )
     assert captured["get"] == ("inst_123", "DR-1", True)
     assert captured["list"] == ("inst_123", "open", None, None, None, 5)
@@ -2717,9 +2713,8 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
     )
 
     class StubClient:
-        def feedback_batch(self, instance_id, *, items, source):
+        def feedback_batch(self, instance_id, *, items):
             assert instance_id == "inst_123"
-            assert source == "human"
             assert len(items) == 1
             return contracts.FeedbackBatchResult(
                 feedback_ids=["FB-1"],
@@ -2735,7 +2730,6 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
             receipt_id,
             result_index,
             action,
-            source,
             reason,
             reason_code,
             scope_hints,
@@ -2748,7 +2742,6 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
             assert receipt_id == "RCP-QUERY-1"
             assert result_index == 0
             assert action == "approve"
-            assert source == "human"
             assert reason == "looks valid"
             assert reason_code == "vendor_mismatch"
             assert scope_hints == {"vendor": "acme"}
@@ -2894,9 +2887,8 @@ def test_feedback_and_outcome_write_commands_emit_json_in_server_mode(
                 receipt_id="RCP-query-json",
             )
 
-        def feedback_batch(self, _instance_id, *, items, source):
+        def feedback_batch(self, _instance_id, *, items):
             assert len(items) == 1
-            assert source == "human"
             return contracts.FeedbackBatchResult(
                 feedback_ids=["FB-batch-json"],
                 applied_count=1,

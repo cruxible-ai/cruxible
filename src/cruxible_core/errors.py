@@ -34,6 +34,8 @@ errors (runtime data), making it easy to catch by category.
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
     ├── PermissionDeniedError (MCP permission mode)
     ├── DirectWriteRefusedError (governed proposal_only direct-write refusal)
+    │   ├── GroupApprovedContentWriteRefusedError (content change to an approved edge)
+    │   └── GovernedSourceSpoofRefusedError (direct write naming a governed verb)
     ├── TerminalLifecycleWriteRefusedError (terminal lifecycle via a free write)
     └── PendingEdgeWriteRefusedError (non-pending write onto a pending proposal)
 """
@@ -513,6 +515,105 @@ class TerminalLifecycleWriteRefusedError(CoreError):
             "receipted verbs (coming in wi-lifecycle-verbs). Meanwhile attest a "
             "contradiction against the claim or use the review machinery. "
             f"Writable here: {writable}."
+        )
+
+
+class GroupApprovedContentWriteRefusedError(DirectWriteRefusedError):
+    """A direct write would change the CONTENT of a group-approved edge.
+
+    Acceptance binds content: when a group approval accepted an edge it accepted
+    that edge's properties, not merely its existence. For a ``proposal_only``
+    relationship type the only legitimate way to change those properties is to
+    re-propose them, so a content-changing direct write is refused here.
+
+    This is a strictly NARROWER refusal than the plain
+    :class:`DirectWriteRefusedError` at ``graph/operations.py``, and it exists
+    because that one has a hole: it exempts the governed sources
+    (``workflow_apply`` / ``group_resolve``), and ``source`` is caller-supplied
+    at the public direct-write API (``add_relationships_with_provenance``). An
+    actor could therefore name a governed source and rewrite a group-approved
+    ``proposal_only`` edge with no proposal at all. Subclassing keeps the HTTP
+    status (403) and the "refused direct write" taxonomy while carrying the
+    group identity the plain refusal cannot name.
+
+    Only raised where the plain chokepoint refusal would NOT fire; it never
+    shadows it.
+    """
+
+    error_code = "group_approved_content_write_refused"
+
+    def __init__(
+        self,
+        relationship_type: str,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        *,
+        group_id: str,
+        changed_properties: list[str],
+    ):
+        self.kind = "relationship"
+        self.type_name = relationship_type
+        self.source = "direct_write"
+        self.policy = "proposal_only"
+        self.relationship_type = relationship_type
+        self.from_type = from_type
+        self.from_id = from_id
+        self.to_type = to_type
+        self.to_id = to_id
+        self.group_id = group_id
+        self.changed_properties = list(changed_properties)
+        changed = ", ".join(self.changed_properties) or "(none)"
+        # Bypass DirectWriteRefusedError.__init__: it composes the generic
+        # policy message, and this refusal must TEACH — name the edge, name the
+        # approving group, and say what to do instead.
+        CoreError.__init__(
+            self,
+            f"Direct write to relationship '{relationship_type}' "
+            f"({from_type}:{from_id} -> {to_type}:{to_id}) is refused: group "
+            f"'{group_id}' approved this edge, and approval binds its CONTENT, "
+            f"not just its existence. This write changes {changed}, and "
+            f"'{relationship_type}' is a proposal_only type — the change must be "
+            "re-proposed and re-approved (group propose -> group resolve), not "
+            "written directly.",
+        )
+
+
+class GovernedSourceSpoofRefusedError(DirectWriteRefusedError):
+    """A public direct-write entry named a GOVERNED write verb as its source.
+
+    ``source`` is caller-supplied at the public direct-write API
+    (``add_relationships_with_provenance`` / ``batch_direct_write``), and the
+    chokepoint in ``graph/operations.py`` EXEMPTS the governed verbs
+    (``workflow_apply`` / ``group_resolve``) from the ``proposal_only`` refusal.
+    Naming one of them therefore let a bare direct write create brand-new
+    ``proposal_only`` relationships and write ``proposal_only`` entities with no
+    proposal, no workflow, and no reviewer anywhere in the act.
+
+    Closed at the SEAM rather than at the chokepoint: the genuine governed paths
+    (``service/group_transitions.py`` and ``workflow/apply.py``) call
+    ``apply_entity`` / ``apply_relationship`` directly and never route through
+    these public entries, so refusing the names here costs them nothing while
+    removing the only way to borrow their authority.
+    """
+
+    error_code = "governed_source_spoof_refused"
+
+    def __init__(self, source: str, *, entry_point: str):
+        self.kind = "relationship"
+        self.type_name = source
+        self.source = source
+        self.policy = "proposal_only"
+        self.entry_point = entry_point
+        CoreError.__init__(
+            self,
+            f"Direct write through '{entry_point}' is refused: "
+            f"provenance source '{source}' names a GOVERNED write verb. Those "
+            "names carry the authority of the proposal and workflow machinery "
+            "and are reserved for it. Use 'group propose' -> 'group resolve' to "
+            "stage governed state, run the canonical workflow, or pick a "
+            "provenance source that honestly describes this direct write.",
         )
 
 

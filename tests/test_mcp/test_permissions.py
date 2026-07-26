@@ -99,6 +99,17 @@ class TestCheckPermission:
         init_permissions()
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_add_entity")
+        # Creating a snapshot moves the instance head, invalidating every
+        # outstanding apply guarded on the old one — a graph-write act.
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_create_snapshot")
+        # Constraints and decision policies ARE active config: they change
+        # how every later query and workflow is adjudicated, which is the
+        # authority reload_config carries.
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_add_constraint")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_add_decision_policy")
 
     def test_required_override_lowers_requirement(self, monkeypatch):
         """The direct-write facades may replace the static tier for a call."""
@@ -184,6 +195,7 @@ class TestCheckPermission:
         check_permission("cruxible_add_constraint")
         check_permission("cruxible_add_decision_policy")
         check_permission("cruxible_create_snapshot")
+        check_permission("cruxible_state_pull_apply")
 
     def test_graph_write_tools_denied_in_governed_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")

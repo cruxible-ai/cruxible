@@ -26,7 +26,6 @@ async def create_decision_record(
         question=req.question,
         subject_type=req.subject_type,
         subject_id=req.subject_id,
-        opened_by=req.opened_by,
         actor_context=req.actor_context,
     )
 

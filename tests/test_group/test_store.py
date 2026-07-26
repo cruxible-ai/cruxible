@@ -49,7 +49,6 @@ def _group(
         thesis_facts=thesis_facts or {"style": "casual"},
         analysis_state=analysis_state or {"centroid": [0.1, 0.2]},
         signal_sources_used=["cosine_v1"],
-        proposed_by="agent",
         member_count=2,
         review_priority=review_priority,
         suggested_priority=suggested_priority,
@@ -151,7 +150,7 @@ class TestGroupRoundTrip:
 
     def test_resolution_id_stored(self, store: GroupStore) -> None:
         # First create a resolution (so FK resolves)
-        res_id = store.save_resolution("fits", "abc123", "approve", "", "", {}, {}, "human")
+        res_id = store.save_resolution("fits", "abc123", "approve", "", "", {}, {})
         g = _group(resolution_id=res_id)
         store.save_group(g)
         loaded = store.get_group(g.group_id)
@@ -198,7 +197,7 @@ class TestStatusUpdate:
         assert loaded.status == "applying"
 
     def test_update_status_with_resolution_id(self, store: GroupStore) -> None:
-        res_id = store.save_resolution("fits", "abc123", "approve", "", "", {}, {}, "human")
+        res_id = store.save_resolution("fits", "abc123", "approve", "", "", {}, {})
         store.save_group(_group("GRP-1"))
         updated = store.update_group_status("GRP-1", "applying", resolution_id=res_id)
         loaded = store.get_group("GRP-1")
@@ -338,7 +337,7 @@ class TestQuerySourceEvidence:
 class TestResolutions:
     def test_save_find(self, store: GroupStore) -> None:
         res_id = store.save_resolution(
-            "fits", "sig1", "approve", "looks good", "thesis", {"k": "v"}, {"state": 1}, "human"
+            "fits", "sig1", "approve", "looks good", "thesis", {"k": "v"}, {"state": 1}
         )
         res = store.find_resolution("fits", "sig1")
         assert res is not None
@@ -348,8 +347,8 @@ class TestResolutions:
         assert res.analysis_state == {"state": 1}
 
     def test_find_with_action_filter(self, store: GroupStore) -> None:
-        store.save_resolution("fits", "sig1", "reject", "", "", {}, {}, "human")
-        store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, "human")
+        store.save_resolution("fits", "sig1", "reject", "", "", {}, {})
+        store.save_resolution("fits", "sig1", "approve", "", "", {}, {})
         # Filter approve only
         res = store.find_resolution("fits", "sig1", action="approve")
         assert res is not None
@@ -360,9 +359,7 @@ class TestResolutions:
         assert res.action == "reject"
 
     def test_find_with_confirmed_filter(self, store: GroupStore) -> None:
-        res_id = store.save_resolution(
-            "fits", "sig1", "approve", "", "", {}, {}, "human", confirmed=False
-        )
+        res_id = store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, confirmed=False)
         # Unconfirmed — not found when filtering confirmed=True
         assert store.find_resolution("fits", "sig1", confirmed=True) is None
         # Found when filtering confirmed=False
@@ -372,39 +369,46 @@ class TestResolutions:
         assert store.find_resolution("fits", "sig1", confirmed=True) is not None
 
     def test_find_with_both_filters(self, store: GroupStore) -> None:
-        store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, "human", confirmed=False)
-        store.save_resolution("fits", "sig1", "reject", "", "", {}, {}, "human", confirmed=True)
+        store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, confirmed=False)
+        store.save_resolution("fits", "sig1", "reject", "", "", {}, {}, confirmed=True)
         # Only confirmed approvals
         assert store.find_resolution("fits", "sig1", action="approve", confirmed=True) is None
         # Confirmed rejects exist
         assert store.find_resolution("fits", "sig1", action="reject", confirmed=True) is not None
 
     def test_confirmed_defaults_false(self, store: GroupStore) -> None:
-        res_id = store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, "human")
+        res_id = store.save_resolution("fits", "sig1", "approve", "", "", {}, {})
         res = store.get_resolution(res_id)
         assert res is not None
         assert res.confirmed is False
 
     def test_confirm_resolution_sets_confirmed(self, store: GroupStore) -> None:
-        res_id = store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, "human")
+        res_id = store.save_resolution("fits", "sig1", "approve", "", "", {}, {})
         store.confirm_resolution(res_id)
         res = store.get_resolution(res_id)
         assert res is not None
         assert res.confirmed is True
 
-    def test_confirm_with_trust_override(self, store: GroupStore) -> None:
+    def test_confirm_does_not_move_trust(self, store: GroupStore) -> None:
+        """Confirmation is not a trust verb.
+
+        ``confirm_resolution`` used to accept a ``trust_status`` override, and
+        the approve path used it to rewrite a reviewer's receipted
+        ``invalidated`` back to ``watch`` without a receipt or an actor. The
+        override is gone; trust moves only through ``update_trust_status``.
+        """
         res_id = store.save_resolution(
-            "fits", "sig1", "approve", "", "", {}, {}, "human", trust_status="trusted"
+            "fits", "sig1", "approve", "", "", {}, {}, trust_status="invalidated"
         )
-        store.confirm_resolution(res_id, trust_status="watch")
+        store.confirm_resolution(res_id)
         res = store.get_resolution(res_id)
         assert res is not None
         assert res.confirmed is True
-        assert res.trust_status == "watch"
+        assert res.trust_status == "invalidated"
 
     def test_get_resolution_by_id(self, store: GroupStore) -> None:
         res_id = store.save_resolution(
-            "fits", "sig1", "approve", "good", "thesis", {"a": 1}, {"b": 2}, "human"
+            "fits", "sig1", "approve", "good", "thesis", {"a": 1}, {"b": 2}
         )
         res = store.get_resolution(res_id)
         assert res is not None
@@ -412,8 +416,8 @@ class TestResolutions:
         assert res.confirmed is False
 
     def test_multiple_resolutions_same_signature(self, store: GroupStore) -> None:
-        store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, "human")
-        store.save_resolution("fits", "sig1", "reject", "", "", {}, {}, "human")
+        store.save_resolution("fits", "sig1", "approve", "", "", {}, {})
+        store.save_resolution("fits", "sig1", "reject", "", "", {}, {})
         resolutions = store.list_resolutions(relationship_type="fits")
         assert len(resolutions) == 2
 
@@ -426,7 +430,6 @@ class TestResolutions:
             "thesis",
             {"k": 1},
             {"state": "x"},
-            "human",
             trust_status="trusted",
         )
         store.update_resolution_trust_status(
@@ -443,7 +446,7 @@ class TestResolutions:
         assert r.trust_reason == "earned by review"
 
     def test_update_trust_status(self, store: GroupStore) -> None:
-        res_id = store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, "human")
+        res_id = store.save_resolution("fits", "sig1", "approve", "", "", {}, {})
         store.update_resolution_trust_status(res_id, "trusted", "promoted")
         res = store.get_resolution(res_id)
         assert res is not None
@@ -529,7 +532,6 @@ class TestAdditiveColumnMigration:
                 "",
                 {},
                 {},
-                "human",
                 receipt_id="RCP-new",
             )
             first._conn.commit()
@@ -565,3 +567,46 @@ class TestCoexistence:
         assert fs.count_feedback() == 0
         gs.close()
         fs.close()
+
+
+class TestLegacyAutoResolvedRows:
+    """0.2.x shipped kits with auto-resolve on, so real DBs hold these rows."""
+
+    def _insert_legacy_row(self, store: GroupStore, group_id: str) -> None:
+        """Write status='auto_resolved' the way 0.2.x did, bypassing the model."""
+        store._conn.execute(
+            "INSERT INTO candidate_groups "
+            "(group_id, relationship_type, signature, status, group_kind, thesis_text, "
+            "thesis_facts, analysis_state, signal_sources_used, member_count, "
+            "pending_version, review_priority, suggested_priority, source_workflow_name, "
+            "source_workflow_receipt_id, source_query_receipt_ids, source_trace_ids, "
+            "source_step_ids, resolution_id, proposed_actor_context, proposed_by, created_at) "
+            "VALUES (?, 'fits', 'legacy-sig', 'auto_resolved', 'propose', 'legacy', "
+            "'{}', '{}', '[]', 1, 1, 'normal', NULL, NULL, NULL, '[]', '[]', '[]', "
+            "NULL, NULL, 'agent', ?)",
+            (group_id, format_datetime(_now())),
+        )
+        store._conn.commit()
+
+    def test_legacy_auto_resolved_row_loads(self, store: GroupStore) -> None:
+        """A 0.2.x auto_resolved row must not blow up ``get_group``.
+
+        Dropping the literal from ``GroupStatus`` made ``_row_to_group`` raise a
+        pydantic ValidationError, so one legacy row bricked every group read on
+        the instance right after an upgrade.
+        """
+        self._insert_legacy_row(store, "GRP-legacy0001")
+        loaded = store.get_group("GRP-legacy0001")
+        assert loaded is not None
+        assert loaded.status == "auto_resolved"
+
+    def test_legacy_auto_resolved_row_lists(self, store: GroupStore) -> None:
+        self._insert_legacy_row(store, "GRP-legacy0002")
+        store.save_group(_group("GRP-live00000001"))
+        listed = {group.group_id for group in store.list_groups(limit=50)}
+        assert listed == {"GRP-legacy0002", "GRP-live00000001"}
+
+    def test_legacy_row_is_invisible_to_the_pending_lookup(self, store: GroupStore) -> None:
+        """It is terminal, not live: a re-propose opens a fresh pending group."""
+        self._insert_legacy_row(store, "GRP-legacy0003")
+        assert store.find_pending_group("fits", "legacy-sig") is None

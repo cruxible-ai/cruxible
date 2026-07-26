@@ -22,6 +22,7 @@ from cruxible_core.config.schema import (
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.provenance import SOURCE_REF_ADD_RELATIONSHIP
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.types import (
@@ -354,7 +355,6 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_one.receipt_id,
             action="reject",
-            source="agent",
             target=_feedback_target("BP-1001"),
             reason="Legacy unsupported",
             reason_code="legacy_unsupported",
@@ -364,19 +364,26 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_two.receipt_id,
             action="reject",
-            source="agent",
             target=_feedback_target("BP-1002"),
             reason="Legacy unsupported",
             reason_code="legacy_unsupported",
             scope_hints={"category": "brakes", "make": "Honda"},
         )
+        # Uncoded feedback is only reachable from a resolved HUMAN actor now:
+        # every other actor kind must give a reason code.
         service_feedback(
             populated_instance,
             receipt_id=query_two.receipt_id,
             action="reject",
-            source="human",
             target=_feedback_target("BP-1002"),
             reason="freeform uncoded reason",
+            actor_context=GovernedActorContext(
+                actor_type="human_user",
+                actor_id="usr_reviewer",
+                org_id="org_1",
+                operation_id="op_uncoded_feedback",
+                timestamp="2026-06-05T12:00:00Z",
+            ),
         )
 
         result = service_analyze_feedback(
@@ -437,7 +444,6 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_one.receipt_id,
             action="reject",
-            source="agent",
             target=_feedback_target("BP-1001"),
             reason="Legacy unsupported",
             reason_code="legacy_unsupported",
@@ -447,7 +453,6 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_two.receipt_id,
             action="reject",
-            source="agent",
             target=_feedback_target("BP-1002"),
             reason="Legacy unsupported",
             reason_code="legacy_unsupported",
@@ -838,7 +843,6 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_one.receipt_id,
             action="reject",
-            source="agent",
             target=_feedback_target("BP-1001"),
             reason="Mismatch",
             reason_code="fitment_mismatch",
@@ -848,7 +852,6 @@ class TestAnalyzeFeedback:
             populated_instance,
             receipt_id=query_two.receipt_id,
             action="reject",
-            source="agent",
             target=_feedback_target("BP-1002"),
             reason="Mismatch",
             reason_code="fitment_mismatch",
@@ -909,7 +912,6 @@ class TestAnalyzeOutcomes:
             populated_instance,
             receipt_id=query.receipt_id,
             outcome="incorrect",
-            source="agent",
             outcome_code="bad_result",
             scope_hints={"surface": "parts_for_vehicle"},
         )
@@ -917,7 +919,6 @@ class TestAnalyzeOutcomes:
             populated_instance,
             receipt_id=query.receipt_id,
             outcome="incorrect",
-            source="agent",
             outcome_code="bad_result",
             scope_hints={"surface": "parts_for_vehicle"},
         )
@@ -985,7 +986,6 @@ class TestAnalyzeOutcomes:
                 populated_instance,
                 receipt_id=query.receipt_id,
                 outcome="incorrect",
-                source="agent",
                 outcome_code="bad_result",
                 scope_hints={"surface": "parts_for_vehicle"},
             )
@@ -1044,7 +1044,6 @@ class TestAnalyzeOutcomes:
                 outcome="incorrect",
                 anchor_type="resolution",
                 anchor_id=resolution_id,
-                source="agent",
                 outcome_code="false_positive",
                 scope_hints={"vendor": "Honda"},
             )
@@ -1087,7 +1086,6 @@ class TestAnalyzeOutcomes:
                 outcome="incorrect",
                 anchor_type="resolution",
                 anchor_id=resolution_id,
-                source="agent",
                 outcome_code="needs_review",
                 scope_hints={"vendor": "Honda"},
             )
@@ -1474,7 +1472,6 @@ class TestLint:
             populated_instance,
             receipt_id=query_one.receipt_id,
             action="reject",
-            source="agent",
             target=_feedback_target("BP-1001"),
             reason="Mismatch",
             reason_code="fitment_mismatch",
@@ -1484,7 +1481,6 @@ class TestLint:
             populated_instance,
             receipt_id=query_two.receipt_id,
             action="reject",
-            source="agent",
             target=_feedback_target("BP-1002"),
             reason="Mismatch",
             reason_code="fitment_mismatch",
@@ -1494,7 +1490,6 @@ class TestLint:
             populated_instance,
             receipt_id=query_one.receipt_id,
             outcome="incorrect",
-            source="agent",
             outcome_code="bad_result",
             scope_hints={"surface": "parts_for_vehicle"},
         )
@@ -1502,7 +1497,6 @@ class TestLint:
             populated_instance,
             receipt_id=query_one.receipt_id,
             outcome="incorrect",
-            source="agent",
             outcome_code="bad_result",
             scope_hints={"surface": "parts_for_vehicle"},
         )
@@ -1759,7 +1753,6 @@ class TestStateHealth:
             resolved_result.group_id,
             action="reject",
             rationale="not part of pending health backlog",
-            resolved_by="human",
             expected_pending_version=1,
         )
 
@@ -1949,7 +1942,6 @@ def _create_resolution_anchor(instance: CruxibleInstance) -> str:
         propose_result.group_id,
         action="approve",
         rationale="accepted",
-        resolved_by="human",
         expected_pending_version=1,
     )
     assert resolve_result.resolution_id is not None

@@ -232,13 +232,16 @@ def filter_relationship_conflicts(
                 )
             )
             continue
-        pending_group = conflicts.get(relationship.identity_tuple())
-        if pending_group is not None:
+        pending_groups = conflicts.get(relationship.identity_tuple()) or []
+        if pending_groups:
+            # Suppression needs ONE explanatory group and the newest live claim
+            # is the honest one to name; the full set matters where every live
+            # group must be annotated (the direct-write conflict path), not here.
             suppressed.append(
                 suppressed_member_from_relationship(
                     relationship,
                     reason="pending_proposal",
-                    group=pending_group,
+                    group=pending_groups[0],
                 )
             )
             continue

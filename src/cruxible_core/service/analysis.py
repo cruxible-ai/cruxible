@@ -17,6 +17,7 @@ from cruxible_core.config.schema import (
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.governance.actors import derived_actor_kind
 from cruxible_core.graph.provenance import (
     SOURCE_REF_ADD_RELATIONSHIP,
     SOURCE_REF_BATCH_DIRECT_WRITE,
@@ -167,8 +168,8 @@ def _state_health_groups(
     counts = {
         "pending_review": 0,
         "applying": 0,
-        "auto_resolved": 0,
         "resolved": 0,
+        "withdrawn": 0,
     }
     ages: list[float] = []
     group_store = instance.get_group_store()
@@ -195,8 +196,8 @@ def _state_health_groups(
     return StateHealthGroupsSection(
         pending_review_count=counts["pending_review"],
         applying_count=counts["applying"],
-        auto_resolved_count=counts["auto_resolved"],
         resolved_count=counts["resolved"],
+        withdrawn_count=counts["withdrawn"],
         total_count=sum(counts.values()),
         oldest_unresolved_age_seconds=max(ages) if ages else None,
         newest_unresolved_age_seconds=min(ages) if ages else None,
@@ -512,7 +513,8 @@ def service_analyze_feedback(
 
     for row in feedback_rows:
         action_counts[row.action] = action_counts.get(row.action, 0) + 1
-        source_counts[row.source] = source_counts.get(row.source, 0) + 1
+        actor_kind = derived_actor_kind(row.actor_context)
+        source_counts[actor_kind] = source_counts.get(actor_kind, 0) + 1
         if row.reason_code:
             reason_code_counts[row.reason_code] = reason_code_counts.get(row.reason_code, 0) + 1
         if row.action != "reject":

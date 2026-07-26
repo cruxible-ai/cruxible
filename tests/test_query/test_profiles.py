@@ -404,3 +404,32 @@ class TestListItems:
         entities = profile_list_items([_entity_payload()], "entities", "compact")
         assert "provenance" not in edges[0]["metadata"]
         assert entities[0]["metadata"] == {"lifecycle": {"status": "superseded"}}
+
+
+class TestCompactRetainsGroupApprovalDrift:
+    """Drift is a governance marker, so the agent-facing default must carry it."""
+
+    def test_group_approval_drift_survives_compact(self) -> None:
+        """``compact`` dropped it, breaking "every ordinary read returns it".
+
+        ``compact`` is the profile agents read by default, so a marker that only
+        survives ``standard`` is invisible to almost every real reader — the
+        divergence between what a group approved and what the edge now says
+        would be silently hidden from exactly the audience it exists for.
+        """
+        payload = _edge_payload_with_state("approved", "active", False)
+        payload["metadata"]["assertion"]["group_approval_drift"] = {
+            "group_id": "GRP-1",
+            "changed_properties": ["dependency_basis"],
+            "approved_values": {"dependency_basis": "schema"},
+            "detected_at": "2026-07-25T00:00:00Z",
+        }
+
+        compact = profile_edge_payload(payload, "compact")
+
+        assert compact["metadata"]["assertion"]["group_approval_drift"] == {
+            "group_id": "GRP-1",
+            "changed_properties": ["dependency_basis"],
+            "approved_values": {"dependency_basis": "schema"},
+            "detected_at": "2026-07-25T00:00:00Z",
+        }

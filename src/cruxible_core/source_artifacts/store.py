@@ -21,14 +21,37 @@ class SourceArtifactStoreProtocol(ABC):
         *,
         archive_content: bytes | None = None,
         archive_media_type: str = "text/markdown",
-    ) -> str: ...
+    ) -> str:
+        """Insert one immutable artifact revision, superseding the current one."""
 
     @abstractmethod
-    def get_artifact(self, source_artifact_id: str) -> SourceArtifactRecord | None: ...
+    def get_artifact(self, source_artifact_id: str) -> SourceArtifactRecord | None:
+        """Return the current (non-superseded) revision of a logical artifact."""
+
+    @abstractmethod
+    def get_artifact_revision(self, artifact_revision_id: str) -> SourceArtifactRecord | None:
+        """Return one specific revision, superseded or not."""
+
+    @abstractmethod
+    def list_artifact_revisions(self, source_artifact_id: str) -> list[SourceArtifactRecord]:
+        """Return every revision of a logical artifact, oldest first."""
+
+    @abstractmethod
+    def record_content_drift(
+        self,
+        artifact_revision_id: str,
+        *,
+        observed_hash: str | None,
+        observed_at: str | None,
+    ) -> bool:
+        """Persist (or clear) the last observed local-content drift for a revision."""
+
     @abstractmethod
     def list_artifacts(self) -> list[SourceArtifactRecord]: ...
     @abstractmethod
     def list_chunks(self, source_artifact_id: str) -> list[SourceArtifactChunk]: ...
+    @abstractmethod
+    def list_revision_chunks(self, artifact_revision_id: str) -> list[SourceArtifactChunk]: ...
     @abstractmethod
     def get_chunk(
         self,

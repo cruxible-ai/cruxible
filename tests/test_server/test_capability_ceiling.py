@@ -84,7 +84,7 @@ def _vehicle(entity_id: str) -> dict[str, object]:
 @pytest.mark.parametrize(
     ("ceiling", "expected_operation", "expected_required"),
     [
-        ("read_only", "cruxible_create_snapshot", "GOVERNED_WRITE"),
+        ("read_only", "cruxible_create_decision_record", "GOVERNED_WRITE"),
         ("governed_write", "cruxible_add_entity", "GRAPH_WRITE"),
         ("graph_write", "cruxible_reload_config", "ADMIN"),
     ],
@@ -101,13 +101,13 @@ def test_each_tier_boundary_allows_at_ceiling_and_refuses_above_it(
     if ceiling == "read_only":
         allowed = client.get(f"/api/v1/{daemon_instance}/schema")
         denied = client.post(
-            f"/api/v1/{daemon_instance}/snapshots",
-            json={"label": "above-read-only"},
+            f"/api/v1/{daemon_instance}/decision-records",
+            json={"question": "above-read-only"},
         )
     elif ceiling == "governed_write":
         allowed = client.post(
-            f"/api/v1/{daemon_instance}/snapshots",
-            json={"label": "at-governed-write"},
+            f"/api/v1/{daemon_instance}/decision-records",
+            json={"question": "at-governed-write"},
         )
         denied = client.post(
             f"/api/v1/{daemon_instance}/entities",
@@ -168,8 +168,8 @@ def test_admin_bearer_token_is_clamped_and_cannot_mint_above_ceiling(
     headers = {"Authorization": f"Bearer {admin.token}"}
 
     at_ceiling = client.post(
-        f"/api/v1/{daemon_instance}/snapshots",
-        json={"label": "admin-token-clamped"},
+        f"/api/v1/{daemon_instance}/decision-records",
+        json={"question": "admin-token-clamped"},
         headers=headers,
     )
     above_ceiling = client.post(

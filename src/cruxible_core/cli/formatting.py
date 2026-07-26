@@ -8,6 +8,7 @@ from typing import Any
 from rich.table import Table
 
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.governance.actors import derived_actor_kind
 from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
@@ -150,7 +151,7 @@ def outcomes_table(records: list[OutcomeRecord]) -> Table:
             anchor,
             r.outcome,
             r.outcome_code or "",
-            r.source,
+            derived_actor_kind(r.actor_context),
             str(r.created_at),
         )
 
@@ -435,7 +436,7 @@ def resolutions_table(resolutions: list[GroupResolution]) -> Table:
             r.relationship_type,
             r.action,
             r.trust_status,
-            r.resolved_by,
+            derived_actor_kind(r.resolved_actor_context),
             format_datetime(r.resolved_at) or "",
         )
 

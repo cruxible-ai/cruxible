@@ -43,6 +43,7 @@ import os
 from typing import Iterable, Literal, Mapping
 
 from cruxible_core.config.schema import CoreConfig
+from cruxible_core.errors import GovernedSourceSpoofRefusedError
 from cruxible_core.runtime.permissions import PermissionMode
 
 WritePolicy = Literal["direct", "proposal_only", "mint_only"]
@@ -92,6 +93,26 @@ def _is_truthy(value: str | None) -> bool:
 def is_governed_source(source: str) -> bool:
     """Return whether ``source`` is a governed (always-permitted) write verb."""
     return source in _GOVERNED_SOURCES
+
+
+def refuse_governed_source_at_direct_write_entry(source: str, *, entry_point: str) -> None:
+    """Refuse a public direct write that names a governed verb as its provenance.
+
+    The chokepoint exempts :data:`_GOVERNED_SOURCES` from the ``proposal_only``
+    refusal, and ``source`` is caller-supplied at the public direct-write API —
+    so without this seam check an ordinary direct write could borrow the
+    proposal/workflow machinery's authority just by naming it, and create
+    brand-new ``proposal_only`` edges or write ``proposal_only`` entities with no
+    proposal behind them.
+
+    The genuine governed paths do NOT pass through the public entries: group
+    resolution (``service/group_transitions.py``) and workflow apply
+    (``workflow/apply.py``) both call ``apply_entity`` / ``apply_relationship``
+    directly. Refusing the names here therefore closes the spoof without
+    touching either real path.
+    """
+    if is_governed_source(source):
+        raise GovernedSourceSpoofRefusedError(source, entry_point=entry_point)
 
 
 def env_refuses_direct_writes(environ: Mapping[str, str] | None = None) -> bool:

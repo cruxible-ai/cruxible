@@ -587,7 +587,7 @@ def test_receipt_then_graph_failure_rolls_back_both(
 def test_decision_then_outcome_failure_rolls_back_compound_write(
     initialized_instance: CruxibleInstance,
 ) -> None:
-    decision = DecisionRecord(question="Approve this change?", opened_by="agent")
+    decision = DecisionRecord(question="Approve this change?")
     outcome = OutcomeRecord(
         receipt_id="RCP-1",
         anchor_type="receipt",
@@ -663,7 +663,6 @@ def test_instance_store_getters_are_not_used_for_direct_writes() -> None:
         "save_trace",
         "update_group",
         "update_group_status",
-        "update_record",
         "update_resolution_trust_status",
     }
     offenders: list[str] = []

@@ -22,6 +22,7 @@ from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.server.auth_managed_entities import (
     materialize_local_operator_auth_managed_entities,
 )
+from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.service.types import (
     CloneSnapshotResult,
     InstanceBackupResult,
@@ -82,9 +83,40 @@ def service_create_snapshot(
     *,
     actor_context: GovernedActorContext | None = None,
 ) -> SnapshotCreateResult:
-    """Create an immutable full snapshot for the current instance."""
-    snapshot = instance.create_snapshot(label=label, actor_context=actor_context)
-    return SnapshotCreateResult(snapshot=snapshot)
+    """Create an immutable full snapshot for the current instance.
+
+    Creating a snapshot MOVES the instance head. Every outstanding state-pull
+    apply guarded on the previous head is invalidated by it, and every later
+    receipt's decision-time coordinate names the new one -- so the head move is
+    a governed act and gets a receipt naming the head it moved from and to, and
+    the actor that moved it. The snapshot is written inside the receipt's write
+    boundary, so a failure to receipt rolls the head move back with it.
+    """
+    parent_snapshot_id = instance.get_head_snapshot_id()
+    with mutation_receipt(
+        instance,
+        "snapshot_create",
+        {"label": label, "parent_snapshot_id": parent_snapshot_id},
+        actor_context=actor_context,
+    ) as ctx:
+        assert ctx.builder is not None
+        snapshot = instance.create_snapshot(label=label, actor_context=actor_context)
+        ctx.builder.record_validation(
+            passed=True,
+            detail={
+                "snapshot_id": snapshot.snapshot_id,
+                "parent_snapshot_id": parent_snapshot_id,
+                "origin_snapshot_id": snapshot.origin_snapshot_id,
+                "config_digest": snapshot.config_digest,
+                "graph_digest": snapshot.graph_digest,
+                "lock_digest": snapshot.lock_digest,
+            },
+        )
+        ctx.set_result(SnapshotCreateResult(snapshot=snapshot))
+
+    result = ctx.result
+    assert isinstance(result, SnapshotCreateResult)
+    return result
 
 
 def service_list_snapshots(

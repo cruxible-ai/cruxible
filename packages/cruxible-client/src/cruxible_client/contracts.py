@@ -44,14 +44,14 @@ GateEvaluationVerdict = Literal["satisfied", "unsatisfied", "error"]
 
 ConstraintSeverity = Literal["warning", "error"]
 FeedbackAction = Literal["approve", "reject", "correct", "flag"]
-FeedbackSource = Literal["human", "agent"]
 OutcomeValue = Literal["correct", "incorrect", "partial", "unknown"]
 OutcomeAnchorType = Literal["resolution", "receipt"]
 ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
 GroupAction = Literal["approve", "reject"]
-GroupResolvedBy = Literal["human", "agent"]
-GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
-GroupProposedBy = Literal["human", "agent"]
+# Deprecated: ``auto_resolved`` is read-only legacy — never written since 0.3,
+# but shipped 0.2.x instances persisted rows carrying it, so a client that drops
+# it from the vocabulary cannot parse those rows at all.
+GroupStatus = Literal["pending_review", "applying", "resolved", "withdrawn", "auto_resolved"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
@@ -270,7 +270,9 @@ class SignalBucketBasis(BaseModel):
 
 SourceKind = Literal["markdown"]
 SourceRetention = Literal["manifest_only", "archive"]
-DereferenceStatus = Literal["available", "drifted", "unavailable"]
+# ``revision_bytes_not_retained``: a pinned read of a superseded revision whose
+# bytes were never archived. NOT drift — the local path holds a newer revision.
+DereferenceStatus = Literal["available", "drifted", "unavailable", "revision_bytes_not_retained"]
 DereferenceBodyOrigin = Literal["archive", "local_path"]
 
 
@@ -279,6 +281,14 @@ class EvidenceRef(BaseModel):
     source_record_id: str = Field(description="Identifier of the record within that source.")
     artifact_id: str | None = Field(
         default=None, description="Optional registered source-artifact id."
+    )
+    artifact_revision_id: str | None = Field(
+        default=None,
+        description=(
+            "Physical revision ('{source_artifact_id}@{revision}') this citation was "
+            "made against. Absent refs dereference against the current revision and "
+            "report revision_unpinned."
+        ),
     )
     table: str | None = Field(
         default=None, description="Optional table name when the source is tabular."
@@ -371,6 +381,13 @@ class SourceEvidenceInput(BaseModel):
     source_artifact_id: str = Field(
         description="Id of the registered source artifact this evidence points into."
     )
+    artifact_revision_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). "
+            "Absent resolves against the current revision."
+        ),
+    )
     chunk_id: str | None = Field(
         default=None,
         description="Chunk id within the artifact; provide this or heading_path+block_selector.",
@@ -422,6 +439,13 @@ class SourceArtifactChunk(BaseModel):
 
 class RegisterSourceArtifactResult(BaseModel):
     source_artifact_id: str
+    artifact_revision_id: str = Field(
+        description="Physical id of the immutable artifact revision this registration resolved to."
+    )
+    revision: int = Field(
+        default=1,
+        description="1-based registration count for this logical source_artifact_id.",
+    )
     source_kind: SourceKind
     source_retention: SourceRetention
     original_uri: str | None = None
@@ -432,6 +456,15 @@ class RegisterSourceArtifactResult(BaseModel):
     archived: bool = False
     archive_content_hash: str | None = None
     chunks: list[SourceArtifactChunk] = Field(default_factory=list)
+    supersedes: str | None = Field(
+        default=None,
+        description="Revision id this registration superseded, if it replaced an earlier one.",
+    )
+    already_registered: bool = Field(
+        default=False,
+        description="True when identical content was already the current revision (no write).",
+    )
+    receipt_id: str | None = None
 
 
 class DereferenceSourceEvidenceResult(BaseModel):
@@ -445,6 +478,8 @@ class DereferenceSourceEvidenceResult(BaseModel):
     body: str | None = None
     reason: str | None = None
     chunk: SourceArtifactChunk | None = None
+    artifact_revision_id: str | None = None
+    revision_unpinned: bool = False
 
 
 class SourceArtifactListItem(BaseModel):
@@ -471,6 +506,8 @@ class SourceArtifactReadChunk(BaseModel):
 
 
 class SourceArtifactReadResult(SourceArtifactListItem):
+    artifact_revision_id: str
+    revision: int = 1
     parser_version: str
     archived: bool = False
     archive_content_hash: str | None = None
@@ -478,6 +515,24 @@ class SourceArtifactReadResult(SourceArtifactListItem):
     content_unavailable_reason: str | None = None
     body_origin: DereferenceBodyOrigin | None = None
     current_artifact_hash: str | None = None
+    drift_observed_hash: str | None = Field(
+        default=None,
+        description="Last observed local content hash that did not match the manifest.",
+    )
+    drift_observed_at: str | None = Field(
+        default=None, description="When the recorded content drift was last observed."
+    )
+    first_drift_observed_hash: str | None = Field(
+        default=None,
+        description=(
+            "Local content hash of the FIRST drift ever observed for this revision. "
+            "Sticky: unlike the pair above it is never cleared, so restoring the "
+            "original bytes does not erase that the source was altered."
+        ),
+    )
+    first_drift_observed_at: str | None = Field(
+        default=None, description="When the first content drift was observed."
+    )
     chunks: list[SourceArtifactReadChunk] = Field(default_factory=list)
 
 
@@ -598,9 +653,6 @@ class FeedbackFromQueryInput(BaseModel):
     result_index: int = Field(description="Zero-based index of the result row in the receipt.")
     action: FeedbackAction = Field(
         description="Adjudication: approve, reject, correct, or flag the edge."
-    )
-    source: FeedbackSource = Field(
-        default="human", description="Who produced the feedback: human or agent."
     )
     reason: str = Field(default="", description="Free-text reason for the feedback.")
     reason_code: str | None = Field(
@@ -1078,6 +1130,11 @@ class InlineQueryDefinition(BaseModel):
 class DecisionRecordResult(BaseModel):
     record: dict[str, Any]
     events: list[dict[str, Any]] = Field(default_factory=list)
+    # The mutation receipt for open/finalize/abandon. The service result has
+    # carried it since decision records became receipted; without it on the
+    # contract the receipt exists but is unreachable from the call that made it,
+    # so a caller cannot cite the proof of its own governed act. Null on reads.
+    receipt_id: str | None = None
 
 
 class DecisionRecordListResult(ListEnvelopeFields):
@@ -1166,11 +1223,17 @@ class StateHealthGroupsSection(BaseModel):
 
     pending_review_count: int = 0
     applying_count: int = 0
-    auto_resolved_count: int = 0
     resolved_count: int = 0
+    withdrawn_count: int = 0
     total_count: int = 0
     oldest_unresolved_age_seconds: float | None = None
     newest_unresolved_age_seconds: float | None = None
+    # Deprecated: always 0. ``auto_resolved`` is no longer a status any code path
+    # writes, so this bucket cannot grow; it is re-emitted only so a 0.2.x reader
+    # that requires the key keeps parsing. An honest zero, not a suppressed
+    # count: legacy ``auto_resolved`` rows are terminal dead-ends and are counted
+    # nowhere else either. Removal follows 0.3; read ``withdrawn_count``.
+    auto_resolved_count: int = 0
 
 
 class StateHealthSignalsSection(BaseModel):
@@ -1289,6 +1352,7 @@ class AddConstraintResult(BaseModel):
     added: bool
     config_updated: bool
     warnings: list[str] = Field(default_factory=list)
+    receipt_id: str | None = None
 
 
 class GetEntityResult(BaseModel):
@@ -1678,6 +1742,7 @@ class SnapshotMetadata(BaseModel):
 
 class SnapshotCreateResult(BaseModel):
     snapshot: SnapshotMetadata
+    receipt_id: str | None = None
 
 
 class SnapshotListResult(ListEnvelopeFields):
@@ -1807,6 +1872,8 @@ class ProposeGroupToolResult(BaseModel):
     suppressed_members: list[SuppressedProposalMember] = Field(default_factory=list)
     policy_summary: dict[str, int] = Field(default_factory=dict)
     receipt_id: str | None = None
+    resolution_id: str | None = None
+    auto_resolve_deferred_reason: str | None = None
 
 
 class AddDecisionPolicyResult(BaseModel):
@@ -1814,6 +1881,7 @@ class AddDecisionPolicyResult(BaseModel):
     added: bool
     config_updated: bool
     warnings: list[str] = Field(default_factory=list)
+    receipt_id: str | None = None
 
 
 class FeedbackGroupSummary(BaseModel):
@@ -2049,6 +2117,7 @@ class GroupStatusHistoryItem(BaseModel):
     tuple_count: int
     rationale: str = ""
     resolved_by: str = ""
+    resolution_source: str = "review"
     resolved_actor: dict[str, Any] | None = None
 
 

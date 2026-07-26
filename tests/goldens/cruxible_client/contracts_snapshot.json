@@ -64,7 +64,8 @@
       "values": [
         "available",
         "drifted",
-        "unavailable"
+        "unavailable",
+        "revision_bytes_not_retained"
       ]
     },
     "EntityLifecycleStatus": {
@@ -80,12 +81,6 @@
         "reject",
         "correct",
         "flag"
-      ]
-    },
-    "FeedbackSource": {
-      "values": [
-        "human",
-        "agent"
       ]
     },
     "FindingCategory": {
@@ -125,24 +120,13 @@
         "reject"
       ]
     },
-    "GroupProposedBy": {
-      "values": [
-        "human",
-        "agent"
-      ]
-    },
-    "GroupResolvedBy": {
-      "values": [
-        "human",
-        "agent"
-      ]
-    },
     "GroupStatus": {
       "values": [
         "pending_review",
-        "auto_resolved",
         "applying",
-        "resolved"
+        "resolved",
+        "withdrawn",
+        "auto_resolved"
       ]
     },
     "GroupTrustStatus": {
@@ -348,6 +332,26 @@
             "type": "string"
           }
         },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
         "warnings": {
           "has_default": false,
           "has_default_factory": true,
@@ -375,6 +379,18 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
           },
           "warnings": {
             "items": {
@@ -430,6 +446,26 @@
             "type": "string"
           }
         },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
         "warnings": {
           "has_default": false,
           "has_default_factory": true,
@@ -457,6 +493,18 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
           },
           "warnings": {
             "items": {
@@ -2527,6 +2575,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -2649,6 +2710,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -3296,6 +3370,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -3396,6 +3483,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -5479,6 +5579,26 @@
             "type": "array"
           }
         },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
         "record": {
           "has_default": false,
           "has_default_factory": false,
@@ -5501,6 +5621,18 @@
             "title": "Events",
             "type": "array"
           },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
           "record": {
             "additionalProperties": true,
             "title": "Record",
@@ -5519,6 +5651,26 @@
     },
     "DereferenceSourceEvidenceResult": {
       "fields": {
+        "artifact_revision_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_revision_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Revision Id"
+          }
+        },
         "body": {
           "default": null,
           "default_json_serializable": true,
@@ -5652,6 +5804,19 @@
             "title": "Reason"
           }
         },
+        "revision_unpinned": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "revision_unpinned",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Revision Unpinned",
+            "type": "boolean"
+          }
+        },
         "source_artifact_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -5671,7 +5836,8 @@
             "enum": [
               "available",
               "drifted",
-              "unavailable"
+              "unavailable",
+              "revision_bytes_not_retained"
             ],
             "title": "Status",
             "type": "string"
@@ -5751,6 +5917,18 @@
           }
         },
         "properties": {
+          "artifact_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Revision Id"
+          },
           "body": {
             "anyOf": [
               {
@@ -5826,6 +6004,11 @@
             "default": null,
             "title": "Reason"
           },
+          "revision_unpinned": {
+            "default": false,
+            "title": "Revision Unpinned",
+            "type": "boolean"
+          },
           "source_artifact_id": {
             "title": "Source Artifact Id",
             "type": "string"
@@ -5834,7 +6017,8 @@
             "enum": [
               "available",
               "drifted",
-              "unavailable"
+              "unavailable",
+              "revision_bytes_not_retained"
             ],
             "title": "Status",
             "type": "string"
@@ -7232,6 +7416,27 @@
             "title": "Artifact Id"
           }
         },
+        "artifact_revision_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_revision_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+            "title": "Artifact Revision Id"
+          }
+        },
         "label": {
           "default": null,
           "default_json_serializable": true,
@@ -7345,6 +7550,19 @@
             "default": null,
             "description": "Optional registered source-artifact id.",
             "title": "Artifact Id"
+          },
+          "artifact_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+            "title": "Artifact Revision Id"
           },
           "label": {
             "anyOf": [
@@ -7959,24 +8177,6 @@
             "description": "Optional hints scoping how broadly the feedback should generalize.",
             "title": "Scope Hints"
           }
-        },
-        "source": {
-          "default": "human",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "source",
-          "required": false,
-          "schema": {
-            "default": "human",
-            "description": "Who produced the feedback: human or agent.",
-            "enum": [
-              "human",
-              "agent"
-            ],
-            "title": "Source",
-            "type": "string"
-          }
         }
       },
       "json_schema": {
@@ -8080,16 +8280,6 @@
             "default": null,
             "description": "Optional hints scoping how broadly the feedback should generalize.",
             "title": "Scope Hints"
-          },
-          "source": {
-            "default": "human",
-            "description": "Who produced the feedback: human or agent.",
-            "enum": [
-              "human",
-              "agent"
-            ],
-            "title": "Source",
-            "type": "string"
           }
         },
         "required": [
@@ -9542,6 +9732,11 @@
                 "title": "Resolution Id",
                 "type": "string"
               },
+              "resolution_source": {
+                "default": "review",
+                "title": "Resolution Source",
+                "type": "string"
+              },
               "resolved_actor": {
                 "anyOf": [
                   {
@@ -9730,6 +9925,19 @@
             "type": "string"
           }
         },
+        "resolution_source": {
+          "default": "review",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "resolution_source",
+          "required": false,
+          "schema": {
+            "default": "review",
+            "title": "Resolution Source",
+            "type": "string"
+          }
+        },
         "resolved_actor": {
           "default": null,
           "default_json_serializable": true,
@@ -9812,6 +10020,11 @@
           },
           "resolution_id": {
             "title": "Resolution Id",
+            "type": "string"
+          },
+          "resolution_source": {
+            "default": "review",
+            "title": "Resolution Source",
             "type": "string"
           },
           "resolved_actor": {
@@ -14453,6 +14666,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -14631,6 +14857,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -16581,6 +16820,26 @@
     },
     "ProposeGroupToolResult": {
       "fields": {
+        "auto_resolve_deferred_reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "auto_resolve_deferred_reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Auto Resolve Deferred Reason"
+          }
+        },
         "group_id": {
           "default": null,
           "default_json_serializable": true,
@@ -16663,6 +16922,26 @@
             ],
             "default": null,
             "title": "Receipt Id"
+          }
+        },
+        "resolution_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "resolution_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolution Id"
           }
         },
         "review_priority": {
@@ -16816,6 +17095,18 @@
           }
         },
         "properties": {
+          "auto_resolve_deferred_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Auto Resolve Deferred Reason"
+          },
           "group_id": {
             "anyOf": [
               {
@@ -16863,6 +17154,18 @@
             ],
             "default": null,
             "title": "Receipt Id"
+          },
+          "resolution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolution Id"
           },
           "review_priority": {
             "title": "Review Priority",
@@ -23894,6 +24197,20 @@
     },
     "RegisterSourceArtifactResult": {
       "fields": {
+        "already_registered": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "already_registered",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "True when identical content was already the current revision (no write).",
+            "title": "Already Registered",
+            "type": "boolean"
+          }
+        },
         "archive_content_hash": {
           "default": null,
           "default_json_serializable": true,
@@ -23925,6 +24242,17 @@
             "default": false,
             "title": "Archived",
             "type": "boolean"
+          }
+        },
+        "artifact_revision_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_revision_id",
+          "required": true,
+          "schema": {
+            "description": "Physical id of the immutable artifact revision this registration resolved to.",
+            "title": "Artifact Revision Id",
+            "type": "string"
           }
         },
         "byte_count": {
@@ -24010,6 +24338,40 @@
             "type": "string"
           }
         },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "revision": {
+          "default": 1,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "revision",
+          "required": false,
+          "schema": {
+            "default": 1,
+            "description": "1-based registration count for this logical source_artifact_id.",
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
         "source_artifact_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -24043,6 +24405,27 @@
             ],
             "title": "Source Retention",
             "type": "string"
+          }
+        },
+        "supersedes": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "supersedes",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Revision id this registration superseded, if it replaced an earlier one.",
+            "title": "Supersedes"
           }
         }
       },
@@ -24119,6 +24502,12 @@
           }
         },
         "properties": {
+          "already_registered": {
+            "default": false,
+            "description": "True when identical content was already the current revision (no write).",
+            "title": "Already Registered",
+            "type": "boolean"
+          },
           "archive_content_hash": {
             "anyOf": [
               {
@@ -24135,6 +24524,11 @@
             "default": false,
             "title": "Archived",
             "type": "boolean"
+          },
+          "artifact_revision_id": {
+            "description": "Physical id of the immutable artifact revision this registration resolved to.",
+            "title": "Artifact Revision Id",
+            "type": "string"
           },
           "byte_count": {
             "title": "Byte Count",
@@ -24179,6 +24573,24 @@
             "title": "Parser Version",
             "type": "string"
           },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
+          "revision": {
+            "default": 1,
+            "description": "1-based registration count for this logical source_artifact_id.",
+            "title": "Revision",
+            "type": "integer"
+          },
           "source_artifact_id": {
             "title": "Source Artifact Id",
             "type": "string"
@@ -24195,10 +24607,24 @@
             ],
             "title": "Source Retention",
             "type": "string"
+          },
+          "supersedes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Revision id this registration superseded, if it replaced an earlier one.",
+            "title": "Supersedes"
           }
         },
         "required": [
           "source_artifact_id",
+          "artifact_revision_id",
           "source_kind",
           "source_retention",
           "content_hash",
@@ -24209,6 +24635,7 @@
         "type": "object"
       },
       "required_fields": [
+        "artifact_revision_id",
         "byte_count",
         "content_hash",
         "parser_version",
@@ -24388,6 +24815,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -24488,6 +24928,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -26180,6 +26633,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -26245,6 +26711,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -26581,6 +27060,19 @@
                 "description": "Optional registered source-artifact id.",
                 "title": "Artifact Id"
               },
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Physical revision ('{source_artifact_id}@{revision}') this citation was made against. Absent refs dereference against the current revision and report revision_unpinned.",
+                "title": "Artifact Revision Id"
+              },
               "label": {
                 "anyOf": [
                   {
@@ -26692,6 +27184,19 @@
           },
           "SourceEvidenceInput": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+                "title": "Artifact Revision Id"
+              },
               "block_selector": {
                 "anyOf": [
                   {
@@ -26846,6 +27351,26 @@
     },
     "SnapshotCreateResult": {
       "fields": {
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
         "snapshot": {
           "has_default": false,
           "has_default_factory": false,
@@ -26936,6 +27461,18 @@
           }
         },
         "properties": {
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
           "snapshot": {
             "$ref": "#/$defs/SnapshotMetadata"
           }
@@ -28199,6 +28736,16 @@
             "type": "boolean"
           }
         },
+        "artifact_revision_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_revision_id",
+          "required": true,
+          "schema": {
+            "title": "Artifact Revision Id",
+            "type": "string"
+          }
+        },
         "body_origin": {
           "default": null,
           "default_json_serializable": true,
@@ -28316,6 +28863,90 @@
             "title": "Current Artifact Hash"
           }
         },
+        "drift_observed_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "drift_observed_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "When the recorded content drift was last observed.",
+            "title": "Drift Observed At"
+          }
+        },
+        "drift_observed_hash": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "drift_observed_hash",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Last observed local content hash that did not match the manifest.",
+            "title": "Drift Observed Hash"
+          }
+        },
+        "first_drift_observed_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "first_drift_observed_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "When the first content drift was observed.",
+            "title": "First Drift Observed At"
+          }
+        },
+        "first_drift_observed_hash": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "first_drift_observed_hash",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Local content hash of the FIRST drift ever observed for this revision. Sticky: unlike the pair above it is never cleared, so restoring the original bytes does not erase that the source was altered.",
+            "title": "First Drift Observed Hash"
+          }
+        },
         "kind": {
           "has_default": false,
           "has_default_factory": false,
@@ -28399,6 +29030,19 @@
             ],
             "title": "Retention",
             "type": "string"
+          }
+        },
+        "revision": {
+          "default": 1,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "revision",
+          "required": false,
+          "schema": {
+            "default": 1,
+            "title": "Revision",
+            "type": "integer"
           }
         },
         "source_artifact_id": {
@@ -28490,6 +29134,10 @@
             "title": "Archived",
             "type": "boolean"
           },
+          "artifact_revision_id": {
+            "title": "Artifact Revision Id",
+            "type": "string"
+          },
           "body_origin": {
             "anyOf": [
               {
@@ -28553,6 +29201,58 @@
             "default": null,
             "title": "Current Artifact Hash"
           },
+          "drift_observed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "When the recorded content drift was last observed.",
+            "title": "Drift Observed At"
+          },
+          "drift_observed_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Last observed local content hash that did not match the manifest.",
+            "title": "Drift Observed Hash"
+          },
+          "first_drift_observed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "When the first content drift was observed.",
+            "title": "First Drift Observed At"
+          },
+          "first_drift_observed_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Local content hash of the FIRST drift ever observed for this revision. Sticky: unlike the pair above it is never cleared, so restoring the original bytes does not erase that the source was altered.",
+            "title": "First Drift Observed Hash"
+          },
           "kind": {
             "const": "markdown",
             "title": "Kind",
@@ -28598,6 +29298,11 @@
             "title": "Retention",
             "type": "string"
           },
+          "revision": {
+            "default": 1,
+            "title": "Revision",
+            "type": "integer"
+          },
           "source_artifact_id": {
             "title": "Source Artifact Id",
             "type": "string"
@@ -28611,6 +29316,7 @@
           "registered_at",
           "chunk_count",
           "byte_count",
+          "artifact_revision_id",
           "parser_version",
           "content_available"
         ],
@@ -28618,6 +29324,7 @@
         "type": "object"
       },
       "required_fields": [
+        "artifact_revision_id",
         "byte_count",
         "chunk_count",
         "content_available",
@@ -28631,6 +29338,27 @@
     },
     "SourceEvidenceInput": {
       "fields": {
+        "artifact_revision_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_revision_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+            "title": "Artifact Revision Id"
+          }
+        },
         "block_selector": {
           "default": null,
           "default_json_serializable": true,
@@ -28753,6 +29481,19 @@
       },
       "json_schema": {
         "properties": {
+          "artifact_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional pin to one immutable revision ('{source_artifact_id}@{revision}'). Absent resolves against the current revision.",
+            "title": "Artifact Revision Id"
+          },
           "block_selector": {
             "anyOf": [
               {
@@ -29093,6 +29834,19 @@
             "title": "Total Count",
             "type": "integer"
           }
+        },
+        "withdrawn_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "withdrawn_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Withdrawn Count",
+            "type": "integer"
+          }
         }
       },
       "json_schema": {
@@ -29145,6 +29899,11 @@
           "total_count": {
             "default": 0,
             "title": "Total Count",
+            "type": "integer"
+          },
+          "withdrawn_count": {
+            "default": 0,
+            "title": "Withdrawn Count",
             "type": "integer"
           }
         },
@@ -29522,6 +30281,11 @@
               "total_count": {
                 "default": 0,
                 "title": "Total Count",
+                "type": "integer"
+              },
+              "withdrawn_count": {
+                "default": 0,
+                "title": "Withdrawn Count",
                 "type": "integer"
               }
             },

@@ -52,11 +52,21 @@ def test_inspect_neighborhood_state_defaults_to_all() -> None:
 
 
 def test_group_status_contract_is_persisted_lifecycle_only() -> None:
+    """``withdrawn`` replaces the hard delete; ``auto_resolved`` is read-only legacy.
+
+    ``auto_resolved`` was a dead-end status no path transitioned out of, and it
+    escaped both ``find_pending_group`` and the pending unique index — so a
+    re-propose of the same signature minted a duplicate row. Auto-resolution is
+    now a real approve and survives as ``resolution_source``. The status literal
+    is still ADMISSIBLE because shipped 0.2.x instances persisted rows carrying
+    it; dropping it made every group read on those instances raise.
+    """
     assert set(get_args(contracts.GroupStatus)) == {
         "pending_review",
-        "auto_resolved",
         "applying",
         "resolved",
+        "withdrawn",
+        "auto_resolved",
     }
 
 

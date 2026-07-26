@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 
 from cruxible_core.config.schema import AssertSpec, CoreConfig
 from cruxible_core.errors import ConfigError, CoreError, QueryExecutionError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.predicate import PredicateValueType, evaluate_typed_comparison
@@ -262,6 +263,7 @@ def execute_provider_step(
     persist_traces: bool,
     config_base_path: Path,
     before_provider_invocation: Callable[[], float | None] | None = None,
+    actor_context: GovernedActorContext | None = None,
 ) -> None:
     assert compiled_step.provider_name is not None
     provider_schema = config.providers[compiled_step.provider_name]
@@ -369,6 +371,7 @@ def execute_provider_step(
             error=error_message,
             started_at=started_at,
             duration_ms=(time.monotonic_ns() - started) / 1_000_000,
+            actor_context=actor_context,
         )
         trace = apply_trace_payload_retention(
             trace,
@@ -412,6 +415,7 @@ def execute_provider_step(
         error=error_message,
         started_at=started_at,
         duration_ms=(time.monotonic_ns() - started) / 1_000_000,
+        actor_context=actor_context,
     )
     trace = apply_trace_payload_retention(
         trace,

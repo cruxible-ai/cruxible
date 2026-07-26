@@ -5,9 +5,38 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
+import structlog
 from pydantic import BaseModel, Field, model_validator
 
 from cruxible_client import contracts
+
+logger = structlog.get_logger()
+
+# Request fields retired with the self-declared human/agent axis. A 0.2.x caller
+# still sends them; pydantic's default ``extra="ignore"`` already accepts the
+# request, so the compatibility question is only whether the drop is SILENT.
+# Deprecated: accepted and ignored, logged once per request, removed after 0.3.
+# The value is derived from ``actor_context`` — a declared one was never
+# reconciled with it and is not honored.
+_RETIRED_ACTOR_AXIS_FIELDS = ("source", "proposed_by", "resolved_by", "opened_by")
+
+
+def _warn_retired_actor_axis_fields(model_name: str, value: Any) -> Any:
+    """Log a deprecation warning for retired declared-actor request fields."""
+    if not isinstance(value, dict):
+        return value
+    present = [name for name in _RETIRED_ACTOR_AXIS_FIELDS if name in value]
+    if present:
+        logger.warning(
+            "deprecated_request_field",
+            request_model=model_name,
+            fields=present,
+            detail=(
+                "the declared human/agent actor axis is retired; the value is "
+                "ignored and derived from actor_context instead"
+            ),
+        )
+    return value
 
 
 class InitRequest(BaseModel):
@@ -130,7 +159,6 @@ class BatchDirectWriteRequest(BaseModel):
 class FeedbackRequest(BaseModel):
     receipt_id: str | None = None
     action: contracts.FeedbackAction
-    source: contracts.FeedbackSource
     from_type: str
     from_id: str
     relationship_type: str
@@ -146,9 +174,13 @@ class FeedbackRequest(BaseModel):
     group_override: bool = False
     actor_context: contracts.GovernedActorContext | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("FeedbackRequest", value)
+
 
 class FeedbackBatchRequest(BaseModel):
-    source: contracts.FeedbackSource
     items: list[contracts.FeedbackBatchItemInput]
     actor_context: contracts.GovernedActorContext | None = None
 
@@ -156,18 +188,27 @@ class FeedbackBatchRequest(BaseModel):
 class FeedbackFromQueryRequest(contracts.FeedbackFromQueryInput):
     actor_context: contracts.GovernedActorContext | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("FeedbackFromQueryRequest", value)
+
 
 class OutcomeRequest(BaseModel):
     receipt_id: str | None = None
     outcome: contracts.OutcomeValue
     anchor_type: contracts.OutcomeAnchorType = "receipt"
     anchor_id: str | None = None
-    source: contracts.FeedbackSource = "human"
     outcome_code: str | None = None
     scope_hints: dict[str, Any] | None = None
     outcome_profile_key: str | None = None
     detail: dict[str, Any] | None = None
     actor_context: contracts.GovernedActorContext | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("OutcomeRequest", value)
 
 
 class ProposeGroupRequest(BaseModel):
@@ -177,21 +218,37 @@ class ProposeGroupRequest(BaseModel):
     thesis_facts: dict[str, Any] | None = None
     analysis_state: dict[str, Any] | None = None
     signal_sources_used: list[str] | None = None
-    proposed_by: contracts.GroupProposedBy = "agent"
     suggested_priority: str | None = None
+    # Optional optimistic guard, mirroring the one ``resolve_group`` requires: a
+    # re-propose REWRITES (or withdraws) the live pending bucket, so a caller
+    # that read that bucket, computed a delta against it, and then re-proposed
+    # must be able to say which version it computed against. Optional because an
+    # unconditional refresh is a legitimate ingest pattern; a WRONG value is
+    # refused. Absent from this model the guard was accepted by the client,
+    # advertised in the CHANGELOG, and then silently dropped at the HTTP seam.
+    expected_pending_version: int | None = None
     actor_context: contracts.GovernedActorContext | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("ProposeGroupRequest", value)
 
 
 class ResolveGroupRequest(BaseModel):
     action: contracts.GroupAction
     rationale: str = ""
-    resolved_by: contracts.GroupResolvedBy = "human"
     expected_pending_version: int
     actor_context: contracts.GovernedActorContext | None = None
     # When approving, bless each surviving pre-existing edge (a member tuple
     # already live) with the group's review status + provenance instead of
     # skipping it silently. Default keeps today's skip-but-now-explained behavior.
     stamp_existing: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("ResolveGroupRequest", value)
 
 
 class UpdateTrustStatusRequest(BaseModel):
@@ -288,6 +345,7 @@ class RegisterSourceArtifactRequest(BaseModel):
 
 class DereferenceSourceEvidenceRequest(BaseModel):
     source_artifact_id: str
+    artifact_revision_id: str | None = None
     chunk_id: str | None = None
     heading_path: list[str] | None = None
     block_selector: str | None = None
@@ -386,8 +444,12 @@ class DecisionRecordCreateRequest(BaseModel):
     question: str
     subject_type: str | None = None
     subject_id: str | None = None
-    opened_by: Literal["human", "agent", "service"] = "human"
     actor_context: contracts.GovernedActorContext | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("DecisionRecordCreateRequest", value)
 
 
 class DecisionRecordFinalizeRequest(BaseModel):

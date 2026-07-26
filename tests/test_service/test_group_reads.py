@@ -317,7 +317,6 @@ class TestListGroups:
                 "",
                 facts2,
                 {},
-                "human",
                 trust_status="invalidated",
                 confirmed=True,
             )
@@ -480,7 +479,6 @@ class TestGroupStatus:
             proposed.group_id,
             "approve",
             rationale="Catalog evidence supports the fit.",
-            resolved_by="human",
             expected_pending_version=1,
             actor_context=actor,
         )
@@ -503,7 +501,6 @@ class TestGroupStatus:
             status="applying",
             thesis_text="reference thesis",
             thesis_facts={"rule_id": "manual", "rule_version": 1},
-            proposed_by="agent",
             member_count=1,
             created_at=datetime.now(timezone.utc),
         )

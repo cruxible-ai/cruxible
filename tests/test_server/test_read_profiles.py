@@ -232,6 +232,8 @@ EDGE_PROVENANCE_FULL = {
     "receipt_id": "<varies>",
     "resolution_id": None,
     "clone_origin": None,
+    "touched_by": None,
+    "backfilled_at": None,
     "created_actor_context": NORMALIZED_ACTOR_CONTEXT_FULL,
     "last_modified_actor_context": None,
 }
@@ -254,6 +256,7 @@ UNREVIEWED_ASSERTION_FULL = {
         "superseded_by": None,
     },
     "group_override": False,
+    "group_approval_drift": None,
 }
 
 # Deliberate wi-read-revision-and-continuation envelope extension:

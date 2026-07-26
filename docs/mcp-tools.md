@@ -528,7 +528,6 @@ happened; they never prove its inputs are still current.
 | `instance_id` | yes | string |  |
 | `receipt_id` | no | string |  |
 | `action` | yes | enum: approve, reject, correct, flag |  |
-| `source` | yes | enum: human, agent |  |
 | `from_type` | yes | string |  |
 | `from_id` | yes | string |  |
 | `relationship_type` | yes | string |  |
@@ -567,7 +566,6 @@ happened; they never prove its inputs are still current.
 | `receipt_id` | yes | string | Query receipt ID. |
 | `result_index` | yes | integer | Zero-based query result row index. |
 | `action` | yes | enum: approve, reject, correct, flag | Feedback action. |
-| `source` | no | enum: human, agent | Who produced this feedback. |
 | `reason` | no | string | Reason for feedback. |
 | `reason_code` | no | string | Structured feedback reason code. |
 | `scope_hints` | no | object | Structured feedback scope hints. |
@@ -600,7 +598,6 @@ happened; they never prove its inputs are still current.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `items` | yes | array |  |
-| `source` | no | enum: human, agent |  |
 
 **Returns:** Top-level fields: `feedback_ids`, `applied_count`, `total`, `receipt_id`
 
@@ -626,7 +623,6 @@ happened; they never prove its inputs are still current.
 | `receipt_id` | no | string | null |  |
 | `anchor_type` | no | enum: resolution, receipt |  |
 | `anchor_id` | no | string | null |  |
-| `source` | no | enum: human, agent |  |
 | `outcome_code` | no | string | null |  |
 | `scope_hints` | no | object | null |  |
 | `outcome_profile_key` | no | string | null |  |
@@ -1161,7 +1157,7 @@ error-level finding exists.
 
 ## cruxible_add_constraint
 
-**Permission:** `GOVERNED_WRITE`
+**Permission:** `ADMIN`
 
 **Purpose:** Use when you need to add a graph quality rule that future evaluations should check.
 
@@ -1186,7 +1182,7 @@ error-level finding exists.
 
 ## cruxible_add_decision_policy
 
-**Permission:** `GOVERNED_WRITE`
+**Permission:** `ADMIN`
 
 **Purpose:** Use when you need to record a policy that affects how a decision surface should be handled.
 
@@ -1290,9 +1286,8 @@ without it, only the active materialized digest is checked.
 | `question` | yes | string |  |
 | `subject_type` | no | string | null |  |
 | `subject_id` | no | string | null |  |
-| `opened_by` | no | string |  |
 
-**Returns:** Top-level fields: `record`, `events`
+**Returns:** Top-level fields: `record`, `events`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1315,7 +1310,7 @@ without it, only the active materialized digest is checked.
 | `decision_record_id` | yes | string |  |
 | `include_events` | no | boolean |  |
 
-**Returns:** Top-level fields: `record`, `events`
+**Returns:** Top-level fields: `record`, `events`, `receipt_id`
 
 **Side Effects:** Read-only.
 
@@ -1394,7 +1389,7 @@ without it, only the active materialized digest is checked.
 | `decision_class` | yes | enum: recommended, rejected, deferred, escalated |  |
 | `rationale` | no | string |  |
 
-**Returns:** Top-level fields: `record`, `events`
+**Returns:** Top-level fields: `record`, `events`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1417,7 +1412,7 @@ without it, only the active materialized digest is checked.
 | `decision_record_id` | yes | string |  |
 | `reason` | no | string |  |
 
-**Returns:** Top-level fields: `record`, `events`
+**Returns:** Top-level fields: `record`, `events`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1771,8 +1766,8 @@ without it, only the active materialized digest is checked.
 | `thesis_facts` | no | object | null |  |
 | `analysis_state` | no | object | null |  |
 | `signal_sources_used` | no | array | null |  |
-| `proposed_by` | no | enum: human, agent |  |
 | `suggested_priority` | no | string | null |  |
+| `expected_pending_version` | no | integer | null | Optimistic guard. A re-propose REWRITES the live pending group; pass the version you computed your delta against to have a bucket that moved underneath you refused instead of overwritten. Omit for an unconditional refresh. |
 
 **Returns:** Top-level fields: `group_id`, `signature`, `status`, `review_priority`, `member_count`, `prior_resolution`, `suppressed`, `suppressed_members`, `policy_summary`, `receipt_id`
 
@@ -1798,7 +1793,6 @@ without it, only the active materialized digest is checked.
 | `action` | yes | enum: approve, reject |  |
 | `expected_pending_version` | yes | integer |  |
 | `rationale` | no | string |  |
-| `resolved_by` | no | enum: human, agent |  |
 | `stamp_existing` | no | boolean | On approve, bless each surviving pre-existing edge (member tuple already live) with this group's review status and provenance instead of skipping it. |
 
 **Returns:** Top-level fields: `group_id`, `action`, `edges_created`, `edges_skipped`, `resolution_id`, `receipt_id`, `skipped_members` (per-member skip explanations: identity plus `skip_kind`, `reason`, `stamped`), `edges_stamped`
@@ -1868,7 +1862,7 @@ without it, only the active materialized digest is checked.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `relationship_type` | no | string | null |  |
-| `status` | no | enum: pending_review, auto_resolved, applying, resolved | null |  |
+| `status` | no | enum: pending_review, applying, resolved, withdrawn, auto_resolved | null | `auto_resolved` is DEPRECATED and read-only: nothing writes it any more, and it is filterable only so an operator upgrading from 0.2.x can find the rows it left behind. |
 | `limit` | no | integer |  |
 | `offset` | no | integer |  |
 
@@ -1956,7 +1950,7 @@ without it, only the active materialized digest is checked.
 
 ## cruxible_create_snapshot
 
-**Permission:** `GOVERNED_WRITE`
+**Permission:** `GRAPH_WRITE`
 
 **Purpose:** Use when you need to mark the current state with a named snapshot.
 
@@ -2039,12 +2033,13 @@ without it, only the active materialized digest is checked.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `source_artifact_id` | yes | string | Artifact ID returned by `cruxible_register_source_artifact`. |
+| `artifact_revision_id` | no | string | null | Pin the read to one immutable revision (`{source_artifact_id}@{revision}`), as carried on the evidence ref you are replaying. Omit to read the current revision, which is reported as `revision_unpinned`. |
 | `chunk_id` | no | string | null | Chunk ID locator. |
 | `heading_path` | no | array | null | Heading-path locator (used with `block_selector`). |
 | `block_selector` | no | string | null | Block selector within the heading path. |
 | `expected_content_hash` | no | string | null | Expected chunk content hash for drift detection. |
 
-**Returns:** Top-level fields: `status` (one of `available`, `drifted`, `unavailable`), `source_artifact_id`, `chunk_id`, `content_hash`, `expected_artifact_hash`, `current_artifact_hash`, `body_origin`, `body`, `reason`, `chunk`
+**Returns:** Top-level fields: `status` (one of `available`, `drifted`, `unavailable`, `revision_bytes_not_retained` — a pinned read of a superseded revision whose bytes were never archived, which is not drift), `source_artifact_id`, `chunk_id`, `content_hash`, `expected_artifact_hash`, `current_artifact_hash`, `body_origin`, `body`, `reason`, `chunk`, `artifact_revision_id`, `revision_unpinned`
 
 **Side Effects:** Read-only.
 

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.types import FeedbackRecord
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.governance.actors import GovernedActorContext, derived_actor_kind
 from cruxible_core.graph.assertion_state import (
     RelationshipAssertion,
     RelationshipReviewSource,
@@ -63,14 +63,14 @@ def _apply_feedback_provenance(
     """Stamp the touched edge's provenance, backfilling it when null.
 
     A null-provenance edge would otherwise stay null forever; touching it via feedback
-    backfills a fresh provenance so the edge becomes auditable.
+    backfills a marker provenance so the edge becomes auditable. Feedback does not
+    claim authorship of an edge it merely adjudicated — see
+    :func:`backfill_provenance_on_touch`.
     """
     return metadata.model_copy(
         update={
             "provenance": backfill_provenance_on_touch(
                 prov,
-                _SOURCE_PREFIX[feedback.source],
-                f"feedback:{feedback.action}",
                 f"feedback:{feedback.action}",
                 actor_context=feedback.actor_context,
             ),
@@ -78,10 +78,18 @@ def _apply_feedback_provenance(
     )
 
 
-_SOURCE_PREFIX: dict[str, RelationshipReviewSource] = {
-    "human": "human",
-    "agent": "agent",
-}
+def _review_source_for(feedback: FeedbackRecord) -> RelationshipReviewSource:
+    """Return the review-state source DERIVED from the feedback's actor.
+
+    Read off ``actor_context``, never off a caller-declared field: an edge's
+    review state records who adjudicated it, and that must not be a claim the
+    adjudicator made about itself.
+    """
+    kind = derived_actor_kind(feedback.actor_context)
+    if kind in ("human", "agent", "system"):
+        return kind
+    return "unknown"
+
 
 _ACTION_PAST: dict[str, RelationshipReviewStatus] = {
     "approve": "approved",
@@ -153,7 +161,7 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
                 relationship_type=t.relationship_type,
             )
 
-    prefix = _SOURCE_PREFIX[feedback.source]
+    prefix = _review_source_for(feedback)
     actor = f"feedback:{feedback.action}"
 
     if feedback.action in _ACTION_PAST:

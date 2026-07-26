@@ -693,7 +693,6 @@ def service_propose_workflow(
                 pending_refresh_mode=proposal_payload.pending_refresh_mode,
                 analysis_state=proposal_payload.analysis_state,
                 signal_sources_used=proposal_payload.signal_sources_used,
-                proposed_by=proposal_payload.proposed_by,
                 suggested_priority=proposal_payload.suggested_priority,
                 source_workflow_name=workflow_name,
                 source_workflow_receipt_id=result.receipt.receipt_id,

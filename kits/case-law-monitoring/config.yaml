@@ -1397,7 +1397,6 @@ workflows:
           candidates_from: candidates
           signals_from: [signals]
           thesis_text: These corpus opinions contain the proposed holdings.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1451,7 +1450,6 @@ workflows:
           candidates_from: candidates
           signals_from: [signals]
           thesis_text: These holdings interpret the proposed statutes or rules.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1507,7 +1505,6 @@ workflows:
           candidates_from: candidates
           signals_from: [signals]
           thesis_text: These holdings materially address the proposed legal issues.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1559,7 +1556,6 @@ workflows:
           candidates_from: candidates
           signals_from: [signals]
           thesis_text: These corpus opinions legally treat the cited opinions in the proposed way.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1615,7 +1611,6 @@ workflows:
           candidates_from: candidates
           signals_from: [signals]
           thesis_text: These holdings support the proposed firm arguments.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1671,7 +1666,6 @@ workflows:
           candidates_from: candidates
           signals_from: [signals]
           thesis_text: These holdings undermine or create legal risk for the proposed arguments.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1719,7 +1713,6 @@ workflows:
           candidates_from: candidates
           signals_from: [signals]
           thesis_text: These matters turn on the proposed statutes, rules, or doctrines.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1810,7 +1803,6 @@ workflows:
           candidates_from: candidates
           signals_from: [signals, jurisdiction_signals]
           thesis_text: These corpus opinions affect the proposed firm matters.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1881,7 +1873,6 @@ workflows:
           candidates_from: candidates
           signals_from: [obligation_signals, routing_signals]
           thesis_text: These filings create the proposed response obligations for tracked matters.
-          proposed_by: agent
         as: proposal
     returns: proposal
 
@@ -1993,7 +1984,6 @@ workflows:
           candidates_from: candidates
           signals_from: [signals]
           thesis_text: These opinions create the proposed review obligations.
-          proposed_by: agent
         as: proposal
     returns: proposal
 

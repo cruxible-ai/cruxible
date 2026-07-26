@@ -142,6 +142,7 @@ def execute_provider_handler(
         persist_traces=context.persist_traces,
         config_base_path=context.config_base_path,
         before_provider_invocation=before_invocation,
+        actor_context=context.actor_context,
     )
     context.check_procedure_wall_clock()
 

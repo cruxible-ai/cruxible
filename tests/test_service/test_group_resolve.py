@@ -23,6 +23,7 @@ from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
 from cruxible_core.service import (
     ResolveGroupResult,
+    service_add_relationships,
     service_attest,
     service_get_relationship_lineage,
     service_propose_group,
@@ -222,7 +223,6 @@ def _save_resolution(
     thesis_text: str,
     thesis_facts: dict[str, Any],
     outcome_state: dict[str, Any],
-    resolved_by: str,
     **kwargs: Any,
 ) -> str:
     with instance.write_transaction() as uow:
@@ -234,7 +234,6 @@ def _save_resolution(
             thesis_text,
             thesis_facts,
             outcome_state,
-            resolved_by,
             **kwargs,
         )
 
@@ -684,6 +683,140 @@ class TestSkipExplanationAndStamp:
         assert rel.metadata.provenance is None
 
 
+class TestReApprovalIsTheNewDriftBaseline:
+    """Re-approval is the THIRD write path for the drift marker.
+
+    RULING (Robert, 2026-07-25): ``group_approval_drift`` reports CURRENT
+    divergence against the NEWEST approval. Blessing a surviving edge copied the
+    assertion with only ``review`` replaced, so a marker raised under group A
+    survived group B's approval verbatim — the edge reported drift against a
+    group that no longer owned it, over content B had just signed off on.
+    """
+
+    @staticmethod
+    def _edge(instance: CruxibleInstance) -> RelationshipInstance:
+        rel = instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+        assert rel is not None
+        return rel
+
+    @staticmethod
+    def _write(instance: CruxibleInstance, *, verified: bool, source: str) -> None:
+        service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    relationship_type="fits",
+                    from_type="Part",
+                    from_id="BP-1",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": verified},
+                )
+            ],
+            source="test",
+            source_ref=source,
+        )
+
+    def _drifted_under_group_a(self, instance: CruxibleInstance) -> str:
+        """Approve BP-1->V-1 as group A, then drift it with a direct write."""
+        group_a = _propose(instance, [_member("BP-1", "V-1")], facts={"style": "casual"})
+        service_resolve_group(instance, group_a, "approve", expected_pending_version=1)
+        assert self._edge(instance).properties["verified"] is False
+
+        self._write(instance, verified=True, source="direct")
+        drift = self._edge(instance).metadata.assertion.group_approval_drift
+        assert drift is not None
+        assert drift.group_id == group_a
+        assert drift.approved_values == {"verified": False}
+        return group_a
+
+    def _approve_as_group_b(
+        self,
+        instance: CruxibleInstance,
+        *,
+        properties: dict[str, Any] | None = None,
+    ) -> tuple[str, ResolveGroupResult]:
+        member = _member("BP-1", "V-1")
+        if properties is not None:
+            member = member.model_copy(update={"properties": properties})
+        group_b = _propose(instance, [member], facts={"style": "formal"})
+        result = service_resolve_group(
+            instance,
+            group_b,
+            "approve",
+            expected_pending_version=1,
+            stamp_existing=True,
+        )
+        assert result.edges_stamped == 1
+        return group_b, result
+
+    def test_re_approval_drops_the_stale_marker_and_reattributes_the_edge(
+        self, instance: CruxibleInstance
+    ) -> None:
+        group_a = self._drifted_under_group_a(instance)
+        group_b, result = self._approve_as_group_b(instance)
+        assert group_b != group_a
+
+        rel = self._edge(instance)
+        # The content B blessed IS the new baseline: nothing diverges from it.
+        assert rel.metadata.assertion.group_approval_drift is None
+        # ...and the edge names B, not A, everywhere a reader would look.
+        assert rel.metadata.provenance is not None
+        assert rel.metadata.provenance.source == "group_resolve"
+        assert rel.metadata.provenance.source_ref == f"group:{group_b}"
+        assert rel.metadata.provenance.resolution_id == result.resolution_id
+        assert rel.metadata.provenance.receipt_id == result.receipt_id
+        assert rel.metadata.assertion.review.status == "approved"
+        assert rel.metadata.assertion.review.updated_by == f"group:{group_b}"
+
+    def test_a_later_divergent_write_drifts_against_the_re_approved_content(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """The new baseline is enforced, not merely declared."""
+        self._drifted_under_group_a(instance)
+        group_b, _result = self._approve_as_group_b(instance)
+
+        # ``verified`` was True at re-approval time, so THAT is what B approved.
+        self._write(instance, verified=False, source="later")
+        drift = self._edge(instance).metadata.assertion.group_approval_drift
+        assert drift is not None
+        assert drift.group_id == group_b
+        assert drift.changed_properties == ["verified"]
+        assert drift.approved_values == {"verified": True}
+
+    def test_approval_never_applies_proposed_content_over_a_surviving_edge(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """Why clearing the marker is always right on this path.
+
+        ``_validate_approval_members`` skips every member whose tuple is already
+        live, so an approval CANNOT overwrite a surviving edge's properties: the
+        blessed baseline is always the edge's current content, whatever the
+        group's members proposed. There is therefore no case where the marker
+        must survive because the approved content differs from what is live.
+        """
+        self._drifted_under_group_a(instance)
+        group_b, result = self._approve_as_group_b(instance, properties={"verified": False})
+
+        assert result.edges_created == 0
+        assert result.edges_skipped == 1
+        rel = self._edge(instance)
+        # B proposed verified=False; the live edge keeps verified=True.
+        assert rel.properties["verified"] is True
+        assert rel.metadata.assertion.group_approval_drift is None
+
+        # The baseline is the LIVE content, not the proposed content: restating
+        # the live value is not drift...
+        self._write(instance, verified=True, source="restate")
+        assert self._edge(instance).metadata.assertion.group_approval_drift is None
+        # ...and moving to what B proposed IS.
+        self._write(instance, verified=False, source="to-proposed")
+        drift = self._edge(instance).metadata.assertion.group_approval_drift
+        assert drift is not None
+        assert drift.group_id == group_b
+        assert drift.approved_values == {"verified": True}
+
+
 # ---------------------------------------------------------------------------
 # Reject tests
 # ---------------------------------------------------------------------------
@@ -747,7 +880,6 @@ class TestReject:
             "",
             {},
             {},
-            "human",
         )
         _update_group_status(instance, group_id, "applying", resolution_id=res_id)
 
@@ -825,7 +957,6 @@ class TestResolutionReceiptId:
                 group.thesis_text,
                 group.thesis_facts,
                 group.analysis_state,
-                "human",
                 confirmed=False,
                 receipt_id=first_attempt_receipt_id,
             )
@@ -879,7 +1010,6 @@ class TestResolutionReceiptId:
             "",
             {},
             {},
-            "human",
         )
         store = instance.get_group_store()
         try:
@@ -1041,7 +1171,7 @@ class TestStatusGuards:
                 expected_pending_version=1,
             )
 
-    def test_auto_resolved_accepts_resolution(self, instance: CruxibleInstance) -> None:
+    def test_pending_group_accepts_resolution(self, instance: CruxibleInstance) -> None:
         """Auto-resolved groups can be explicitly resolved."""
         facts = {"style": "casual"}
         sig = compute_group_signature("fits", facts)
@@ -1055,7 +1185,6 @@ class TestStatusGuards:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=True,
         )
@@ -1065,7 +1194,6 @@ class TestStatusGuards:
         # Instead, just test that a pending_review or auto_resolved group
         # can be resolved. Let's manually set status.
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
-        _update_group_status(instance, group_id, "auto_resolved")
 
         result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert result.edges_created == 1
@@ -1110,7 +1238,6 @@ class TestConfirmedFlag:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=False,
         )
@@ -1149,19 +1276,28 @@ class TestTrustInheritance:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=True,
         )
 
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
-        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        # A prior TRUSTED confirmed resolution plus all-support signals is
+        # exactly the auto-resolve precondition, so the proposal resolves itself
+        # through the approve rail rather than sitting in pending_review.
+        result = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="test",
+            thesis_facts=facts_scope,
+        )
+        assert result.status == "resolved"
+        assert result.resolution_id is not None
 
         store = instance.get_group_store()
         try:
-            group = store.get_group(group_id)
-            res = store.get_resolution(group.resolution_id)
+            res = store.get_resolution(result.resolution_id)
             assert res.trust_status == "trusted"
+            assert res.resolution_source == "auto_resolved"
         finally:
             store.close()
 
@@ -1182,7 +1318,6 @@ class TestTrustInheritance:
             "",
             facts,
             {},
-            "human",
             trust_status="watch",
             confirmed=True,
         )
@@ -1198,7 +1333,14 @@ class TestTrustInheritance:
         finally:
             store.close()
 
-    def test_invalidated_prior_starts_watch(self, instance: CruxibleInstance) -> None:
+    def test_invalidated_prior_is_carried_forward(self, instance: CruxibleInstance) -> None:
+        """Approve must not launder a reviewer's receipted ``invalidated``.
+
+        Trust is thesis-scoped and lives on the signature's latest confirmed
+        approval, so a new approval that reset it to ``watch`` was a trust MOVE
+        performed by a verb that has no business moving trust — and it discarded
+        the reviewer's judgement without a receipt, an actor, or a reason.
+        """
         facts_scope = {"style": "casual"}
         facts = _agent_signature_facts(
             instance,
@@ -1215,8 +1357,8 @@ class TestTrustInheritance:
             "",
             facts,
             {},
-            "human",
             trust_status="invalidated",
+            trust_reason="reviewer rejected this thesis",
             confirmed=True,
         )
 
@@ -1227,7 +1369,8 @@ class TestTrustInheritance:
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            assert res.trust_status == "watch"
+            assert res.trust_status == "invalidated"
+            assert res.trust_reason == "reviewer rejected this thesis"
         finally:
             store.close()
 
@@ -1260,7 +1403,6 @@ class TestTrustInheritance:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=False,  # unconfirmed
         )
@@ -1282,10 +1424,17 @@ class TestTrustInheritance:
 # ---------------------------------------------------------------------------
 
 
-class TestTrustRevalidation:
-    def test_prior_invalidated_while_applying(self, instance: CruxibleInstance) -> None:
-        """If prior was trusted at creation but invalidated while in applying,
-        trust revalidates to watch at confirmation."""
+class TestApproveNeverMovesTrust:
+    def test_prior_invalidated_before_resolve_is_carried_not_reset(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """A prior invalidated between propose and resolve is CARRIED, not reset.
+
+        Confirmation used to re-read the prior and rewrite ``invalidated`` to
+        ``watch`` — a second, quieter door to the same unattributed trust move
+        the creation path made. Re-approving a thesis is not evidence that the
+        thesis became trustworthy again.
+        """
         facts_scope = {"style": "casual"}
         facts = _agent_signature_facts(
             instance,
@@ -1295,7 +1444,7 @@ class TestTrustRevalidation:
         sig = compute_group_signature("fits", facts)
 
         # Create prior trusted confirmed resolution
-        prior_res_id = _save_resolution(
+        _save_resolution(
             instance,
             "fits",
             sig,
@@ -1304,26 +1453,37 @@ class TestTrustRevalidation:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=True,
         )
 
-        # Propose and start resolve (manually simulate applying state)
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
+        # The prior is trusted, so the proposal auto-resolves on the way in.
+        first = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="test",
+            thesis_facts=facts_scope,
+        )
+        assert first.status == "resolved"
+        assert first.resolution_id is not None
 
-        # Now invalidate the prior before resolve completes
-        _update_resolution_trust_status(instance, prior_res_id, "invalidated", "trust broken")
+        # A reviewer then invalidates the now-latest confirmed approval.
+        _update_resolution_trust_status(
+            instance, first.resolution_id, "invalidated", "trust broken"
+        )
 
-        # Resolve — should revalidate trust at confirmation
+        # A later approval of the same signature carries the invalidation
+        # forward instead of quietly revalidating it.
+        group_id = _propose(instance, [_member("BP-2", "V-2")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
         try:
             group = store.get_group(group_id)
             res = store.get_resolution(group.resolution_id)
-            # Prior was invalidated, so new resolution should be watch
-            assert res.trust_status == "watch"
+            assert res.trust_status == "invalidated"
+            assert res.trust_reason == "trust broken"
         finally:
             store.close()
 
@@ -1344,18 +1504,22 @@ class TestTrustRevalidation:
             "",
             facts,
             {},
-            "human",
             trust_status="trusted",
             confirmed=True,
         )
 
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
-        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        result = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="test",
+            thesis_facts=facts_scope,
+        )
+        assert result.resolution_id is not None
 
         store = instance.get_group_store()
         try:
-            group = store.get_group(group_id)
-            res = store.get_resolution(group.resolution_id)
+            res = store.get_resolution(result.resolution_id)
             assert res.trust_status == "trusted"  # preserved
         finally:
             store.close()
@@ -1399,7 +1563,6 @@ class TestApplyingRetry:
             "",
             {},
             {},
-            "human",
             confirmed=False,
         )
         _update_group_status(instance, group_id, "applying", resolution_id=res_id)
@@ -1448,7 +1611,6 @@ class TestApplyingRetry:
             "",
             {},
             {},
-            "human",
             confirmed=False,
         )
         _update_group_status(instance, group_id, "applying", resolution_id=res_id)
@@ -1486,7 +1648,6 @@ class TestApplyingRetry:
             "",
             {},
             {},
-            "human",
             confirmed=False,
         )
         _update_group_status(instance, group_id, "applying", resolution_id=res_id)
@@ -1652,3 +1813,51 @@ class TestServiceSeamGovernanceRail:
         )
         assert still_pending is not None
         assert still_pending.metadata.assertion.review.status == "pending"
+
+
+class TestTerminalStatusesAreNotResolvable:
+    """Resolve accepts ``pending_review`` only — ``applying`` for approve retry."""
+
+    def test_withdrawn_group_cannot_be_approved_afterwards(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """A withdrawn group keeps its members; that must not make it approvable.
+
+        Withdraw preserves the proposal deliberately (it is governance history).
+        Resolve used to accept any status that was not ``resolved``, so the
+        preserved proposal stayed approvable by id — including after a fresh
+        pending group for the same signature had been opened and reviewed on its
+        own terms.
+        """
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        _update_group_status(instance, group_id, "withdrawn")
+
+        with pytest.raises(ConfigError, match="withdrawn and cannot be resolved"):
+            service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
+    def test_withdrawn_group_cannot_be_rejected_afterwards(
+        self, instance: CruxibleInstance
+    ) -> None:
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        _update_group_status(instance, group_id, "withdrawn")
+
+        with pytest.raises(ConfigError, match="withdrawn and cannot be resolved"):
+            service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
+
+    def test_legacy_auto_resolved_group_cannot_be_resolved(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """The deprecated legacy status is terminal, not a back door into approve."""
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        _update_group_status(instance, group_id, "auto_resolved")
+
+        with pytest.raises(ConfigError, match="auto_resolved and cannot be resolved"):
+            service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
+    def test_pending_review_group_still_resolves(self, instance: CruxibleInstance) -> None:
+        """The allowlist must not have closed the door on the normal path."""
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
+        assert result.action == "approve"

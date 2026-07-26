@@ -30,7 +30,14 @@ RelationshipReviewStatus = Literal[
     "rejected",
 ]
 
-RelationshipReviewSource = Literal["system", "human", "agent", "group"]
+RelationshipReviewSource = Literal["system", "human", "agent", "group", "unknown"]
+"""Who moved an edge's review state.
+
+``unknown`` is the honest value for a review transition whose actor context did
+not resolve. It exists because the alternative — the retired caller-declared
+``source`` axis — defaulted such writes to ``human``, which is a claim the
+instance had no evidence for.
+"""
 
 RelationshipLifecycleStatus = Literal[
     "active",
@@ -254,6 +261,41 @@ class EntityLifecycleState(LifecycleState[EntityLifecycleStatus]):
     status: EntityLifecycleStatus = "live"
 
 
+class GroupApprovalDrift(BaseModel):
+    """Divergence between the content a group approved and the edge's content now.
+
+    A group approval accepts an edge's PROPERTIES, not merely its existence. For
+    an ordinary (``direct``) relationship type a later direct write that changes
+    those properties is legitimate — facts about the world change — but the
+    divergence must not vanish silently, or a reviewer reading the edge still
+    believes the group signed off on what it now says.
+
+    ``approved_values`` holds the values as of the approval, and is carried
+    forward across successive drifts on the same group: a second drift must not
+    overwrite it with the first drift's values, or the record degrades into
+    "what it said last time" instead of "what was approved".
+    """
+
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    group_id: str
+    changed_properties: list[str] = Field(default_factory=list)
+    approved_values: dict[str, Any] = Field(default_factory=dict)
+    first_detected_at: datetime | None = None
+    detected_at: datetime | None = None
+    receipt_id: str | None = None
+    actor_context: GovernedActorContext | None = None
+
+    @field_validator("first_detected_at", "detected_at")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | None) -> datetime | None:
+        return ensure_utc(value) if value is not None else None
+
+    @field_serializer("first_detected_at", "detected_at", when_used="json")
+    def _serialize_timestamp(self, value: datetime | None) -> str | None:
+        return format_datetime(value)
+
+
 class RelationshipAssertion(BaseModel):
     """Coupled review and lifecycle state for a relationship."""
 
@@ -262,6 +304,13 @@ class RelationshipAssertion(BaseModel):
     review: RelationshipReviewState = Field(default_factory=RelationshipReviewState)
     lifecycle: RelationshipLifecycleState = Field(default_factory=RelationshipLifecycleState)
     group_override: bool = False
+    # Deliberately NOT on the review or lifecycle axis: a legitimately-changed
+    # fact must stay live and stay approved. Drift is a trust annotation that
+    # rides alongside ``group_override`` (the other group-provenance flag) and
+    # is returned by every ordinary relationship read via ``metadata.assertion``.
+    # ``None`` is dropped by the ``exclude_none=True`` metadata encoder, so
+    # un-drifted edges serialize exactly as before.
+    group_approval_drift: GroupApprovalDrift | None = None
 
 
 def relationship_assertion_from_metadata(value: Any) -> RelationshipAssertion:
@@ -313,6 +362,7 @@ __all__ = [
     "WRITABLE_RELATIONSHIP_LIFECYCLE_STATUSES",
     "EntityLifecycleState",
     "EntityLifecycleStatus",
+    "GroupApprovalDrift",
     "LifecycleState",
     "RelationshipAssertion",
     "RelationshipLifecycleState",

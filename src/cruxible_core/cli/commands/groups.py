@@ -50,12 +50,16 @@ def _group_status_filter(status: str | None) -> GroupStatus | None:
         return None
     if status == "pending_review":
         return "pending_review"
-    if status == "auto_resolved":
-        return "auto_resolved"
+    if status == "withdrawn":
+        return "withdrawn"
     if status == "applying":
         return "applying"
     if status == "resolved":
         return "resolved"
+    if status == "auto_resolved":
+        # Deprecated read-only legacy status; filterable so an operator
+        # upgrading from 0.2.x can find the rows it left behind.
+        return "auto_resolved"
     raise click.BadParameter(f"Invalid group status: {status}")
 
 
@@ -91,6 +95,12 @@ def _resolution_action_filter(action: str | None) -> ResolutionAction | None:
     hidden=True,
     help="Deprecated; signal sources are derived from member signals.",
 )
+@click.option(
+    "--expected-pending-version",
+    type=int,
+    default=None,
+    help="Refuse the re-propose if the live pending group is not at this version.",
+)
 @handle_errors
 def group_propose(
     relationship: str,
@@ -100,6 +110,7 @@ def group_propose(
     thesis_facts: str | None,
     analysis_state: str | None,
     signal_source: tuple[str, ...],
+    expected_pending_version: int | None,
 ) -> None:
     """Propose a candidate group of edges for batch review."""
     if members_file and members_json:
@@ -191,6 +202,7 @@ def group_propose(
             thesis_facts=facts,
             analysis_state=state,
             signal_sources_used=list(signal_source) if signal_source else None,
+            expected_pending_version=expected_pending_version,
         ),
         lambda instance: service_propose_group_inputs(
             instance,
@@ -200,6 +212,7 @@ def group_propose(
             thesis_facts=facts,
             analysis_state=state,
             signal_sources_used=list(signal_source) if signal_source else None,
+            expected_pending_version=expected_pending_version,
         ),
         allow_local=False,
         command_name="group propose",
@@ -236,12 +249,6 @@ def group_propose(
 )
 @click.option("--rationale", default="", help="Rationale for this resolution.")
 @click.option(
-    "--source",
-    type=click.Choice(["human", "agent"]),
-    default="human",
-    help="Who resolved (default: human).",
-)
-@click.option(
     "--expected-pending-version",
     required=True,
     type=int,
@@ -262,7 +269,6 @@ def group_resolve(
     group_id: str,
     action: str,
     rationale: str,
-    source: str,
     expected_pending_version: int,
     stamp_existing: bool,
     output_json: bool,
@@ -274,7 +280,6 @@ def group_resolve(
             group_id,
             action=cast(contracts.GroupAction, action),
             rationale=rationale,
-            resolved_by=cast(contracts.GroupResolvedBy, source),
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
         ),
@@ -283,7 +288,6 @@ def group_resolve(
             group_id,
             action,  # type: ignore[arg-type]
             rationale=rationale,
-            resolved_by=source,  # type: ignore[arg-type]
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
         ),
@@ -421,7 +425,7 @@ def group_get(group_id: str, output_json: bool) -> None:
 @click.option(
     "--status",
     default=None,
-    type=click.Choice(["pending_review", "auto_resolved", "applying", "resolved"]),
+    type=click.Choice(["pending_review", "applying", "resolved", "withdrawn", "auto_resolved"]),
     help="Filter by status.",
 )
 @click.option("--limit", default=50, help="Max groups to show.")
@@ -575,6 +579,7 @@ def group_status(group_id: str | None, signature: str | None, output_json: bool)
                     "tuple_count": item.tuple_count,
                     "rationale": item.rationale,
                     "resolved_by": item.resolved_by,
+                    "resolution_source": item.resolution_source,
                     "resolved_actor": item.resolved_actor,
                 }
                 for item in result.approved_history

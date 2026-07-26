@@ -11,11 +11,16 @@ from pydantic import (
     StrictFloat,
     StrictInt,
     StrictStr,
+    computed_field,
     model_serializer,
     model_validator,
 )
 
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.governance.actors import (
+    DerivedActorKind,
+    GovernedActorContext,
+    derived_actor_kind,
+)
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.temporal import utc_now
@@ -29,8 +34,38 @@ ResolutionAction = Literal["approve", "reject"]
 TrustStatus = Literal["trusted", "watch", "invalidated"]
 """Trust posture for a persisted resolution, tuned by outcome analysis."""
 
-GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
-"""Lifecycle status of a candidate group."""
+GroupStatus = Literal["pending_review", "applying", "resolved", "withdrawn", "auto_resolved"]
+"""Lifecycle status of a candidate group.
+
+Deprecated: ``auto_resolved`` is READ-ONLY legacy. It is never written again as
+of 0.3 (wi-group-auto-resolve-bug) and will be removed once no shipped 0.2.x
+instance can still hold such a row.
+
+It was a dead-end label: no code path transitioned a group out of it, and
+because ``find_pending_group`` and the pending unique index both key on
+``pending_review``, an auto-resolved group escaped both — so re-proposing the
+same signature minted a DUPLICATE row instead of rewriting the live one.
+Auto-resolution now runs the real receipted approve transition, and
+``auto_resolved`` survives as :attr:`GroupResolution.resolution_source`.
+
+The literal stays admissible on READ because shipped 0.2.x kits (auto-resolve is
+enabled in them) persisted rows carrying it. Dropping it from the vocabulary
+made ``_row_to_group`` raise a validation error on every list/get that touched
+one, so a single legacy row bricked group reads for the whole instance after an
+upgrade. Those rows are NOT migrated to ``withdrawn``: nobody withdrew them, and
+inventing the act would be a fabricated governance event. They are terminal —
+``resolve_group`` refuses them — and they sit outside the pending unique index,
+so a re-propose of the same signature opens a fresh ``pending_review`` group.
+
+``withdrawn`` replaces the hard DELETE the empty-delta refresh used to perform.
+A pending group whose delta went empty is a governance artifact — it was
+proposed, it was reviewed against, and its members are evidence — so it is
+retired in place rather than erased. ``withdrawn`` is outside the pending unique
+index, so a later re-propose of the same signature opens a fresh pending group.
+"""
+
+ResolutionSource = Literal["review", "auto_resolved"]
+"""How a resolution came about: an explicit review, or policy auto-resolution."""
 
 GroupKind = Literal["propose", "revoke"]
 """Intent of a candidate group. ``revoke`` is reserved for future flows."""
@@ -154,7 +189,7 @@ class GroupResolution(BaseModel):
     trust_reason: str = ""
     trust_actor_context: GovernedActorContext | None = None
     confirmed: bool = False
-    resolved_by: Literal["human", "agent"] = "human"
+    resolution_source: ResolutionSource = "review"
     resolved_at: datetime
     resolved_actor_context: GovernedActorContext | None = None
     receipt_id: str | None = Field(
@@ -166,6 +201,19 @@ class GroupResolution(BaseModel):
             "to nothing. Resolutions predating this field load with null."
         ),
     )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def resolved_by(self) -> DerivedActorKind:
+        """Deprecated: read-only projection of the resolving actor's derived kind.
+
+        The caller-declared ``resolved_by`` axis is retired — it was a claim, not
+        evidence. This re-emits the old field name as a value DERIVED from
+        ``resolved_actor_context`` (exactly what the ``resolved_by`` SQL column
+        already stores) so 0.2.x readers keep parsing. Never writable; removal
+        follows 0.3. Read ``resolved_actor_context`` instead.
+        """
+        return derived_actor_kind(self.resolved_actor_context)
 
 
 class CandidateGroup(BaseModel):
@@ -180,7 +228,6 @@ class CandidateGroup(BaseModel):
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     signal_sources_used: list[str] = Field(default_factory=list)
-    proposed_by: Literal["human", "agent"] = "agent"
     member_count: int = 0
     pending_version: int = 1
     review_priority: ReviewPriority = "normal"
@@ -193,3 +240,14 @@ class CandidateGroup(BaseModel):
     resolution_id: str | None = None
     proposed_actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def proposed_by(self) -> DerivedActorKind:
+        """Deprecated: read-only projection of the proposing actor's derived kind.
+
+        Same retirement as :attr:`GroupResolution.resolved_by`: re-emitted under
+        the old name as a value derived from ``proposed_actor_context``, which is
+        what the ``proposed_by`` SQL column already stores. Removal follows 0.3.
+        """
+        return derived_actor_kind(self.proposed_actor_context)

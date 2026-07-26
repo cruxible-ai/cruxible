@@ -1607,7 +1607,7 @@ class TestFeedback:
             "feedback record",
         )
 
-    def test_feedback_agent_source(
+    def test_feedback_record_is_refused_in_server_mode(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
@@ -1632,8 +1632,6 @@ class TestFeedback:
                 receipt_id,
                 "--action",
                 "approve",
-                "--source",
-                "agent",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -3107,7 +3105,6 @@ def _seed_group(instance: CruxibleInstance, *, resolve: bool = False) -> str:
             instance,
             group_id,
             "approve",
-            resolved_by="human",
             expected_pending_version=1,
         )
     return group_id

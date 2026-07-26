@@ -800,7 +800,6 @@ class TestFeedbackGroupOverride:
                 "instance_id": instance_id,
                 "receipt_id": receipt_id,
                 "action": "approve",
-                "source": "human",
                 "from_type": "Part",
                 "from_id": "BP-1",
                 "relationship_type": "fits",

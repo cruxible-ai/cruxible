@@ -581,7 +581,6 @@ def handle_create_decision_record(
     question: str,
     subject_type: str | None = None,
     subject_id: str | None = None,
-    opened_by: str = "human",
 ) -> contracts.DecisionRecordResult:
     return _dispatch_remote_or_local(
         lambda client: client.create_decision_record(
@@ -589,14 +588,12 @@ def handle_create_decision_record(
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         ),
         lambda: api.create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         ),
         allow_local=False,
         operation_name="cruxible_create_decision_record",
@@ -789,7 +786,6 @@ def handle_feedback(
     instance_id: str,
     receipt_id: str | None,
     action: contracts.FeedbackAction,
-    source: contracts.FeedbackSource,
     from_type: str,
     from_id: str,
     relationship_type: str,
@@ -809,7 +805,6 @@ def handle_feedback(
             instance_id,
             receipt_id=receipt_id,
             action=action,
-            source=source,
             from_type=from_type,
             from_id=from_id,
             relationship_type=relationship_type,
@@ -827,7 +822,6 @@ def handle_feedback(
             instance_id=instance_id,
             receipt_id=receipt_id,
             action=action,
-            source=source,
             from_type=from_type,
             from_id=from_id,
             relationship_type=relationship_type,
@@ -961,13 +955,11 @@ def handle_analyze_outcomes(
 def handle_feedback_batch(
     instance_id: str,
     items: list[contracts.FeedbackBatchItemInput],
-    *,
-    source: contracts.FeedbackSource,
 ) -> contracts.FeedbackBatchResult:
     """Record batch edge feedback tied to prior receipts."""
     return _dispatch_remote_or_local(
-        lambda client: client.feedback_batch(instance_id, items=items, source=source),
-        lambda: api.feedback_batch(instance_id, items, source=source),
+        lambda client: client.feedback_batch(instance_id, items=items),
+        lambda: api.feedback_batch(instance_id, items),
         allow_local=False,
         operation_name="cruxible_feedback_batch",
     )
@@ -979,7 +971,6 @@ def handle_feedback_from_query(
     receipt_id: str,
     result_index: int,
     action: contracts.FeedbackAction,
-    source: contracts.FeedbackSource = "human",
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
@@ -995,7 +986,6 @@ def handle_feedback_from_query(
             receipt_id=receipt_id,
             result_index=result_index,
             action=action,
-            source=source,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,
@@ -1009,7 +999,6 @@ def handle_feedback_from_query(
             receipt_id=receipt_id,
             result_index=result_index,
             action=action,
-            source=source,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,
@@ -1029,7 +1018,6 @@ def handle_outcome(
     receipt_id: str | None = None,
     anchor_type: contracts.OutcomeAnchorType = "receipt",
     anchor_id: str | None = None,
-    source: contracts.FeedbackSource = "human",
     outcome_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     outcome_profile_key: str | None = None,
@@ -1043,7 +1031,6 @@ def handle_outcome(
             outcome=outcome,
             anchor_type=anchor_type,
             anchor_id=anchor_id,
-            source=source,
             outcome_code=outcome_code,
             scope_hints=scope_hints,
             outcome_profile_key=outcome_profile_key,
@@ -1055,7 +1042,6 @@ def handle_outcome(
             outcome,
             anchor_type=anchor_type,
             anchor_id=anchor_id,
-            source=source,
             outcome_code=outcome_code,
             scope_hints=scope_hints,
             outcome_profile_key=outcome_profile_key,
@@ -2055,8 +2041,8 @@ def handle_propose_group(
     thesis_facts: dict[str, Any] | None = None,
     analysis_state: dict[str, Any] | None = None,
     signal_sources_used: list[str] | None = None,
-    proposed_by: contracts.GroupProposedBy = "agent",
     suggested_priority: str | None = None,
+    expected_pending_version: int | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""
     return _dispatch_remote_or_local(
@@ -2068,8 +2054,8 @@ def handle_propose_group(
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
             signal_sources_used=signal_sources_used,
-            proposed_by=proposed_by,
             suggested_priority=suggested_priority,
+            expected_pending_version=expected_pending_version,
         ),
         lambda: api.propose_group(
             instance_id,
@@ -2079,8 +2065,8 @@ def handle_propose_group(
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
             signal_sources_used=signal_sources_used,
-            proposed_by=proposed_by,
             suggested_priority=suggested_priority,
+            expected_pending_version=expected_pending_version,
         ),
         allow_local=False,
         operation_name="cruxible_propose_group",
@@ -2092,7 +2078,6 @@ def handle_resolve_group(
     group_id: str,
     action: contracts.GroupAction,
     rationale: str = "",
-    resolved_by: contracts.GroupResolvedBy = "human",
     expected_pending_version: int | None = None,
     stamp_existing: bool = False,
 ) -> contracts.ResolveGroupToolResult:
@@ -2103,7 +2088,6 @@ def handle_resolve_group(
             group_id,
             action=action,
             rationale=rationale,
-            resolved_by=resolved_by,
             expected_pending_version=_required_pending_version(expected_pending_version),
             stamp_existing=stamp_existing,
         ),
@@ -2112,7 +2096,6 @@ def handle_resolve_group(
             group_id,
             action,
             rationale=rationale,
-            resolved_by=resolved_by,
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
         ),
@@ -2368,6 +2351,7 @@ def handle_dereference_source_evidence(
     instance_id: str,
     *,
     source_artifact_id: str,
+    artifact_revision_id: str | None = None,
     chunk_id: str | None = None,
     heading_path: list[str] | None = None,
     block_selector: str | None = None,
@@ -2378,6 +2362,7 @@ def handle_dereference_source_evidence(
         lambda client: client.dereference_source_evidence(
             instance_id,
             source_artifact_id=source_artifact_id,
+            artifact_revision_id=artifact_revision_id,
             chunk_id=chunk_id,
             heading_path=heading_path,
             block_selector=block_selector,
@@ -2386,6 +2371,7 @@ def handle_dereference_source_evidence(
         lambda: api.dereference_source_evidence(
             instance_id,
             source_artifact_id=source_artifact_id,
+            artifact_revision_id=artifact_revision_id,
             chunk_id=chunk_id,
             heading_path=heading_path,
             block_selector=block_selector,

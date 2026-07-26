@@ -491,8 +491,6 @@ def apply_relationship(
                     "provenance": backfill_provenance_on_touch(
                         metadata.provenance,
                         source,
-                        source_ref,
-                        source,
                         actor_context=actor_context,
                     ),
                 }

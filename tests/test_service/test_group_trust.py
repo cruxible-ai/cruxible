@@ -222,7 +222,6 @@ class TestUpdateTrustStatus:
                 "",
                 facts,
                 {},
-                "human",
                 confirmed=False,
             )
 
@@ -279,7 +278,19 @@ class TestTrustEffects:
         service_update_trust_status(instance, res_id, "trusted", "reviewed")
 
         pr = service_propose_group(instance, "fits", [_member("BP-3", "V-3")], thesis_facts=facts)
-        assert pr.status == "auto_resolved"
+        # Auto-resolution is an actual approve now: the group is resolved, it
+        # names its resolution, and that resolution records that policy — not
+        # a reviewer — decided it.
+        assert pr.status == "resolved"
+        assert pr.resolution_id is not None
+        store = instance.get_group_store()
+        try:
+            resolution = store.get_resolution(pr.resolution_id)
+            assert resolution is not None
+            assert resolution.resolution_source == "auto_resolved"
+            assert resolution.confirmed is True
+        finally:
+            store.close()
 
     def test_trust_compounds(self, instance: CruxibleInstance) -> None:
         """Promote to trusted, auto-resolve + approve second batch → inherits trusted."""
@@ -287,16 +298,16 @@ class TestTrustEffects:
         res_id_1 = _propose_and_approve(instance, "BP-1", "V-1", facts=facts)
         service_update_trust_status(instance, res_id_1, "trusted")
 
-        # Second batch — will auto-resolve
+        # Second batch — auto-resolves on the way in, so there is no second
+        # explicit resolve to make.
         pr2 = service_propose_group(instance, "fits", [_member("BP-3", "V-3")], thesis_facts=facts)
-        assert pr2.status == "auto_resolved"
-        service_resolve_group(instance, pr2.group_id, "approve", expected_pending_version=1)
+        assert pr2.status == "resolved"
+        assert pr2.resolution_id is not None
 
         store = instance.get_group_store()
         try:
-            group2 = store.get_group(pr2.group_id)
-            res2 = store.get_resolution(group2.resolution_id)
-            assert res2.trust_status == "trusted"  # inherited
+            res2 = store.get_resolution(pr2.resolution_id)
+            assert res2.trust_status == "trusted"  # carried forward
         finally:
             store.close()
 

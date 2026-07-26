@@ -32,7 +32,7 @@ from cruxible_core.group.types import (
     CandidateGroup,
     CandidateMember,
     GroupResolution,
-    TrustStatus,
+    ResolutionSource,
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.primitives import ordered_unique
@@ -112,7 +112,6 @@ def _annotate_stamped_skips(
 
 
 _VALID_RESOLVE_ACTIONS = ("approve", "reject")
-_VALID_RESOLVE_SOURCES = ("human", "agent")
 _VALID_TRUST_STATUSES = ("trusted", "watch", "invalidated")
 
 
@@ -142,15 +141,10 @@ def _enforce_group_resolution_governance() -> None:
 def validate_resolve_request(
     *,
     action: str,
-    resolved_by: str,
     expected_pending_version: int | None,
 ) -> None:
     if action not in _VALID_RESOLVE_ACTIONS:
         raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_RESOLVE_ACTIONS)}")
-    if resolved_by not in _VALID_RESOLVE_SOURCES:
-        raise ConfigError(
-            f"Invalid resolved_by '{resolved_by}'. Use: {', '.join(_VALID_RESOLVE_SOURCES)}"
-        )
     if expected_pending_version is None:
         raise ConfigError("Resolve requires expected_pending_version")
 
@@ -160,15 +154,22 @@ def resolve_group_transition(
     group_id: str,
     action: Literal["approve", "reject"],
     rationale: str = "",
-    resolved_by: Literal["human", "agent"] = "human",
     expected_pending_version: int | None = None,
     actor_context: GovernedActorContext | None = None,
     stamp_existing: bool = False,
+    resolution_source: ResolutionSource = "review",
 ) -> ResolveGroupResult:
-    """Resolve a candidate group through one mutation receipt/UOW boundary."""
+    """Resolve a candidate group through one mutation receipt/UOW boundary.
+
+    ``resolution_source`` records HOW the resolution came about. ``"review"`` is
+    an adjudicator acting; ``"auto_resolved"`` is the proposal policy resolving
+    the group on the proposer's behalf. Both take this same path — an
+    auto-resolution is a real receipted event with edges, an actor, and a
+    resolution row, not a status label — so the only difference between them is
+    what the resolution honestly records about its own origin.
+    """
     validate_resolve_request(
         action=action,
-        resolved_by=resolved_by,
         expected_pending_version=expected_pending_version,
     )
     assert expected_pending_version is not None
@@ -183,6 +184,7 @@ def resolve_group_transition(
             "action": action,
             "expected_pending_version": expected_pending_version,
             "stamp_existing": stamp_existing,
+            "resolution_source": resolution_source,
         },
         actor_context=actor_context,
     ) as ctx:
@@ -199,9 +201,9 @@ def resolve_group_transition(
                 group=target.group,
                 members=target.members,
                 rationale=rationale,
-                resolved_by=resolved_by,
                 actor_context=actor_context,
                 builder=ctx.builder,
+                resolution_source=resolution_source,
             )
         else:
             resolved = _approve_group(
@@ -210,11 +212,11 @@ def resolve_group_transition(
                 group=target.group,
                 members=target.members,
                 rationale=rationale,
-                resolved_by=resolved_by,
                 actor_context=actor_context,
                 is_retry=target.is_retry,
                 builder=ctx.builder,
                 stamp_existing=stamp_existing,
+                resolution_source=resolution_source,
             )
         ctx.set_result(resolved)
 
@@ -318,10 +320,23 @@ def _load_group_for_resolve(
         if group is None:
             raise GroupNotFoundError(group_id)
 
+        # ALLOWLIST, not a denylist of terminal states. Resolve used to accept
+        # any status that was not ``resolved``, which left every OTHER terminal
+        # state resolvable: a WITHDRAWN group keeps its members (that is the
+        # point of withdrawing rather than deleting), so its preserved proposal
+        # could still be approved by id afterwards — even once a fresh pending
+        # group for the same signature existed and had been reviewed on its own
+        # terms. ``pending_review`` is the only reviewable state; ``applying``
+        # is admitted solely so an interrupted approve can be retried.
         if group.status == "resolved":
             raise ConfigError("Group already resolved")
         if group.status == "applying" and action != "approve":
             raise ConfigError("Group is in applying state from a prior approve — cannot reject")
+        if group.status not in ("pending_review", "applying"):
+            raise ConfigError(
+                f"Group is {group.status} and cannot be resolved; only a "
+                "pending_review group is reviewable"
+            )
 
         return _ResolveTarget(
             group=group,
@@ -350,9 +365,9 @@ def _reject_group(
     group: CandidateGroup,
     members: list[CandidateMember],
     rationale: str,
-    resolved_by: Literal["human", "agent"],
     actor_context: GovernedActorContext | None,
     builder: ReceiptBuilder,
+    resolution_source: ResolutionSource = "review",
 ) -> ResolveGroupResult:
     builder.record_validation(
         passed=True,
@@ -360,6 +375,7 @@ def _reject_group(
             "action": "reject",
             "members": len(members),
             "pending_version_at_resolve": group.pending_version,
+            "resolution_source": resolution_source,
         },
     )
     resolution_id = group_store.save_resolution(
@@ -370,11 +386,11 @@ def _reject_group(
         group.thesis_text,
         group.thesis_facts,
         group.analysis_state,
-        resolved_by,
         trust_status="watch",
         confirmed=True,
         resolved_actor_context=actor_context,
         receipt_id=builder.receipt_id,
+        resolution_source=resolution_source,
     )
     group_store.update_group_status(
         group.group_id,
@@ -486,10 +502,26 @@ def _validate_approval_members(
     )
 
 
-def _inherited_trust_status(prior: GroupResolution | None) -> TrustStatus:
-    if prior is not None and prior.trust_status in ("trusted", "watch"):
-        return prior.trust_status
-    return "watch"
+def _carried_trust(prior: GroupResolution | None) -> tuple[str, str, GovernedActorContext | None]:
+    """Return the trust posture a new approval CARRIES FORWARD from *prior*.
+
+    Trust is thesis-scoped: it lives on the signature's latest confirmed
+    approval, so every new approval must inherit the posture verbatim or the
+    approve verb becomes a trust-moving verb. It used to be neither — it
+    laundered ``invalidated`` into ``watch`` (both here and again in
+    ``_revalidated_trust_status`` at confirm time), silently discarding a
+    reviewer's receipted judgement and, under
+    ``auto_resolve_requires_prior_trust="trusted_or_watch"``, re-arming
+    auto-resolution for the very thesis a reviewer had just invalidated.
+
+    Carrying forward includes the reason and the actor context: the surviving
+    posture must keep pointing at the reviewer who set it, not at whoever
+    happened to approve next. A signature with no prior confirmed approval
+    starts at the ``watch`` default with no reason and no attribution.
+    """
+    if prior is None:
+        return "watch", "", None
+    return prior.trust_status, prior.trust_reason, prior.trust_actor_context
 
 
 def _start_approval_resolution(
@@ -497,11 +529,11 @@ def _start_approval_resolution(
     group_store: GroupStoreProtocol,
     group: CandidateGroup,
     rationale: str,
-    resolved_by: Literal["human", "agent"],
     is_retry: bool,
     validation: _ApprovalValidation,
     actor_context: GovernedActorContext | None,
     receipt_id: str,
+    resolution_source: ResolutionSource,
 ) -> str:
     """Return the resolution id this approve attempt applies edges under.
 
@@ -539,6 +571,7 @@ def _start_approval_resolution(
         action="approve",
         confirmed=True,
     )
+    carried_status, carried_reason, carried_actor = _carried_trust(prior)
     resolution_id: str = group_store.save_resolution(
         group.relationship_type,
         group.signature,
@@ -547,11 +580,13 @@ def _start_approval_resolution(
         group.thesis_text,
         group.thesis_facts,
         group.analysis_state,
-        resolved_by,
-        trust_status=_inherited_trust_status(prior),
+        trust_status=carried_status,
+        trust_reason=carried_reason,
+        trust_actor_context=carried_actor,
         confirmed=False,
         resolved_actor_context=actor_context,
         receipt_id=receipt_id,
+        resolution_source=resolution_source,
     )
     group_store.update_group_status(
         group.group_id,
@@ -659,6 +694,24 @@ def _blessed_metadata_for_existing(
     only touches ``last_modified_*``), and the prior direct-write receipt remains in
     the audit chain. A null-provenance direct-add is backfilled with fresh group
     provenance so it becomes auditable.
+
+    This is the THIRD write path for ``group_approval_drift``, and the ruling
+    (the marker reports CURRENT divergence against the NEWEST approval) applies
+    here too: the content this approval blesses IS the new approved baseline, so
+    any marker the edge was carrying is stale by construction and is dropped.
+    Carrying it verbatim meant an edge that drifted under group A and was then
+    re-proposed and approved by group B — with exactly the content B signed off
+    on — still reported drift against A, while its provenance already read
+    ``group:B``. A reviewer reading that saw a divergence that does not exist
+    against a group that no longer owns the edge.
+
+    Verified: this path can never bless content the approver did not see.
+    ``_validate_approval_members`` skips every member whose tuple is already
+    live (``edge_exists``), so approval NEVER applies proposed properties over a
+    surviving edge — only these already-live properties are blessed. The new
+    baseline is therefore the edge's current content, whatever the group's
+    members proposed, and a later divergent write drifts against those values
+    under group B.
     """
     metadata = existing.metadata
     now = utc_now()
@@ -691,7 +744,9 @@ def _blessed_metadata_for_existing(
         updated_by=source_ref,
         actor_context=actor_context,
     )
-    assertion = metadata.assertion.model_copy(update={"review": review})
+    assertion = metadata.assertion.model_copy(
+        update={"review": review, "group_approval_drift": None}
+    )
     return metadata.model_copy(update={"provenance": provenance, "assertion": assertion})
 
 
@@ -762,36 +817,20 @@ def _stamp_existing_edges(
     return stamped
 
 
-def _revalidated_trust_status(
-    *,
-    group_store: GroupStoreProtocol,
-    group: CandidateGroup,
-) -> TrustStatus | None:
-    prior = group_store.find_resolution(
-        group.relationship_type,
-        group.signature,
-        action="approve",
-        confirmed=True,
-    )
-    if prior is not None and prior.trust_status == "invalidated":
-        return "watch"
-    return None
-
-
 def _confirm_approval_resolution(
     *,
     group_store: GroupStoreProtocol,
     group: CandidateGroup,
     resolution_id: str,
 ) -> None:
-    revalidated_trust = _revalidated_trust_status(
-        group_store=group_store,
-        group=group,
-    )
-    group_store.confirm_resolution(
-        resolution_id,
-        trust_status=revalidated_trust,
-    )
+    """Confirm the approval. Trust is NOT re-decided here.
+
+    The removed ``_revalidated_trust_status`` used confirmation as a second,
+    quieter door to rewrite ``invalidated`` back to ``watch``. Re-approving a
+    thesis is not evidence that the thesis became trustworthy again; only an
+    ``update_trust_status`` call — receipted, attributed, and reasoned — is.
+    """
+    group_store.confirm_resolution(resolution_id)
     group_store.update_group_status(group.group_id, "resolved")
 
 
@@ -802,11 +841,11 @@ def _approve_group(
     group: CandidateGroup,
     members: list[CandidateMember],
     rationale: str,
-    resolved_by: Literal["human", "agent"],
     actor_context: GovernedActorContext | None,
     is_retry: bool,
     builder: ReceiptBuilder,
     stamp_existing: bool = False,
+    resolution_source: ResolutionSource = "review",
 ) -> ResolveGroupResult:
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
@@ -831,7 +870,7 @@ def _approve_group(
             "group_signature": group.signature,
             "pending_version": group.pending_version,
             "rationale": rationale,
-            "resolved_by": resolved_by,
+            "resolution_source": resolution_source,
             "stamp_existing": stamp_existing,
             "is_retry": is_retry,
         },
@@ -863,11 +902,11 @@ def _approve_group(
         group_store=uow.groups,
         group=group,
         rationale=rationale,
-        resolved_by=resolved_by,
         is_retry=is_retry,
         validation=validation,
         actor_context=actor_context,
         receipt_id=builder.receipt_id,
+        resolution_source=resolution_source,
     )
     applied = _apply_resolved_relationships(
         instance=instance,

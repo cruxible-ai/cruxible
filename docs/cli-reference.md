@@ -1031,7 +1031,6 @@ shared_evidence:
 | `--question` | yes | `Sentinel.UNSET` | text | Question or decision being evaluated. |
 | `--subject-type` | no | `` | text | Optional subject type. |
 | `--subject-id` | no | `` | text | Optional subject identifier. |
-| `--opened-by` | no | `human` | choice |  |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1273,7 +1272,6 @@ findings.
 | `--reason-code` | no | `` | text | Structured feedback reason code. |
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
 | `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
-| `--source` | no | `human` | choice | Who produced this feedback (default: human). |
 | `--group-override` | no | `False` | boolean | Mark relationship assertion metadata as a group override (edge must exist). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
@@ -1298,7 +1296,6 @@ findings.
 | `--receipt` | yes | `Sentinel.UNSET` | text | Query receipt ID. |
 | `--result-index` | yes | `Sentinel.UNSET` | integer | Zero-based index of the query result row to adjudicate. |
 | `--action` | yes | `Sentinel.UNSET` | choice | Feedback action. |
-| `--source` | no | `human` | choice | Who produced this feedback (default: human). |
 | `--reason` | no | `` | text | Reason for feedback. |
 | `--reason-code` | no | `` | text | Structured feedback reason code. |
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
@@ -1331,7 +1328,6 @@ findings.
 | --- | --- | --- | --- | --- |
 | `--items-file` | no | `` | path | JSON or YAML file with batch feedback items. |
 | `--items` | no | `` | text | Inline JSON array of feedback items. |
-| `--source` | no | `human` | choice | Who produced this feedback batch (default: human). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1795,6 +1791,7 @@ Text output labels an interrupted record as
 | `--thesis-facts` | no | `` | text | Optional JSON object used as agent-supplied direct proposal scope. |
 | `--analysis-state` | no | `` | text | JSON object of opaque analysis state. |
 | `--signal-source` | no | `()` | text | Deprecated and hidden; signal sources are derived from member signals. Optional, repeatable. |
+| `--expected-pending-version` | no | `` | integer | Optimistic guard: refuse the re-propose if the live pending group is not at this version. Omit for an unconditional refresh. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -1841,7 +1838,6 @@ Text output labels an interrupted record as
 | `--group` | yes | `Sentinel.UNSET` | text | Group ID to resolve. |
 | `--action` | yes | `Sentinel.UNSET` | choice | Resolution action. |
 | `--rationale` | no | `` | text | Rationale for this resolution. |
-| `--source` | no | `human` | choice | Who resolved (default: human). |
 | `--expected-pending-version` | yes | `Sentinel.UNSET` | integer | Pending version the reviewer saw when deciding. |
 | `--stamp-existing` | no | `False` | boolean | On approve, bless each surviving pre-existing edge with this group's review status and provenance instead of skipping it. |
 | `--json` | no | `False` | boolean | Output as JSON. |
@@ -3189,6 +3185,7 @@ cruxible source register \
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--artifact` | yes | `Sentinel.UNSET` | text | Source artifact ID returned by `source register`. |
+| `--revision` | no | `` | text | Pin the read to one immutable revision (`{artifact}@{n}`). Omit to read the current revision, which is reported as `revision_unpinned`. |
 | `--chunk` | no | `` | text | Deterministic chunk ID from the registered manifest. |
 | `--heading` | no | `` | text | Heading path segment. Repeat for nested headings. |
 | `--block-selector` | no | `` | text | Block selector under the heading path, such as `paragraph:1`. |
@@ -3217,8 +3214,12 @@ cruxible source dereference \
 ```
 
 **Output And Side Effects:**
-- Read-only. Returns `available`, `drifted`, or `unavailable` plus source body
-  when Cruxible can safely dereference the locator.
+- Read-only. Returns `available`, `drifted`, `unavailable`, or
+  `revision_bytes_not_retained` plus source body when Cruxible can safely
+  dereference the locator.
+- `revision_bytes_not_retained` means the pinned revision has been superseded and
+  its bytes were never archived: the local file now holds a NEWER revision, so
+  Cruxible refuses to call the guaranteed hash mismatch drift.
 - `body_origin` is `archive` when archived bytes are used, or `local_path` when
   Cruxible rereads the registered local file.
 

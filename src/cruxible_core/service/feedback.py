@@ -32,7 +32,11 @@ from cruxible_core.feedback.types import (
     FeedbackRecord,
     OutcomeRecord,
 )
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.governance.actors import (
+    DerivedActorKind,
+    GovernedActorContext,
+    derived_actor_kind,
+)
 from cruxible_core.graph.claim_target import ClaimTargetConflictError, resolve_claim_target
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import RelationshipInstance
@@ -58,21 +62,16 @@ from cruxible_core.service.types import (
 
 _VALID_ACTIONS = ("approve", "reject", "correct", "flag")
 _VALID_OUTCOMES = ("correct", "incorrect", "partial", "unknown")
-_VALID_SOURCES = ("human", "agent")
 
 
 def _validate_feedback_request_values(
     *,
     action: str,
-    source: str,
     corrections: Any,
 ) -> None:
     """Validate the basic feedback payload before loading external state."""
     if action not in _VALID_ACTIONS:
         raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_ACTIONS)}")
-
-    if source not in _VALID_SOURCES:
-        raise ConfigError(f"Invalid source '{source}'. Use: {', '.join(_VALID_SOURCES)}")
 
     if corrections is not None and not isinstance(corrections, dict):
         raise ConfigError("corrections must be an object")
@@ -85,7 +84,6 @@ def _normalize_feedback_record(
     receipt: Receipt | None,
     receipt_id: str | None,
     action: Literal["approve", "reject", "correct", "flag"],
-    source: Literal["human", "agent"],
     target: RelationshipInstance,
     reason: str,
     reason_code: str | None,
@@ -104,7 +102,6 @@ def _normalize_feedback_record(
     """
     _validate_feedback_request_values(
         action=action,
-        source=source,
         corrections=corrections,
     )
 
@@ -174,9 +171,9 @@ def _normalize_feedback_record(
         _validate_feedback_inputs(
             profile=profile,
             relationship_type=target.relationship_type,
-            source=source,
             reason_code=reason_code,
             scope_hints=normalized_scope_hints,
+            actor_kind=derived_actor_kind(actor_context),
         )
         if reason_code is not None:
             reason_schema = profile.reason_codes[reason_code]
@@ -194,7 +191,6 @@ def _normalize_feedback_record(
     return FeedbackRecord(
         receipt_id=receipt_id,
         action=action,
-        source=source,
         target=target,
         reason=reason,
         reason_code=reason_code,
@@ -229,15 +225,26 @@ def _validate_feedback_inputs(
     *,
     profile: FeedbackProfileSchema,
     relationship_type: str,
-    source: Literal["human", "agent"],
     reason_code: str | None,
     scope_hints: dict[str, Any],
+    actor_kind: DerivedActorKind,
 ) -> None:
-    """Validate feedback inputs against the configured feedback profile."""
-    if source == "agent" and not reason_code:
+    """Validate feedback inputs against the configured feedback profile.
+
+    The reason-code requirement keys off the DERIVED actor kind, never a
+    caller-declared one. It used to read a ``source`` field the caller set
+    itself and defaulted to ``"human"`` — so the one rule that holds
+    non-human writers to a structured, analyzable reason was skippable by
+    the writers it was written for, simply by claiming to be a person.
+
+    Anything that is not a resolved human must give a reason code, and that
+    includes ``"unknown"``: an unattributed write is not evidence of a human,
+    it is absence of evidence, and absence is not grounds for the exemption.
+    """
+    if actor_kind != "human" and not reason_code:
         raise ConfigError(
-            f"Feedback for relationship '{relationship_type}' requires reason_code for "
-            f"source '{source}'"
+            f"Feedback for relationship '{relationship_type}' requires reason_code "
+            f"for a '{actor_kind}' actor"
         )
 
     if reason_code is not None:
@@ -362,15 +369,11 @@ def _build_context_snapshot(
 def _validate_outcome_request_values(
     *,
     outcome: str,
-    source: str,
     detail: Any,
 ) -> None:
     """Validate the basic outcome payload before loading external state."""
     if outcome not in _VALID_OUTCOMES:
         raise ConfigError(f"Invalid outcome '{outcome}'. Use: {', '.join(_VALID_OUTCOMES)}")
-
-    if source not in _VALID_SOURCES:
-        raise ConfigError(f"Invalid source '{source}'. Use: {', '.join(_VALID_SOURCES)}")
 
     if detail is not None and not isinstance(detail, dict):
         raise ConfigError("detail must be an object")
@@ -477,11 +480,15 @@ def _validate_outcome_inputs(
     *,
     profile: OutcomeProfileSchema | None,
     profile_key: str | None,
-    source: Literal["human", "agent"],
     outcome_code: str | None,
     scope_hints: dict[str, Any],
+    actor_kind: DerivedActorKind,
 ) -> None:
-    """Validate structured outcome inputs against the configured profile."""
+    """Validate structured outcome inputs against the configured profile.
+
+    Keys off the derived actor kind for the same reason as
+    :func:`_validate_feedback_inputs`.
+    """
     if profile is None:
         if outcome_code is not None:
             raise ConfigError("Outcome uses outcome_code but no matching outcome profile exists")
@@ -489,9 +496,9 @@ def _validate_outcome_inputs(
             raise ConfigError("Outcome uses scope_hints but no matching outcome profile exists")
         return
 
-    if source == "agent" and not outcome_code:
+    if actor_kind != "human" and not outcome_code:
         raise ConfigError(
-            f"Outcome for profile '{profile_key}' requires outcome_code for source '{source}'"
+            f"Outcome for profile '{profile_key}' requires outcome_code for a '{actor_kind}' actor"
         )
 
     if outcome_code is not None:
@@ -641,7 +648,8 @@ def _build_resolution_lineage_snapshot(
             "relationship_type": resolution.relationship_type,
             "action": resolution.action,
             "trust_status": resolution.trust_status,
-            "resolved_by": resolution.resolved_by,
+            "resolved_by": derived_actor_kind(resolution.resolved_actor_context),
+            "resolution_source": resolution.resolution_source,
         },
         "group": {
             "group_signature": resolution.group_signature,
@@ -1019,7 +1027,6 @@ def service_feedback_input(
     instance: InstanceProtocol,
     item: FeedbackItemInput,
     *,
-    source: Literal["human", "agent"],
     actor_context: GovernedActorContext | None = None,
 ) -> FeedbackServiceResult:
     """Normalize one feedback input payload, then record edge feedback."""
@@ -1027,7 +1034,6 @@ def service_feedback_input(
         instance,
         receipt_id=item.receipt_id,
         action=item.action,
-        source=source,
         target=_relationship_target_from_input(item.target),
         reason=item.reason,
         reason_code=item.reason_code,
@@ -1044,7 +1050,6 @@ def service_feedback_from_query_result(
     receipt_id: str,
     result_index: int,
     action: Literal["approve", "reject", "correct", "flag"],
-    source: Literal["human", "agent"] = "human",
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
@@ -1057,7 +1062,6 @@ def service_feedback_from_query_result(
     """Record edge feedback by selecting relationship evidence from a query receipt."""
     _validate_feedback_request_values(
         action=action,
-        source=source,
         corrections=corrections,
     )
     receipt = service_get_receipt(instance, receipt_id)
@@ -1088,7 +1092,6 @@ def service_feedback_from_query_result(
         instance,
         receipt_id=receipt_id,
         action=action,
-        source=source,
         target=target,
         reason=reason,
         reason_code=reason_code,
@@ -1098,7 +1101,7 @@ def service_feedback_from_query_result(
         _feedback_from_query={
             **query_selection,
             "action": action,
-            "source": source,
+            "actor_kind": derived_actor_kind(actor_context),
             "reason": reason,
             "reason_code": reason_code,
             "scope_hints": scope_hints or {},
@@ -1111,7 +1114,6 @@ def service_feedback(
     instance: InstanceProtocol,
     receipt_id: str | None,
     action: Literal["approve", "reject", "correct", "flag"],
-    source: Literal["human", "agent"],
     target: RelationshipInstance,
     reason: str = "",
     reason_code: str | None = None,
@@ -1129,7 +1131,6 @@ def service_feedback(
     """
     _validate_feedback_request_values(
         action=action,
-        source=source,
         corrections=corrections,
     )
     check_upstream_type_ownership(
@@ -1145,7 +1146,6 @@ def service_feedback(
         receipt=receipt,
         receipt_id=receipt_id,
         action=action,
-        source=source,
         target=target,
         reason=reason,
         reason_code=reason_code,
@@ -1158,7 +1158,7 @@ def service_feedback(
     receipt_parameters: dict[str, Any] = {
         "source_receipt_id": receipt_id,
         "action": action,
-        "source": source,
+        "actor_kind": derived_actor_kind(actor_context),
         "target": _feedback_target_label(target),
     }
     if _feedback_from_query is not None:
@@ -1206,14 +1206,12 @@ def service_feedback_batch_inputs(
     instance: InstanceProtocol,
     items: list[FeedbackItemInput],
     *,
-    source: Literal["human", "agent"],
     actor_context: GovernedActorContext | None = None,
 ) -> FeedbackBatchServiceResult:
     """Normalize batch feedback input payloads, then record them together."""
     return service_feedback_batch(
         instance,
         [_feedback_batch_item_from_input(item) for item in items],
-        source=source,
         actor_context=actor_context,
     )
 
@@ -1222,7 +1220,6 @@ def service_feedback_batch(
     instance: InstanceProtocol,
     items: list[FeedbackBatchItem],
     *,
-    source: Literal["human", "agent"],
     actor_context: GovernedActorContext | None = None,
 ) -> FeedbackBatchServiceResult:
     """Record a batch of edge feedback with one top-level receipt."""
@@ -1236,7 +1233,6 @@ def service_feedback_batch(
     for item in items:
         _validate_feedback_request_values(
             action=item.action,
-            source=source,
             corrections=item.corrections,
         )
 
@@ -1251,7 +1247,6 @@ def service_feedback_batch(
             receipt=receipts[item.receipt_id],
             receipt_id=item.receipt_id,
             action=item.action,
-            source=source,
             target=item.target,
             reason=item.reason,
             reason_code=item.reason_code,
@@ -1266,7 +1261,7 @@ def service_feedback_batch(
     with mutation_receipt(
         instance,
         "feedback_batch",
-        {"count": len(items), "source": source},
+        {"count": len(items), "actor_kind": derived_actor_kind(actor_context)},
         actor_context=actor_context,
     ) as ctx:
         assert ctx.builder is not None
@@ -1331,7 +1326,6 @@ def service_outcome(
     *,
     anchor_type: Literal["resolution", "receipt"] = "receipt",
     anchor_id: str | None = None,
-    source: Literal["human", "agent"] = "human",
     outcome_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     outcome_profile_key: str | None = None,
@@ -1345,7 +1339,6 @@ def service_outcome(
     """
     _validate_outcome_request_values(
         outcome=outcome,
-        source=source,
         detail=detail,
     )
     normalized_scope_hints = dict(scope_hints or {})
@@ -1374,9 +1367,9 @@ def service_outcome(
         _validate_outcome_inputs(
             profile=profile,
             profile_key=resolved_profile_key,
-            source=source,
             outcome_code=outcome_code,
             scope_hints=normalized_scope_hints,
+            actor_kind=derived_actor_kind(actor_context),
         )
         lineage_snapshot = _build_receipt_lineage_snapshot(
             receipt=receipt,
@@ -1404,9 +1397,9 @@ def service_outcome(
         _validate_outcome_inputs(
             profile=profile,
             profile_key=resolved_profile_key,
-            source=source,
             outcome_code=outcome_code,
             scope_hints=normalized_scope_hints,
+            actor_kind=derived_actor_kind(actor_context),
         )
         lineage_snapshot = _build_resolution_lineage_snapshot(
             profile=profile,
@@ -1435,7 +1428,6 @@ def service_outcome(
         decision_context=decision_context,
         lineage_snapshot=lineage_snapshot,
         relationship_type=relationship_type,
-        source=source,
         detail=detail or {},
         actor_context=actor_context,
     )

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.trace_payloads import (
     DEFAULT_TRACE_PAYLOAD_INLINE_BYTES,
@@ -75,6 +76,7 @@ def build_trace(
     error: str | None,
     started_at: datetime,
     duration_ms: float,
+    actor_context: GovernedActorContext | None = None,
 ) -> ExecutionTrace:
     return ExecutionTrace(
         workflow_name=workflow_name,
@@ -92,6 +94,7 @@ def build_trace(
         output_payload=output_payload,
         status=status,
         error=error,
+        actor_context=actor_context,
         started_at=started_at,
         finished_at=utc_now(),
         duration_ms=round(duration_ms, 3),

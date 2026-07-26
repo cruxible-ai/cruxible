@@ -10,10 +10,26 @@ from cruxible_core.governance.actors import GovernedActorContext
 
 SourceKind = Literal["markdown"]
 SourceRetention = Literal["manifest_only", "archive"]
-DereferenceStatus = Literal["available", "drifted", "unavailable"]
+# ``revision_bytes_not_retained``: the read resolved a SUPERSEDED revision whose
+# bytes were never archived. Distinct from ``unavailable`` (which says nothing
+# about why) and emphatically not ``drifted``: the local path holds a NEWER
+# revision's bytes, so the hash mismatch is guaranteed and says nothing about
+# whether anyone tampered with the cited evidence.
+DereferenceStatus = Literal["available", "drifted", "unavailable", "revision_bytes_not_retained"]
 DereferenceBodyOrigin = Literal["archive", "local_path"]
 
 MARKDOWN_CHUNKS_V1 = "markdown_chunks_v1"
+
+
+def artifact_revision_id(source_artifact_id: str, revision: int) -> str:
+    """Physical id of one immutable revision of a logical source artifact.
+
+    Registrations are insert-only, so the logical ``source_artifact_id`` alone
+    cannot identify a row: an artifact re-registered with changed content keeps
+    its logical id while the earlier manifest must stay addressable for the
+    evidence refs already pinned to it.
+    """
+    return f"{source_artifact_id}@{revision}"
 
 
 class SourceArtifactChunk(BaseModel):
@@ -33,9 +49,17 @@ class SourceArtifactChunk(BaseModel):
 
 
 class SourceArtifactRecord(BaseModel):
-    """Persisted source artifact metadata and local dereference information."""
+    """One immutable revision of a source artifact manifest.
+
+    ``revision`` counts registrations of the same logical
+    ``source_artifact_id``; ``superseded_by`` points forward to the revision
+    that replaced this one as the current manifest, so a superseded manifest
+    stays readable for evidence refs pinned to its ``content_hash``.
+    """
 
     source_artifact_id: str
+    artifact_revision_id: str = ""
+    revision: int = 1
     source_kind: SourceKind
     source_retention: SourceRetention
     original_uri: str | None = None
@@ -48,14 +72,37 @@ class SourceArtifactRecord(BaseModel):
     archive_content_hash: str | None = None
     created_at: str
     registered_actor_context: GovernedActorContext | None = None
+    superseded_by: str | None = None
+    superseded_at: str | None = None
+    drift_observed_hash: str | None = None
+    drift_observed_at: str | None = None
+    # STICKY counterpart to the pair above: the FIRST drift ever observed for
+    # this revision. Current drift state is legitimately cleared when the file
+    # matches its manifest again; that a drift once happened is not.
+    first_drift_observed_hash: str | None = None
+    first_drift_observed_at: str | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _derive_revision_id(self) -> SourceArtifactRecord:
+        # Derived rather than required so every construction site cannot get
+        # the physical id out of step with the (logical id, revision) pair.
+        if not self.artifact_revision_id:
+            object.__setattr__(
+                self,
+                "artifact_revision_id",
+                artifact_revision_id(self.source_artifact_id, self.revision),
+            )
+        return self
 
 
 class RegisterSourceArtifactResult(BaseModel):
     """Public result returned after registering a local evidence source."""
 
     source_artifact_id: str
+    artifact_revision_id: str
+    revision: int = 1
     source_kind: SourceKind
     source_retention: SourceRetention
     original_uri: str | None = None
@@ -66,6 +113,9 @@ class RegisterSourceArtifactResult(BaseModel):
     archived: bool = False
     archive_content_hash: str | None = None
     chunks: list[SourceArtifactChunk] = Field(default_factory=list)
+    supersedes: str | None = None
+    already_registered: bool = False
+    receipt_id: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -74,6 +124,10 @@ class SourceEvidenceInput(BaseModel):
     """Unresolved source locator supplied by an agent or user."""
 
     source_artifact_id: str
+    # Optional PIN to one immutable revision. Absent means "whatever revision is
+    # current", which is the right default for a fresh locator and the wrong one
+    # for replaying a citation made earlier.
+    artifact_revision_id: str | None = None
     chunk_id: str | None = None
     heading_path: list[str] | None = None
     block_selector: str | None = None
@@ -145,6 +199,8 @@ class SourceArtifactListResult(BaseModel):
 class SourceArtifactReadResult(SourceArtifactListItem):
     """Full source artifact read model with ordered chunks."""
 
+    artifact_revision_id: str
+    revision: int = 1
     parser_version: str
     archived: bool = False
     archive_content_hash: str | None = None
@@ -152,6 +208,10 @@ class SourceArtifactReadResult(SourceArtifactListItem):
     content_unavailable_reason: str | None = None
     body_origin: DereferenceBodyOrigin | None = None
     current_artifact_hash: str | None = None
+    drift_observed_hash: str | None = None
+    drift_observed_at: str | None = None
+    first_drift_observed_hash: str | None = None
+    first_drift_observed_at: str | None = None
     chunks: list[SourceArtifactReadChunk] = Field(default_factory=list)
 
 
@@ -168,5 +228,12 @@ class DereferenceSourceEvidenceResult(BaseModel):
     body: str | None = None
     reason: str | None = None
     chunk: SourceArtifactChunk | None = None
+    # The revision this read actually resolved against, always reported.
+    artifact_revision_id: str | None = None
+    # True when the caller pinned no revision and the read fell back to the
+    # CURRENT one. An unpinned dereference is not wrong, but it is not a replay
+    # of the citation either, and the difference must be visible rather than
+    # inferred from a matching hash.
+    revision_unpinned: bool = False
 
     model_config = ConfigDict(extra="forbid")

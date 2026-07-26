@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from cruxible_core.config.schema import (
     FeedbackRemediationHint,
@@ -13,14 +13,27 @@ from cruxible_core.config.schema import (
     OutcomeLabel,
     OutcomeRemediationHint,
 )
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.governance.actors import (
+    DerivedActorKind,
+    GovernedActorContext,
+    derived_actor_kind,
+)
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.primitives import new_id
 from cruxible_core.temporal import utc_now
 
 
 class FeedbackRecord(BaseModel):
-    """Human or AI feedback on a query result or specific relationship."""
+    """Feedback on a query result or specific relationship.
+
+    The caller-declared ``human``/``agent`` ``source`` axis is RETIRED. It was
+    never reconciled with ``actor_context.actor_type``, it defaulted to
+    ``"human"``, and it gated the reason-code requirement that exists precisely
+    to hold non-human writers to a structured, analyzable reason — so an agent
+    could opt out of the rule written for it by declaring itself a person.
+    Readers derive the kind from ``actor_context`` via
+    :func:`cruxible_core.governance.actors.derived_actor_kind`.
+    """
 
     feedback_id: str = Field(default_factory=lambda: new_id("FB"))
     receipt_id: str | None = None
@@ -37,11 +50,24 @@ class FeedbackRecord(BaseModel):
 
     decision_context: dict[str, Any] = Field(default_factory=dict)
     context_snapshot: dict[str, Any] = Field(default_factory=dict)
-    source: Literal["human", "agent"] = "human"
     model_id: str | None = None
     corrections: dict[str, Any] = Field(default_factory=dict)
     actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def source(self) -> DerivedActorKind:
+        """Deprecated: read-only projection of ``derived_actor_kind(actor_context)``.
+
+        The caller-DECLARED ``human``/``agent`` axis is gone — it was never
+        reconciled with the actor context and it gated the reason-code rule it
+        was supposed to be held to. This re-emits the same field name as a
+        DERIVED value so a 0.2.x reader keeps parsing, and it is exactly what the
+        ``source`` SQL column already stores. Never writable; scheduled for
+        removal in the release after 0.3. Read ``actor_context`` instead.
+        """
+        return derived_actor_kind(self.actor_context)
 
 
 class FeedbackBatchItem(BaseModel):
@@ -76,10 +102,20 @@ class OutcomeRecord(BaseModel):
     decision_context: dict[str, Any] = Field(default_factory=dict)
     lineage_snapshot: dict[str, Any] = Field(default_factory=dict)
     relationship_type: str | None = None
-    source: Literal["human", "agent"] = "human"
     detail: dict[str, Any] = Field(default_factory=dict)
     actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def source(self) -> DerivedActorKind:
+        """Deprecated: read-only projection of ``derived_actor_kind(actor_context)``.
+
+        Same retirement as :attr:`FeedbackRecord.source` — re-emitted under the
+        old name as a derived value for 0.2.x readers, matching the denormalized
+        ``source`` SQL column. Removal follows 0.3.
+        """
+        return derived_actor_kind(self.actor_context)
 
     @model_validator(mode="after")
     def default_anchor_id(self) -> OutcomeRecord:

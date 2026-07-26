@@ -36,10 +36,23 @@ OperationType = Literal[
     "feedback_batch",
     "group_propose",
     "group_rewrite",
+    "group_withdraw",
+    # Deprecated: read-only legacy. ``group_clear`` was renamed to
+    # ``group_withdraw`` in 0.3 and is never written again, but 0.2.x instances
+    # persisted receipts carrying it — dropping the literal made ``get_receipt``
+    # raise on every one of them. Removed once no shipped 0.2.x receipt store
+    # can still be read.
     "group_clear",
     "group_resolve",
     "group_trust_update",
     "state_pull_apply",
+    "config_add_constraint",
+    "config_add_decision_policy",
+    "decision_record_open",
+    "decision_record_finalize",
+    "decision_record_abandon",
+    "source_artifact_register",
+    "snapshot_create",
 ]
 """Coarse-grained category of operation that produced a receipt."""
 

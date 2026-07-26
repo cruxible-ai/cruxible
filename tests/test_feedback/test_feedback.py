@@ -14,7 +14,7 @@ from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.governance.actors import GovernedActorContext, derived_actor_kind
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import RelationshipProvenance
 from cruxible_core.graph.types import (
@@ -88,6 +88,28 @@ def graph() -> EntityGraph:
         )
     )
     return g
+
+
+def human_actor() -> GovernedActorContext:
+    """A resolved person. Derives to review source "human"."""
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id="usr_reviewer",
+        org_id="org_1",
+        operation_id="op_human_feedback",
+        timestamp="2026-06-05T12:00:00Z",
+    )
+
+
+def agent_actor() -> GovernedActorContext:
+    """A service account. Derives to review source "agent"."""
+    return GovernedActorContext(
+        actor_type="service_account",
+        actor_id="svc_triage",
+        org_id="org_1",
+        operation_id="op_agent_feedback",
+        timestamp="2026-06-05T12:00:00Z",
+    )
 
 
 def assert_review_state(
@@ -222,6 +244,7 @@ class TestApplier:
             receipt_id="RCP-test",
             action="approve",
             target=target,
+            actor_context=human_actor(),
         )
         assert apply_feedback(graph, fb) is True
 
@@ -234,6 +257,7 @@ class TestApplier:
             action="reject",
             target=target,
             reason="Wrong fitment",
+            actor_context=human_actor(),
         )
         assert apply_feedback(graph, fb) is True
 
@@ -245,6 +269,7 @@ class TestApplier:
             receipt_id="RCP-test",
             action="flag",
             target=target,
+            actor_context=human_actor(),
         )
         assert apply_feedback(graph, fb) is True
 
@@ -257,6 +282,7 @@ class TestApplier:
             action="correct",
             target=target,
             corrections={"confidence": 0.95, "fitment_notes": "confirmed"},
+            actor_context=human_actor(),
         )
         assert apply_feedback(graph, fb) is True
 
@@ -276,6 +302,7 @@ class TestApplier:
                 to_type="Vehicle",
                 to_id="V-1",
             ),
+            actor_context=human_actor(),
         )
         assert apply_feedback(graph, fb) is False
 
@@ -288,6 +315,7 @@ class TestApplier:
             receipt_id="RCP-test",
             action="approve",
             target=target,
+            actor_context=human_actor(),
         )
         apply_feedback(graph, fb)
 
@@ -305,8 +333,8 @@ class TestApplier:
             receipt_id="RCP-test",
             action="approve",
             target=target,
-            source="agent",
             model_id="claude-opus-4-6",
+            actor_context=agent_actor(),
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
@@ -321,8 +349,8 @@ class TestApplier:
             receipt_id="RCP-test",
             action="reject",
             target=target,
-            source="agent",
             reason="AI flagged wrong fitment",
+            actor_context=agent_actor(),
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
@@ -337,6 +365,7 @@ class TestApplier:
             action="correct",
             target=target,
             corrections={"review_note": "checked by reviewer", "fitment_notes": "checked"},
+            actor_context=human_actor(),
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
@@ -372,6 +401,7 @@ class TestApplier:
             action="reject",
             target=target,
             reason="Wrong",
+            actor_context=human_actor(),
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
@@ -386,6 +416,7 @@ class TestApplier:
             action="correct",
             target=target,
             corrections={"confidence": 0.99},
+            actor_context=human_actor(),
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
@@ -407,6 +438,7 @@ class TestApplier:
                 "_provenance": {"source": "spoofed"},
                 "_assertion": {"review": {"status": "rejected", "source": "human"}},
             },
+            actor_context=human_actor(),
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
@@ -421,19 +453,28 @@ class TestApplier:
     def test_no_provenance_backfilled_on_touch(
         self, graph: EntityGraph, target: RelationshipInstance
     ):
-        """Feedback on a null-provenance edge backfills provenance instead of staying null."""
+        """Feedback on a null-provenance edge marks it, without claiming authorship.
+
+        The touch cannot know where the edge came from, so the origin is
+        recorded as unknown-and-backfilled rather than as the feedback
+        channel. What IS known — which channel backfilled it, and when — is
+        recorded separately.
+        """
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="approve",
             target=target,
+            actor_context=human_actor(),
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert_review_state(rel, status="approved", source="human")
         prov = rel.metadata.provenance
         assert prov is not None
-        assert prov.source == "human"
-        assert prov.source_ref == "feedback:approve"
+        assert prov.source == "unknown_backfilled"
+        assert prov.source_ref == "unknown_backfilled"
+        assert prov.touched_by == "feedback:approve"
+        assert prov.backfilled_at is not None
         assert prov.last_modified_by == "feedback:approve"
         assert prov.last_modified_at is not None
 
@@ -459,6 +500,7 @@ class TestApplier:
                 to_type="Vehicle",
                 to_id="V-1",
             ),
+            actor_context=human_actor(),
         )
         with pytest.raises(RelationshipAmbiguityError):
             apply_feedback(graph, fb)
@@ -495,6 +537,7 @@ class TestApplier:
                 to_id="V-1",
                 edge_key=edge_key,
             ),
+            actor_context=human_actor(),
         )
         assert apply_feedback(graph, fb) is True
 
@@ -511,6 +554,7 @@ class TestFeedbackStore:
             action="reject",
             target=target,
             reason="Bad fitment",
+            actor_context=human_actor(),
         )
         fid = store.save_feedback(fb)
         loaded = store.get_feedback(fid)
@@ -564,13 +608,17 @@ class TestFeedbackStore:
             receipt_id="RCP-1",
             action="approve",
             target=target,
-            source="agent",
             model_id="claude-opus-4-6",
+            actor_context=agent_actor(),
         )
         store.save_feedback(fb)
         loaded = store.get_feedback(fb.feedback_id)
         assert loaded.model_id == "claude-opus-4-6"
-        assert loaded.source == "agent"
+        # The declared axis is retired; what survives on the record is the
+        # actor context the kind is derived from.
+        assert loaded.actor_context is not None
+        assert loaded.actor_context.actor_type == "service_account"
+        assert derived_actor_kind(loaded.actor_context) == "agent"
 
     def test_corrections_persisted(self, store: FeedbackStore, target: RelationshipInstance):
         fb = FeedbackRecord(
@@ -578,6 +626,7 @@ class TestFeedbackStore:
             action="correct",
             target=target,
             corrections={"confidence": 0.99},
+            actor_context=human_actor(),
         )
         store.save_feedback(fb)
         loaded = store.get_feedback(fb.feedback_id)
@@ -589,7 +638,6 @@ class TestFeedbackStore:
         fb = FeedbackRecord(
             receipt_id="RCP-1",
             action="reject",
-            source="agent",
             target=target,
             reason="Legacy unsupported",
             reason_code="legacy_unsupported",
@@ -608,6 +656,7 @@ class TestFeedbackStore:
                 "edge": {"relationship": "fits", "properties": {}},
                 "context": {"surface_type": "query"},
             },
+            actor_context=human_actor(),
         )
         store.save_feedback(fb)
         loaded = store.get_feedback(fb.feedback_id)
@@ -681,8 +730,8 @@ class TestOutcomeStore:
                 "surface": {"type": "query", "name": "parts_for_vehicle"},
                 "trace_set": {"trace_ids": [], "provider_names": [], "trace_count": 0},
             },
-            source="agent",
             detail={"installed": True},
+            actor_context=human_actor(),
         )
         oid = store.save_outcome(out)
         loaded = store.get_outcome(oid)
@@ -758,6 +807,7 @@ class TestFeedbackQueryIntegration:
                 to_id="V-1",
             ),
             reason="Wrong fitment for this trim",
+            actor_context=human_actor(),
         )
         apply_feedback(graph, fb)
 
@@ -789,6 +839,7 @@ class TestFeedbackQueryIntegration:
                     to_type="Vehicle",
                     to_id="V-1",
                 ),
+                actor_context=human_actor(),
             )
             apply_feedback(graph, fb)
 
@@ -817,6 +868,7 @@ class TestFeedbackQueryIntegration:
                 to_id="V-1",
             ),
             corrections={"confidence": 0.99},
+            actor_context=human_actor(),
         )
         apply_feedback(graph, fb)
 
@@ -851,6 +903,7 @@ class TestFeedbackQueryIntegration:
                 to_id="V-1",
             ),
             reason="Wrong part",
+            actor_context=human_actor(),
         )
         apply_feedback(graph, fb)
 
@@ -882,7 +935,6 @@ class TestFeedbackQueryIntegration:
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="reject",
-            source="agent",
             target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-2",
@@ -891,6 +943,7 @@ class TestFeedbackQueryIntegration:
                 to_id="V-1",
             ),
             reason="AI flagged wrong fitment",
+            actor_context=agent_actor(),
         )
         apply_feedback(graph, fb)
 

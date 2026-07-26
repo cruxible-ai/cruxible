@@ -142,7 +142,6 @@ def _feedback(rail: Rail, action: str, **overrides: Any) -> Any:
     kwargs: dict[str, Any] = {
         "receipt_id": None,
         "action": action,
-        "source": "human",
         "target": _target(),
         "reason": "rail test",
     }
@@ -205,18 +204,18 @@ def test_batch_is_gated_at_its_strictest_action(rail: Rail) -> None:
     items = [_batch_item(rail, "flag"), _batch_item(rail, "approve")]
     with request_permission_scope(PermissionMode.GOVERNED_WRITE):
         with pytest.raises(PermissionDeniedError, match="GRAPH_WRITE"):
-            service_feedback_batch(rail.instance, items, source="human")
+            service_feedback_batch(rail.instance, items)
     assert _review_status(rail) == "pending"
 
     with request_permission_scope(PermissionMode.GRAPH_WRITE):
-        result = service_feedback_batch(rail.instance, items, source="human")
+        result = service_feedback_batch(rail.instance, items)
     assert result.applied_count == 2
     assert _review_status(rail) == "approved"
 
 
 def test_batch_of_flags_stays_governed(rail: Rail) -> None:
     with request_permission_scope(PermissionMode.GOVERNED_WRITE):
-        result = service_feedback_batch(rail.instance, [_batch_item(rail, "flag")], source="human")
+        result = service_feedback_batch(rail.instance, [_batch_item(rail, "flag")])
     assert result.applied_count == 1
 
 
@@ -262,7 +261,7 @@ def test_kill_switch_refuses_a_batch_containing_acceptance(
     monkeypatch.setenv("CRUXIBLE_REFUSE_DIRECT_WRITES", "true")
     items = [_batch_item(rail, "flag"), _batch_item(rail, "approve")]
     with pytest.raises(DirectWriteRefusedError):
-        service_feedback_batch(rail.instance, items, source="human")
+        service_feedback_batch(rail.instance, items)
     assert _review_status(rail) == "pending"
 
 

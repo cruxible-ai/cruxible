@@ -353,7 +353,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
     def cruxible_feedback(
         instance_id: str,
         action: contracts.FeedbackAction,
-        source: contracts.FeedbackSource,
         from_type: str,
         from_id: str,
         relationship_type: str,
@@ -391,7 +390,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             instance_id=instance_id,
             receipt_id=receipt_id,
             action=action,
-            source=source,
             from_type=from_type,
             from_id=from_id,
             relationship_type=relationship_type,
@@ -410,10 +408,9 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
     def cruxible_feedback_batch(
         instance_id: str,
         items: list[contracts.FeedbackBatchItemInput],
-        source: contracts.FeedbackSource = "human",
     ) -> contracts.FeedbackBatchResult:
         """Record batch edge feedback under one top-level mutation receipt."""
-        return handlers.handle_feedback_batch(instance_id, items, source=source)
+        return handlers.handle_feedback_batch(instance_id, items)
 
     @_tool
     def cruxible_feedback_from_query(
@@ -421,7 +418,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         receipt_id: str,
         result_index: int,
         action: contracts.FeedbackAction,
-        source: contracts.FeedbackSource = "human",
         reason: str = "",
         reason_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
@@ -441,7 +437,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             receipt_id=receipt_id,
             result_index=result_index,
             action=action,
-            source=source,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,
@@ -458,7 +453,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         receipt_id: str | None = None,
         anchor_type: contracts.OutcomeAnchorType = "receipt",
         anchor_id: str | None = None,
-        source: contracts.FeedbackSource = "human",
         outcome_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
         outcome_profile_key: str | None = None,
@@ -471,7 +465,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             receipt_id=receipt_id,
             anchor_type=anchor_type,
             anchor_id=anchor_id,
-            source=source,
             outcome_code=outcome_code,
             scope_hints=scope_hints,
             outcome_profile_key=outcome_profile_key,
@@ -978,7 +971,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         question: str,
         subject_type: str | None = None,
         subject_id: str | None = None,
-        opened_by: str = "human",
     ) -> contracts.DecisionRecordResult:
         """Open a decision record that can collect query and workflow receipts."""
         return handlers.handle_create_decision_record(
@@ -986,7 +978,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         )
 
     @_tool
@@ -1377,8 +1368,8 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         thesis_facts: dict[str, Any] | None = None,
         analysis_state: dict[str, Any] | None = None,
         signal_sources_used: list[str] | None = None,
-        proposed_by: contracts.GroupProposedBy = "agent",
         suggested_priority: str | None = None,
+        expected_pending_version: int | None = None,
     ) -> contracts.ProposeGroupToolResult:
         """Propose a candidate group of edges for batch review.
 
@@ -1390,8 +1381,18 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         hashed.
 
         If a prior trusted resolution exists for the same thesis signature and
-        all signals meet the auto-resolve policy, the group is auto-resolved.
-        Otherwise it enters pending_review with a Cruxible-derived review_priority.
+        all signals meet the auto-resolve policy, the group is approved
+        immediately through the normal resolve rail — real edges, a real
+        resolution row, a real receipt — and the result carries its
+        ``resolution_id``. Auto-resolution creates live edges, so a caller below
+        GRAPH_WRITE gets ``pending_review`` plus an
+        ``auto_resolve_deferred_reason`` instead. Otherwise the group enters
+        pending_review with a Cruxible-derived review_priority.
+
+        A re-propose of the same thesis signature REWRITES the live pending
+        group. Pass ``expected_pending_version`` (read from the group you
+        computed the delta against) to have a bucket that moved underneath you
+        refused instead of overwritten; omit it for an unconditional refresh.
         """
         return handlers.handle_propose_group(
             instance_id,
@@ -1401,8 +1402,8 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
             signal_sources_used=signal_sources_used,
-            proposed_by=proposed_by,
             suggested_priority=suggested_priority,
+            expected_pending_version=expected_pending_version,
         )
 
     @_tool
@@ -1412,7 +1413,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         action: contracts.GroupAction,
         expected_pending_version: int,
         rationale: str = "",
-        resolved_by: contracts.GroupResolvedBy = "human",
         stamp_existing: bool = False,
     ) -> contracts.ResolveGroupToolResult:
         """Resolve a candidate group by approving or rejecting it.
@@ -1429,7 +1429,6 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             group_id,
             action,
             rationale=rationale,
-            resolved_by=resolved_by,
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
         )
@@ -1477,9 +1476,11 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         """List candidate groups with optional filters.
 
         Results are sorted by review_priority descending (critical first).
-        Use ``status`` to filter by lifecycle state (pending_review,
-        auto_resolved, applying, resolved). Use ``relationship_type``
-        to filter by edge type.
+        Use ``status`` to filter by lifecycle state (pending_review, applying,
+        resolved, withdrawn). ``auto_resolved`` is a DEPRECATED read-only
+        status: nothing writes it any more, and it is filterable only so an
+        operator upgrading from 0.2.x can find the rows it left behind. Use
+        ``relationship_type`` to filter by edge type.
         """
         return handlers.handle_list_groups(
             instance_id,
@@ -1620,15 +1621,22 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
     def cruxible_dereference_source_evidence(
         instance_id: str,
         source_artifact_id: str,
+        artifact_revision_id: str | None = None,
         chunk_id: str | None = None,
         heading_path: list[str] | None = None,
         block_selector: str | None = None,
         expected_content_hash: str | None = None,
     ) -> contracts.DereferenceSourceEvidenceResult:
-        """Return source text for a registered source-evidence locator."""
+        """Return source text for a registered source-evidence locator.
+
+        Pass ``artifact_revision_id`` (from the evidence ref you are replaying)
+        to read the revision the citation was MADE against. Without it the read
+        resolves against the current revision and reports ``revision_unpinned``.
+        """
         return handlers.handle_dereference_source_evidence(
             instance_id,
             source_artifact_id=source_artifact_id,
+            artifact_revision_id=artifact_revision_id,
             chunk_id=chunk_id,
             heading_path=heading_path,
             block_selector=block_selector,
