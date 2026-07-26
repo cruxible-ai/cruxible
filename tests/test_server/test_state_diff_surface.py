@@ -150,7 +150,10 @@ def test_unknown_artifact_digest_is_a_structured_error(
     assert response.json()["error_type"] == "ConfigError"
 
 
-def test_cli_renders_the_diff_and_reads_the_artifact_back(tmp_path: Path) -> None:
+def test_cli_renders_the_diff_and_reads_the_artifact_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     root = tmp_path / "local"
     root.mkdir()
     (root / "config.yaml").write_text(CAR_PARTS_YAML)
@@ -171,33 +174,35 @@ def test_cli_renders_the_diff_and_reads_the_artifact_back(tmp_path: Path) -> Non
         ],
     )
 
+    # monkeypatch.chdir RESTORES the working directory at teardown; a bare
+    # os.chdir leaks it into whatever test runs next.
+    monkeypatch.chdir(root)
     runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        import os
+    human = runner.invoke(cli, ["state", "diff", snapshot.snapshot_id])
+    assert human.exit_code == 0, human.output
+    assert "diff digest:" in human.output
+    assert "+ Part:BP-9000" in human.output
 
-        os.chdir(root)
-        human = runner.invoke(cli, ["state", "diff", snapshot.snapshot_id])
-        assert human.exit_code == 0, human.output
-        assert "diff digest:" in human.output
-        assert "+ Part:BP-9000" in human.output
+    structured = runner.invoke(cli, ["state", "diff", snapshot.snapshot_id, "--json"])
+    assert structured.exit_code == 0, structured.output
+    payload = json.loads(structured.output)
+    assert payload["summary"]["added"] == 1
 
-        structured = runner.invoke(cli, ["state", "diff", snapshot.snapshot_id, "--json"])
-        assert structured.exit_code == 0, structured.output
-        payload = json.loads(structured.output)
-        assert payload["summary"]["added"] == 1
-
-        artifact = runner.invoke(cli, ["state", "diff", "--artifact", payload["diff_digest"]])
-        assert artifact.exit_code == 0, artifact.output
-        assert json.loads(artifact.output)["summary"] == payload["summary"]
-        # STDOUT IS THE ARTIFACT. `cruxible state diff --artifact D | sha256sum`
-        # is a verification step, so the bytes on stdout must hash to D --
-        # re-indenting a parsed body or appending a newline silently breaks it.
-        stdout_bytes = artifact.stdout_bytes
-        assert not stdout_bytes.endswith(b"\n")
-        assert f"sha256:{hashlib.sha256(stdout_bytes).hexdigest()}" == payload["diff_digest"]
+    artifact = runner.invoke(cli, ["state", "diff", "--artifact", payload["diff_digest"]])
+    assert artifact.exit_code == 0, artifact.output
+    assert json.loads(artifact.output)["summary"] == payload["summary"]
+    # STDOUT IS THE ARTIFACT. `cruxible state diff --artifact D | sha256sum` is
+    # a verification step, so the bytes on stdout must hash to D --
+    # re-indenting a parsed body or appending a newline silently breaks it.
+    stdout_bytes = artifact.stdout_bytes
+    assert not stdout_bytes.endswith(b"\n")
+    assert f"sha256:{hashlib.sha256(stdout_bytes).hexdigest()}" == payload["diff_digest"]
 
 
-def test_cli_human_table_names_the_transition_values(tmp_path: Path) -> None:
+def test_cli_human_table_names_the_transition_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A bare ``[lifecycle_transition]`` withholds the adjudication it reports."""
     root = tmp_path / "local"
     root.mkdir()
@@ -255,10 +260,8 @@ def test_cli_human_table_names_the_transition_values(tmp_path: Path) -> None:
     )
     instance.save_graph(graph)
 
+    monkeypatch.chdir(root)
     runner = CliRunner()
-    import os
-
-    os.chdir(root)
     result = runner.invoke(cli, ["state", "diff", snapshot.snapshot_id])
     assert result.exit_code == 0, result.output
     assert "lifecycle_transition: active -> superseded" in result.output

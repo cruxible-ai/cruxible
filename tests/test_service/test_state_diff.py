@@ -866,47 +866,67 @@ def test_edges_only_diff_never_queries_the_procedure_store(
     assert set(result.sections) == {"edges"}
 
 
-def test_procedures_are_captured_inside_the_revision_sandwich(
+def test_a_procedure_write_after_the_closing_revision_read_does_not_leak_in(
     instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A coordinate is one revision across ALL its sections, or it refuses.
+    """A coordinate is ONE revision across all its sections.
 
-    The graph and the procedure table are separate stores. Reading procedures
-    after the closing revision was taken let a concurrent procedure mutation
-    produce an artifact stamped revision N whose procedures were N+1 -- a
-    mixed-revision plan that looked atomic.
+    The seam has to be AFTER the closing revision read. A write injected
+    between the opening and closing reads is caught by the graph sandwich
+    whether or not procedures are captured inside it, so probing there proves
+    nothing about this fix. ``get_head_snapshot_id`` is the first call the
+    resolver makes once the sandwich has closed, which is exactly the window
+    where a lazily-loaded procedure table would silently pick up a newer
+    revision than the coordinate it is stamped with.
+
+    The assertion is therefore the ABSENCE of the late write: the artifact must
+    describe revision N, not N plus whatever landed afterwards.
     """
     snapshot = service_create_snapshot(instance).snapshot
-    real_load = CruxibleInstance.load_graph
-    bumped: dict[str, bool] = {}
+    real_head = CruxibleInstance.get_head_snapshot_id
+    seeded: dict[str, bool] = {}
 
-    def _mutate_between_graph_and_closing_read(self: CruxibleInstance) -> Any:
-        graph = real_load(self)
-        if not bumped:
-            # A concurrent writer lands a procedure between the graph capture
-            # and the closing revision read.
-            bumped["done"] = True
-            _seed_procedure(self, "PRC-racer")
-        return graph
+    def _seed_after_the_closing_read(self: CruxibleInstance) -> Any:
+        head = real_head(self)
+        if not seeded:
+            seeded["done"] = True
+            _seed_procedure(self, "PRC-late")
+        return head
 
-    monkeypatch.setattr(CruxibleInstance, "load_graph", _mutate_between_graph_and_closing_read)
+    monkeypatch.setattr(CruxibleInstance, "get_head_snapshot_id", _seed_after_the_closing_read)
     result = service_state_diff(
         instance,
         from_coordinate=snapshot.snapshot_id,
         sections=("procedures",),
     )
-    # The retry saw a settled revision; the artifact is single-revision and the
-    # procedure the racer wrote is inside it.
-    assert bumped == {"done": True}
-    assert result.to_coordinate["identity"]["read_revision"] == instance.get_read_revision()
-    assert result.sections["procedures"]["counts"]["added"] == 1
+
+    assert seeded == {"done": True}
+    assert result.sections["procedures"]["counts"]["added"] == 0
+    assert result.sections["procedures"]["added"] == []
+    # The write really did land -- the diff simply does not describe it, which
+    # is the whole point: it happened after this coordinate was closed.
+    monkeypatch.undo()
+    later = service_state_diff(
+        instance,
+        from_coordinate=snapshot.snapshot_id,
+        sections=("procedures",),
+    )
+    assert later.sections["procedures"]["counts"]["added"] == 1
 
 
-def test_persistent_procedure_drift_refuses_rather_than_mixing_revisions(
+def test_procedure_drift_inside_the_sandwich_refuses_rather_than_mixing_revisions(
     instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A revision that genuinely moves mid-capture refuses after one retry.
+
+    This is the sandwich's own guarantee (a write between the opening and
+    closing reads), not the lazy-loader fix -- kept because the two together
+    are what make a coordinate single-revision: this one refuses when the
+    revision moved, the test above proves nothing is picked up after it
+    settled.
+    """
     snapshot = service_create_snapshot(instance).snapshot
     real_load = CruxibleInstance.load_graph
     counter = {"n": 0}
@@ -924,6 +944,7 @@ def test_persistent_procedure_drift_refuses_rather_than_mixing_revisions(
             from_coordinate=snapshot.snapshot_id,
             sections=("procedures",),
         )
+    assert counter["n"] == 2
 
 
 def test_max_items_per_bucket_must_be_at_least_one(instance: CruxibleInstance) -> None:
