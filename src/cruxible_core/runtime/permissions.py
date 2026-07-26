@@ -164,10 +164,6 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_create_decision_record": PermissionMode.GOVERNED_WRITE,
     "cruxible_finalize_decision_record": PermissionMode.GOVERNED_WRITE,
     "cruxible_abandon_decision_record": PermissionMode.GOVERNED_WRITE,
-    "cruxible_add_constraint": PermissionMode.GOVERNED_WRITE,
-    "cruxible_add_decision_policy": PermissionMode.GOVERNED_WRITE,
-    "cruxible_create_snapshot": PermissionMode.GOVERNED_WRITE,
-    "cruxible_state_pull_apply": PermissionMode.GOVERNED_WRITE,
     "cruxible_register_source_artifact": PermissionMode.GOVERNED_WRITE,
     # GRAPH_WRITE tools
     "cruxible_add_entity": PermissionMode.GRAPH_WRITE,

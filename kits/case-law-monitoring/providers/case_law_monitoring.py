@@ -17,7 +17,6 @@ from typing import Any
 from cruxible_core.provider.payloads import load_artifact_json, source_artifact_evidence_ref
 from cruxible_core.provider.types import ProviderContext
 
-
 CORPUS_FIELDS = (
     "opinions",
     "courts",

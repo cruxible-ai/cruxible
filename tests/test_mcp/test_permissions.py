@@ -192,10 +192,6 @@ class TestCheckPermission:
         check_permission("cruxible_run_workflow")
         check_permission("cruxible_test_workflow")
         check_permission("cruxible_propose_workflow")
-        check_permission("cruxible_add_constraint")
-        check_permission("cruxible_add_decision_policy")
-        check_permission("cruxible_create_snapshot")
-        check_permission("cruxible_state_pull_apply")
 
     def test_graph_write_tools_denied_in_governed_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
