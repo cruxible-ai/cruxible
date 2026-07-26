@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import (
@@ -21,6 +22,16 @@ from cruxible_core.service import (
 )
 from cruxible_core.working_set import normalize_edge_record, record_identity, validate_record
 from tests.test_cli.conftest import CAR_PARTS_YAML
+
+# Uncoded feedback (a reason with no reason_code) requires a resolved HUMAN
+# actor; agent-kind actors must supply a code.
+_HUMAN_REVIEWER = GovernedActorContext(
+    actor_type="human_user",
+    actor_id="usr_reviewer",
+    org_id="org_1",
+    operation_id="op_claim_identity_feedback",
+    timestamp="2026-06-05T12:00:00Z",
+)
 
 
 @pytest.fixture
@@ -123,7 +134,6 @@ def test_feedback_stamps_the_resolved_claim_id(instance: CruxibleInstance) -> No
         instance,
         receipt_id=None,
         action="approve",
-        source="human",
         target=RelationshipInstance(
             from_type="Part",
             from_id="BP-1",
@@ -132,6 +142,7 @@ def test_feedback_stamps_the_resolved_claim_id(instance: CruxibleInstance) -> No
             to_id="V-1",
         ),
         reason="looks right",
+        actor_context=_HUMAN_REVIEWER,
     )
     store = instance.get_feedback_store()
     try:
@@ -152,7 +163,6 @@ def test_feedback_refuses_disagreeing_target_disambiguators(instance: CruxibleIn
             instance,
             receipt_id=None,
             action="approve",
-            source="human",
             target=RelationshipInstance(
                 from_type="Part",
                 from_id="BP-1",
@@ -163,6 +173,7 @@ def test_feedback_refuses_disagreeing_target_disambiguators(instance: CruxibleIn
                 claim_id=stored.claim_id,
             ),
             reason="ambiguous",
+            actor_context=_HUMAN_REVIEWER,
         )
 
 

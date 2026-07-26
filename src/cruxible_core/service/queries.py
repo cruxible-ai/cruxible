@@ -67,10 +67,7 @@ from cruxible_core.query.read_surface import (
 from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.query.types import QueryPathSegment, dump_query_row
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.service.decisions import (
-    ensure_decision_record_open,
-    record_decision_event_for_context,
-)
+from cruxible_core.service.decisions import record_decision_event_for_context
 from cruxible_core.service.types import (
     EntityChangeHistoryItem,
     EntityChangeHistoryResult,
@@ -113,23 +110,6 @@ _ENTITY_HISTORY_RECEIPT_PAGE_SIZE = 500
 # ---------------------------------------------------------------------------
 
 
-def _require_open_decision_record(
-    instance: InstanceProtocol,
-    context: OperationContext | None,
-) -> None:
-    """Refuse the read when it names a missing or closed decision record.
-
-    The workflow path already gates on ``ensure_decision_record_open``. Without
-    the same gate here, a READ_ONLY caller could keep appending events to a
-    finalized or abandoned record: ``record_decision_event_for_context`` only
-    logs append failures, so the growth was silent and the record's closure
-    meant nothing.
-    """
-    if context is None or context.decision_record_id is None:
-        return
-    ensure_decision_record_open(instance, context.decision_record_id)
-
-
 def service_query(
     instance: InstanceProtocol,
     query_name: str,
@@ -142,7 +122,6 @@ def service_query(
 
     Returns results, receipt, and execution metadata.
     """
-    _require_open_decision_record(instance, context)
     started_at = utc_now()
     input_event = {
         "query_name": query_name,
@@ -249,7 +228,6 @@ def service_query_inline_surface(
     if surface_limit is not None and surface_limit < 1:
         raise ConfigError("limit must be a positive integer")
 
-    _require_open_decision_record(instance, context)
     inline_name, query_schema = _inline_query_schema(definition)
     query_name = f"{_INLINE_QUERY_PREFIX}{inline_name}"
     started_at = utc_now()

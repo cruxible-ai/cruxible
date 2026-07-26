@@ -3,38 +3,38 @@
   "kits": {
     "agent-operation": {
       "asset": "agent-operation-0.2.8.tar.gz",
-      "dir_digest": "sha256:304877aa589521a98846df249009e0b669e473982c664797c0a720ef35bb2403",
-      "tarball_sha256": "406e79b018ac23dc82d8d828db3df67ac3ed3cf458342c1f933331b782b4e785"
+      "dir_digest": "sha256:0d822cebab0d6ac661d5f567b1bfbad4cd5d8c7f43911da30d5e1cbb63b64743",
+      "tarball_sha256": "682c5700b92ceda422728abb0a76f75dfa25586d7c00baecd11693533e47e7d7"
     },
     "agent-release": {
       "asset": "agent-release-0.2.8.tar.gz",
-      "dir_digest": "sha256:673a8bef126783a73924e119732395889084e7cf3cbcf3c5b3ce20bc9ea1a5ca",
-      "tarball_sha256": "7ba6acbf555743bbbd8a50a4c6a7e5591f3d4081a8fbfd6b1a019c5ea8ea3cc1"
+      "dir_digest": "sha256:0c58036911ee4da3a4cae3399e80e7ec62fb302c162076e86180505055923d45",
+      "tarball_sha256": "bd7453e5544608e0f4944074b34c51042aa2013d2724cc372796b30f4cb62f12"
     },
     "case-law-monitoring": {
       "asset": "case-law-monitoring-0.2.8.tar.gz",
-      "dir_digest": "sha256:0e127235065f384e88fa7538c64221f3fd2ed9309657d1f75303ec453db63b7e",
-      "tarball_sha256": "06f744d65d68ad84271f3481fcd6add705f6fef48cb2d4891fc59dfce047c87d"
+      "dir_digest": "sha256:2967cb0e5ed3b02634f56362332bfef0103c220649305ef5cb0c34a95419784e",
+      "tarball_sha256": "0dfac92855e05eed2abfff783fa7c5a57826ab2e6a637a645110839b8888409e"
     },
     "kev-reference": {
       "asset": "kev-reference-0.2.8.tar.gz",
-      "dir_digest": "sha256:3a95733d0fd79b395482be77c8ef2d49856106a7dbb34811d0729c4d4ae6aa71",
-      "tarball_sha256": "e3b605b0849c444542a322befe0241d412a7d421457f86d657230c98b7daf310"
+      "dir_digest": "sha256:99eff610a27b3b19a4115ca2439800f9bb53bfee6c35d88d4d5f8236aee6cd60",
+      "tarball_sha256": "1f9d3078b1676c4bd7cea0fcabeca264a282c9cc70a7984539389ca92c2309d6"
     },
     "kev-triage": {
       "asset": "kev-triage-0.2.8.tar.gz",
-      "dir_digest": "sha256:881bdf9fa01edc253c482c78e5d845f525d9befaff4afb7394e1f820599bd796",
-      "tarball_sha256": "3ddf0d546d83b40e5abed1554818c361ffb6ffef82d5e4fb4e63c0e6b0bccc66"
+      "dir_digest": "sha256:c717daedf270fa2b22e26763495754900d5472cd6f0144811fa44ba235a4e7b6",
+      "tarball_sha256": "04f75e296b0dbd1af787e38cf4624dbf3a394136c4f2b608c0aec49b0f864b29"
     },
     "project-domain": {
       "asset": "project-domain-0.2.8.tar.gz",
-      "dir_digest": "sha256:162caa7810937caa94cb9f15675cd248d6f20de68ddc100210669ccd614c4a5b",
-      "tarball_sha256": "6faa2e3c95d5ae0ab5f73680911b3976dc64cbc297ccf29d067db4b66576af1c"
+      "dir_digest": "sha256:e28a257a82bc506ab81fdc34a555e452d6e57dea30c6406cc2ac3f4b8263c217",
+      "tarball_sha256": "c3413b482355c86c3e433a3528de699ce65f835b9efb5e5daea470562e6a8447"
     },
     "supply-chain-blast-radius": {
       "asset": "supply-chain-blast-radius-0.2.8.tar.gz",
-      "dir_digest": "sha256:8fd6a490e9cbbff3cc5e364555365264dfccfee727e2dbf0af5cfd4153669694",
-      "tarball_sha256": "bcc78821431cefa50b7f125a54a45a51df642412ec56eb38fec8a882a083c676"
+      "dir_digest": "sha256:539f067b303e5cd8fbdfa9060580cde17b325d04e300290f6982baaa84197cc3",
+      "tarball_sha256": "5f26a646e7e3ba1595150123b56621fe25688f772002705cf55c9e1c21a874d0"
     }
   },
   "version": "0.2.8"

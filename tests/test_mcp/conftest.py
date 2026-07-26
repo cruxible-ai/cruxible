@@ -537,6 +537,7 @@ class GovernedLocalClient:
         analysis_state: dict | None = None,
         signal_sources_used: list[str] | None = None,
         suggested_priority: str | None = None,
+        expected_pending_version: int | None = None,
     ):
         return api.propose_group(
             instance_id,
@@ -547,6 +548,7 @@ class GovernedLocalClient:
             analysis_state=analysis_state,
             signal_sources_used=signal_sources_used,
             suggested_priority=suggested_priority,
+            expected_pending_version=expected_pending_version,
         )
 
     def resolve_group(

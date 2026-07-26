@@ -520,7 +520,6 @@ class TestAnalyzeFeedback:
                 instance,
                 receipt_id=query.receipt_id,
                 action="reject",
-                source="agent",
                 target=_feedback_target(part_id),
                 reason="Legacy unsupported",
                 reason_code="legacy_unsupported",
@@ -1322,7 +1321,10 @@ CREATE TABLE outcomes (
         assert feedback.scope_hints == {"category": "brakes"}
         assert feedback.feedback_profile_key == "fits"
         assert feedback.feedback_profile_version == 3
-        assert feedback.source == "agent"
+        # ``source`` is a derived projection of actor_context now; a legacy row
+        # with no actor context honestly reads "unknown", whatever the retired
+        # declared-source column said.
+        assert feedback.source == "unknown"
         assert feedback.target.from_id == "BP-1001"
         assert feedback.decision_context == {
             "surface_type": "query",
@@ -1343,7 +1345,7 @@ CREATE TABLE outcomes (
         assert outcome.outcome_profile_key == "query_quality"
         assert outcome.outcome_profile_version == 5
         assert outcome.relationship_type == "fits"
-        assert outcome.source == "human"
+        assert outcome.source == "unknown"
         assert outcome.outcome_profile_digest is None
 
     def test_migration_keeps_every_legacy_row(self, tmp_path: Path) -> None:
