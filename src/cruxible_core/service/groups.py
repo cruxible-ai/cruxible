@@ -997,7 +997,7 @@ def service_group_status(
 def service_list_groups(
     instance: InstanceProtocol,
     relationship_type: str | None = None,
-    status: (Literal["pending_review", "applying", "resolved", "withdrawn"] | None) = None,
+    status: GroupStatus | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> ListGroupsResult:

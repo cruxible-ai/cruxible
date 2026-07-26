@@ -48,7 +48,10 @@ OutcomeValue = Literal["correct", "incorrect", "partial", "unknown"]
 OutcomeAnchorType = Literal["resolution", "receipt"]
 ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
 GroupAction = Literal["approve", "reject"]
-GroupStatus = Literal["pending_review", "applying", "resolved", "withdrawn"]
+# Deprecated: ``auto_resolved`` is read-only legacy — never written since 0.3,
+# but shipped 0.2.x instances persisted rows carrying it, so a client that drops
+# it from the vocabulary cannot parse those rows at all.
+GroupStatus = Literal["pending_review", "applying", "resolved", "withdrawn", "auto_resolved"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
@@ -1083,6 +1086,11 @@ class InlineQueryDefinition(BaseModel):
 class DecisionRecordResult(BaseModel):
     record: dict[str, Any]
     events: list[dict[str, Any]] = Field(default_factory=list)
+    # The mutation receipt for open/finalize/abandon. The service result has
+    # carried it since decision records became receipted; without it on the
+    # contract the receipt exists but is unreachable from the call that made it,
+    # so a caller cannot cite the proof of its own governed act. Null on reads.
+    receipt_id: str | None = None
 
 
 class DecisionRecordListResult(ListEnvelopeFields):
@@ -1176,6 +1184,12 @@ class StateHealthGroupsSection(BaseModel):
     total_count: int = 0
     oldest_unresolved_age_seconds: float | None = None
     newest_unresolved_age_seconds: float | None = None
+    # Deprecated: always 0. ``auto_resolved`` is no longer a status any code path
+    # writes, so this bucket cannot grow; it is re-emitted only so a 0.2.x reader
+    # that requires the key keeps parsing. An honest zero, not a suppressed
+    # count: legacy ``auto_resolved`` rows are terminal dead-ends and are counted
+    # nowhere else either. Removal follows 0.3; read ``withdrawn_count``.
+    auto_resolved_count: int = 0
 
 
 class StateHealthSignalsSection(BaseModel):

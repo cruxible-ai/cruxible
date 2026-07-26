@@ -1351,6 +1351,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         analysis_state: dict[str, Any] | None = None,
         signal_sources_used: list[str] | None = None,
         suggested_priority: str | None = None,
+        expected_pending_version: int | None = None,
     ) -> contracts.ProposeGroupToolResult:
         """Propose a candidate group of edges for batch review.
 
@@ -1369,6 +1370,11 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         GRAPH_WRITE gets ``pending_review`` plus an
         ``auto_resolve_deferred_reason`` instead. Otherwise the group enters
         pending_review with a Cruxible-derived review_priority.
+
+        A re-propose of the same thesis signature REWRITES the live pending
+        group. Pass ``expected_pending_version`` (read from the group you
+        computed the delta against) to have a bucket that moved underneath you
+        refused instead of overwritten; omit it for an unconditional refresh.
         """
         return handlers.handle_propose_group(
             instance_id,
@@ -1379,6 +1385,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             analysis_state=analysis_state,
             signal_sources_used=signal_sources_used,
             suggested_priority=suggested_priority,
+            expected_pending_version=expected_pending_version,
         )
 
     @_tool

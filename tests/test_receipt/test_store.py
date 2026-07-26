@@ -824,3 +824,41 @@ class TestSQLiteReceiptStore:
         assert len(listed) == 1
         assert listed[0]["provider_name"] == "provider_a"
         assert listed[0]["input_payload_metadata"]["stored_inline"] is True
+
+
+class TestLegacyOperationTypes:
+    """0.2.x wrote receipt rows this build must still be able to read."""
+
+    def test_stored_group_clear_receipt_loads(self, store: SQLiteReceiptStore) -> None:
+        """``group_clear`` was renamed ``group_withdraw``; stored rows survive.
+
+        Dropping the literal from ``OperationType`` made ``get_receipt`` raise on
+        every 0.2.x empty-delta-refresh receipt — receipts are the audit record,
+        so making them unreadable is the one thing a rename must not do.
+        """
+        builder = ReceiptBuilder(
+            operation_type="group_withdraw",
+            parameters={"group_id": "GRP-1"},
+        )
+        receipt = builder.build()
+        legacy_json = json.loads(receipt.model_dump_json())
+        legacy_json["operation_type"] = "group_clear"
+        store._conn.execute(
+            "INSERT INTO receipts "
+            "(receipt_id, query_name, parameters, receipt_json, created_at, duration_ms, "
+            "operation_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "RCP-legacy-clear",
+                receipt.query_name,
+                json.dumps(receipt.parameters),
+                json.dumps(legacy_json),
+                format_datetime(receipt.created_at),
+                receipt.duration_ms,
+                "group_clear",
+            ),
+        )
+        store._conn.commit()
+
+        loaded = store.get_receipt("RCP-legacy-clear")
+        assert loaded is not None
+        assert loaded.operation_type == "group_clear"

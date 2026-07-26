@@ -118,6 +118,12 @@ def _compact_edge_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
             compact_assertion["lifecycle"] = compact_lifecycle
     if assertion.get("group_override"):
         compact_assertion["group_override"] = assertion["group_override"]
+    if assertion.get("group_approval_drift"):
+        # Retained for the same reason as ``group_override``: it is a governance
+        # marker, and the design premise is that EVERY ordinary read carries the
+        # divergence. ``compact`` is the agent-facing default profile, so
+        # dropping it here would hide drift from almost every real reader.
+        compact_assertion["group_approval_drift"] = assertion["group_approval_drift"]
     if not compact_assertion:
         return {}
     return {"assertion": compact_assertion}

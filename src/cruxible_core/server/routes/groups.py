@@ -31,6 +31,7 @@ async def propose_group(
         analysis_state=req.analysis_state,
         signal_sources_used=req.signal_sources_used,
         suggested_priority=req.suggested_priority,
+        expected_pending_version=req.expected_pending_version,
         actor_context=req.actor_context,
     )
 

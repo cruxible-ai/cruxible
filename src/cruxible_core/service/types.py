@@ -1184,6 +1184,12 @@ class StateHealthGroupsSection:
     total_count: int = 0
     oldest_unresolved_age_seconds: float | None = None
     newest_unresolved_age_seconds: float | None = None
+    # Deprecated: always 0. ``auto_resolved`` is no longer a status any code path
+    # writes, so this bucket cannot grow; it is re-emitted only so a 0.2.x reader
+    # that requires the key keeps parsing. An honest zero, not a suppressed
+    # count: legacy ``auto_resolved`` rows are terminal dead-ends and are counted
+    # nowhere else either. Removal follows 0.3; read ``withdrawn_count``.
+    auto_resolved_count: int = 0
 
 
 @dataclass

@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from cruxible_core.errors import ConfigError, GroupNotFoundError
 from cruxible_core.governance.actors import derived_actor_kind, dump_actor_context
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import RelationshipInstance
-from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
+from cruxible_core.group.types import (
+    CandidateGroup,
+    CandidateMember,
+    GroupResolution,
+    GroupStatus,
+)
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.service.property_diffs import property_delta as build_property_delta
 from cruxible_core.service.types import (
@@ -170,12 +175,16 @@ def group_status_read_model(
 def list_groups_read_model(
     instance: InstanceProtocol,
     relationship_type: str | None = None,
-    status: (Literal["pending_review", "applying", "resolved", "withdrawn"] | None) = None,
+    status: GroupStatus | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> ListGroupsResult:
-    """List candidate groups with optional filters, sorted by review priority."""
-    valid_statuses = ("pending_review", "applying", "resolved", "withdrawn")
+    """List candidate groups with optional filters, sorted by review priority.
+
+    ``auto_resolved`` is accepted as a filter even though nothing writes it any
+    more: an operator upgrading from 0.2.x needs a way to FIND the legacy rows.
+    """
+    valid_statuses = get_args(GroupStatus)
     if status is not None and status not in valid_statuses:
         raise ConfigError(f"Invalid status '{status}'. Use: {', '.join(valid_statuses)}")
 

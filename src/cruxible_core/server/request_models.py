@@ -5,9 +5,38 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
+import structlog
 from pydantic import BaseModel, Field, model_validator
 
 from cruxible_client import contracts
+
+logger = structlog.get_logger()
+
+# Request fields retired with the self-declared human/agent axis. A 0.2.x caller
+# still sends them; pydantic's default ``extra="ignore"`` already accepts the
+# request, so the compatibility question is only whether the drop is SILENT.
+# Deprecated: accepted and ignored, logged once per request, removed after 0.3.
+# The value is derived from ``actor_context`` — a declared one was never
+# reconciled with it and is not honored.
+_RETIRED_ACTOR_AXIS_FIELDS = ("source", "proposed_by", "resolved_by", "opened_by")
+
+
+def _warn_retired_actor_axis_fields(model_name: str, value: Any) -> Any:
+    """Log a deprecation warning for retired declared-actor request fields."""
+    if not isinstance(value, dict):
+        return value
+    present = [name for name in _RETIRED_ACTOR_AXIS_FIELDS if name in value]
+    if present:
+        logger.warning(
+            "deprecated_request_field",
+            request_model=model_name,
+            fields=present,
+            detail=(
+                "the declared human/agent actor axis is retired; the value is "
+                "ignored and derived from actor_context instead"
+            ),
+        )
+    return value
 
 
 class InitRequest(BaseModel):
@@ -143,6 +172,11 @@ class FeedbackRequest(BaseModel):
     group_override: bool = False
     actor_context: contracts.GovernedActorContext | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("FeedbackRequest", value)
+
 
 class FeedbackBatchRequest(BaseModel):
     items: list[contracts.FeedbackBatchItemInput]
@@ -151,6 +185,11 @@ class FeedbackBatchRequest(BaseModel):
 
 class FeedbackFromQueryRequest(contracts.FeedbackFromQueryInput):
     actor_context: contracts.GovernedActorContext | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("FeedbackFromQueryRequest", value)
 
 
 class OutcomeRequest(BaseModel):
@@ -164,6 +203,11 @@ class OutcomeRequest(BaseModel):
     detail: dict[str, Any] | None = None
     actor_context: contracts.GovernedActorContext | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("OutcomeRequest", value)
+
 
 class ProposeGroupRequest(BaseModel):
     relationship_type: str
@@ -173,7 +217,20 @@ class ProposeGroupRequest(BaseModel):
     analysis_state: dict[str, Any] | None = None
     signal_sources_used: list[str] | None = None
     suggested_priority: str | None = None
+    # Optional optimistic guard, mirroring the one ``resolve_group`` requires: a
+    # re-propose REWRITES (or withdraws) the live pending bucket, so a caller
+    # that read that bucket, computed a delta against it, and then re-proposed
+    # must be able to say which version it computed against. Optional because an
+    # unconditional refresh is a legitimate ingest pattern; a WRONG value is
+    # refused. Absent from this model the guard was accepted by the client,
+    # advertised in the CHANGELOG, and then silently dropped at the HTTP seam.
+    expected_pending_version: int | None = None
     actor_context: contracts.GovernedActorContext | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("ProposeGroupRequest", value)
 
 
 class ResolveGroupRequest(BaseModel):
@@ -185,6 +242,11 @@ class ResolveGroupRequest(BaseModel):
     # already live) with the group's review status + provenance instead of
     # skipping it silently. Default keeps today's skip-but-now-explained behavior.
     stamp_existing: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("ResolveGroupRequest", value)
 
 
 class UpdateTrustStatusRequest(BaseModel):
@@ -379,6 +441,11 @@ class DecisionRecordCreateRequest(BaseModel):
     subject_type: str | None = None
     subject_id: str | None = None
     actor_context: contracts.GovernedActorContext | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_retired_fields(cls, value: Any) -> Any:
+        return _warn_retired_actor_axis_fields("DecisionRecordCreateRequest", value)
 
 
 class DecisionRecordFinalizeRequest(BaseModel):

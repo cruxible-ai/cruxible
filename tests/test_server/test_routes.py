@@ -3493,3 +3493,121 @@ def test_http_entity_lifecycle_gating_parity(
     body = by_id.json()
     assert body["found"] is True
     assert body["metadata"]["lifecycle"]["status"] == "retired"
+
+
+def _propose_fits_group(
+    client: TestClient,
+    instance_id: str,
+    *,
+    to_id: str,
+    expected_pending_version: int | None = None,
+):
+    body: dict[str, object] = {
+        "relationship_type": "fits",
+        "thesis_facts": {"rule_id": "fit_rule", "rule_version": 1},
+        "members": [
+            {
+                "from_type": "Part",
+                "from_id": "BP-1002",
+                "to_type": "Vehicle",
+                "to_id": to_id,
+                "relationship_type": "fits",
+                "signals": [
+                    {
+                        "signal_source": "catalog",
+                        "signal": "support",
+                        "evidence": "listed in the vendor catalog",
+                    }
+                ],
+            }
+        ],
+    }
+    if expected_pending_version is not None:
+        body["expected_pending_version"] = expected_pending_version
+    return client.post(f"/api/v1/{instance_id}/groups/propose", json=body)
+
+
+def test_propose_group_honors_expected_pending_version_over_http(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    """The optimistic guard must survive the HTTP seam, not be dropped there.
+
+    The client sends ``expected_pending_version`` and the CHANGELOG advertises
+    it, but the request model had no such field — so pydantic dropped it and
+    every remote re-propose ran unguarded while appearing to be guarded.
+    """
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    opened = _propose_fits_group(app_client, instance_id, to_id="V-2024-ACCORD-SPORT")
+    assert opened.status_code == 200, opened.json()
+    group_id = opened.json()["group_id"]
+    assert group_id is not None
+
+    stale = _propose_fits_group(
+        app_client,
+        instance_id,
+        to_id="V-2024-ACCORD-SPORT",
+        expected_pending_version=99,
+    )
+    assert stale.status_code == 400, stale.json()
+    assert "expected pending_version 99" in stale.json()["message"]
+
+    current = _propose_fits_group(
+        app_client,
+        instance_id,
+        to_id="V-2024-ACCORD-SPORT",
+        expected_pending_version=1,
+    )
+    assert current.status_code == 200, current.json()
+
+
+def test_decision_record_mutations_return_their_receipt_id(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    """Open/finalize/abandon each mint a receipt; the caller must be able to cite it.
+
+    The service result carried ``receipt_id`` and the contract dropped it, so the
+    proof of a governed act existed but was unreachable from the call that made
+    it. Reads stay null — nothing was written.
+    """
+    instance_id = _init_instance(app_client, server_project)
+
+    opened = app_client.post(
+        f"/api/v1/{instance_id}/decision-records",
+        json={"question": "Ship the release?"},
+    )
+    assert opened.status_code == 200, opened.json()
+    open_payload = opened.json()
+    record_id = open_payload["record"]["decision_record_id"]
+    assert open_payload["receipt_id"]
+
+    fetched = app_client.get(f"/api/v1/{instance_id}/decision-records/{record_id}")
+    assert fetched.json()["receipt_id"] is None
+
+    finalized = app_client.post(
+        f"/api/v1/{instance_id}/decision-records/{record_id}/finalize",
+        json={"final_decision": "Ship", "decision_class": "recommended"},
+    )
+    assert finalized.json()["receipt_id"]
+
+    second = app_client.post(
+        f"/api/v1/{instance_id}/decision-records",
+        json={"question": "Second question?"},
+    )
+    second_id = second.json()["record"]["decision_record_id"]
+    abandoned = app_client.post(
+        f"/api/v1/{instance_id}/decision-records/{second_id}/abandon",
+        json={"reason": "Superseded"},
+    )
+    assert abandoned.json()["receipt_id"]
+
+    for receipt_id in (
+        open_payload["receipt_id"],
+        finalized.json()["receipt_id"],
+        abandoned.json()["receipt_id"],
+    ):
+        receipt = app_client.get(f"/api/v1/{instance_id}/receipts/{receipt_id}")
+        assert receipt.status_code == 200, receipt.json()

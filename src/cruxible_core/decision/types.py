@@ -7,9 +7,13 @@ import json
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.governance.actors import (
+    DerivedActorKind,
+    GovernedActorContext,
+    derived_actor_kind,
+)
 from cruxible_core.primitives import new_id
 from cruxible_core.temporal import utc_now
 
@@ -48,6 +52,18 @@ class DecisionRecord(BaseModel):
     decision_class: DecisionClass | None = None
     rationale: str = ""
     abandoned_reason: str = ""
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def opened_by(self) -> DerivedActorKind:
+        """Deprecated: read-only projection of the opening actor's derived kind.
+
+        The caller-declared ``opened_by`` axis is retired; this re-emits the old
+        field name as a value DERIVED from ``opened_actor_context``, which is
+        what the ``opened_by`` SQL column already stores. Never writable; removal
+        follows 0.3. Read ``opened_actor_context`` instead.
+        """
+        return derived_actor_kind(self.opened_actor_context)
 
     @model_validator(mode="after")
     def validate_terminal_state(self) -> DecisionRecord:

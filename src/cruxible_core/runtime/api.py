@@ -1365,7 +1365,11 @@ def create_decision_record(
         subject_id=subject_id,
         actor_context=actor,
     )
-    return contracts.DecisionRecordResult(record=result.record.model_dump(mode="json"))
+    return contracts.DecisionRecordResult(
+        record=result.record.model_dump(mode="json"),
+        events=[event.model_dump(mode="json") for event in result.events],
+        receipt_id=result.receipt_id,
+    )
 
 
 def get_decision_record(
@@ -1384,6 +1388,7 @@ def get_decision_record(
     return contracts.DecisionRecordResult(
         record=result.record.model_dump(mode="json"),
         events=[event.model_dump(mode="json") for event in result.events],
+        receipt_id=result.receipt_id,
     )
 
 
@@ -1474,6 +1479,7 @@ def finalize_decision_record(
     return contracts.DecisionRecordResult(
         record=result.record.model_dump(mode="json"),
         events=[event.model_dump(mode="json") for event in result.events],
+        receipt_id=result.receipt_id,
     )
 
 
@@ -1496,6 +1502,7 @@ def abandon_decision_record(
     return contracts.DecisionRecordResult(
         record=result.record.model_dump(mode="json"),
         events=[event.model_dump(mode="json") for event in result.events],
+        receipt_id=result.receipt_id,
     )
 
 
@@ -2149,6 +2156,7 @@ def state_health(instance_id: str) -> contracts.StateHealthResult:
             total_count=result.groups.total_count,
             oldest_unresolved_age_seconds=result.groups.oldest_unresolved_age_seconds,
             newest_unresolved_age_seconds=result.groups.newest_unresolved_age_seconds,
+            auto_resolved_count=result.groups.auto_resolved_count,
         ),
         signals=contracts.StateHealthSignalsSection(
             unevidenced_support_by_source=result.signals.unevidenced_support_by_source,

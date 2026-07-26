@@ -22,6 +22,14 @@ the project's own state instance.
   HTTP request models, the CLI (`--source`, `--opened-by`), and the client.
   Readers derive the value from the actor context.
 
+  The READ-side field names survive as DEPRECATED derived projections (see
+  *Deprecated* below): `FeedbackRecord.source`, `OutcomeRecord.source`,
+  `GroupResolution.resolved_by`, `CandidateGroup.proposed_by`, and
+  `DecisionRecord.opened_by` are re-emitted, computed from
+  `derived_actor_kind(actor_context)`. What is gone is the ability to DECLARE
+  them. The retired request fields are accepted and ignored with a
+  `deprecated_request_field` warning rather than rejected.
+
   The `reason_code` requirement now keys off the derived kind and applies to
   everything that is not a resolved human — including `"unknown"`, because an
   unattributed write is absence of evidence, not evidence of a person.
@@ -34,9 +42,11 @@ the project's own state instance.
   forbids extra keys. Persisted rows are unaffected: the SQL columns survive as
   denormalized projections written from the derived value.
 
-  **Contract fields removed:** `FeedbackFromQueryInput.source`;
-  `StateHealthGroupsSection.auto_resolved_count` (replaced by `withdrawn_count`);
-  the `FeedbackSource`, `GroupProposedBy`, and `GroupResolvedBy` type aliases.
+  **Contract fields removed:** `FeedbackFromQueryInput.source`; the
+  `FeedbackSource`, `GroupProposedBy`, and `GroupResolvedBy` type aliases.
+  `StateHealthGroupsSection.auto_resolved_count` is superseded by
+  `withdrawn_count` but stays on the contract as a deprecated always-0
+  projection.
 
 - **`auto_resolved` is retired as a group status**: it was a dead-end label. No
   code path transitioned a group out of it, no edges were created, no resolution
@@ -56,9 +66,12 @@ the project's own state instance.
   guard rejects it) — the proposal does not fail, and the reason travels on the
   result.
 
-  **Contract change:** `GroupStatus` drops `auto_resolved` and gains
-  `withdrawn`; `GroupResolution` drops `resolved_by` and gains
-  `resolution_source`.
+  **Contract change:** `GroupStatus` gains `withdrawn`; `GroupResolution` gains
+  `resolution_source`. `auto_resolved` stays in `GroupStatus` as a DEPRECATED
+  read-only member (see *Deprecated*) — shipped 0.2.x kits wrote such rows and
+  they must still load. They are NOT migrated to `withdrawn`: nobody withdrew
+  them, and minting that act would fabricate a governance event that never
+  happened. They are terminal, and `resolve_group` refuses them.
 
 - **An empty-delta re-propose withdraws its pending group instead of deleting
   it**: under the default `pending_refresh_mode="replace"`, a re-propose that
@@ -67,8 +80,11 @@ the project's own state instance.
   `group_id` joined to nothing. The group is now marked `withdrawn` with its
   members intact; `withdrawn` sits outside the pending unique index, so the
   signature is free for a later proposal. The receipt operation type is
-  `group_withdraw` (was `group_clear`). `propose_group` also accepts an optional
-  `expected_pending_version`, the same optimistic guard `resolve_group` requires.
+  `group_withdraw` (was `group_clear`; the old literal stays readable, see
+  *Deprecated*). `propose_group` also accepts an optional
+  `expected_pending_version`, the same optimistic guard `resolve_group`
+  requires — now carried on the HTTP request model, the MCP tool, and
+  `cruxible group propose --expected-pending-version`, not only the client.
 
 - **Approve no longer moves trust**: a new approval CARRIES the signature's trust
   posture — status, reason, and the actor who set it — forward verbatim. It used
@@ -126,6 +142,36 @@ the project's own state instance.
   write verbs, so freezing live writes can no longer be walked around via
   feedback. `reject` / `flag` stay available — they move edges *out* of
   live state.
+
+### Deprecated
+
+Deprecate-then-remove applies to every shipped surface: these all still work,
+each is annotated `Deprecated:` at its definition, and all are scheduled for
+removal in the release after 0.3.
+
+- **`GroupStatus` keeps `auto_resolved` as a read-only member.** Nothing writes
+  it any more, but shipped 0.2.x kits (auto-resolve is enabled in them) persisted
+  rows with it. Dropping the literal made `_row_to_group` raise on every
+  list/get that touched one, so a single legacy row bricked group reads for the
+  whole instance immediately after upgrading. Legacy rows are terminal and
+  filterable (`cruxible group list --status auto_resolved`) so an operator can
+  find them; nothing transitions them and nothing recreates them.
+- **`OperationType` keeps `group_clear`.** Renamed to `group_withdraw`, never
+  written again, but 0.2.x receipt stores hold rows carrying the old value and
+  `get_receipt` raised on every one of them. A rename must not make an audit
+  record unreadable.
+- **Derived actor-kind projections re-emitted under the old field names.**
+  `FeedbackRecord.source`, `OutcomeRecord.source`, `GroupResolution.resolved_by`,
+  `CandidateGroup.proposed_by`, and `DecisionRecord.opened_by` return as
+  computed, read-only values from `derived_actor_kind(actor_context)` — exactly
+  what the matching SQL columns already store. Declaring them is gone; reading
+  them is not. Read `actor_context` instead.
+- **Retired declared-actor REQUEST fields are accepted and ignored.** Sending
+  `source` / `proposed_by` / `resolved_by` / `opened_by` to a mutating HTTP route
+  logs a `deprecated_request_field` warning instead of silently dropping the
+  value. It is never honored — the kind is derived from `actor_context`.
+- **`StateHealthGroupsSection.auto_resolved_count` returns, always 0.** An honest
+  zero: no path can grow that bucket any more. Read `withdrawn_count`.
 
 ### Fixed
 

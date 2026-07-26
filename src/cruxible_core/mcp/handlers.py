@@ -2036,6 +2036,7 @@ def handle_propose_group(
     analysis_state: dict[str, Any] | None = None,
     signal_sources_used: list[str] | None = None,
     suggested_priority: str | None = None,
+    expected_pending_version: int | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""
     return _dispatch_remote_or_local(
@@ -2048,6 +2049,7 @@ def handle_propose_group(
             analysis_state=analysis_state,
             signal_sources_used=signal_sources_used,
             suggested_priority=suggested_priority,
+            expected_pending_version=expected_pending_version,
         ),
         lambda: api.propose_group(
             instance_id,
@@ -2058,6 +2060,7 @@ def handle_propose_group(
             analysis_state=analysis_state,
             signal_sources_used=signal_sources_used,
             suggested_priority=suggested_priority,
+            expected_pending_version=expected_pending_version,
         ),
         allow_local=False,
         operation_name="cruxible_propose_group",

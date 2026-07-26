@@ -567,3 +567,46 @@ class TestCoexistence:
         assert fs.count_feedback() == 0
         gs.close()
         fs.close()
+
+
+class TestLegacyAutoResolvedRows:
+    """0.2.x shipped kits with auto-resolve on, so real DBs hold these rows."""
+
+    def _insert_legacy_row(self, store: GroupStore, group_id: str) -> None:
+        """Write status='auto_resolved' the way 0.2.x did, bypassing the model."""
+        store._conn.execute(
+            "INSERT INTO candidate_groups "
+            "(group_id, relationship_type, signature, status, group_kind, thesis_text, "
+            "thesis_facts, analysis_state, signal_sources_used, member_count, "
+            "pending_version, review_priority, suggested_priority, source_workflow_name, "
+            "source_workflow_receipt_id, source_query_receipt_ids, source_trace_ids, "
+            "source_step_ids, resolution_id, proposed_actor_context, proposed_by, created_at) "
+            "VALUES (?, 'fits', 'legacy-sig', 'auto_resolved', 'propose', 'legacy', "
+            "'{}', '{}', '[]', 1, 1, 'normal', NULL, NULL, NULL, '[]', '[]', '[]', "
+            "NULL, NULL, 'agent', ?)",
+            (group_id, format_datetime(_now())),
+        )
+        store._conn.commit()
+
+    def test_legacy_auto_resolved_row_loads(self, store: GroupStore) -> None:
+        """A 0.2.x auto_resolved row must not blow up ``get_group``.
+
+        Dropping the literal from ``GroupStatus`` made ``_row_to_group`` raise a
+        pydantic ValidationError, so one legacy row bricked every group read on
+        the instance right after an upgrade.
+        """
+        self._insert_legacy_row(store, "GRP-legacy0001")
+        loaded = store.get_group("GRP-legacy0001")
+        assert loaded is not None
+        assert loaded.status == "auto_resolved"
+
+    def test_legacy_auto_resolved_row_lists(self, store: GroupStore) -> None:
+        self._insert_legacy_row(store, "GRP-legacy0002")
+        store.save_group(_group("GRP-live00000001"))
+        listed = {group.group_id for group in store.list_groups(limit=50)}
+        assert listed == {"GRP-legacy0002", "GRP-live00000001"}
+
+    def test_legacy_row_is_invisible_to_the_pending_lookup(self, store: GroupStore) -> None:
+        """It is terminal, not live: a re-propose opens a fresh pending group."""
+        self._insert_legacy_row(store, "GRP-legacy0003")
+        assert store.find_pending_group("fits", "legacy-sig") is None
