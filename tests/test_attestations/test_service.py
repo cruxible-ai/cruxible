@@ -20,6 +20,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.graph.assertion_state import relationship_assertion_from_metadata
 from cruxible_core.graph.evidence import EvidenceRef
+from cruxible_core.graph.types import RelationshipInstance, mint_claim_id
 from cruxible_core.service import (
     service_attest,
     service_attestation_queue,
@@ -42,6 +43,7 @@ def _attest(
     observer: str = "observer",
     evidence_refs: Sequence[EvidenceRef | Mapping[str, object]] | None = None,
     edge_key: int | None = None,
+    claim_id: str | None = None,
     properties: dict[str, object] | None = None,
     idempotency_key: str | None = None,
 ) -> AttestationRecordResult:
@@ -61,6 +63,7 @@ def _attest(
         observed_at=OBSERVED_AT,
         actor_context=actor(observer),
         edge_key=edge_key,
+        claim_id=claim_id,
         properties=properties,
         idempotency_key=idempotency_key,
     )
@@ -90,7 +93,14 @@ def test_absent_support_creates_pending_with_required_properties(
     assert relationship.metadata.evidence is not None
     assert relationship.metadata.evidence.evidence_refs == result.attestation.evidence_refs
     listed = service_list_attestations(attestation_instance, claim_key=CLAIM_KEY)
-    assert listed.items[0].edge_key_mismatch is True
+    # EVER-OR-NEVER: this record stamped a claim_id at record time, so the
+    # target-identity comparison is id-vs-id and the stale caller-supplied
+    # edge_key (999) is never consulted. Comparing the per-load edge_key on a
+    # record that has a stable identity would report a mismatch after any
+    # reload, which is noise, not signal.
+    assert listed.items[0].target_identity_mismatch_kind == "claim_id"
+    assert listed.items[0].target_identity_mismatch is False
+    assert listed.items[0].attestation.claim_id == relationship.claim_id
     attached = _attest(attestation_instance, "contradict")
     assert attached.created_claim is False
     assert attached.attestation.claim_state_at_record == "pending"
@@ -219,7 +229,14 @@ def test_create_refusal_retries_as_attach_after_in_transaction_race(
     )
     assert result.created_claim is False
     assert result.attestation.claim_state_at_record == "pending"
-    assert result.warnings == ["pending claim appeared during create; attached to existing claim"]
+    # BOTH warnings: the attach, and the properties it silently discarded.
+    # The properties warning used to be an ``elif`` on the create branch, so
+    # exactly the path that ignored the caller's properties was the one path
+    # that never said so.
+    assert result.warnings == [
+        "pending claim appeared during create; attached to existing claim",
+        "properties ignored because the claim tuple already exists",
+    ]
 
 
 def test_property_change_buckets_stale_content_and_zero_elides_empty_claims(
@@ -416,6 +433,74 @@ def test_idempotent_replay_refuses_divergent_request(
             idempotency_key="diverge-key",
         )
     replay = _attest(attestation_instance, "support", idempotency_key="diverge-key")
+    assert replay.idempotent_replay is True
+    assert replay.attestation.attestation_id == original.attestation.attestation_id
+
+
+def test_a_stale_claim_id_refuses_instead_of_silently_retargeting_the_tuple(
+    attestation_instance: CruxibleInstance,
+) -> None:
+    """A stale id used to re-resolve tuple-first AND invent a race warning.
+
+    The unknown id fell through to the create branch, which re-resolved by tuple,
+    hit the existing claim, and reported "pending claim appeared during create"
+    -- a concurrency story for something no concurrency caused. The observation
+    landed on a claim the caller had never seen.
+    """
+    live = add_live_claim(attestation_instance)
+    with pytest.raises(ConfigError) as excinfo:
+        _attest(attestation_instance, "support", claim_id="CLM-staleref00000")
+    message = str(excinfo.value)
+    assert "CLM-staleref00000" in message
+    assert live.claim_id is not None and live.claim_id in message
+    assert "appeared during create" not in message
+    assert service_list_attestations(attestation_instance).total == 0
+
+
+def test_replay_refuses_a_different_claim_target_on_the_same_tuple(
+    attestation_instance: CruxibleInstance,
+) -> None:
+    """Same tuple, same stance, same evidence -- DIFFERENT claim.
+
+    Comparing only stance and evidence made a second, genuinely distinct
+    observation disappear: it returned the first record as "idempotent" while
+    the claim it was actually about went unrecorded.
+    """
+    first_claim = add_live_claim(attestation_instance)
+    original = _attest(attestation_instance, "support", idempotency_key="target-key")
+    assert original.attestation.claim_id == first_claim.claim_id
+
+    # A second, PARALLEL claim on the same 5-tuple: identical natural key,
+    # different identity. Exactly what claim_id exists to tell apart.
+    graph = attestation_instance.load_graph()
+    sibling_id = mint_claim_id()
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="protected_by",
+            from_type="Service",
+            from_id="svc-1",
+            to_type="Control",
+            to_id="ctl-1",
+            properties={"severity": "low"},
+            claim_id=sibling_id,
+        )
+    )
+    attestation_instance.save_graph(graph)
+
+    with pytest.raises(ConfigError, match="claim target"):
+        _attest(
+            attestation_instance,
+            "support",
+            claim_id=sibling_id,
+            idempotency_key="target-key",
+        )
+    # ...and the untouched replay still replays.
+    replay = _attest(
+        attestation_instance,
+        "support",
+        claim_id=first_claim.claim_id,
+        idempotency_key="target-key",
+    )
     assert replay.idempotent_replay is True
     assert replay.attestation.attestation_id == original.attestation.attestation_id
 

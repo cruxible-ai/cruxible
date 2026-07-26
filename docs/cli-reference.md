@@ -1478,7 +1478,7 @@ The `git-pre-push` kind evaluates merge commits only: squash merges mint new SHA
 **Usage:**
 
 ```bash
-cruxible attest record --relationship REL_TYPE --from-type TYPE --from-id ID --to-type TYPE --to-id ID --stance support|contradict|unsure --observed-at ISO_TIME [--evidence-ref JSON]... [--edge-key INTEGER] [--properties JSON] [--note TEXT] [--idempotency-key KEY] [--json]
+cruxible attest record --relationship REL_TYPE --from-type TYPE --from-id ID --to-type TYPE --to-id ID --stance support|contradict|unsure --observed-at ISO_TIME [--evidence-ref JSON]... [--edge-key INTEGER] [--claim-id CLAIM_ID] [--properties JSON] [--note TEXT] [--idempotency-key KEY] [--json]
 ```
 
 **Purpose:** Record one observation against a tuple-first relationship claim.
@@ -1496,6 +1496,7 @@ cruxible attest record --relationship REL_TYPE --from-type TYPE --from-id ID --t
 | `--observed-at` | yes |  | text | ISO-8601 time when the world was observed. |
 | `--evidence-ref` | no |  | JSON | Evidence pointer; repeatable and required for support or contradict. |
 | `--edge-key` | no |  | integer | Disambiguation hint; tuple coordinates remain authoritative. |
+| `--claim-id` | no |  | text | Stable claim identity; the preferred disambiguator, taking precedence over `--edge-key`. Supplying both with disagreeing values is refused. |
 | `--properties` | no |  | JSON | Properties used only when absent support creates a pending claim. |
 | `--note` | no |  | text | Optional note, encouraged for unsure. |
 | `--idempotency-key` | no |  | text | Retry-safe key scoped to actor and claim tuple. |
@@ -1527,7 +1528,10 @@ cruxible attest record --relationship REL_TYPE --from-type TYPE --from-id ID --t
 | `--json` | no | `False` | boolean | Output as a standard list envelope. |
 
 **Output And Side Effects:** Read-only. Items include latest disposition plus
-`unresolved_target`, `edge_key_mismatch`, and `stale_content` markers.
+`unresolved_target`, `target_identity_mismatch` (with
+`target_identity_mismatch_kind` naming which comparison ran: `claim_id` where
+both sides carry a minted id, `edge_key` for legacy records that carry only the
+per-load key), and `stale_content` markers.
 
 ## cruxible attest queue
 
@@ -3475,6 +3479,7 @@ cruxible source dereference \
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--apply-digest` | yes | `Sentinel.UNSET` | text | Apply digest returned by pull-preview. |
+| `--repair` | no | `False` | boolean | Repair mode: re-apply the release ALREADY tracked, to restore a materialized upstream that was damaged locally. Normally refused as a no-op; the local copy's digest verification is skipped because that is the check the damage trips. Claim ids are preserved. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -3489,6 +3494,12 @@ cruxible source dereference \
 **Usage:** `cruxible state pull-preview [OPTIONS]`
 
 **Purpose:** Preview pulling a newer upstream release into the current overlay.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--repair` | no | `False` | boolean | Repair mode: re-apply the release ALREADY tracked, to restore a materialized upstream that was damaged locally. Normally refused as a no-op; the local copy's digest verification is skipped because that is the check the damage trips. Claim ids are preserved. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.

@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client import contracts
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp import working_set as mcp_working_set
 from cruxible_core.runtime.instance import CruxibleInstance
@@ -68,6 +68,7 @@ def local_instance(tmp_project: Path) -> CruxibleInstance:
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1",

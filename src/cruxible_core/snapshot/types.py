@@ -13,6 +13,14 @@ from cruxible_core.temporal import utc_now
 
 _RELEASE_ID_PATTERN = re.compile(r"[a-zA-Z0-9._-]+")
 
+INSTANCE_BACKUP_FORMAT_VERSION = 2
+"""Current instance-backup format.
+
+Bumped to 2 by edge identity (storage migration 0004): the backed-up state
+database's ``graph_relationships`` table is keyed by ``claim_id`` and no longer
+carries the derived ``relationship_id`` column.
+"""
+
 StateCompatibility = Literal["data_only", "additive_schema", "breaking"]
 """Compatibility class between a published release and its predecessors.
 
@@ -47,9 +55,20 @@ class StateSnapshot(BaseModel):
 
 
 class InstanceBackupManifest(BaseModel):
-    """Portable same-identity instance backup metadata."""
+    """Portable same-identity instance backup metadata.
 
-    format_version: int = 1
+    ``format_version`` is the version of THIS manifest shape.
+    ``min_reader_format_version`` is the harder promise: the lowest format a
+    reader must understand to install the payload safely. They came apart at
+    edge identity, because a post-0004 ``state.db`` cannot be read by a build
+    that still expects ``graph_relationships.relationship_id`` -- that column is
+    gone. Declaring the minimum lets ``restore`` refuse BEFORE installation,
+    with a version message, instead of installing the database and failing later
+    on a missing column with an opaque SQL error.
+    """
+
+    format_version: int = INSTANCE_BACKUP_FORMAT_VERSION
+    min_reader_format_version: int = INSTANCE_BACKUP_FORMAT_VERSION
     instance_id: str
     created_at: datetime = Field(default_factory=utc_now)
     cruxible_version: str
@@ -120,3 +139,12 @@ class UpstreamMetadata(PublishedStateManifest):
     graph_digest: str | None = None
     upstream_config_digest: str | None = None
     upstream_lock_digest: str | None = None
+    identity_map_digest: str | None = None
+    """Digest of the normalized LEGACY claim-identity reconcile map.
+
+    Only pre-identity upstream releases need entries in that map (post-upgrade
+    releases carry their own ids), so this stays the empty-map digest for a
+    modern upstream. Its job is to make id churn VISIBLE: two pulls of the same
+    release whose upstream identities moved differ here even though every
+    content digest is byte-identical.
+    """

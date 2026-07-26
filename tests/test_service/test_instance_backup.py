@@ -15,6 +15,7 @@ from cruxible_core.graph.types import EntityInstance
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import service_add_entities
 from cruxible_core.service.snapshots import (
+    _INSTANCE_BACKUP_MANIFEST_V2,
     read_instance_backup_manifest,
     service_backup_instance,
     service_relocate_instance,
@@ -144,12 +145,12 @@ def test_instance_restore_requires_required_manifest_artifact_digests(
     broken = tmp_path / "missing-manifest-artifact.cruxible.zip"
 
     with zipfile.ZipFile(artifact) as archive, zipfile.ZipFile(broken, "w") as out:
-        manifest = json.loads(archive.read("manifest.json"))
+        manifest = json.loads(archive.read(_INSTANCE_BACKUP_MANIFEST_V2))
         manifest["artifacts"].pop("config.yaml")
         for name in archive.namelist():
             content = (
                 json.dumps(manifest).encode("utf-8")
-                if name == "manifest.json"
+                if name == _INSTANCE_BACKUP_MANIFEST_V2
                 else archive.read(name)
             )
             out.writestr(name, content)
@@ -162,7 +163,7 @@ def test_instance_restore_rejects_unsafe_zip_path(tmp_path: Path) -> None:
     artifact = tmp_path / "unsafe.cruxible.zip"
     with zipfile.ZipFile(artifact, "w") as archive:
         archive.writestr("../state.db", b"bad")
-        archive.writestr("manifest.json", json.dumps({}))
+        archive.writestr(_INSTANCE_BACKUP_MANIFEST_V2, json.dumps({}))
 
     with pytest.raises(ConfigError, match="Unsafe path"):
         read_instance_backup_manifest(artifact)

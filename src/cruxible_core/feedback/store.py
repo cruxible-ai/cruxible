@@ -10,6 +10,7 @@ from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.governance.actors import dump_actor_context, load_actor_context
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.instance_protocol import FeedbackStoreProtocol
+from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.temporal import format_datetime
 
 _SCHEMA = """\
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS feedback (
     target_to_type TEXT NOT NULL DEFAULT '',
     target_to_id TEXT NOT NULL DEFAULT '',
     target_edge_key INTEGER,
+    target_claim_id TEXT,
     reason TEXT NOT NULL DEFAULT '',
     reason_code TEXT,
     reason_remediation_hint TEXT,
@@ -91,13 +93,26 @@ class FeedbackStore(FeedbackStoreProtocol):
         self._owns_connection = connection is None
         self._conn.row_factory = sqlite3.Row
         if initialize_schema:
-            self._conn.executescript(_SCHEMA)
+            execute_schema_script(self._conn, _SCHEMA)
             self._ensure_feedback_schema()
 
     def _ensure_feedback_schema(self) -> None:
         self._ensure_actor_context_columns()
         self._ensure_profile_digest_columns()
+        self._ensure_target_claim_id_column()
         self._ensure_feedback_receipt_nullable()
+
+    def _ensure_target_claim_id_column(self) -> None:
+        """Add the record-time target claim_id stamp to a pre-identity table.
+
+        Additive and nullable, and NEW RECORDS ONLY: historical feedback keeps a
+        NULL stamp and keeps resolving tuple-first, unchanged.
+        """
+        columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(feedback)").fetchall()
+        }
+        if "target_claim_id" not in columns:
+            self._conn.execute("ALTER TABLE feedback ADD COLUMN target_claim_id TEXT")
 
     def _ensure_actor_context_columns(self) -> None:
         feedback_columns = {
@@ -130,13 +145,26 @@ class FeedbackStore(FeedbackStoreProtocol):
             self._conn.execute("ALTER TABLE outcomes ADD COLUMN outcome_profile_digest TEXT")
 
     def _ensure_feedback_receipt_nullable(self) -> None:
+        """Rebuild ``feedback`` to drop the NOT NULL on ``receipt_id``.
+
+        The rebuild copies rows column-by-column, so EVERY column the new table
+        declares must be named in the INSERT...SELECT or it silently arrives
+        NULL. ``target_claim_id`` is copied conditionally because the rebuild
+        can run against an old table that predates the column -- selecting a
+        column the source lacks is a hard SQL error, and the column arriving
+        NULL for those rows is correct (they never had a claim id to carry).
+        """
         rows = self._conn.execute("PRAGMA table_info(feedback)").fetchall()
         receipt_column = next((row for row in rows if row["name"] == "receipt_id"), None)
         if receipt_column is None or not receipt_column["notnull"]:
             return
+        claim_id_source = (
+            "target_claim_id" if any(row["name"] == "target_claim_id" for row in rows) else "NULL"
+        )
 
         self._conn.execute("ALTER TABLE feedback RENAME TO feedback_receipt_not_null_old")
-        self._conn.executescript(
+        execute_schema_script(
+            self._conn,
             """\
 CREATE TABLE feedback (
     feedback_id TEXT PRIMARY KEY,
@@ -149,6 +177,7 @@ CREATE TABLE feedback (
     target_to_type TEXT NOT NULL DEFAULT '',
     target_to_id TEXT NOT NULL DEFAULT '',
     target_edge_key INTEGER,
+    target_claim_id TEXT,
     reason TEXT NOT NULL DEFAULT '',
     reason_code TEXT,
     reason_remediation_hint TEXT,
@@ -169,6 +198,7 @@ CREATE TABLE feedback (
 INSERT INTO feedback (
     feedback_id, receipt_id, action, target_json, target_relationship,
     target_from_type, target_from_id, target_to_type, target_to_id, target_edge_key,
+    target_claim_id,
     reason, reason_code, reason_remediation_hint, scope_hints,
     feedback_profile_key, feedback_profile_version, feedback_profile_digest,
     decision_context, context_snapshot, decision_surface_type,
@@ -177,6 +207,7 @@ INSERT INTO feedback (
 SELECT
     feedback_id, receipt_id, action, target_json, target_relationship,
     target_from_type, target_from_id, target_to_type, target_to_id, target_edge_key,
+    :TARGET_CLAIM_ID_SOURCE:,
     reason, reason_code, reason_remediation_hint, scope_hints,
     feedback_profile_key, feedback_profile_version, feedback_profile_digest,
     decision_context, context_snapshot, decision_surface_type,
@@ -184,7 +215,7 @@ SELECT
 FROM feedback_receipt_not_null_old;
 DROP TABLE feedback_receipt_not_null_old;
 CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
-"""
+""".replace(":TARGET_CLAIM_ID_SOURCE:", claim_id_source),
         )
 
     # -----------------------------------------------------------------
@@ -210,11 +241,12 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
             "INSERT OR REPLACE INTO feedback "
             "(feedback_id, receipt_id, action, target_json, target_relationship, "
             "target_from_type, target_from_id, target_to_type, target_to_id, target_edge_key, "
+            "target_claim_id, "
             "reason, reason_code, reason_remediation_hint, scope_hints, "
             "feedback_profile_key, feedback_profile_version, feedback_profile_digest, "
             "decision_context, context_snapshot, decision_surface_type, "
             "decision_surface_name, source, model_id, corrections, actor_context, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (" + ", ".join(["?"] * 27) + ")",
             (
                 record.feedback_id,
                 record.receipt_id,
@@ -226,6 +258,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
                 record.target.to_type,
                 record.target.to_id,
                 record.target.edge_key,
+                record.target.claim_id,
                 record.reason,
                 record.reason_code,
                 record.reason_remediation_hint,

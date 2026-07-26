@@ -36,6 +36,15 @@ class AttestationRecord(BaseModel):
     to_type: str
     to_id: str
     edge_key: int | None = None
+    claim_id: str | None = None
+    """Record-time stamp of the claim's minted identity.
+
+    NEW RECORDS ONLY. Resolution semantics are unchanged and stay TUPLE-FIRST,
+    so every historical record keeps resolving exactly as it did; the stamp is
+    what lets a read say "this observation was made against THIS claim", not how
+    the claim is found.
+    """
+
     claim_content_digest: str
     claim_state_at_record: ClaimStateAtRecord
     stance: AttestationStance
@@ -139,12 +148,23 @@ class AttestationDispositionResult(BaseModel):
 
 
 class AttestationListItem(BaseModel):
-    """One stored attestation plus tuple-first read-time resolution markers."""
+    """One stored attestation plus tuple-first read-time resolution markers.
+
+    ``target_identity_mismatch`` generalizes the old ``edge_key_mismatch``: the
+    question is always "does the claim this record was made against still look
+    like the claim the tuple resolves to today", and the answer is now computed
+    from whichever identity the record actually stamped.
+    ``target_identity_mismatch_kind`` says which comparison ran -- ``claim_id``
+    for records written after edge identity landed, ``edge_key`` for the legacy
+    ones. It is an EVER-OR-NEVER marker per record: a record stamped with a
+    claim_id is never compared by edge_key, and vice versa.
+    """
 
     attestation: AttestationRecord
     latest_disposition: AttestationDisposition | None = None
     unresolved_target: bool = False
-    edge_key_mismatch: bool = False
+    target_identity_mismatch: bool = False
+    target_identity_mismatch_kind: Literal["claim_id", "edge_key"] | None = None
     stale_content: bool = False
     current_claim_state: ClaimStateAtRecord | None = None
 
@@ -181,6 +201,7 @@ class AttestationQueueEntry(BaseModel):
     to_type: str
     to_id: str
     edge_key: int | None = None
+    claim_id: str | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     open_contradict_count: int
     distinct_contradicting_actor_count: int

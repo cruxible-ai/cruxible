@@ -18,6 +18,13 @@ from cruxible_core.config.loader import save_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.legacy_identity import (
+    backfill_legacy_graph,
+    dump_legacy_identity_map,
+    legacy_identity_map_digest,
+    load_legacy_identity_map,
+    record_minted_identities,
+)
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import (
     compute_bundle_digest,
@@ -45,6 +52,7 @@ from cruxible_core.snapshot.types import (
     UpstreamMetadata,
 )
 from cruxible_core.snapshot.upstream_verification import sha256_file, verify_tracked_upstream
+from cruxible_core.storage.sqlite import LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY
 from cruxible_core.transport.backends import (
     RELEASE_BUNDLE_MEMBERS,
     RELEASE_MEMBER_DIGESTS_FILE,
@@ -161,8 +169,30 @@ def service_create_state_overlay(
     # references a phantom receipt -- the same invariant the clone-from-snapshot
     # and state-pull-apply paths enforce.
     upstream_graph.relabel_clone_receipts()
-    instance.save_graph(upstream_graph)
-    materialize_local_operator_auth_managed_entities(instance)
+    # LEGACY-IMAGE BACKFILL (overlay create). A release published before edge
+    # identity has no claim ids in its graph.json, and that bundle is immutable
+    # forever. Mint them in memory; the bundle bytes on disk are untouched, so
+    # the members digest and release immutability still verify.
+    minted = backfill_legacy_graph(upstream_graph)
+    identity_map = record_minted_identities({}, minted)
+    # ONE commit boundary for the backfilled graph AND the map that explains it.
+    #
+    # ``save_graph`` opens its own transaction when there is none, so persisting
+    # the graph first and the map afterwards left a window where a crash between
+    # them stranded minted ids with no reconcile map -- and the next pull of a
+    # still-pre-identity upstream would then re-mint every one of them, staling
+    # each record-time stamp while every content digest stayed identical. The
+    # storage module states this invariant where the state key is declared: the
+    # map must be written in the SAME transaction as the backfill it describes.
+    # ``write_transaction`` is re-entrant, so ``save_graph`` joins THIS boundary.
+    with instance.write_transaction() as uow:
+        instance.save_graph(upstream_graph)
+        if identity_map:
+            uow.snapshots.set_instance_state(
+                LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY,
+                dump_legacy_identity_map(identity_map),
+            )
+        materialize_local_operator_auth_managed_entities(instance)
     upstream = UpstreamMetadata(
         transport_ref=resolved.tracking_transport_ref,
         requested_source_ref=resolved.source_ref,
@@ -175,6 +205,7 @@ def service_create_state_overlay(
         owned_relationship_types=pulled.manifest.owned_relationship_types,
         bundle_format_version=pulled.manifest.bundle_format_version,
         members_digest=pulled.manifest.members_digest,
+        identity_map_digest=legacy_identity_map_digest(identity_map),
         overlay_config_path="config.yaml",
         manifest_path=str((upstream_dir / "manifest.json").relative_to(root)),
         graph_path=str((upstream_dir / "graph.json").relative_to(root)),
@@ -196,8 +227,18 @@ def service_state_status(instance: InstanceProtocol) -> StateStatusResult:
     return StateStatusResult(upstream=instance.get_upstream_metadata())
 
 
-def service_pull_state_preview(instance: InstanceProtocol) -> StatePullPreviewResult:
-    """Preview an upstream pull for a release-backed overlay instance."""
+def service_pull_state_preview(
+    instance: InstanceProtocol,
+    *,
+    force_repair: bool = False,
+) -> StatePullPreviewResult:
+    """Preview an upstream pull for a release-backed overlay instance.
+
+    ``force_repair`` previews the REPAIR of a damaged materialized upstream: the
+    digest verification of the local copy is what fails in that state, and it is
+    also the gate this preview must pass to hand back an apply digest, so a
+    repair could otherwise never be previewed and therefore never applied.
+    """
     upstream = instance.get_upstream_metadata()
     if upstream is None:
         raise ConfigError("Instance is not tracking an upstream state release")
@@ -208,6 +249,7 @@ def service_pull_state_preview(instance: InstanceProtocol) -> StatePullPreviewRe
         upstream=upstream,
         pulled=pulled,
         bundle_warnings=bundle_warnings,
+        force_repair=force_repair,
     )
 
 
@@ -217,10 +259,12 @@ def _build_state_pull_preview(
     upstream: UpstreamMetadata,
     pulled: PulledReleaseBundle,
     bundle_warnings: list[str],
+    force_repair: bool = False,
 ) -> StatePullPreviewResult:
     """Evaluate a materialized upstream bundle against the current overlay."""
     root = instance.get_root_path()
-    verify_tracked_upstream(root, upstream)
+    if not force_repair:
+        verify_tracked_upstream(root, upstream)
     _verify_release_immutability(root, pulled.root_dir, pulled.manifest.release_id)
     warnings: list[str] = list(bundle_warnings)
     conflicts: list[str] = []
@@ -241,9 +285,20 @@ def _build_state_pull_preview(
     except Exception as exc:
         conflicts.append(f"Overlay config does not compose cleanly with target release: {exc}")
 
-    current_upstream_graph = _load_graph_from_bundle(root / ".cruxible" / "upstream" / "current")
+    try:
+        current_upstream_graph = _load_graph_from_bundle(
+            root / ".cruxible" / "upstream" / "current"
+        )
+    except Exception as exc:
+        if not force_repair:
+            raise
+        # Repairing an upstream whose graph.json is the damaged member: the
+        # deltas below are reported against a missing baseline, which is
+        # information, not a reason to block the repair.
+        warnings.append(f"Materialized upstream graph is unreadable and will be repaired: {exc}")
+        current_upstream_graph = EntityGraph()
     next_graph = _load_graph_from_bundle(pulled.root_dir)
-    local_graph = _extract_local_overlay_graph(instance.load_graph(), upstream)
+    local_graph = _extract_local_overlay_graph(instance.load_graph(), pulled.manifest)
     conflicts.extend(_find_dangling_reference_conflicts(local_graph, next_graph, pulled.manifest))
     apply_digest = _compute_state_apply_digest(
         current_release_id=upstream.release_id,
@@ -270,8 +325,18 @@ def service_pull_state_apply(
     *,
     expected_apply_digest: str,
     actor_context: GovernedActorContext | None = None,
+    force_repair: bool = False,
 ) -> StatePullApplyResult:
-    """Apply a previewed upstream pull to a release-backed overlay instance."""
+    """Apply a previewed upstream pull to a release-backed overlay instance.
+
+    ``force_repair`` permits re-applying the release ALREADY tracked, which is
+    otherwise refused as a no-op. It exists because re-pulling the current
+    release is the documented repair for a materialized upstream that was
+    damaged locally (``snapshot.upstream_verification`` sends operators here by
+    name), and a blanket no-op refusal removed the only way out of that state.
+    Repair still goes through the legacy reconcile map, so ids stay stable: a
+    repair restores bytes, it does not re-identify claims.
+    """
     upstream = instance.get_upstream_metadata()
     if upstream is None:
         raise ConfigError("Instance is not tracking an upstream state release")
@@ -282,11 +347,27 @@ def service_pull_state_apply(
         upstream=upstream,
         pulled=pulled,
         bundle_warnings=bundle_warnings,
+        force_repair=force_repair,
     )
     if preview.apply_digest != expected_apply_digest:
         raise ConfigError("State pull apply digest mismatch; rerun pull preview before apply")
     if preview.conflicts:
         raise ConfigError("State pull preview has blocking conflicts", errors=preview.conflicts)
+    if pulled.manifest.release_id == upstream.release_id and not force_repair:
+        # A no-op re-apply of the release already tracked. It was already
+        # warning-worthy; with claim identity it is worse than useless -- it
+        # re-materializes the same immutable bundle and, for a pre-identity
+        # upstream, re-runs the legacy backfill for no state change at all.
+        # Refuse rather than churn -- but NAME the escape, because the same
+        # operation is the documented repair for a locally damaged materialized
+        # upstream, and a refusal with no way through would strand that
+        # instance with no read path and no supported fix.
+        raise ConfigError(
+            f"Instance already tracks release '{upstream.release_id}'; "
+            "re-applying the same release is a no-op and is refused. To REPAIR a "
+            "damaged materialized upstream, re-run with repair enabled "
+            "(`cruxible state pull-apply --repair`); claim ids are preserved."
+        )
 
     root = instance.get_root_path()
     pre_pull_snapshot_id = service_create_snapshot(
@@ -303,7 +384,7 @@ def service_pull_state_apply(
     )
 
     current_graph = instance.load_graph()
-    local_graph = _extract_local_overlay_graph(current_graph, upstream)
+    local_graph = _extract_local_overlay_graph(current_graph, pulled.manifest)
     next_upstream_graph = _load_graph_from_bundle(upstream_dir)
     # The upstream bundle is graph+config+lock with NO receipts: any receipt_id
     # on an upstream edge points at a receipt in the publishing instance that is
@@ -311,6 +392,16 @@ def service_pull_state_apply(
     # merge so no upstream-origin edge in this overlay references a phantom
     # receipt. Local overlay edges keep their receipt_id -- it resolves locally.
     next_upstream_graph.relabel_clone_receipts()
+    # LEGACY-IMAGE BACKFILL (pull apply). A pre-identity upstream release never
+    # gains ids of its own, so this overlay mints them -- reusing whatever it
+    # minted for the same tuples on an earlier pull, so upstream identities stay
+    # stable across re-pulls instead of churning invisibly. The bundle bytes are
+    # untouched; only this instance's live SQLite learns the ids.
+    stored_identity_map = load_legacy_identity_map(
+        instance.get_instance_state(LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY)
+    )
+    minted = backfill_legacy_graph(next_upstream_graph, reuse=stored_identity_map)
+    identity_map = record_minted_identities(stored_identity_map, minted)
     conflicts = _find_dangling_reference_conflicts(
         local_graph,
         next_upstream_graph,
@@ -359,6 +450,7 @@ def service_pull_state_apply(
         owned_relationship_types=pulled.manifest.owned_relationship_types,
         bundle_format_version=pulled.manifest.bundle_format_version,
         members_digest=pulled.manifest.members_digest,
+        identity_map_digest=legacy_identity_map_digest(identity_map),
         overlay_config_path=upstream.overlay_config_path,
         manifest_path=str((upstream_dir / "manifest.json").relative_to(root)),
         graph_path=str((upstream_dir / "graph.json").relative_to(root)),
@@ -387,6 +479,11 @@ def service_pull_state_apply(
     # instance.json advertising a release whose graph had been rolled back.
     with instance.write_transaction() as uow:
         instance.save_graph(merged)
+        if identity_map != stored_identity_map:
+            uow.snapshots.set_instance_state(
+                LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY,
+                dump_legacy_identity_map(identity_map),
+            )
         materialize_local_operator_auth_managed_entities(instance)
         receipt_id = _record_state_pull_apply_receipt(
             instance,
@@ -865,17 +962,27 @@ def _compute_state_apply_digest(
 
 def _extract_local_overlay_graph(
     current_graph: EntityGraph,
-    upstream: UpstreamMetadata,
+    ownership: PublishedStateManifest,
 ) -> EntityGraph:
+    """Split the overlay's own state out of the merged graph.
+
+    ``ownership`` is the manifest whose ownership decides what "local" means,
+    and on a pull it must be the NEW manifest, not the tracked (stale) upstream
+    metadata. A type the incoming release has TAKEN OVER would otherwise still
+    look local, be extracted, and then collide with the upstream edge of the
+    same tuple at merge time -- the stale-ownership window. The merge guard
+    refuses that collision loudly; passing the new ownership here means it never
+    arises.
+    """
     local_entity_types = [
         entity_type
         for entity_type in current_graph.list_entity_types()
-        if entity_type not in set(upstream.owned_entity_types)
+        if entity_type not in set(ownership.owned_entity_types)
     ]
     local_relationship_types = [
         relationship_type
         for relationship_type in current_graph.list_relationship_types()
-        if relationship_type not in set(upstream.owned_relationship_types)
+        if relationship_type not in set(ownership.owned_relationship_types)
     ]
     return current_graph.extract_owned_subgraph(
         entity_types=local_entity_types,

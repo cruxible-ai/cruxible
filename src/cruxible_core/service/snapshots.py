@@ -30,21 +30,50 @@ from cruxible_core.service.types import (
     SnapshotCreateResult,
     SnapshotListResult,
 )
-from cruxible_core.snapshot.types import InstanceBackupManifest
+from cruxible_core.snapshot.types import (
+    INSTANCE_BACKUP_FORMAT_VERSION,
+    InstanceBackupManifest,
+)
 from cruxible_core.storage.sqlite import backup_sqlite_database
 from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.compiler import LOCK_FILE_NAME, resolve_lock_path
 
-_INSTANCE_BACKUP_MANIFEST = "manifest.json"
+# THE FORMAT-2 MANIFEST IS RENAMED, and that rename IS the downgrade refusal.
+#
+# A minimum-reader-version field can only refuse a downgrade in a build that
+# already knows to read it. Every ALREADY-SHIPPED pre-identity reader does not:
+# it would parse a format-2 manifest, see nothing it recognizes as a barrier,
+# install a post-0004 ``state.db``, and only then fail -- at the first graph
+# read, on a column that no longer exists, with a broken instance left on disk.
+# Renaming the member makes that reader fail at VERIFICATION instead:
+# ``manifest.json`` is in its required-members set, so it refuses "missing
+# required file(s)" before writing anything. A blunt message, but the failure
+# lands before installation, which is the property that matters.
+#
+# Readers from this version forward accept BOTH names, so v1 backups keep
+# restoring unchanged; only writing moved.
+_INSTANCE_BACKUP_MANIFEST_V1 = "manifest.json"
+_INSTANCE_BACKUP_MANIFEST_V2 = "backup-manifest-v2.json"
+_INSTANCE_BACKUP_MANIFEST = _INSTANCE_BACKUP_MANIFEST_V2
 _INSTANCE_BACKUP_STATE_DB = "state.db"
 _INSTANCE_BACKUP_CONFIG = "config.yaml"
 _INSTANCE_BACKUP_METADATA = "instance.json"
-_INSTANCE_BACKUP_REQUIRED = {
-    _INSTANCE_BACKUP_MANIFEST,
+_INSTANCE_BACKUP_REQUIRED_ARTIFACTS = {
     _INSTANCE_BACKUP_STATE_DB,
     _INSTANCE_BACKUP_CONFIG,
     _INSTANCE_BACKUP_METADATA,
 }
+
+
+def _resolve_manifest_member(names: set[str]) -> str:
+    """Return which manifest member this artifact carries."""
+    for candidate in (_INSTANCE_BACKUP_MANIFEST_V2, _INSTANCE_BACKUP_MANIFEST_V1):
+        if candidate in names:
+            return candidate
+    raise ConfigError(
+        "Instance backup artifact is missing its manifest (expected "
+        f"'{_INSTANCE_BACKUP_MANIFEST_V2}' or '{_INSTANCE_BACKUP_MANIFEST_V1}')"
+    )
 
 
 def service_create_snapshot(
@@ -330,7 +359,9 @@ def read_instance_backup_manifest(artifact_path: str | Path) -> InstanceBackupMa
     try:
         with zipfile.ZipFile(artifact) as archive:
             _validate_zip_names(archive)
-            manifest_bytes = archive.read(_INSTANCE_BACKUP_MANIFEST)
+            manifest_bytes = archive.read(_resolve_manifest_member(set(archive.namelist())))
+    except ConfigError:
+        raise
     except (OSError, KeyError, zipfile.BadZipFile) as exc:
         raise ConfigError(f"Invalid instance backup artifact: {artifact}") from exc
     return _parse_manifest(manifest_bytes)
@@ -354,14 +385,16 @@ def _read_verified_instance_backup(
         with zipfile.ZipFile(artifact) as archive:
             _validate_zip_names(archive)
             names = set(archive.namelist())
-            missing = sorted(_INSTANCE_BACKUP_REQUIRED - names)
+            manifest_member = _resolve_manifest_member(names)
+            missing = sorted(_INSTANCE_BACKUP_REQUIRED_ARTIFACTS - names)
             if missing:
                 raise ConfigError(
                     f"Instance backup artifact is missing required file(s): {', '.join(missing)}"
                 )
-            manifest = _parse_manifest(archive.read(_INSTANCE_BACKUP_MANIFEST))
+            manifest = _parse_manifest(archive.read(manifest_member))
+            _refuse_unsupported_backup_format(manifest)
             missing_required_artifacts = sorted(
-                (_INSTANCE_BACKUP_REQUIRED - {_INSTANCE_BACKUP_MANIFEST}) - set(manifest.artifacts)
+                _INSTANCE_BACKUP_REQUIRED_ARTIFACTS - set(manifest.artifacts)
             )
             if missing_required_artifacts:
                 raise ConfigError(
@@ -388,6 +421,22 @@ def _read_verified_instance_backup(
                 f"expected {expected}, got {actual}"
             )
     return {"manifest": manifest, "contents": contents}
+
+
+def _refuse_unsupported_backup_format(manifest: InstanceBackupManifest) -> None:
+    """Refuse a backup this build cannot install, BEFORE anything is written.
+
+    The minimum-reader check exists because the failure it replaces was awful:
+    a post-identity ``state.db`` restored under a pre-identity build installs
+    fine and then fails at the first graph read on a column that no longer
+    exists. Refusing up front, by version, says what is actually wrong.
+    """
+    if manifest.min_reader_format_version > INSTANCE_BACKUP_FORMAT_VERSION:
+        raise ConfigError(
+            "Instance backup requires a newer Cruxible: its state database is "
+            f"format {manifest.min_reader_format_version}, this build reads up to "
+            f"{INSTANCE_BACKUP_FORMAT_VERSION}. Upgrade before restoring."
+        )
 
 
 def _parse_manifest(content: bytes) -> InstanceBackupManifest:

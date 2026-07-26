@@ -17,7 +17,7 @@ from cruxible_core.errors import (
     PermissionDeniedError,
 )
 from cruxible_core.governance.actors import GovernedActorContext
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
@@ -428,6 +428,7 @@ class TestPerMemberValidation:
         graph = instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1",
@@ -454,6 +455,7 @@ def _add_direct_edge(instance: CruxibleInstance) -> None:
     graph = instance.load_graph()
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1",
@@ -1424,6 +1426,7 @@ class TestApplyingRetry:
         graph = instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1",
@@ -1462,6 +1465,7 @@ class TestApplyingRetry:
         graph = instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1",
@@ -1505,6 +1509,7 @@ class TestZeroEdgeApprove:
         graph = instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1",

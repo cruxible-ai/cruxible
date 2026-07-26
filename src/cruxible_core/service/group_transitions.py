@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -562,17 +563,24 @@ def _start_approval_resolution(
 
 def _record_relationship_write_nodes(
     builder: ReceiptBuilder,
-    relationships: list[ValidatedRelationship],
+    applied: Sequence[tuple[ValidatedRelationship, RelationshipInstance]],
 ) -> None:
-    for validated in relationships:
-        relationship = validated.relationship
+    """Record write nodes from the DURABLE applied edges.
+
+    Ordering fix (v3): this used to run BEFORE ``_apply_resolved_relationships``,
+    off the pre-apply validated inputs, so a group-created edge could never
+    stamp the id of the edge the apply actually produced -- it did not exist
+    yet. Write nodes are now recorded after the apply, from its return values.
+    """
+    for validated, durable in applied:
         builder.record_relationship_write(
-            from_type=relationship.from_type,
-            from_id=relationship.from_id,
-            to_type=relationship.to_type,
-            to_id=relationship.to_id,
-            relationship=relationship.relationship_type,
+            from_type=durable.from_type,
+            from_id=durable.from_id,
+            to_type=durable.to_type,
+            to_id=durable.to_id,
+            relationship=durable.relationship_type,
             is_update=validated.is_update,
+            claim_id=durable.claim_id,
         )
 
 
@@ -587,16 +595,20 @@ def _apply_resolved_relationships(
     receipt_id: str | None = None,
     resolution_id: str | None = None,
     actor_context: GovernedActorContext | None = None,
-) -> int:
-    if not relationships:
-        return 0
+) -> list[tuple[ValidatedRelationship, RelationshipInstance]]:
+    """Apply the group's resolved edges, returning (validated, durable) pairs.
 
-    touched_relationships: list[RelationshipInstance] = []
+    The durable halves are what the caller records write nodes from -- the
+    apply is the only place the created edge's ``claim_id`` exists.
+    """
+    if not relationships:
+        return []
+
+    applied: list[tuple[ValidatedRelationship, RelationshipInstance]] = []
     for validated in relationships:
-        relationship = validated.relationship
         # source="group_resolve" is a governed verb — always permitted by the
         # chokepoint regardless of write_policy.
-        apply_relationship(
+        durable = apply_relationship(
             graph,
             validated,
             "group_resolve",
@@ -606,24 +618,16 @@ def _apply_resolved_relationships(
             resolution_id=resolution_id,
             actor_context=actor_context,
         )
-        persisted = graph.get_relationship(
-            relationship.from_type,
-            relationship.from_id,
-            relationship.to_type,
-            relationship.to_id,
-            relationship.relationship_type,
-        )
-        if persisted is not None:
-            touched_relationships.append(persisted)
+        applied.append((validated, durable))
 
     save_graph_for_mutation(
         instance,
         graph,
         entities=[],
-        relationships=touched_relationships,
+        relationships=[durable for _validated, durable in applied],
         uow=uow,
     )
-    return sum(1 for validated in relationships if not validated.is_update)
+    return applied
 
 
 def _blessed_metadata_for_existing(
@@ -865,8 +869,7 @@ def _approve_group(
         actor_context=actor_context,
         receipt_id=builder.receipt_id,
     )
-    _record_relationship_write_nodes(builder, validation.valid_inputs)
-    edges_created = _apply_resolved_relationships(
+    applied = _apply_resolved_relationships(
         instance=instance,
         config=config,
         graph=graph,
@@ -877,6 +880,8 @@ def _approve_group(
         resolution_id=resolution_id,
         actor_context=actor_context,
     )
+    _record_relationship_write_nodes(builder, applied)
+    edges_created = sum(1 for validated, _durable in applied if not validated.is_update)
     stamped_tuples: list[dict[str, str]] = []
     if stamp_existing and validation.skipped_existing:
         stamped_tuples = _stamp_existing_edges(

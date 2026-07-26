@@ -1923,8 +1923,14 @@ def feedback(
     group_override: bool = False,
     receipt_id: str | None = None,
     actor_context: Any | None = None,
+    claim_id: str | None = None,
 ) -> contracts.FeedbackResult:
-    """Record feedback on an edge."""
+    """Record feedback on an edge.
+
+    ``claim_id`` is the stable-identity disambiguator and it WINS over
+    ``edge_key``; supplying both with disagreeing values is refused rather than
+    silently resolved. Appended LAST so no existing positional caller shifts.
+    """
     check_permission("cruxible_feedback", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
     _require_review_transition_actor(action, actor)
@@ -1939,6 +1945,7 @@ def feedback(
         to_type=to_type,
         to_id=to_id,
         edge_key=edge_key,
+        claim_id=claim_id,
     )
     result = service_feedback_input(
         instance,
@@ -1989,6 +1996,11 @@ def feedback_batch(
                     to_type=item.target.to_type,
                     to_id=item.target.to_id,
                     edge_key=item.target.edge_key,
+                    # The published contract PROMISES claim_id takes precedence
+                    # here; dropping it in the mapping made that promise a
+                    # no-op, and a caller disambiguating carefully got silent
+                    # tuple-first resolution instead.
+                    claim_id=item.target.claim_id,
                 ),
                 reason=item.reason,
                 reason_code=item.reason_code,
@@ -2897,6 +2909,7 @@ def inspect_entity(
                 "to_type": edge.to_type,
                 "to_id": edge.to_id,
                 "edge_key": edge.edge_key,
+                "claim_id": edge.claim_id,
                 "properties": edge.properties,
                 "metadata": edge.metadata,
             }
@@ -2951,6 +2964,7 @@ def inspect_entity(
             "to_type": other.entity_type if neighbor.direction == "outgoing" else entity_type,
             "to_id": other.entity_id if neighbor.direction == "outgoing" else entity_id,
             "edge_key": neighbor.edge_key,
+            "claim_id": neighbor.claim_id,
             "properties": neighbor.properties,
             "metadata": neighbor.metadata,
             "direction": neighbor.direction,
@@ -3194,6 +3208,7 @@ def _direct_write_group_interaction_to_contract(
         group_signature=interaction.group_signature,
         source_workflow_name=interaction.source_workflow_name,
         edge_key=interaction.edge_key,
+        claim_id=interaction.claim_id,
     )
 
 
@@ -3581,6 +3596,10 @@ def get_relationship(
         to_type=relationship.to_type,
         to_id=relationship.to_id,
         edge_key=relationship.edge_key,
+        # Pinned on the contract AND populated here: a caller that reads an edge
+        # in order to disambiguate a later write has to be able to get the id
+        # from the read it already made.
+        claim_id=relationship.claim_id,
         properties=relationship.properties,
         metadata=relationship.metadata.model_dump(mode="json", exclude_none=True),
         corroboration=corroboration if isinstance(corroboration, dict) else None,
@@ -3651,6 +3670,7 @@ def attest(
     evidence_refs: Sequence[contracts.EvidenceRef | dict[str, Any]],
     observed_at: str | datetime,
     edge_key: int | None = None,
+    claim_id: str | None = None,
     properties: dict[str, Any] | None = None,
     note: str | None = None,
     idempotency_key: str | None = None,
@@ -3681,6 +3701,7 @@ def attest(
         observed_at=parsed_observed_at,
         actor_context=actor,
         edge_key=edge_key,
+        claim_id=claim_id,
         properties=properties,
         note=note,
         idempotency_key=idempotency_key,
@@ -4599,11 +4620,19 @@ def state_status(instance_id: str) -> contracts.StateStatusResult:
     return contracts.StateStatusResult(upstream=upstream)
 
 
-def state_pull_preview(instance_id: str) -> contracts.StatePullPreviewResult:
-    """Preview pulling a newer upstream release into an overlay."""
+def state_pull_preview(
+    instance_id: str,
+    force_repair: bool = False,
+) -> contracts.StatePullPreviewResult:
+    """Preview pulling a newer upstream release into an overlay.
+
+    ``force_repair`` previews the repair of a DAMAGED materialized upstream --
+    see ``service_pull_state_apply``. It is appended LAST so no positional
+    caller shifts.
+    """
     check_permission("cruxible_state_pull_preview", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    result = service_pull_state_preview(instance)
+    result = service_pull_state_preview(instance, force_repair=force_repair)
     return contracts.StatePullPreviewResult(
         current_release_id=result.current_release_id,
         target_release_id=result.target_release_id,
@@ -4621,8 +4650,14 @@ def state_pull_apply(
     instance_id: str,
     expected_apply_digest: str,
     actor_context: Any | None = None,
+    force_repair: bool = False,
 ) -> contracts.StatePullApplyResult:
-    """Apply a previewed upstream pull to a tracked overlay."""
+    """Apply a previewed upstream pull to a tracked overlay.
+
+    ``force_repair`` permits re-applying the release already tracked, which is
+    the documented repair for a damaged materialized upstream. Appended LAST so
+    no positional caller shifts.
+    """
     check_permission("cruxible_state_pull_apply", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
@@ -4630,6 +4665,7 @@ def state_pull_apply(
         instance,
         expected_apply_digest=expected_apply_digest,
         actor_context=actor,
+        force_repair=force_repair,
     )
     return contracts.StatePullApplyResult(
         release_id=result.release_id,

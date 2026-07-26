@@ -141,6 +141,10 @@ VOLATILE_LEAF_KEYS = {
     # wi-read-revision-and-continuation: monotonic state revision — value is
     # the fixture's mutation count, structurally pinned but value-normalized.
     "read_revision",
+    # wi-edge-identity-global: the minted claim identity is random per instance,
+    # so it is structurally pinned (present on every edge payload) but
+    # value-normalized, exactly like receipt_id above.
+    "claim_id",
 }
 
 
@@ -281,6 +285,7 @@ LIST_EDGES_STANDARD = {
             "to_id": "V-1",
             "relationship_type": "fits",
             "edge_key": 1,
+            "claim_id": "<varies>",
             "properties": {"verified": True},
             "metadata": {
                 "provenance": EDGE_PROVENANCE_TRIMMED,
@@ -294,6 +299,7 @@ LIST_EDGES_STANDARD = {
             "to_id": "V-2",
             "relationship_type": "fits",
             "edge_key": 0,
+            "claim_id": "<varies>",
             "properties": {"verified": True},
             "metadata": {
                 "provenance": EDGE_PROVENANCE_TRIMMED,
@@ -326,6 +332,7 @@ INSPECT_STANDARD = {
             "direction": "outgoing",
             "relationship_type": "fits",
             "edge_key": 0,
+            "claim_id": "<varies>",
             "properties": {"verified": True},
             "metadata": {
                 "provenance": EDGE_PROVENANCE_TRIMMED,
@@ -337,6 +344,7 @@ INSPECT_STANDARD = {
             "direction": "outgoing",
             "relationship_type": "fits",
             "edge_key": 1,
+            "claim_id": "<varies>",
             "properties": {"verified": True},
             "metadata": {
                 "provenance": EDGE_PROVENANCE_TRIMMED,
@@ -370,6 +378,7 @@ QUERY_PATH_ROW_STANDARD = {
             "to_type": "Vehicle",
             "to_id": "V-2",
             "edge_key": 0,
+            "claim_id": "<varies>",
             "properties": {"verified": True},
             "metadata": {
                 "provenance": EDGE_PROVENANCE_FULL,
@@ -432,6 +441,9 @@ QUERY_RUN_STANDARD = {
                     "from_entity_type": "Part",
                     "from_entity_id": "BP-1",
                     "edge_properties": {"verified": True},
+                    # No claim_id: the query receipt's edge_traversal node
+                    # records the traversal, not a claim write. Identity stamps
+                    # belong on relationship_write nodes.
                     "edge_key": 0,
                 },
                 "payload_metadata": None,

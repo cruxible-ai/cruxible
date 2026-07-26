@@ -114,6 +114,15 @@ def _list_items(result: Any) -> list[dict[str, Any]]:
 )
 @click.option("--edge-key", type=int, default=None)
 @click.option(
+    "--claim-id",
+    default=None,
+    help=(
+        "Stable claim identity; the preferred disambiguator when several edges share "
+        "the tuple. Takes precedence over --edge-key; supplying both with disagreeing "
+        "values is refused."
+    ),
+)
+@click.option(
     "--properties",
     default=None,
     help="JSON properties used when a support stance CREATES an absent claim as pending.",
@@ -132,6 +141,7 @@ def attest_record(
     observed_at: str,
     evidence_refs: tuple[str, ...],
     edge_key: int | None,
+    claim_id: str | None,
     properties: str | None,
     note: str | None,
     idempotency_key: str | None,
@@ -157,6 +167,7 @@ def attest_record(
             observed_at=observed_at,
             evidence_refs=parsed_evidence,
             edge_key=edge_key,
+            claim_id=claim_id,
             properties=parsed_properties,
             note=note,
             idempotency_key=idempotency_key,
@@ -233,8 +244,9 @@ def attest_list(
         markers = []
         if item.get("unresolved_target"):
             markers.append("unresolved_target")
-        if item.get("edge_key_mismatch"):
-            markers.append("edge_key_mismatch")
+        if item.get("target_identity_mismatch"):
+            kind = item.get("target_identity_mismatch_kind") or "identity"
+            markers.append(f"target_identity_mismatch:{kind}")
         if item.get("stale_content"):
             markers.append("stale_content")
         suffix = f" ({', '.join(markers)})" if markers else ""

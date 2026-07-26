@@ -6,6 +6,7 @@ Cruxible should treat the edge in live graph semantics.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Generic, Literal, TypeVar
 
@@ -13,8 +14,10 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    ValidationError,
     field_serializer,
     field_validator,
+    model_validator,
 )
 
 from cruxible_core.governance.actors import GovernedActorContext
@@ -87,6 +90,62 @@ class RelationshipReviewState(BaseModel):
         return format_datetime(value)
 
 
+class SupersessionPointer(BaseModel):
+    """Open, typed reference to the other side of a supersession link.
+
+    Two shapes are named, one per subject kind:
+
+    * an EDGE (claim) is referenced by its minted ``claim_id`` -- the whole
+      point of edge identity is that a supersession pointer can name one
+      specific claim rather than a tuple that may have several live edges;
+    * an ENTITY is referenced by ``entity_type`` + ``entity_id``, its natural
+      key (entities already have stable identity).
+
+    The model is deliberately OPEN (``extra="allow"``) so a later pointer kind
+    can be introduced without a migration of stored lifecycle payloads, and so
+    already-persisted free-form pointers keep validating. What it refuses is the
+    three shapes that can only be mistakes: an empty pointer, a half entity
+    pair, and a pointer that names BOTH a claim and an entity.
+
+    THE REFUSAL IS A WRITE-PATH REFUSAL. Constructing or validating a pointer
+    directly -- what a lifecycle verb does when it writes one -- raises on those
+    shapes. Reaching this model through a stored ``LifecycleState`` does NOT:
+    that path runs on EVERY graph load, so a single stray persisted value would
+    make the whole graph unloadable, turning a bad pointer into a bricked
+    instance. ``LifecycleState`` therefore coerces an incoherent stored pointer
+    to ``None`` (see ``_tolerate_incoherent_stored_pointer``): the damage stays
+    the size of the one field.
+
+    Nothing writes these today. The dedicated receipted lifecycle verbs
+    (``wi-lifecycle-verbs``) are the first writer; this pass only gives the
+    field a shape those verbs can target.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    claim_id: str | None = None
+    entity_type: str | None = None
+    entity_id: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_pointer_shape(self) -> SupersessionPointer:
+        has_entity_type = bool(self.entity_type)
+        has_entity_id = bool(self.entity_id)
+        if has_entity_type != has_entity_id:
+            raise ValueError(
+                "supersession pointer entity reference requires both entity_type and entity_id"
+            )
+        if self.claim_id and has_entity_type:
+            raise ValueError(
+                "supersession pointer names either a claim_id or an entity, never both"
+            )
+        if not self.claim_id and not has_entity_type and not (self.model_extra or {}):
+            raise ValueError(
+                "supersession pointer must name a claim_id or an entity_type/entity_id pair"
+            )
+        return self
+
+
 class LifecycleState(BaseModel, Generic[StatusT]):
     """Shared lifecycle/actuality structure for entities and relationships.
 
@@ -115,8 +174,32 @@ class LifecycleState(BaseModel, Generic[StatusT]):
     effective_until: datetime | None = None
     closed_at: datetime | None = None
     closed_by: str | None = None
-    supersedes: dict[str, Any] | None = None
-    superseded_by: dict[str, Any] | None = None
+    supersedes: SupersessionPointer | None = None
+    superseded_by: SupersessionPointer | None = None
+
+    @field_validator("supersedes", "superseded_by", mode="before")
+    @classmethod
+    def _tolerate_incoherent_stored_pointer(cls, value: Any) -> Any:
+        """Coerce an unusable STORED pointer to None instead of failing the load.
+
+        This validator runs on every graph load, because lifecycle state is
+        decoded out of persisted relationship/entity metadata. If it propagated
+        ``SupersessionPointer``'s refusals, one stray persisted ``{}`` -- from a
+        hand-edited image, a future writer's bug, a partially-written payload --
+        would make the ENTIRE graph unloadable, with no read path left to
+        diagnose or repair it from. A pointer that names nothing resolvable is
+        worth exactly nothing, so dropping it costs nothing and keeps the blast
+        radius at one field. The write path (constructing or validating a
+        ``SupersessionPointer`` directly) still refuses those shapes loudly.
+        """
+        if value is None or isinstance(value, SupersessionPointer):
+            return value
+        if not isinstance(value, Mapping):
+            return None
+        try:
+            return SupersessionPointer.model_validate(dict(value))
+        except ValidationError:
+            return None
 
     @field_validator("effective_from", "effective_until", "closed_at")
     @classmethod
@@ -237,6 +320,7 @@ __all__ = [
     "RelationshipReviewSource",
     "RelationshipReviewState",
     "RelationshipReviewStatus",
+    "SupersessionPointer",
     "relationship_assertion_from_metadata",
     "relationship_is_live",
     "relationship_lifecycle_is_active",

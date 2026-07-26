@@ -14,7 +14,7 @@ from cruxible_core.config.composer import compose_config_files
 from cruxible_core.config.loader import load_config, save_config
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.evidence import RelationshipEvidence
-from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
+from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata, mint_claim_id
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import TrustStatus
 from cruxible_core.kits import write_materialized_kit_metadata
@@ -610,6 +610,7 @@ def _add_review_context_edges(instance: CruxibleInstance) -> None:
     installed_version = str(target.get("properties", {}).get("installed_version") or "unknown")
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="asset_remediated_vulnerability",
             from_type="Asset",
             from_id=asset_id,
@@ -638,6 +639,7 @@ def _add_review_context_edges(instance: CruxibleInstance) -> None:
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="asset_patch_exception_for",
             from_type="Asset",
             from_id=asset_id,
@@ -666,6 +668,7 @@ def _add_review_context_edges(instance: CruxibleInstance) -> None:
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="asset_vulnerability_posture",
             from_type="Asset",
             from_id=asset_id,
@@ -748,6 +751,7 @@ def _add_stale_exposure_for_reconciliation_golden(instance: CruxibleInstance) ->
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="asset_vulnerability_posture",
             from_type="Asset",
             from_id=asset_id,

@@ -29,7 +29,12 @@ from cruxible_core.config.schema import (
 from cruxible_core.errors import ConfigError, DataValidationError, QueryExecutionError
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.evidence import EvidenceRef
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    RelationshipMetadata,
+    mint_claim_id,
+)
 from cruxible_core.receipt.serializer import to_markdown
 from cruxible_core.service import service_list, service_run
 from cruxible_core.storage.sqlite import SQLiteGraphRepository
@@ -363,6 +368,7 @@ class TestWorkflowExecutor:
         graph = proposal_workflow_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="recommended_for",
                 from_type="Campaign",
                 from_id="CMP-1",
@@ -373,6 +379,7 @@ class TestWorkflowExecutor:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="recommended_for",
                 from_type="Campaign",
                 from_id="CMP-1",
@@ -383,6 +390,7 @@ class TestWorkflowExecutor:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="suppressed_for",
                 from_type="Campaign",
                 from_id="CMP-1",
@@ -439,6 +447,7 @@ class TestWorkflowExecutor:
         graph = proposal_workflow_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="recommended_for",
                 from_type="Campaign",
                 from_id="CMP-1",
@@ -502,6 +511,7 @@ class TestWorkflowExecutor:
         graph = proposal_workflow_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="recommended_for",
                 from_type="Campaign",
                 from_id="CMP-1",
@@ -568,6 +578,7 @@ class TestWorkflowExecutor:
         graph = proposal_workflow_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="recommended_for",
                 from_type="Campaign",
                 from_id="CMP-1",
@@ -579,6 +590,7 @@ class TestWorkflowExecutor:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="recommended_for",
                 from_type="Campaign",
                 from_id="CMP-1",
@@ -706,6 +718,7 @@ class TestWorkflowExecutor:
         graph = proposal_workflow_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="recommended_for",
                 from_type="Campaign",
                 from_id="CMP-1",
@@ -775,6 +788,7 @@ class TestWorkflowExecutor:
         for sku in ("SKU-123", "SKU-456"):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="recommended_for",
                     from_type="Campaign",
                     from_id="CMP-1",
@@ -853,6 +867,7 @@ class TestWorkflowExecutor:
         for sku in ("SKU-123", "SKU-456"):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="recommended_for",
                     from_type="Campaign",
                     from_id="CMP-1",
@@ -968,6 +983,7 @@ class TestWorkflowExecutor:
         for sku in ("SKU-123", "SKU-456"):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="recommended_for",
                     from_type="Campaign",
                     from_id="CMP-1",
@@ -1066,6 +1082,7 @@ class TestWorkflowExecutor:
         for sku in ("SKU-123", "SKU-456"):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="recommended_for",
                     from_type="Campaign",
                     from_id="CMP-1",
@@ -1367,6 +1384,7 @@ class TestWorkflowExecutor:
         for sku in ("SKU-123", "SKU-456"):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="recommended_for",
                     from_type="Campaign",
                     from_id="CMP-1",
@@ -1522,6 +1540,7 @@ class TestWorkflowExecutor:
         for sku in ("SKU-123", "SKU-456"):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="recommended_for",
                     from_type="Campaign",
                     from_id="CMP-1",
@@ -1963,6 +1982,7 @@ class TestWorkflowExecutor:
         for sku in ("SKU-123", "SKU-456"):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="recommended_for",
                     from_type="Campaign",
                     from_id="CMP-1",
@@ -2026,6 +2046,7 @@ class TestWorkflowExecutor:
         for sku, status in (("SKU-123", "human_approved"), ("SKU-456", "pending")):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="recommended_for",
                     from_type="Campaign",
                     from_id="CMP-1",

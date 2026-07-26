@@ -41,7 +41,7 @@ Credential scope (server mode)
 Record shape (one JSON object per line)
     ``kind`` (``entity`` | ``edge``), identity fields (``entity_type`` /
     ``entity_id`` or ``relationship_type``/``from_type``/``from_id``/
-    ``to_type``/``to_id``/``edge_key``), ``props`` (the compact-profile
+    ``to_type``/``to_id``/``edge_key``/``claim_id``), ``props`` (the compact-profile
     property slice — the same serializer as ``--profile compact``, never a new
     projection), ``lifecycle``, ``review`` (``None`` for entities — they have
     no review axis), ``read_revision`` (``None`` means the source response
@@ -356,6 +356,10 @@ def normalize_edge_record(
         "to_type": compact.get("to_type"),
         "to_id": compact.get("to_id"),
         "edge_key": compact.get("edge_key"),
+        # The cache is PERSISTENT and its normalizer drops unknown fields, so
+        # claim_id has to be named here or every cached edge would silently lose
+        # its stable identity on capture.
+        "claim_id": compact.get("claim_id"),
         "props": compact.get("properties") or {},
         "lifecycle": assertion.get("lifecycle"),
         "review": assertion.get("review"),
@@ -368,9 +372,20 @@ def normalize_edge_record(
 
 
 def record_identity(record: dict[str, Any]) -> RecordIdentity:
-    """Dedupe identity key for one working-set record."""
+    """Dedupe identity key for one working-set record.
+
+    Edges dedupe on ``claim_id`` WHEN PRESENT. ``edge_key`` is a per-load
+    counter that pull-apply re-keys, so keying the persistent cache on it made
+    one claim accumulate several cache identities across pulls; the stable id
+    collapses them. Records captured before identity (or from an instance that
+    does not expose it) keep the tuple+edge_key key, so an old cache stays
+    readable and dedupes exactly as it always did.
+    """
     if record.get("kind") == "entity":
         return ("entity", record.get("entity_type"), record.get("entity_id"))
+    claim_id = record.get("claim_id")
+    if isinstance(claim_id, str) and claim_id:
+        return ("edge", claim_id)
     return (
         "edge",
         record.get("relationship_type"),
@@ -427,6 +442,8 @@ def validate_record(record: Any) -> str | None:
             return f"missing or non-string identity field {field_name!r}"
     if kind == "edge" and not _is_optional_int(record.get("edge_key")):
         return "edge_key must be an integer or null"
+    if kind == "edge" and not isinstance(record.get("claim_id"), (str, type(None))):
+        return "claim_id must be a string or null"
     if not isinstance(record.get("props"), dict):
         return "props must be an object"
     if not _is_optional_int(record.get("read_revision")):
@@ -690,6 +707,7 @@ def _walk_single_hop_neighbor(
                 "to_type": endpoints[1].get("entity_type"),
                 "to_id": endpoints[1].get("entity_id"),
                 "edge_key": neighbor.get("edge_key"),
+                "claim_id": neighbor.get("claim_id"),
                 "properties": neighbor.get("properties") or {},
                 "metadata": neighbor.get("metadata") or {},
             },

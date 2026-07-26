@@ -801,6 +801,7 @@ def handle_feedback(
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
     group_override: bool = False,
+    claim_id: str | None = None,
 ) -> contracts.FeedbackResult:
     """Record feedback on an edge."""
     return _dispatch_remote_or_local(
@@ -815,6 +816,7 @@ def handle_feedback(
             to_type=to_type,
             to_id=to_id,
             edge_key=edge_key,
+            claim_id=claim_id,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,
@@ -832,6 +834,7 @@ def handle_feedback(
             to_type=to_type,
             to_id=to_id,
             edge_key=edge_key,
+            claim_id=claim_id,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,
@@ -1760,6 +1763,7 @@ def handle_attest(
     observed_at: str,
     evidence_refs: list[contracts.EvidenceRef] | None = None,
     edge_key: int | None = None,
+    claim_id: str | None = None,
     properties: dict[str, Any] | None = None,
     note: str | None = None,
     idempotency_key: str | None = None,
@@ -1777,6 +1781,7 @@ def handle_attest(
             observed_at=observed_at,
             evidence_refs=evidence_refs or [],
             edge_key=edge_key,
+            claim_id=claim_id,
             properties=properties,
             note=note,
             idempotency_key=idempotency_key,
@@ -1792,6 +1797,7 @@ def handle_attest(
             observed_at=observed_at,
             evidence_refs=evidence_refs or [],
             edge_key=edge_key,
+            claim_id=claim_id,
             properties=properties,
             note=note,
             idempotency_key=idempotency_key,

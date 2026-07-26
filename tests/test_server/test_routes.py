@@ -2815,6 +2815,120 @@ def test_feedback_route_approves_pending_relationship_without_source_receipt(
     assert metadata["assertion"]["review"]["source"] == "human"
 
 
+def test_feedback_route_threads_claim_id_through_to_resolution(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    """The contract PROMISES claim_id precedence on the feedback target.
+
+    It was published and pinned but never reached resolution: the request model
+    had no field, the route passed none, the api took no parameter, and the
+    batch mapping dropped it. A caller disambiguating carefully got silent
+    tuple-first resolution and no way to tell.
+    """
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+    coordinates = {
+        "from_type": "Part",
+        "from_id": "BP-1001",
+        "relationship_type": "fits",
+        "to_type": "Vehicle",
+        "to_id": "V-2024-CIVIC-EX",
+    }
+    lookup = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params=coordinates,
+    )
+    assert lookup.status_code == 200
+    claim_id = lookup.json()["claim_id"]
+    assert claim_id
+
+    target = {"action": "approve", "source": "human", **coordinates}
+
+    # Disagreeing disambiguators are refused over HTTP, which is only possible
+    # if claim_id actually reached resolution.
+    disagree = app_client.post(
+        f"/api/v1/{instance_id}/feedback",
+        json={**target, "claim_id": claim_id, "edge_key": 9999},
+    )
+    assert disagree.status_code >= 400
+    assert "disagree" in disagree.text
+
+    approved = app_client.post(
+        f"/api/v1/{instance_id}/feedback",
+        json={**target, "claim_id": claim_id},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["applied"] is True
+
+    after = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params=coordinates,
+    )
+    assert after.json()["metadata"]["assertion"]["review"]["status"] == "approved"
+
+
+def test_feedback_batch_route_threads_claim_id_through_to_resolution(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    """Same promise, the batch mapping that dropped it."""
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+    batch_target = {
+        "from_type": "Part",
+        "from_id": "BP-1001",
+        "relationship_type": "fits",
+        "to_type": "Vehicle",
+        "to_id": "V-2024-CIVIC-EX",
+    }
+    lookup = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params=batch_target,
+    )
+    claim_id = lookup.json()["claim_id"]
+    assert claim_id
+
+    query = app_client.post(
+        f"/api/v1/{instance_id}/queries/run",
+        json={"query_name": "parts_for_vehicle", "params": {"vehicle_id": "V-2024-CIVIC-EX"}},
+    )
+    assert query.status_code == 200
+    receipt_id = query.json()["receipt_id"]
+
+    disagree = app_client.post(
+        f"/api/v1/{instance_id}/feedback/batch",
+        json={
+            "source": "human",
+            "items": [
+                {
+                    "receipt_id": receipt_id,
+                    "action": "approve",
+                    "target": {**batch_target, "claim_id": claim_id, "edge_key": 9999},
+                }
+            ],
+        },
+    )
+    assert disagree.status_code >= 400
+    assert "disagree" in disagree.text
+
+    agreed = app_client.post(
+        f"/api/v1/{instance_id}/feedback/batch",
+        json={
+            "source": "human",
+            "items": [
+                {
+                    "receipt_id": receipt_id,
+                    "action": "approve",
+                    "target": {**batch_target, "claim_id": claim_id},
+                }
+            ],
+        },
+    )
+    assert agreed.status_code == 200
+    assert agreed.json()["applied_count"] == 1
+
+
 def test_workflow_propose_snapshot_and_overlay_round_trip(
     app_client: TestClient,
     workflow_server_project: Path,

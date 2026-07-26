@@ -366,6 +366,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         corrections: dict[str, Any] | None = None,
         group_override: bool = False,
         receipt_id: str | None = None,
+        claim_id: str | None = None,
     ) -> contracts.FeedbackResult:
         """Record edge-level feedback by explicit relationship coordinates.
 
@@ -375,9 +376,12 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         Rejected edges are excluded from future query results.
         Approved edges are trusted in traversals.
 
-        Use `corrections` with `action="correct"` and set `edge_key` only
-        when disambiguation is needed. `applied=False` means the record was
-        saved but the graph edge was not updated.
+        Use `corrections` with `action="correct"`. When several edges share the
+        endpoints, disambiguate with `claim_id` (the stable minted identity,
+        preferred) or `edge_key` (per-load). `claim_id` takes precedence, and
+        supplying both with disagreeing values is refused rather than silently
+        resolved. `applied=False` means the record was saved but the graph edge
+        was not updated.
 
         Set `group_override=True` to mark the edge assertion metadata as a
         group override for group resolve. The edge must already exist in the
@@ -394,6 +398,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             to_type=to_type,
             to_id=to_id,
             edge_key=edge_key,
+            claim_id=claim_id,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,
@@ -1179,6 +1184,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         observed_at: str,
         evidence_refs: list[contracts.EvidenceRef] | None = None,
         edge_key: int | None = None,
+        claim_id: str | None = None,
         properties: dict[str, Any] | None = None,
         note: str | None = None,
         idempotency_key: str | None = None,
@@ -1190,6 +1196,10 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         claim, using ``properties``. ``contradict`` and ``unsure`` are refused
         on an absent claim. Attesting is therefore not a pure observation on
         the create path — use it only when you mean to assert the claim exists.
+
+        When several edges share the tuple, pass ``claim_id`` (the stable
+        identity, preferred) or ``edge_key`` (per-load) to pick one. Passing
+        both with disagreeing values is refused, never silently resolved.
         """
         return handlers.handle_attest(
             instance_id,
@@ -1202,6 +1212,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             observed_at=observed_at,
             evidence_refs=evidence_refs,
             edge_key=edge_key,
+            claim_id=claim_id,
             properties=properties,
             note=note,
             idempotency_key=idempotency_key,

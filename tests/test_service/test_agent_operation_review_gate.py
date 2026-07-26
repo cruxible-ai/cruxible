@@ -38,7 +38,7 @@ from cruxible_core.graph.assertion_state import (
     RelationshipAssertion,
     RelationshipReviewState,
 )
-from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
+from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata, mint_claim_id
 from cruxible_core.service import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
@@ -643,6 +643,7 @@ class TestCloseGatePendingEdgeExploit:
         graph = instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 from_type="ReviewRequest",
                 from_id="rr-gated",
                 relationship_type="review_request_for_work_item",

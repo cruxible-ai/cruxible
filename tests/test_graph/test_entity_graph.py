@@ -10,6 +10,7 @@ from cruxible_core.graph.types import (
     RelationshipInstance,
     RelationshipMetadata,
     make_node_id,
+    mint_claim_id,
     split_node_id,
 )
 
@@ -53,6 +54,7 @@ def populated_graph(graph: EntityGraph) -> EntityGraph:
     # BP-1234 fits both vehicles
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1234",
@@ -63,6 +65,7 @@ def populated_graph(graph: EntityGraph) -> EntityGraph:
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1234",
@@ -74,6 +77,7 @@ def populated_graph(graph: EntityGraph) -> EntityGraph:
     # BP-5678 fits only Civic
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-5678",
@@ -85,6 +89,7 @@ def populated_graph(graph: EntityGraph) -> EntityGraph:
     # BP-5678 replaces BP-1234
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="replaces",
             from_type="Part",
             from_id="BP-5678",
@@ -200,6 +205,7 @@ class TestRelationshipOperations:
         """Adding a relationship creates stub entities if they don't exist."""
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="NEW-PART",
@@ -220,6 +226,7 @@ class TestRelationshipOperations:
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -230,6 +237,7 @@ class TestRelationshipOperations:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -240,6 +248,7 @@ class TestRelationshipOperations:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P-1",
@@ -269,6 +278,7 @@ class TestRelationshipOperations:
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -279,6 +289,7 @@ class TestRelationshipOperations:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -328,6 +339,7 @@ class TestRelationshipStateWrites:
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -356,6 +368,7 @@ class TestRelationshipStateWrites:
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -401,6 +414,7 @@ class TestRelationshipStateWrites:
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -542,6 +556,7 @@ class TestGetDescendants:
         for src, dst in [("1", "2"), ("2", "3"), ("3", "1")]:
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="next",
                     from_type="N",
                     from_id=src,
@@ -558,6 +573,7 @@ class TestGetDescendants:
         graph.add_entity(EntityInstance(entity_type="N", entity_id="1"))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="self_ref",
                 from_type="N",
                 from_id="1",
@@ -583,6 +599,7 @@ class TestGetDescendants:
         for src, dst in [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")]:
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="link",
                     from_type="N",
                     from_id=src,
@@ -608,6 +625,7 @@ class TestGetDescendants:
         for i in range(4):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="next",
                     from_type="N",
                     from_id=str(i),
@@ -626,6 +644,7 @@ class TestGetDescendants:
         for i in range(4):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="next",
                     from_type="N",
                     from_id=str(i),
@@ -660,6 +679,7 @@ class TestGetAncestors:
         for src, dst in [("A", "B"), ("B", "C")]:
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="parent",
                     from_type="N",
                     from_id=src,
@@ -683,6 +703,7 @@ class TestGetAncestors:
         for src, dst in [("A", "B"), ("B", "C"), ("C", "D")]:
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="parent",
                     from_type="N",
                     from_id=src,
@@ -701,6 +722,7 @@ class TestGetAncestors:
         for src, dst in [("A", "B"), ("B", "C"), ("C", "D")]:
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="parent",
                     from_type="N",
                     from_id=src,
@@ -719,6 +741,7 @@ class TestGetAncestors:
         for src, dst in [("A", "B"), ("B", "C"), ("C", "A")]:
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="next",
                     from_type="N",
                     from_id=src,
@@ -735,6 +758,7 @@ class TestGetAncestors:
         graph.add_entity(EntityInstance(entity_type="N", entity_id="1"))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="self_ref",
                 from_type="N",
                 from_id="1",
@@ -760,6 +784,7 @@ class TestGetAncestors:
         for src in ["A", "B"]:
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="parent",
                     from_type="N",
                     from_id=src,
@@ -779,6 +804,7 @@ class TestGetAncestors:
         for src, dst in [("R", "A"), ("R", "B"), ("A", "D"), ("B", "D")]:
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="parent",
                     from_type="N",
                     from_id=src,
@@ -818,6 +844,7 @@ class TestIterEdges:
             "to_id",
             "relationship_type",
             "edge_key",
+            "claim_id",
             "properties",
             "metadata",
         }
@@ -1035,6 +1062,7 @@ class TestToDictFromDict:
         # Add a second "fits" edge on the same pair (different properties)
         restored.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1234",
@@ -1073,6 +1101,7 @@ class TestExtractAndMerge:
         )
         current.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="local_links_reference",
                 from_type="LocalThing",
                 from_id="L-1",

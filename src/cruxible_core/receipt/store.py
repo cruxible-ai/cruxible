@@ -17,6 +17,7 @@ from cruxible_core.provider.trace_payloads import (
 )
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt, ReceiptNode
+from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.temporal import format_datetime, parse_datetime
 
 
@@ -107,7 +108,7 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         self._trace_payload_retention = trace_payload_retention
         self._conn.row_factory = sqlite3.Row
         if initialize_schema:
-            self._conn.executescript(_SCHEMA)
+            execute_schema_script(self._conn, _SCHEMA)
 
     def save_receipt(self, receipt: Receipt) -> str:
         """Persist a receipt. Returns the receipt_id.

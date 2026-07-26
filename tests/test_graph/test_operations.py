@@ -15,7 +15,12 @@ from cruxible_core.graph.operations import (
     validate_relationship,
 )
 from cruxible_core.graph.provenance import make_provenance
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    RelationshipMetadata,
+    mint_claim_id,
+)
 
 CONFIG_YAML = """\
 version: "1.0"
@@ -253,6 +258,7 @@ relationships:
     def test_update_relationship_merges_and_validates_full_payload(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P1",
@@ -298,6 +304,7 @@ relationships:
     def test_invalid_relationship_update_leaves_existing_edge_unchanged(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P1",
@@ -402,6 +409,7 @@ class TestApplyRelationship:
         # First add the relationship
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P1",
@@ -445,6 +453,7 @@ class TestApplyRelationship:
         """Updating an edge that carries no provenance backfills a fresh one (not sticky null)."""
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P1",

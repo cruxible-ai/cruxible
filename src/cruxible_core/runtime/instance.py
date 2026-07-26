@@ -35,6 +35,7 @@ from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.legacy_identity import backfill_legacy_graph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
@@ -414,6 +415,15 @@ class CruxibleInstance(InstanceProtocol):
         with self._storage_backend().snapshot_repository() as snapshots:
             return snapshots.get_instance_state(key)
 
+    def get_instance_state(self, key: str) -> Any | None:
+        """Read one durable instance-state value (the shared key/value slot).
+
+        Public because reconciliation state that must be read OUTSIDE a write
+        boundary lives here -- the legacy claim-identity map is read before the
+        pull's transaction opens and written inside it.
+        """
+        return self._get_snapshot_state(key)
+
     def _get_origin_snapshot_id(self) -> str | None:
         value = self._get_snapshot_state(_ORIGIN_SNAPSHOT_STATE_KEY)
         return value if isinstance(value, str) else None
@@ -637,6 +647,13 @@ class CruxibleInstance(InstanceProtocol):
         # dangling pointers and stamp clone origin so no edge in the clone
         # references a phantom receipt.
         graph.relabel_clone_receipts()
+        # LEGACY-IMAGE BACKFILL. A snapshot taken before edge identity carries
+        # no claim ids, and it stays clonable forever. Mint the missing ones in
+        # memory (missing-only: a post-identity snapshot's ids are preserved)
+        # and persist them with the graph below, in one transaction. The
+        # snapshot ARTIFACTS are re-saved byte-identical -- graph.json keeps the
+        # exact bytes its graph_digest was computed over.
+        backfill_legacy_graph(graph)
 
         lock_bytes = artifacts.get(LOCK_FILE_NAME)
         if lock_bytes is not None:

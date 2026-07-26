@@ -26,7 +26,12 @@ from cruxible_core.errors import (
 )
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.provenance import RelationshipProvenance
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    RelationshipMetadata,
+    mint_claim_id,
+)
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.service import (
@@ -1274,6 +1279,7 @@ class TestGetRelationship:
         # Add a second fits edge between same endpoints
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1001",
@@ -1385,6 +1391,7 @@ class TestGetRelationship:
         graph = populated_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1002",
@@ -1428,6 +1435,7 @@ class TestGetRelationship:
         graph = populated_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1002",
@@ -1747,6 +1755,7 @@ class TestList:
         graph = populated_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1002",

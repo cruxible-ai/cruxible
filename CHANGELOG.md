@@ -74,6 +74,42 @@ the project's own state instance.
   name is out of the lint's reach by design, where the guard's `where`
   clause is the source of truth.
 
+- **Claims have a stable identity (`claim_id`)**: edges now carry a minted,
+  opaque, immutable `claim_id` that survives pull-apply, snapshot/clone,
+  publish→pull, and backup/restore. `edge_key` is demoted to what it always
+  was — a per-load key, the wire disambiguator, and the ordering token — and
+  is no longer identity. `claim_id` is exposed additively on edge payloads and
+  accepted as an optional target disambiguator on attestation and feedback
+  targets, where it takes precedence over `edge_key`; supplying both with
+  disagreeing values is refused rather than silently resolved.
+
+  **Upgrade notes.** A storage migration (`0004_claim_identity`) rebuilds
+  `graph_relationships` around the new key on first open; it is atomic and
+  lock-serialized, so a concurrent reader sees the old schema or the new one,
+  never a half-upgraded table.
+
+  **One-time working-set duplicate.** The working set is a persistent JSONL
+  cache that used to dedupe on `edge_key`. It now dedupes on `claim_id` when
+  present. Entries cached BEFORE the upgrade carry no `claim_id`, so an edge
+  that is re-added after the upgrade can appear twice in the working set until
+  its next refresh — once under the old `edge_key` identity and once under its
+  claim identity. This is cosmetic, affects only the local cache (never graph
+  state, receipts, or query results), and self-heals on the next working-set
+  refresh; `cruxible ws refresh` clears it immediately.
+
+  **Backup format 2.** New backups write their manifest as
+  `backup-manifest-v2.json` rather than `manifest.json`, so a pre-identity
+  Cruxible refuses the artifact at verification (as a missing required file)
+  instead of installing a state database it cannot read. Backups written by
+  earlier versions still restore normally.
+
+  **Repairing a damaged upstream.** Re-applying the release an overlay already
+  tracks is now refused as a no-op, so the documented repair for a locally
+  damaged materialized upstream moved behind an explicit flag:
+  `cruxible state pull-preview --repair` then
+  `cruxible state pull-apply --repair --apply-digest ...`. Repair preserves
+  claim ids.
+
 ### Fixed
 
 - **Pending proposals are no longer clobbered**: a plain non-pending write

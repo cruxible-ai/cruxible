@@ -461,8 +461,17 @@ class ReceiptBuilder:
         is_update: bool,
         detail: dict[str, Any] | None = None,
         parent_id: str | None = None,
+        *,
+        claim_id: str | None = None,
     ) -> str:
-        """Record that a relationship was written to the graph."""
+        """Record that a relationship was written to the graph.
+
+        ``claim_id`` must come from the DURABLE relationship that
+        ``apply_relationship`` returned, not from the caller's input: a create's
+        input never carries the id of an edge that did not exist yet. It is
+        omitted from the node detail when absent so receipts written on paths
+        that legitimately have no id (refused proposals) keep their shape.
+        """
         node_detail: dict[str, Any] = {
             "from_type": from_type,
             "from_id": from_id,
@@ -471,6 +480,8 @@ class ReceiptBuilder:
             "relationship": relationship,
             "is_update": is_update,
         }
+        if claim_id is not None:
+            node_detail["claim_id"] = claim_id
         if detail:
             node_detail.update(detail)
         node_id = self._add_node(

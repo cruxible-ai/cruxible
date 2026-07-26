@@ -11,7 +11,7 @@ from cruxible_core.config.schema import (
     TraversalStep,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.query.engine import execute_query
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.serializer import to_json, to_markdown, to_mermaid
@@ -110,6 +110,7 @@ def graph() -> EntityGraph:
     # P-1 fits V-1 (verified)
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="P-1",
@@ -121,6 +122,7 @@ def graph() -> EntityGraph:
     # P-2 fits V-1 (not verified)
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="P-2",

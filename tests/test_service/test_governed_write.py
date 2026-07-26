@@ -6,7 +6,7 @@ import pytest
 
 from cruxible_core.errors import ReceiptNotFoundError, RelationshipAmbiguityError
 from cruxible_core.feedback.types import FeedbackBatchItem
-from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.graph.types import RelationshipInstance, mint_claim_id
 from cruxible_core.service import (
     FeedbackItemInput,
     RelationshipTargetInput,
@@ -150,6 +150,7 @@ def test_service_feedback_ambiguous_edge_rolls_back_feedback_record(populated_in
     graph = populated_instance.load_graph()
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             from_type="Part",
             from_id="BP-1001",
             relationship_type="fits",

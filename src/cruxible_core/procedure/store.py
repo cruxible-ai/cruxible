@@ -27,6 +27,7 @@ from cruxible_core.procedure.types import (
     ProcedureStatus,
     compute_procedure_definition_digest,
 )
+from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.temporal import format_datetime
 
 _SCHEMA = """\
@@ -107,7 +108,7 @@ class ProcedureStore(ProcedureStoreProtocol):
         self._conn.row_factory = sqlite3.Row
         if initialize_schema:
             self._conn.execute("PRAGMA foreign_keys = ON")
-            self._conn.executescript(_SCHEMA)
+            execute_schema_script(self._conn, _SCHEMA)
 
     def save_procedure(self, procedure: ProcedureRecord) -> str:
         """Insert a new immutable definition. Does not commit."""

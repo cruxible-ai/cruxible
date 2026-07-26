@@ -540,6 +540,7 @@ happened; they never prove its inputs are still current.
 | `scope_hints` | no | object | null |  |
 | `corrections` | no | object | null |  |
 | `group_override` | no | boolean |  |
+| `claim_id` | no | string | null | Stable claim identity; preferred disambiguator, takes precedence over `edge_key`, disagreement refused. |
 
 **Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`
 
@@ -1445,6 +1446,7 @@ without it, only the active materialized digest is checked.
 | `observed_at` | yes | string | ISO-8601 time when the world was observed; it cannot be in the future. |
 | `evidence_refs` | no | array or null | Evidence pointers; at least one is required for `support` and `contradict`. |
 | `edge_key` | no | integer or null | Unstable disambiguation hint; tuple coordinates remain authoritative. |
+| `claim_id` | no | string or null | Stable claim identity; the preferred disambiguator, taking precedence over `edge_key`. Supplying both with disagreeing values is refused. |
 | `properties` | no | object or null | Required relationship properties when absent support creates a pending claim; ignored on attach. |
 | `note` | no | string or null | Optional observation note, encouraged for `unsure`. |
 | `idempotency_key` | no | string or null | Retry-safe key scoped to the claim tuple and resolved actor. |

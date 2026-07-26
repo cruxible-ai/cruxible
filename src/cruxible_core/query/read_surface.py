@@ -50,6 +50,10 @@ class ReadInspectNeighbor:
     properties: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     entity: EntityInstance | None = None
+    # APPENDED, never inserted: a new field placed mid-signature silently shifts
+    # every positional caller's arguments one slot to the right, and a dataclass
+    # gives no error for it -- the wrong value simply lands in the wrong field.
+    claim_id: str | None = None
 
 
 @dataclass
@@ -79,6 +83,8 @@ class ReadNeighborhoodEdge:
     edge_key: int | None
     properties: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # APPENDED, never inserted -- see ReadInspectNeighbor.claim_id.
+    claim_id: str | None = None
 
 
 @dataclass
@@ -255,6 +261,7 @@ def inspect_entity(
             direction=row["direction"],
             relationship_type=str(row["relationship_type"]),
             edge_key=row.get("edge_key"),
+            claim_id=row.get("claim_id"),
             properties=dict(row.get("properties", {})),
             metadata=dict(row.get("metadata", {})),
             entity=(
@@ -514,6 +521,7 @@ def inspect_neighborhood(
             to_type=edge["to_type"],
             to_id=edge["to_id"],
             edge_key=edge.get("edge_key"),
+            claim_id=edge.get("claim_id"),
             properties=dict(edge.get("properties", {})),
             metadata=dict(edge.get("metadata", {})),
         )

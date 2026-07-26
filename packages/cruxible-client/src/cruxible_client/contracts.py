@@ -513,6 +513,14 @@ class EdgeTargetInput(BaseModel):
         default=None,
         description="Disambiguator when multiple edges share the same endpoints.",
     )
+    claim_id: str | None = Field(
+        default=None,
+        description=(
+            "Stable claim identity. Preferred disambiguator when multiple edges "
+            "share the same endpoints; takes precedence over edge_key. Supplying "
+            "both with disagreeing values is refused, never silently resolved."
+        ),
+    )
 
 
 class MemberInput(BaseModel):
@@ -737,6 +745,8 @@ class QueryPathSegmentItem(BaseModel):
     to_type: str
     to_id: str
     edge_key: int | None = None
+    claim_id: str | None = None
+    """Stable minted claim identity; survives pulls, unlike `edge_key`."""
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     corroboration: dict[str, Any] | None = Field(
@@ -784,6 +794,8 @@ class QueryRelationshipItem(BaseModel):
     to_type: str
     to_id: str
     edge_key: int | None = None
+    claim_id: str | None = None
+    """Stable minted claim identity; survives pulls, unlike `edge_key`."""
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     corroboration: dict[str, Any] | None = Field(
@@ -849,6 +861,8 @@ class QueryGraphEdgeItem(BaseModel):
     to_type: str
     to_id: str
     edge_key: int | None = None
+    claim_id: str | None = None
+    """Stable minted claim identity; survives pulls, unlike `edge_key`."""
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     corroboration: dict[str, Any] | None = Field(
@@ -1237,6 +1251,8 @@ class DirectWriteGroupInteraction(BaseModel):
     group_signature: str | None = None
     source_workflow_name: str | None = None
     edge_key: int | None = None
+    claim_id: str | None = None
+    """Stable minted claim identity; survives pulls, unlike `edge_key`."""
 
 
 class AddRelationshipResult(BaseModel):
@@ -1292,6 +1308,8 @@ class GetRelationshipResult(BaseModel):
     to_type: str
     to_id: str
     edge_key: int | None = None
+    claim_id: str | None = None
+    """Stable minted claim identity; survives pulls, unlike `edge_key`."""
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     corroboration: dict[str, Any] | None = Field(
@@ -1401,6 +1419,8 @@ class InspectNeighborResult(BaseModel):
     direction: Literal["incoming", "outgoing"]
     relationship_type: str
     edge_key: int | None = None
+    claim_id: str | None = None
+    """Stable minted claim identity; survives pulls, unlike `edge_key`."""
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     corroboration: dict[str, Any] | None = Field(
@@ -1446,6 +1466,8 @@ class NeighborhoodEdgeResult(BaseModel):
     to_type: str
     to_id: str
     edge_key: int | None = None
+    claim_id: str | None = None
+    """Stable minted claim identity; survives pulls, unlike `edge_key`."""
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     corroboration: dict[str, Any] | None = Field(

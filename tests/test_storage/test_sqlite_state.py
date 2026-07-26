@@ -26,7 +26,12 @@ from cruxible_core.graph.assertion_state import (
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import EvidenceRef, RelationshipEvidence
 from cruxible_core.graph.provenance import RelationshipProvenance
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    RelationshipMetadata,
+    mint_claim_id,
+)
 from cruxible_core.group.store import GroupStore
 from cruxible_core.instance_protocol import (
     DecisionStoreProtocol,
@@ -49,6 +54,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
     {
         Path("src/cruxible_core/storage/sqlite.py"),
+        # The shared DDL executor: it exists precisely so store schemas can run
+        # inside the migration lock instead of through executescript, which
+        # would commit and drop the lock. It lives outside the storage package
+        # because every store imports it and storage/__init__ imports the stores.
+        Path("src/cruxible_core/sqlite_ddl.py"),
         Path("src/cruxible_core/receipt/store.py"),
         Path("src/cruxible_core/feedback/store.py"),
         Path("src/cruxible_core/group/store.py"),
@@ -140,6 +150,7 @@ def test_save_load_restart_preserves_relationship_state(
     graph.add_entity(_vehicle())
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1",
@@ -172,6 +183,7 @@ def test_save_load_restart_preserves_relationship_state(
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1",
@@ -279,6 +291,7 @@ def test_save_graph_does_not_create_live_graph_json(
     graph.add_entity(_vehicle())
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1",
@@ -318,6 +331,7 @@ def test_snapshot_graph_json_export_remains_node_link_compatible(
     graph.add_entity(_vehicle())
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1",
@@ -449,6 +463,7 @@ def _edge_with_receipt(receipt_id: str) -> RelationshipInstance:
         from_id="BP-1",
         to_type="Vehicle",
         to_id="V-1",
+        claim_id=mint_claim_id(),
         metadata=RelationshipMetadata(
             provenance=RelationshipProvenance(
                 source="workflow_apply",

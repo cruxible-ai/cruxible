@@ -17,7 +17,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
 from cruxible_core.config.schema import NamedQuerySchema
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance
+from cruxible_core.graph.types import EntityInstance, mint_claim_id
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.service import (
@@ -2128,6 +2128,7 @@ class TestGetRelationship:
         graph = populated_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1001",
@@ -2634,6 +2635,7 @@ class TestExportEdges:
         graph = populated_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1002",

@@ -11,7 +11,7 @@ Node ID format: "{entity_type}:{entity_id}" (e.g., "Vehicle:V-2024-CIVIC-EX")
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import count
 from typing import Any
@@ -28,6 +28,7 @@ from cruxible_core.graph.types import (
     RelationshipInstance,
     RelationshipMetadata,
     make_node_id,
+    mint_claim_id,
     relationship_is_live,
     split_node_id,
 )
@@ -85,12 +86,128 @@ class EntityGraph:
         self._graph: nx.MultiDiGraph[str] = nx.MultiDiGraph()
         self._entities_by_type: dict[str, set[str]] = defaultdict(set)
         self._edge_counter: count[int] = count()
+        # First of the three claim_id uniqueness layers (the other two are the
+        # storage INSERT and the merge guard): an in-memory index that makes a
+        # duplicate id fail at the moment it enters the graph, not later at
+        # persistence, so the raising stack points at the caller that copied it.
+        self._claim_ids: set[str] = set()
 
     def clear(self) -> None:
         """Clear all entities and relationships from the graph."""
         self._graph.clear()
         self._entities_by_type.clear()
         self._edge_counter = count()
+        self._claim_ids.clear()
+
+    def backfill_missing_claim_ids(
+        self,
+        *,
+        reuse: Mapping[tuple[str, str, str, str, str], Sequence[str]] | None = None,
+    ) -> list[RelationshipInstance]:
+        """Mint claim ids for edges that carry none, IN MEMORY only.
+
+        The legacy-image seam. Pre-identity snapshots, clones, overlay-create
+        images, and pre-upgrade upstream bundles are materialized forever, and
+        they carry no ids -- so the paths that materialize them normalize the
+        in-memory graph here and persist the result to live SQLite in the same
+        transaction. Two rules the callers depend on:
+
+        * MISSING-ONLY. A post-upgrade image already serializes live ids;
+          rollback/clone/re-pull must PRESERVE those, never re-mint them.
+        * ARTIFACT BYTES ARE NOT TOUCHED. This mutates the in-memory graph, and
+          nothing else. The materialized ``graph.json``, bundle members, and
+          snapshot artifacts stay byte-identical, because pull verification and
+          same-release immutability hash those exact bytes.
+
+        ``reuse`` is the legacy tuple->ids reconcile map: when a tuple appears in
+        it, its previously-minted ids are reused instead of fresh mints, so
+        re-pulling the same pre-upgrade upstream release does not silently
+        re-mint every upstream identity and stale every record-time stamp.
+
+        The map is tuple->ORDERED LIST because this is a MULTIGRAPH: one tuple
+        can carry several PARALLEL edges, and a single id could only ever
+        reconcile one of them, leaving the rest to churn on every pull forever.
+        Position within a tuple is the order the id-less parallel edges are
+        encountered, which is edge insertion order -- the same order the
+        per-load ``edge_key`` counter follows, and the order a re-materialized
+        image reproduces exactly. So the Nth parallel edge takes the Nth id,
+        stably across re-pulls. The returned list is in that same order, which
+        is what lets ``record_minted_identities`` fold it back positionally.
+
+        Returns the durable relationships that received an id -- reused AND
+        freshly minted -- for the caller to persist.
+        """
+        backfilled: list[RelationshipInstance] = []
+        seen_per_identity: dict[tuple[str, str, str, str, str], int] = {}
+        for u, v, key, edge_data in self._graph.edges(keys=True, data=True):
+            if isinstance(edge_data.get("claim_id"), str):
+                continue
+            from_type, from_id = split_node_id(u)
+            to_type, to_id = split_node_id(v)
+            rel_type = str(edge_data.get("relationship_type"))
+            identity = (rel_type, from_type, from_id, to_type, to_id)
+            position = seen_per_identity.get(identity, 0)
+            seen_per_identity[identity] = position + 1
+            reusable = (reuse or {}).get(identity) or ()
+            claim_id = reusable[position] if position < len(reusable) else ""
+            if not claim_id or claim_id in self._claim_ids:
+                # A reconcile-map entry that collides with a live id would
+                # silently retarget an existing identity; mint past it instead
+                # of adopting the collision.
+                claim_id = mint_claim_id()
+            edge_data["claim_id"] = claim_id
+            self._claim_ids.add(claim_id)
+            backfilled.append(
+                RelationshipInstance(
+                    relationship_type=rel_type,
+                    from_type=from_type,
+                    from_id=from_id,
+                    to_type=to_type,
+                    to_id=to_id,
+                    edge_key=key if isinstance(key, int) else None,
+                    claim_id=claim_id,
+                    properties=dict(edge_data.get("properties", {})),
+                    metadata=_relationship_metadata(edge_data),
+                )
+            )
+        return backfilled
+
+    def has_claim_id(self, claim_id: str) -> bool:
+        """Whether an edge with this minted claim identity is in the graph."""
+        return claim_id in self._claim_ids
+
+    def find_relationship_by_claim_id(self, claim_id: str) -> RelationshipInstance | None:
+        """Look one claim up by its minted identity (linear scan; no id index).
+
+        Deliberately unindexed: ``claim_id`` is a disambiguator on read paths
+        that already hold the tuple, so the id lookup never has to be the
+        primary access path. If that changes, index it then -- not speculatively.
+
+        The scan runs over RAW edge data and materializes a
+        ``RelationshipInstance`` only for the edge that matches: building (and
+        discarding) a validated pydantic model for every edge in the graph to
+        find one is the kind of cost an "unindexed but cheap" lookup must not
+        quietly carry.
+        """
+        if claim_id not in self._claim_ids:
+            return None
+        for u, v, key, data in self._graph.edges(keys=True, data=True):
+            if data.get("claim_id") != claim_id:
+                continue
+            from_type, from_id = split_node_id(u)
+            to_type, to_id = split_node_id(v)
+            return RelationshipInstance(
+                relationship_type=str(data.get("relationship_type")),
+                from_type=from_type,
+                from_id=from_id,
+                to_type=to_type,
+                to_id=to_id,
+                edge_key=key if isinstance(key, int) else None,
+                claim_id=claim_id,
+                properties=dict(data.get("properties", {})),
+                metadata=_relationship_metadata(data),
+            )
+        return None
 
     # -------------------------------------------------------------------------
     # Entity Operations
@@ -163,6 +280,17 @@ class EntityGraph:
         """Remove an entity and all its relationships."""
         node_id = make_node_id(entity_type, entity_id)
         if node_id in self._graph:
+            # Removing a node takes its edges with it, so their claim ids must
+            # leave the uniqueness index too -- otherwise a later re-add of the
+            # same claim would be refused as a phantom duplicate.
+            for _u, _v, edge_data in self._graph.edges(node_id, data=True):
+                claim_id = edge_data.get("claim_id")
+                if isinstance(claim_id, str):
+                    self._claim_ids.discard(claim_id)
+            for _u, _v, edge_data in self._graph.in_edges(node_id, data=True):
+                claim_id = edge_data.get("claim_id")
+                if isinstance(claim_id, str):
+                    self._claim_ids.discard(claim_id)
             self._graph.remove_node(node_id)
             self._entities_by_type[entity_type].discard(node_id)
 
@@ -232,8 +360,35 @@ class EntityGraph:
                 return key, edge_data
         return None
 
-    def add_relationship(self, rel: RelationshipInstance) -> None:
-        """Add a relationship to the graph. Creates stub entities if needed."""
+    def add_relationship(self, rel: RelationshipInstance) -> int:
+        """Add a relationship to the graph. Creates stub entities if needed.
+
+        Returns the per-load ``edge_key`` assigned to the new edge, so a caller
+        that must read back exactly the edge it just wrote can address it
+        directly instead of re-resolving by tuple (which returns the FIRST
+        match, not necessarily the new sibling).
+
+        PRESERVE-OR-RAISE on ``claim_id``: the incoming id is carried onto the
+        edge verbatim (never re-minted -- that is what made ``edge_key``
+        unusable as identity), and an id-less instance reaching a graph is a
+        programming error, not a tolerated shape. Constructing an id-less
+        instance is normal (candidates, wire references, dry-run previews);
+        ADDING one is the bug this refusal names.
+        """
+        if not rel.claim_id or not rel.claim_id.strip():
+            raise ValueError(
+                "Relationship added to a graph is missing claim_id "
+                f"({rel.relationship_label()}). Edges enter the graph through "
+                "graph.operations.apply_relationship, which mints the id; "
+                "constructing an id-less RelationshipInstance is fine, adding "
+                "one is a programming error."
+            )
+        if rel.claim_id in self._claim_ids:
+            raise ValueError(
+                f"Duplicate claim_id '{rel.claim_id}' added to the graph "
+                f"({rel.relationship_label()}); claim identity is unique per instance"
+            )
+
         from_node = rel.from_node_id()
         to_node = rel.to_node_id()
 
@@ -263,9 +418,12 @@ class EntityGraph:
             to_node,
             key=edge_key,
             relationship_type=rel.relationship_type,
+            claim_id=rel.claim_id,
             properties=rel.properties,
             metadata=_metadata_dict(rel.metadata),
         )
+        self._claim_ids.add(rel.claim_id)
+        return edge_key
 
     def get_relationship(
         self,
@@ -295,6 +453,7 @@ class EntityGraph:
             to_type=to_type,
             to_id=to_id,
             edge_key=key if isinstance(key, int) else None,
+            claim_id=edge_data.get("claim_id"),
             properties=edge_data.get("properties", {}),
             metadata=_relationship_metadata(edge_data),
         )
@@ -477,8 +636,11 @@ class EntityGraph:
         if found is None:
             return False
 
-        key, _edge_data = found
+        key, edge_data = found
         self._graph.remove_edge(from_node, to_node, key=key)
+        claim_id = edge_data.get("claim_id")
+        if isinstance(claim_id, str):
+            self._claim_ids.discard(claim_id)
         return True
 
     def relationship_count_between(
@@ -664,10 +826,13 @@ class EntityGraph:
     def _iter_edges_raw(
         self,
         relationship_type: str | None = None,
-    ) -> Iterator[tuple[str, str, str, str, str, Any, dict[str, Any], RelationshipMetadata]]:
-        """Low-level iterator yielding 7-tuples.
+    ) -> Iterator[
+        tuple[str, str, str, str, str, Any, str | None, dict[str, Any], RelationshipMetadata]
+    ]:
+        """Low-level iterator yielding 9-tuples.
 
-        Yields (from_type, from_id, to_type, to_id, rel_type, edge_key, properties, metadata).
+        Yields (from_type, from_id, to_type, to_id, rel_type, edge_key,
+        claim_id, properties, metadata).
         """
         for u, v, key, data in self._graph.edges(keys=True, data=True):
             rel_type = data.get("relationship_type")
@@ -686,6 +851,7 @@ class EntityGraph:
                 to_id,
                 rel_type,
                 key,
+                data.get("claim_id"),
                 data.get("properties", {}),
                 _relationship_metadata(data),
             )
@@ -702,6 +868,7 @@ class EntityGraph:
             to_id,
             rel_type,
             key,
+            claim_id,
             props,
             metadata,
         ) in self._iter_edges_raw(relationship_type):
@@ -712,6 +879,7 @@ class EntityGraph:
                 "to_id": to_id,
                 "relationship_type": rel_type,
                 "edge_key": key,
+                "claim_id": claim_id,
                 "properties": props,
                 "metadata": _metadata_dict(metadata),
             }
@@ -728,6 +896,7 @@ class EntityGraph:
             to_id,
             rel_type,
             key,
+            claim_id,
             props,
             metadata,
         ) in self._iter_edges_raw(relationship_type):
@@ -738,6 +907,7 @@ class EntityGraph:
                 to_type=to_type,
                 to_id=to_id,
                 edge_key=key if isinstance(key, int) else None,
+                claim_id=claim_id,
                 properties=dict(props),
                 metadata=metadata,
             )
@@ -831,6 +1001,7 @@ class EntityGraph:
                             "direction": "outgoing",
                             "relationship_type": rel_type,
                             "edge_key": key,
+                            "claim_id": data.get("claim_id"),
                             "properties": data.get("properties", {}),
                             "metadata": _metadata_dict(_relationship_metadata(data)),
                             "entity": entity,
@@ -853,6 +1024,7 @@ class EntityGraph:
                             "direction": "incoming",
                             "relationship_type": rel_type,
                             "edge_key": key,
+                            "claim_id": data.get("claim_id"),
                             "properties": data.get("properties", {}),
                             "metadata": _metadata_dict(_relationship_metadata(data)),
                             "entity": entity,
@@ -978,6 +1150,7 @@ class EntityGraph:
                 "to_type": to_type,
                 "to_id": to_id,
                 "edge_key": key,
+                "claim_id": data.get("claim_id"),
                 "properties": dict(data.get("properties", {})),
                 "metadata": _metadata_dict(_relationship_metadata(data)),
             }
@@ -1170,6 +1343,7 @@ class EntityGraph:
                     to_type=edge["to_type"],
                     to_id=edge["to_id"],
                     edge_key=edge["edge_key"],
+                    claim_id=edge["claim_id"],
                     properties=dict(edge["properties"]),
                     metadata=RelationshipMetadata.model_validate(edge.get("metadata") or {}),
                 )
@@ -1215,6 +1389,33 @@ class EntityGraph:
                     "Overlay relationship references missing target entity "
                     f"{edge['to_type']}:{edge['to_id']}"
                 )
+            # REFUSE a duplicate tuple rather than preferring either side. The
+            # losing edge may hold local-only attachments (attestations,
+            # feedback, receipts pointing at its identity) that silent
+            # preference would orphan, and a merge is the wrong place to
+            # adjudicate that. A collision here means ownership moved under the
+            # extract step, so the caller's ownership inputs are what needs
+            # fixing.
+            if merged.has_relationship(
+                edge["from_type"],
+                edge["from_id"],
+                edge["to_type"],
+                edge["to_id"],
+                edge["relationship_type"],
+            ):
+                raise ValueError(
+                    "Refusing to merge: overlay relationship "
+                    f"{edge['from_type']}:{edge['from_id']} "
+                    f"-[{edge['relationship_type']}]-> "
+                    f"{edge['to_type']}:{edge['to_id']} collides with an existing "
+                    "base relationship on the same identity tuple"
+                )
+            claim_id = edge.get("claim_id")
+            if isinstance(claim_id, str) and merged.has_claim_id(claim_id):
+                raise ValueError(
+                    f"Refusing to merge: overlay claim_id '{claim_id}' is already "
+                    "present in the base graph; claim identity is unique per instance"
+                )
             merged.add_relationship(
                 RelationshipInstance(
                     relationship_type=edge["relationship_type"],
@@ -1223,6 +1424,7 @@ class EntityGraph:
                     to_type=edge["to_type"],
                     to_id=edge["to_id"],
                     edge_key=edge["edge_key"],
+                    claim_id=claim_id,
                     properties=dict(edge["properties"]),
                     metadata=RelationshipMetadata.model_validate(edge.get("metadata") or {}),
                 )
@@ -1261,5 +1463,18 @@ class EntityGraph:
             if isinstance(key, int) and key > max_key:
                 max_key = key
             edge_data.setdefault("metadata", _metadata_dict(RelationshipMetadata()))
+            # Legacy images (pre-identity snapshots, clones, upstream bundles)
+            # deserialize with no claim_id at all. Normalize the attribute so
+            # every read path sees the same shape, and leave the None for the
+            # named materialization-time backfill sites to mint into -- from_dict
+            # itself never mints (it runs on previews and dry-runs too).
+            claim_id = edge_data.setdefault("claim_id", None)
+            if isinstance(claim_id, str):
+                if claim_id in graph._claim_ids:
+                    raise ValueError(
+                        f"Duplicate claim_id '{claim_id}' in serialized graph data; "
+                        "claim identity is unique per instance"
+                    )
+                graph._claim_ids.add(claim_id)
         graph._edge_counter = count(max_key + 1)
         return graph

@@ -25,7 +25,12 @@ from cruxible_core.graph.assertion_state import (
     RelationshipReviewState,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    RelationshipMetadata,
+    mint_claim_id,
+)
 from cruxible_core.query.engine import (
     QueryResult,
     _evaluate_constraint,
@@ -325,6 +330,7 @@ def graph() -> EntityGraph:
     # Fitments: BP-1234 fits CIVIC (verified) and ACCORD (unverified)
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1234",
@@ -335,6 +341,7 @@ def graph() -> EntityGraph:
     )
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-1234",
@@ -347,6 +354,7 @@ def graph() -> EntityGraph:
     # BP-5678 fits CIVIC (verified)
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-5678",
@@ -359,6 +367,7 @@ def graph() -> EntityGraph:
     # BP-9999 fits CAMRY (verified)
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="fits",
             from_type="Part",
             from_id="BP-9999",
@@ -371,6 +380,7 @@ def graph() -> EntityGraph:
     # Replacements: BP-5678 replaces BP-1234 (upgrade), BP-9999 replaces BP-1234 (downgrade)
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="replaces",
             from_type="Part",
             from_id="BP-5678",
@@ -381,6 +391,7 @@ def graph() -> EntityGraph:
     )
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="replaces",
             from_type="Part",
             from_id="BP-9999",
@@ -1365,6 +1376,7 @@ class TestMultiStepQuery:
     ):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="vehicle_blocks_part",
                 from_type="Vehicle",
                 from_id="V-CIVIC",
@@ -1425,6 +1437,7 @@ class TestRelatedEdgeExclusions:
     def test_outgoing_related_edge_excludes_candidate(self, config: CoreConfig, graph: EntityGraph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="vehicle_blocks_part",
                 from_type="Vehicle",
                 from_id="V-CIVIC",
@@ -1446,6 +1459,7 @@ class TestRelatedEdgeExclusions:
     def test_incoming_related_edge_excludes_candidate(self, config: CoreConfig, graph: EntityGraph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="suppressed_fit",
                 from_type="Part",
                 from_id="BP-1234",
@@ -1469,6 +1483,7 @@ class TestRelatedEdgeExclusions:
     ):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="blocked",
                 from_type="Part",
                 from_id="BP-1234",
@@ -1492,6 +1507,7 @@ class TestRelatedEdgeExclusions:
     ):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="blocked",
                 from_type="Part",
                 from_id="BP-5678",
@@ -1515,6 +1531,7 @@ class TestRelatedEdgeExclusions:
     ):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="suppressed_fit",
                 from_type="Part",
                 from_id="BP-1234",
@@ -1558,6 +1575,7 @@ class TestRelatedEdgeExclusions:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="suppressed_fit",
                 from_type="Part",
                 from_id="BP-1234",
@@ -1612,6 +1630,7 @@ class TestRelatedEdgeExclusions:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="suppressed_fit",
                 from_type="Part",
                 from_id="BP-1234",
@@ -1649,6 +1668,7 @@ class TestRelatedEdgeExclusions:
     def test_related_edge_rejected_does_not_exclude(self, config: CoreConfig, graph: EntityGraph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="suppressed_fit",
                 from_type="Part",
                 from_id="BP-1234",
@@ -1676,6 +1696,7 @@ class TestRelatedEdgeExclusions:
     ):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="suppressed_fit",
                 from_type="Part",
                 from_id="BP-5678",
@@ -1699,6 +1720,7 @@ class TestRelatedEdgeExclusions:
     ):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="vehicle_blocks_part",
                 from_type="Vehicle",
                 from_id="V-CIVIC",
@@ -2073,6 +2095,7 @@ def _fan_out_graph() -> EntityGraph:
     # P-1 owns ORG-1
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="owns",
             from_type="Person",
             from_id="P-1",
@@ -2084,6 +2107,7 @@ def _fan_out_graph() -> EntityGraph:
     # P-2 owns ORG-1
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="owns",
             from_type="Person",
             from_id="P-2",
@@ -2095,6 +2119,7 @@ def _fan_out_graph() -> EntityGraph:
     # PARENT-1 owns_org ORG-1
     g.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="owns_org",
             from_type="Person",
             from_id="PARENT-1",
@@ -2130,6 +2155,7 @@ class TestMultiRelationshipStep:
         # A -> B via links
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="links",
                 from_type="Node",
                 from_id="A",
@@ -2141,6 +2167,7 @@ class TestMultiRelationshipStep:
         # A -> B via alt_links
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="alt_links",
                 from_type="Node",
                 from_id="A",
@@ -2283,6 +2310,7 @@ def _chain_graph() -> EntityGraph:
     for src, dst in [("A", "B"), ("B", "C"), ("C", "D")]:
         g.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="links",
                 from_type="Node",
                 from_id=src,
@@ -2427,6 +2455,7 @@ def _project_fanout_graph() -> EntityGraph:
     ]:
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type=relationship_type,
                 from_type=from_type,
                 from_id=from_id,
@@ -2462,6 +2491,7 @@ class TestMaxDepth:
         # Add alt_links: A -> C (shortcut)
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="alt_links",
                 from_type="Node",
                 from_id="A",
@@ -2482,6 +2512,7 @@ class TestMaxDepth:
         # Add cycle: D -> A
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="links",
                 from_type="Node",
                 from_id="D",
@@ -2502,6 +2533,7 @@ class TestMaxDepth:
         # Add cycle: D -> A
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="links",
                 from_type="Node",
                 from_id="D",
@@ -2561,6 +2593,7 @@ class TestMaxDepth:
             )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="links",
                 from_type="Node",
                 from_id="A",
@@ -2571,6 +2604,7 @@ class TestMaxDepth:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="links",
                 from_type="Node",
                 from_id="B",
@@ -2581,6 +2615,7 @@ class TestMaxDepth:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="links",
                 from_type="Node",
                 from_id="C",
@@ -2924,6 +2959,7 @@ class TestPathResults:
     def test_path_dedupe_can_collapse_or_preserve_distinct_paths(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1234",
@@ -3499,6 +3535,7 @@ class TestQueryIncludes:
         for vehicle_id in ("V-CIVIC", "V-ACCORD"):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="fits",
                     from_type="Part",
                     from_id="BP-DUAL",
@@ -3511,6 +3548,7 @@ class TestQueryIncludes:
         for replacer in ("BP-1234", "BP-9999"):
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="replaces",
                     from_type="Part",
                     from_id=replacer,
@@ -3616,6 +3654,7 @@ class TestQueryIncludes:
             # entries (the parts), shared `$result` anchor (V-SHARED).
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="fits",
                     from_type="Part",
                     from_id=part_id,
@@ -3772,6 +3811,7 @@ class TestQueryIncludes:
     def test_include_related_predicate_can_reference_path_alias(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="blocked",
                 from_type="Part",
                 from_id="BP-5678",
@@ -4032,6 +4072,7 @@ class TestQueryIncludes:
     def test_include_from_entry_and_path_alias_anchors(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="vehicle_blocks_part",
                 from_type="Vehicle",
                 from_id="V-CIVIC",
@@ -4171,6 +4212,7 @@ class TestQueryIncludes:
     def test_include_related_predicates_match_from_candidate_anchor(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="blocked",
                 from_type="Part",
                 from_id="BP-5678",
@@ -4361,6 +4403,7 @@ class TestOperationalQueryControls:
     ):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="BP-5678",
@@ -4442,6 +4485,7 @@ class TestOperationalQueryControls:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="AA-0001",
@@ -4584,6 +4628,7 @@ class TestOperationalQueryControls:
             )
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="fits",
                     from_type="Part",
                     from_id=part_id,
@@ -4620,6 +4665,7 @@ class TestOperationalQueryControls:
     def test_max_paths_per_result_caps_each_result_entity(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1234",
@@ -4661,6 +4707,7 @@ class TestOperationalQueryControls:
     def test_optional_matches_respect_max_paths(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="BP-5678",
@@ -4840,6 +4887,7 @@ def _kev_path_graph() -> EntityGraph:
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="affects",
             from_type="Vulnerability",
             from_id="VULN-1",
@@ -4849,6 +4897,7 @@ def _kev_path_graph() -> EntityGraph:
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="deployed_on",
             from_type="Product",
             from_id="PROD-1",
@@ -4858,6 +4907,7 @@ def _kev_path_graph() -> EntityGraph:
     )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             relationship_type="supports",
             from_type="Asset",
             from_id="ASSET-1",
@@ -4975,6 +5025,7 @@ class TestStructuredPredicates:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1234",
@@ -5037,6 +5088,7 @@ class TestStructuredPredicates:
             )
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="fits",
                     from_type="Part",
                     from_id=part_id,
@@ -5085,6 +5137,7 @@ class TestStructuredPredicates:
         config.relationships[0].properties["due_by"] = PropertySchema(type="date")
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1234",
@@ -5095,6 +5148,7 @@ class TestStructuredPredicates:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-5678",
@@ -5133,6 +5187,7 @@ class TestStructuredPredicates:
         config.relationships[0].properties["checked_at"] = PropertySchema(type="datetime")
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1234",
@@ -5143,6 +5198,7 @@ class TestStructuredPredicates:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-5678",
@@ -5181,6 +5237,7 @@ class TestStructuredPredicates:
         config.relationships[0].properties["checked_at"] = PropertySchema(type="datetime")
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1234",
@@ -5236,6 +5293,7 @@ class TestStructuredPredicates:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -5335,6 +5393,7 @@ class TestStructuredPredicates:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="owned_by",
                 from_type="Part",
                 from_id="BP-1234",
@@ -5345,6 +5404,7 @@ class TestStructuredPredicates:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="owned_by",
                 from_type="Part",
                 from_id="BP-5678",
@@ -5393,6 +5453,7 @@ class TestStructuredPredicates:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="suppressed_fit",
                 from_type="Part",
                 from_id="BP-5678",
@@ -5439,6 +5500,7 @@ class TestRelationshipState:
     def test_where_related_ignores_pending_related_edge_under_live_state(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="suppressed_fit",
                 from_type="Part",
                 from_id="BP-5678",
@@ -5480,6 +5542,7 @@ class TestRelationshipState:
     def test_where_not_related_ignores_pending_related_edge_under_live_state(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="suppressed_fit",
                 from_type="Part",
                 from_id="BP-5678",
@@ -5521,6 +5584,7 @@ class TestRelationshipState:
     def test_inactive_related_edge_does_not_affect_related_predicates(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="suppressed_fit",
                 from_type="Part",
                 from_id="BP-5678",
@@ -5622,6 +5686,7 @@ class TestRelationshipState:
             )
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="fits",
                     from_type="Part",
                     from_id=part_id,
@@ -6167,6 +6232,7 @@ class TestRelationshipResults:
     ):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1234",
@@ -6208,6 +6274,7 @@ class TestRelationshipResults:
     def test_relationship_query_defaults_to_path_dedupe(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1234",

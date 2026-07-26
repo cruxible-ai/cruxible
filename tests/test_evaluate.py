@@ -23,7 +23,12 @@ from cruxible_core.graph.assertion_state import RelationshipAssertion, Relations
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import EvidenceRef, RelationshipEvidence
 from cruxible_core.graph.provenance import RelationshipProvenance
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    RelationshipMetadata,
+    mint_claim_id,
+)
 from cruxible_core.group.store import GroupStore
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.query.evaluate import EvaluationFinding, evaluate_graph
@@ -123,6 +128,7 @@ class TestOrphanEntities:
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V1", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P1",
@@ -145,6 +151,7 @@ class TestCoverageGaps:
         graph.add_entity(EntityInstance(entity_type="Part", entity_id="P2", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -166,6 +173,7 @@ class TestCoverageGaps:
         # Only add fits, not replaces
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P1",
@@ -195,6 +203,7 @@ class TestCoverageGaps:
         graph.add_entity(EntityInstance(entity_type="Part", entity_id="P2", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -228,6 +237,7 @@ class TestConstraintViolations:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -260,6 +270,7 @@ class TestConstraintViolations:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -302,6 +313,7 @@ class TestConstraintViolations:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -345,6 +357,7 @@ class TestConstraintViolations:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -412,6 +425,7 @@ class TestGovernedSupportRelationships:
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -432,6 +446,7 @@ class TestGovernedSupportRelationships:
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -460,6 +475,7 @@ class TestGovernedSupportRelationships:
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -482,6 +498,7 @@ class TestGovernedSupportRelationships:
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -501,6 +518,7 @@ class TestGovernedSupportRelationships:
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -521,6 +539,7 @@ class TestGovernedSupportRelationships:
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -545,6 +564,7 @@ class TestGovernedSupportRelationships:
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -731,6 +751,7 @@ class TestReportStructure:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -768,6 +789,7 @@ class TestReportStructure:
         graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P2",
@@ -831,6 +853,7 @@ class TestUnreviewedCoMembers:
         # SDN1 → Officer1 via xref
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="xref",
                 from_type="SDN",
                 from_id="S1",
@@ -842,6 +865,7 @@ class TestUnreviewedCoMembers:
         # Officer1 → Company1 via works_at
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O1",
@@ -853,6 +877,7 @@ class TestUnreviewedCoMembers:
         # Officer2 → Company1 via works_at
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O2",
@@ -884,6 +909,7 @@ class TestUnreviewedCoMembers:
 
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="xref",
                 from_type="SDN",
                 from_id="S1",
@@ -894,6 +920,7 @@ class TestUnreviewedCoMembers:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="xref",
                 from_type="SDN",
                 from_id="S2",
@@ -904,6 +931,7 @@ class TestUnreviewedCoMembers:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O1",
@@ -914,6 +942,7 @@ class TestUnreviewedCoMembers:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O2",
@@ -986,6 +1015,7 @@ class TestQualityChecks:
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="affects",
                 from_type="Part",
                 from_id="P1",
@@ -1172,6 +1202,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="product_from_vendor",
                 from_type="Product",
                 from_id="product-widget",
@@ -1232,6 +1263,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="product_from_vendor",
                 from_type="Product",
                 from_id="product-widget",
@@ -1301,6 +1333,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="product_from_vendor",
                 from_type="Product",
                 from_id="product-widget",
@@ -1335,6 +1368,7 @@ class TestQualityChecks:
         graph.add_entity(EntityInstance(entity_type="Part", entity_id="P2", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="replaces",
                 from_type="Part",
                 from_id="P1",
@@ -1359,6 +1393,7 @@ class TestQualityChecks:
 
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="xref",
                 from_type="SDN",
                 from_id="S1",
@@ -1371,6 +1406,7 @@ class TestQualityChecks:
         for c_id in ["C1", "C2"]:
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="works_at",
                     from_type="Officer",
                     from_id="O1",
@@ -1381,6 +1417,7 @@ class TestQualityChecks:
             )
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="works_at",
                     from_type="Officer",
                     from_id="O2",
@@ -1405,6 +1442,7 @@ class TestQualityChecks:
 
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="xref",
                 from_type="SDN",
                 from_id="S1",
@@ -1415,6 +1453,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O1",
@@ -1429,6 +1468,7 @@ class TestQualityChecks:
             graph.add_entity(EntityInstance(entity_type="Officer", entity_id=oid, properties={}))
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="works_at",
                     from_type="Officer",
                     from_id=oid,
@@ -1453,6 +1493,7 @@ class TestQualityChecks:
 
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="xref",
                 from_type="SDN",
                 from_id="S1",
@@ -1463,6 +1504,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O1",
@@ -1473,6 +1515,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O2",
@@ -1498,6 +1541,7 @@ class TestQualityChecks:
 
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="xref",
                 from_type="SDN",
                 from_id="S1",
@@ -1508,6 +1552,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O1",
@@ -1518,6 +1563,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O2",
@@ -1542,6 +1588,7 @@ class TestQualityChecks:
 
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="xref",
                 from_type="SDN",
                 from_id="S1",
@@ -1552,6 +1599,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O1",
@@ -1562,6 +1610,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O2",
@@ -1586,6 +1635,7 @@ class TestQualityChecks:
 
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="xref",
                 from_type="SDN",
                 from_id="S1",
@@ -1596,6 +1646,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O1",
@@ -1606,6 +1657,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O2",
@@ -1631,6 +1683,7 @@ class TestQualityChecks:
 
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="xref",
                 from_type="SDN",
                 from_id="S1",
@@ -1641,6 +1694,7 @@ class TestQualityChecks:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O1",
@@ -1656,6 +1710,7 @@ class TestQualityChecks:
             graph.add_entity(EntityInstance(entity_type="Officer", entity_id=oid, properties={}))
             graph.add_relationship(
                 RelationshipInstance(
+                    claim_id=mint_claim_id(),
                     relationship_type="works_at",
                     from_type="Officer",
                     from_id=oid,
@@ -1681,6 +1736,7 @@ class TestQualityChecks:
         # SDN1 → Officer1 via xref (seeds matched_set)
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="xref",
                 from_type="SDN",
                 from_id="S1",
@@ -1692,6 +1748,7 @@ class TestQualityChecks:
         # Officer1 → Company1 via works_at
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Officer",
                 from_id="O1",
@@ -1703,6 +1760,7 @@ class TestQualityChecks:
         # Malformed: Company2 → Company1 via works_at (wrong from_entity type)
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="works_at",
                 from_type="Company",
                 from_id="C2",

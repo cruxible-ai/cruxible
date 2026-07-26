@@ -18,7 +18,12 @@ from cruxible_core.config.schema import (
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.evidence import EvidenceRef
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    RelationshipMetadata,
+    mint_claim_id,
+)
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.store import GroupStore
 from cruxible_core.group.types import (
@@ -413,6 +418,7 @@ def _approve_live_fit_edge(
         )
     graph.add_relationship(
         RelationshipInstance(
+            claim_id=mint_claim_id(),
             from_type="Part",
             from_id="BP-1001",
             relationship_type="fits",
@@ -1362,6 +1368,7 @@ class TestPendingBuckets:
         graph = matching_instance.load_graph()
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="BP-1001",

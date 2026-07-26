@@ -11,7 +11,7 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.store import GroupStore
 from cruxible_core.snapshot.types import UpstreamMetadata
 from cruxible_core.storage.sqlite import SQLiteGraphRepository
@@ -176,6 +176,7 @@ class TestGraphPersistence:
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -209,6 +210,7 @@ class TestGraphPersistence:
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -223,6 +225,7 @@ class TestGraphPersistence:
         # Adding another relationship should work without key collision
         loaded.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-2",
@@ -252,6 +255,7 @@ class TestGraphRoundTrip:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-1",
@@ -262,6 +266,7 @@ class TestGraphRoundTrip:
         )
         graph.add_relationship(
             RelationshipInstance(
+                claim_id=mint_claim_id(),
                 relationship_type="fits",
                 from_type="Part",
                 from_id="P-2",
