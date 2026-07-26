@@ -144,6 +144,10 @@ from cruxible_core.service.state import (
     service_pull_state_preview,
     service_state_status,
 )
+from cruxible_core.service.state_diff import (
+    service_state_diff,
+    service_state_diff_artifact,
+)
 from cruxible_core.service.types import (
     AddConstraintServiceResult,
     AddDecisionPolicyServiceResult,
@@ -348,6 +352,8 @@ __all__ = [
     "service_create_state_overlay",
     "service_pull_state_preview",
     "service_pull_state_apply",
+    "service_state_diff",
+    "service_state_diff_artifact",
     "service_plan",
     "apply_preview_reference_from_receipt",
     "service_apply_workflow",

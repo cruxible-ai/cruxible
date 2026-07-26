@@ -7,6 +7,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from cruxible_client._error_base import (
+    ConcurrentStateDriftError as ConcurrentStateDriftError,
+)
+from cruxible_client._error_base import (
     CoreError as CoreError,
 )
 from cruxible_client._error_base import (
@@ -444,6 +447,11 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             token_read_revision=context.get("token_read_revision"),
             current_read_revision=context.get("current_read_revision"),
             reason=context.get("reason"),
+        )
+    elif body.error_type == "ConcurrentStateDriftError":
+        exc = ConcurrentStateDriftError(
+            int(context.get("opening_revision") or 0),
+            int(context.get("closing_revision") or 0),
         )
     elif body.error_type == "MutationError":
         exc = MutationError(body.message)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,8 @@ from cruxible_core.service import (
     service_publish_state,
     service_pull_state_apply,
     service_pull_state_preview,
+    service_state_diff,
+    service_state_diff_artifact,
     service_state_health,
     service_state_status,
 )
@@ -32,7 +35,228 @@ from cruxible_core.service import (
 
 @click.group("state")
 def state_group() -> None:
-    """Publish immutable states and manage pullable overlays."""
+    """Compare, publish, and track state across coordinates."""
+
+
+_DIFF_COORDINATE_HELP = (
+    "Coordinates are 'current', a snapshot id (snap_ + 16 hex, exactly as "
+    "`cruxible snapshot list` prints it), 'upstream' (the verified materialized "
+    "tracked release), or 'origin' (clone provenance). A release you have not "
+    "pulled is NOT a coordinate -- materialize it with `cruxible state "
+    "pull-apply` first; pull-preview owns transport and foreign-byte "
+    "verification."
+)
+
+
+@state_group.command("diff", epilog=_DIFF_COORDINATE_HELP)
+@click.argument("from_coordinate", required=False)
+@click.argument("to_coordinate", required=False)
+@click.option(
+    "--section",
+    "sections",
+    multiple=True,
+    type=click.Choice(["entities", "edges", "procedures"]),
+    help="Restrict the diff to these sections (repeatable).",
+)
+@click.option(
+    "--entity-type", "entity_types", multiple=True, help="Restrict entities to these types."
+)
+@click.option(
+    "--relationship-type",
+    "relationship_types",
+    multiple=True,
+    help="Restrict edges to these relationship types.",
+)
+@click.option(
+    "--bucket",
+    "buckets",
+    multiple=True,
+    type=click.Choice(["added", "removed", "changed", "ambiguous", "identity_conflict"]),
+    help="Report only these buckets (counts stay whole).",
+)
+@click.option("--changed-only", is_flag=True, default=False, help="Suppress added/removed items.")
+@click.option(
+    "--max-items",
+    type=int,
+    default=None,
+    help="Per-bucket cap for the returned view; the persisted artifact is never capped.",
+)
+@click.option(
+    "--artifact",
+    "artifact_digest",
+    default=None,
+    help="Re-read a persisted diff artifact by its diff_digest instead of computing one.",
+)
+@json_option
+@handle_errors
+def state_diff_cmd(
+    from_coordinate: str | None,
+    to_coordinate: str | None,
+    sections: tuple[str, ...],
+    entity_types: tuple[str, ...],
+    relationship_types: tuple[str, ...],
+    buckets: tuple[str, ...],
+    changed_only: bool,
+    max_items: int | None,
+    artifact_digest: str | None,
+    output_json: bool,
+) -> None:
+    """Diff state between two coordinates.
+
+    With no arguments this is parent-of-head to current: "what did the last
+    committed transition do, plus anything since". `commit_graph_snapshot`
+    advances live state in the same boundary that writes the snapshot, so
+    head-to-current would be the empty diff by construction.
+    """
+    if artifact_digest is not None:
+        artifact = _dispatch_cli_instance(
+            lambda client, instance_id: client.state_diff_artifact(instance_id, artifact_digest),
+            lambda instance: service_state_diff_artifact(instance, artifact_digest),
+        )
+        _emit_json(_as_payload(artifact.content))
+        return
+
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.state_diff(
+            instance_id,
+            from_coordinate=from_coordinate,
+            to_coordinate=to_coordinate,
+            sections=list(sections) or None,
+            entity_types=list(entity_types) or None,
+            relationship_types=list(relationship_types) or None,
+            buckets=list(buckets) or None,
+            changed_only=changed_only,
+            max_items_per_bucket=max_items,
+        ),
+        lambda instance: service_state_diff(
+            instance,
+            from_coordinate=from_coordinate,
+            to_coordinate=to_coordinate,
+            sections=tuple(sections) or None,
+            entity_types=tuple(entity_types) or None,
+            relationship_types=tuple(relationship_types) or None,
+            buckets=tuple(buckets) or None,
+            changed_only=changed_only,
+            **({"max_items_per_bucket": max_items} if max_items is not None else {}),
+        ),
+    )
+    if output_json:
+        _emit_json(_as_payload(result))
+        return
+    _render_state_diff(_as_payload(result))
+
+
+def _as_payload(result: Any) -> dict[str, Any]:
+    """Normalize the server contract model or the local dataclass into a dict."""
+    if hasattr(result, "model_dump"):
+        return dict(result.model_dump(mode="json"))
+    if is_dataclass(result) and not isinstance(result, type):
+        return dict(asdict(result))
+    return dict(result)
+
+
+def _render_state_diff(payload: dict[str, Any]) -> None:
+    summary = payload["summary"]
+    click.echo(
+        f"{payload['from_coordinate']['kind']}"
+        f"({_coordinate_label(payload['from_coordinate'])}) -> "
+        f"{payload['to_coordinate']['kind']}"
+        f"({_coordinate_label(payload['to_coordinate'])})"
+    )
+    if payload.get("default_basis"):
+        click.echo(f"  default basis: {payload['default_basis']}")
+    click.echo(f"  diff digest:   {payload['diff_digest']}")
+    click.echo(f"  artifact:      {payload['artifact_ref']['path']}")
+    click.echo(f"  trust:         {payload['artifact_trust']}  liveness: {payload['liveness']}")
+    if payload["normalizations"]:
+        click.echo(f"  normalizations: {', '.join(payload['normalizations'])}")
+    if not payload["artifact_complete"]:
+        click.secho(
+            "  returned view is BOUNDED: this is not a reviewable plan; read the "
+            "artifact with --artifact for the complete body.",
+            fg="yellow",
+        )
+    click.echo(
+        "  totals: "
+        f"added={summary['added']} removed={summary['removed']} "
+        f"changed={summary['changed']} (annotation_only={summary['annotation_only']}) "
+        f"unchanged={summary['unchanged']} "
+        f"ambiguous={summary['ambiguous_from']}/{summary['ambiguous_to']} "
+        f"identity_conflict={summary['identity_conflict']}"
+    )
+    for entry in payload["omitted_sections"]:
+        click.secho(
+            f"  omitted section '{entry['section']}': {entry['side']} side is "
+            f"{entry['from_status'] if entry['side'] != 'to' else entry['to_status']}",
+            fg="yellow",
+        )
+    for name, section in sorted(payload["sections"].items()):
+        counts = section["counts"]
+        click.echo(f"{name}:")
+        click.echo(
+            f"  added={counts['added']} removed={counts['removed']} "
+            f"changed={counts['changed']} unchanged={counts['unchanged']}"
+        )
+        for bucket, accounting in sorted(section["view"].items()):
+            if accounting["truncated"]:
+                click.secho(
+                    f"  {bucket}: showing {accounting['returned']} of {accounting['total']}",
+                    fg="yellow",
+                )
+        diagnostics = section.get("diagnostics") or {}
+        excluded = diagnostics.get("excluded_boundary_stubs")
+        if excluded and (excluded["from"] or excluded["to"]):
+            click.echo(f"  boundary stubs excluded: from={excluded['from']} to={excluded['to']}")
+        for type_name, tally in sorted(_counts_by_type(section).items()):
+            click.echo(f"  {type_name}: +{tally['added']} -{tally['removed']} ~{tally['changed']}")
+        for item in section["changed"][:10]:
+            click.echo(f"  ~ {_item_label(item)} [{', '.join(item['channels'])}]")
+            for change in (item.get("properties") or {}).get("changes", [])[:5]:
+                click.echo(
+                    f"      {change['property']}: "
+                    f"{_value_label(change['from_value'])} -> "
+                    f"{_value_label(change['to_value'])}"
+                )
+        for item in section["added"][:10]:
+            click.echo(f"  + {_item_label(item)}")
+        for item in section["removed"][:10]:
+            click.echo(f"  - {_item_label(item)}")
+
+
+def _counts_by_type(section: dict[str, Any]) -> dict[str, dict[str, int]]:
+    """Added/removed/changed per entity or relationship type, from the shown items."""
+    tallies: dict[str, dict[str, int]] = {}
+    for bucket in ("added", "removed", "changed"):
+        for item in section[bucket]:
+            type_name = item.get("relationship_type") or item.get("entity_type") or "procedure"
+            tally = tallies.setdefault(type_name, {"added": 0, "removed": 0, "changed": 0})
+            tally[bucket] += 1
+    return tallies
+
+
+def _value_label(value: Any) -> str:
+    if isinstance(value, dict) and value.get("elided") is True:
+        return f"<elided {value['byte_count']}B {value['value_digest']}>"
+    return json.dumps(value, default=str)
+
+
+def _coordinate_label(coordinate: dict[str, Any]) -> str:
+    identity = coordinate.get("identity") or {}
+    for key in ("snapshot_id", "release_id", "head_snapshot_id"):
+        if identity.get(key):
+            return str(identity[key])
+    return str(coordinate.get("spec", "?"))
+
+
+def _item_label(item: dict[str, Any]) -> str:
+    if "procedure_id" in item:
+        return str(item["procedure_id"])
+    if "entity_type" in item:
+        return f"{item['entity_type']}:{item['entity_id']}"
+    return (
+        f"{item['from_type']}:{item['from_id']} -[{item['relationship_type']}]-> "
+        f"{item['to_type']}:{item['to_id']}"
+    )
 
 
 @state_group.command("publish")

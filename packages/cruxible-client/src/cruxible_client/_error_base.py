@@ -51,3 +51,28 @@ class StaleContinuationError(CoreError):
                 f"current read_revision={current_read_revision})"
             )
         super().__init__(f"Stale continuation token: {detail}. Restart the read from the start.")
+
+
+class ConcurrentStateDriftError(CoreError):
+    """Live state moved WHILE a ``current`` coordinate was being captured.
+
+    ``state diff`` resolves ``current`` under a revision sandwich (invalidate
+    the graph cache, read the revision, load the graph, read the revision
+    again) and retries once. A second mismatch means another writer is landing
+    commits faster than one read can complete, and a diff whose stamped
+    revision does not describe its own graph is worse than no diff -- the digest
+    would pin a coordinate that never existed. Both revisions are named so the
+    caller can see the drift rather than guess at it.
+    """
+
+    error_code = "concurrent_state_drift"
+
+    def __init__(self, opening_revision: int, closing_revision: int) -> None:
+        self.opening_revision = opening_revision
+        self.closing_revision = closing_revision
+        super().__init__(
+            "Live state changed while the 'current' coordinate was being captured "
+            f"(read_revision {opening_revision} -> {closing_revision}) and the retry "
+            "hit the same race. Re-run the diff when writes have settled, or diff two "
+            "snapshot coordinates, which cannot drift."
+        )

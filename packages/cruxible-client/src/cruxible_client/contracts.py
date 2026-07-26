@@ -1861,6 +1861,53 @@ class StatePullApplyResult(BaseModel):
     receipt_id: str | None = None
 
 
+class StateDiffArtifactRef(BaseModel):
+    """Where the complete canonical diff artifact was persisted."""
+
+    path: str
+    diff_digest: str
+    byte_count: int
+
+
+class StateDiffResult(BaseModel):
+    """A structured difference between two state coordinates.
+
+    ``sections`` is the BOUNDED view (per-bucket caps, oversized values elided)
+    and ``view_digest`` covers exactly those bytes. ``diff_digest`` always
+    covers the complete unelided body persisted at ``artifact_ref``; only an
+    ``artifact_complete: true`` result may be treated as a reviewed plan.
+    """
+
+    diff_digest: str
+    view_digest: str
+    artifact_complete: bool
+    artifact_ref: StateDiffArtifactRef
+    diff_engine_version: str
+    artifact_schema_version: int
+    artifact_trust: str
+    normalizations: list[str] = Field(default_factory=list)
+    liveness: str = "not_evaluated"
+    selector: dict[str, Any] = Field(default_factory=dict)
+    from_coordinate: dict[str, Any] = Field(default_factory=dict)
+    to_coordinate: dict[str, Any] = Field(default_factory=dict)
+    omitted_sections: list[dict[str, Any]] = Field(default_factory=list)
+    context: dict[str, Any] = Field(default_factory=dict)
+    sections: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, int] = Field(default_factory=dict)
+    view: dict[str, Any] = Field(default_factory=dict)
+    default_basis: str | None = None
+    receipt_id: str | None = None
+
+
+class StateDiffArtifactResult(BaseModel):
+    """One persisted diff artifact, fetched by its content address."""
+
+    diff_digest: str
+    path: str
+    byte_count: int
+    content: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProposeGroupToolResult(BaseModel):
     group_id: str | None = None
     signature: str

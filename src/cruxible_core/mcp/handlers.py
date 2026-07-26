@@ -2406,6 +2406,52 @@ def handle_state_status(instance_id: str) -> contracts.StateStatusResult:
     )
 
 
+def handle_state_diff(
+    instance_id: str,
+    from_coordinate: str | None = None,
+    to_coordinate: str | None = None,
+    sections: list[str] | None = None,
+    entity_types: list[str] | None = None,
+    relationship_types: list[str] | None = None,
+    buckets: list[str] | None = None,
+    changed_only: bool = False,
+) -> contracts.StateDiffResult:
+    """Compare two state coordinates."""
+    return _dispatch_remote_or_local(
+        lambda client: client.state_diff(
+            instance_id,
+            from_coordinate=from_coordinate,
+            to_coordinate=to_coordinate,
+            sections=sections,
+            entity_types=entity_types,
+            relationship_types=relationship_types,
+            buckets=buckets,
+            changed_only=changed_only,
+        ),
+        lambda: api.state_diff(
+            instance_id,
+            from_coordinate=from_coordinate,
+            to_coordinate=to_coordinate,
+            sections=sections,
+            entity_types=entity_types,
+            relationship_types=relationship_types,
+            buckets=buckets,
+            changed_only=changed_only,
+        ),
+    )
+
+
+def handle_state_diff_artifact(
+    instance_id: str,
+    diff_digest: str,
+) -> contracts.StateDiffArtifactResult:
+    """Read one persisted diff artifact by its content address."""
+    return _dispatch_remote_or_local(
+        lambda client: client.state_diff_artifact(instance_id, diff_digest),
+        lambda: api.state_diff_artifact(instance_id, diff_digest),
+    )
+
+
 def handle_state_pull_preview(instance_id: str) -> contracts.StatePullPreviewResult:
     """Preview pulling a new upstream release into a local overlay."""
     return _dispatch_remote_or_local(

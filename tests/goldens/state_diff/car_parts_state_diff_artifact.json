@@ -1,0 +1,312 @@
+{
+  "artifact_schema_version": 1,
+  "artifact_trust": "verified",
+  "context": {
+    "digest_domains": {
+      "graph_artifact_digest": {
+        "comparable": false,
+        "equal": null,
+        "from": "<DIGEST_1>",
+        "scope": "bytes",
+        "to": null
+      },
+      "lock_file_digest": {
+        "comparable": true,
+        "equal": true,
+        "from": "<DIGEST_2>",
+        "scope": "bytes",
+        "to": "<DIGEST_2>"
+      },
+      "semantic_config_digest": {
+        "comparable": true,
+        "equal": true,
+        "from": "<DIGEST_3>",
+        "scope": "semantic",
+        "to": "<DIGEST_3>"
+      }
+    }
+  },
+  "from": {
+    "digests": {
+      "graph_artifact_digest": {
+        "scope": "bytes",
+        "value": "<DIGEST_1>"
+      },
+      "lock_file_digest": {
+        "scope": "bytes",
+        "value": "<DIGEST_2>"
+      },
+      "semantic_config_digest": {
+        "scope": "semantic",
+        "value": "<DIGEST_3>"
+      }
+    },
+    "identity": {
+      "created_at": "<TIMESTAMP_1>",
+      "snapshot_id": "<SNAPSHOT_1>"
+    },
+    "kind": "snapshot",
+    "members": {},
+    "ownership": {
+      "basis": "pinned",
+      "owned_entity_types": [],
+      "owned_relationship_types": []
+    },
+    "sections": {
+      "edges": "available",
+      "entities": "available",
+      "procedures": "available"
+    },
+    "spec": "<SNAPSHOT_1>",
+    "verification": "not_applicable"
+  },
+  "liveness": "not_evaluated",
+  "normalizations": [],
+  "omitted_sections": [],
+  "sections": {
+    "edges": {
+      "added": [
+        {
+          "claim_id": "<CLAIM_1>",
+          "diagnostic": {
+            "edge_key": 1
+          },
+          "from_id": "BP-1234",
+          "from_type": "Part",
+          "ownership": "local",
+          "relationship_type": "fits",
+          "state": {
+            "annotations": {
+              "evidence_ref_keys": [],
+              "group_override": false,
+              "provenance": {
+                "created_at": "<TIMESTAMP_2>",
+                "receipt_id": "<RECEIPT_1>",
+                "source": "fixture",
+                "source_ref": "seed"
+              }
+            },
+            "lifecycle": {
+              "status": "active"
+            },
+            "properties": {
+              "source": "fixture",
+              "verified": false
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "state_digest": "<DIGEST_4>",
+          "to_id": "V-CIVIC",
+          "to_type": "Vehicle"
+        }
+      ],
+      "ambiguous": [],
+      "changed": [
+        {
+          "annotation_only": false,
+          "annotations": null,
+          "channels": [
+            "review_transition",
+            "lifecycle_transition"
+          ],
+          "diagnostic": {
+            "from_edge_key": 0,
+            "to_edge_key": 0
+          },
+          "from_claim_id": "<CLAIM_2>",
+          "from_id": "BP-1001",
+          "from_ownership": "local",
+          "from_state_digest": "<DIGEST_5>",
+          "from_type": "Part",
+          "identity_basis": "claim_id",
+          "lifecycle_changes": [],
+          "lifecycle_transition": {
+            "from": "active",
+            "to": "superseded"
+          },
+          "properties": null,
+          "relationship_type": "fits",
+          "review_changes": [
+            {
+              "from_value": "system",
+              "property": "source",
+              "to_value": "human"
+            }
+          ],
+          "review_transition": {
+            "from": "unreviewed",
+            "to": "approved"
+          },
+          "subtype": null,
+          "to_claim_id": "<CLAIM_2>",
+          "to_id": "V-CIVIC",
+          "to_ownership": "local",
+          "to_state_digest": "<DIGEST_6>",
+          "to_type": "Vehicle"
+        }
+      ],
+      "counts": {
+        "added": 1,
+        "ambiguous_from": 0,
+        "ambiguous_to": 0,
+        "annotation_only": 0,
+        "changed": 1,
+        "excluded_from": 0,
+        "excluded_to": 0,
+        "from_total": 1,
+        "identity_conflict": 0,
+        "removed": 0,
+        "to_total": 2,
+        "unchanged": 0
+      },
+      "diagnostics": {
+        "stub_detection": "not_applicable"
+      },
+      "identity_conflict": [],
+      "removed": []
+    },
+    "entities": {
+      "added": [],
+      "ambiguous": [],
+      "changed": [
+        {
+          "annotation_only": false,
+          "annotations": null,
+          "channels": [
+            "properties"
+          ],
+          "entity_id": "BP-1001",
+          "entity_type": "Part",
+          "from_ownership": "local",
+          "from_state_digest": "<DIGEST_7>",
+          "identity_basis": "entity_key",
+          "lifecycle_changes": [],
+          "lifecycle_transition": null,
+          "properties": {
+            "changes": [
+              {
+                "from_value": 49.99,
+                "property": "price",
+                "to_value": 54.99
+              }
+            ],
+            "delta": {
+              "added": [],
+              "changed": [
+                "price"
+              ],
+              "removed": []
+            }
+          },
+          "review_changes": [],
+          "review_transition": null,
+          "subtype": null,
+          "to_ownership": "local",
+          "to_state_digest": "<DIGEST_8>"
+        }
+      ],
+      "counts": {
+        "added": 0,
+        "ambiguous_from": 0,
+        "ambiguous_to": 0,
+        "annotation_only": 0,
+        "changed": 1,
+        "excluded_from": 0,
+        "excluded_to": 0,
+        "from_total": 3,
+        "identity_conflict": 0,
+        "removed": 0,
+        "to_total": 3,
+        "unchanged": 2
+      },
+      "diagnostics": {
+        "boundary_stub_asymmetry": [],
+        "excluded_boundary_stubs": {
+          "from": 0,
+          "to": 0
+        },
+        "stub_detection": "enabled"
+      },
+      "identity_conflict": [],
+      "removed": []
+    },
+    "procedures": {
+      "added": [],
+      "ambiguous": [],
+      "changed": [],
+      "counts": {
+        "added": 0,
+        "ambiguous_from": 0,
+        "ambiguous_to": 0,
+        "annotation_only": 0,
+        "changed": 0,
+        "excluded_from": 0,
+        "excluded_to": 0,
+        "from_total": 0,
+        "identity_conflict": 0,
+        "removed": 0,
+        "to_total": 0,
+        "unchanged": 0
+      },
+      "diagnostics": {
+        "stub_detection": "not_applicable"
+      },
+      "identity_conflict": [],
+      "removed": []
+    }
+  },
+  "selector": {
+    "buckets": null,
+    "changed_only": false,
+    "entity_types": null,
+    "relationship_types": null,
+    "sections": null
+  },
+  "summary": {
+    "added": 1,
+    "ambiguous_from": 0,
+    "ambiguous_to": 0,
+    "annotation_only": 0,
+    "changed": 2,
+    "identity_conflict": 0,
+    "removed": 0,
+    "unchanged": 2
+  },
+  "to": {
+    "claim_identity": {
+      "coverage": null,
+      "map_digest": "<DIGEST_9>"
+    },
+    "digests": {
+      "lock_file_digest": {
+        "scope": "bytes",
+        "value": "<DIGEST_2>"
+      },
+      "semantic_config_digest": {
+        "scope": "semantic",
+        "value": "<DIGEST_3>"
+      }
+    },
+    "identity": {
+      "head_snapshot_id": "<SNAPSHOT_1>",
+      "read_revision": 7
+    },
+    "kind": "current",
+    "members": {},
+    "ownership": {
+      "basis": "pinned",
+      "owned_entity_types": [],
+      "owned_relationship_types": []
+    },
+    "sections": {
+      "edges": "available",
+      "entities": "available",
+      "procedures": "available"
+    },
+    "spec": "current",
+    "verification": "not_applicable"
+  }
+}

@@ -164,6 +164,8 @@ from cruxible_core.service import (
     service_sample,
     service_schema,
     service_server_info,
+    service_state_diff,
+    service_state_diff_artifact,
     service_state_health,
     service_state_status,
     service_stats,
@@ -177,6 +179,7 @@ from cruxible_core.service.lifecycle_inputs import (
     relationship_lifecycle_state,
 )
 from cruxible_core.service.snapshots import paths_overlap, read_instance_backup_manifest
+from cruxible_core.service.state_diff import DEFAULT_BUCKET_CAP as DEFAULT_DIFF_BUCKET_CAP
 from cruxible_core.service.types import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
@@ -4678,4 +4681,73 @@ def state_pull_apply(
         apply_digest=result.apply_digest,
         pre_pull_snapshot_id=result.pre_pull_snapshot_id,
         receipt_id=result.receipt_id,
+    )
+
+
+def state_diff(
+    instance_id: str,
+    *,
+    from_coordinate: str | None = None,
+    to_coordinate: str | None = None,
+    sections: list[str] | None = None,
+    entity_types: list[str] | None = None,
+    relationship_types: list[str] | None = None,
+    buckets: list[str] | None = None,
+    changed_only: bool = False,
+    max_items_per_bucket: int = DEFAULT_DIFF_BUCKET_CAP,
+) -> contracts.StateDiffResult:
+    """Compare two state coordinates and persist the canonical plan artifact."""
+    check_permission("cruxible_state_diff", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_state_diff(
+        instance,
+        from_coordinate=from_coordinate,
+        to_coordinate=to_coordinate,
+        sections=tuple(sections) if sections is not None else None,
+        entity_types=tuple(entity_types) if entity_types is not None else None,
+        relationship_types=tuple(relationship_types) if relationship_types is not None else None,
+        buckets=tuple(buckets) if buckets is not None else None,
+        changed_only=changed_only,
+        max_items_per_bucket=max_items_per_bucket,
+    )
+    return contracts.StateDiffResult(
+        diff_digest=result.diff_digest,
+        view_digest=result.view_digest,
+        artifact_complete=result.artifact_complete,
+        artifact_ref=contracts.StateDiffArtifactRef(
+            path=result.artifact_ref.path,
+            diff_digest=result.artifact_ref.diff_digest,
+            byte_count=result.artifact_ref.byte_count,
+        ),
+        diff_engine_version=result.diff_engine_version,
+        artifact_schema_version=result.artifact_schema_version,
+        artifact_trust=result.artifact_trust,
+        normalizations=result.normalizations,
+        liveness=result.liveness,
+        selector=result.selector,
+        from_coordinate=result.from_coordinate,
+        to_coordinate=result.to_coordinate,
+        omitted_sections=result.omitted_sections,
+        context=result.context,
+        sections=result.sections,
+        summary=result.summary,
+        view=result.view,
+        default_basis=result.default_basis,
+        receipt_id=result.receipt_id,
+    )
+
+
+def state_diff_artifact(
+    instance_id: str,
+    diff_digest: str,
+) -> contracts.StateDiffArtifactResult:
+    """Read one persisted diff artifact by its content address."""
+    check_permission("cruxible_state_diff", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_state_diff_artifact(instance, diff_digest)
+    return contracts.StateDiffArtifactResult(
+        diff_digest=result.diff_digest,
+        path=result.path,
+        byte_count=result.byte_count,
+        content=result.content,
     )

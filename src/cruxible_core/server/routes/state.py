@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter
 
 from cruxible_client import contracts
 from cruxible_core.runtime import api
 from cruxible_core.server.request_models import (
+    StateDiffRequest,
     StateOverlayRequest,
     StatePublishRequest,
     StatePullApplyRequest,
@@ -57,6 +60,48 @@ async def state_health(instance_id: str) -> contracts.StateHealthResult:
     """Read deterministic, read-only state-health maintenance signals."""
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return api.state_health(resolved_instance_id)
+
+
+@router.post(
+    "/{instance_id}/state/diff",
+    response_model=contracts.StateDiffResult,
+    include_in_schema=False,
+)
+async def state_diff(
+    instance_id: str,
+    req: StateDiffRequest | None = None,
+) -> contracts.StateDiffResult:
+    """Compare two state coordinates and persist the canonical plan artifact."""
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    body = req if req is not None else StateDiffRequest()
+    kwargs: dict[str, Any] = {}
+    if body.max_items_per_bucket is not None:
+        kwargs["max_items_per_bucket"] = body.max_items_per_bucket
+    return api.state_diff(
+        resolved_instance_id,
+        from_coordinate=body.from_coordinate,
+        to_coordinate=body.to_coordinate,
+        sections=body.sections,
+        entity_types=body.entity_types,
+        relationship_types=body.relationship_types,
+        buckets=body.buckets,
+        changed_only=body.changed_only,
+        **kwargs,
+    )
+
+
+@router.get(
+    "/{instance_id}/state/diff/artifacts/{diff_digest}",
+    response_model=contracts.StateDiffArtifactResult,
+    include_in_schema=False,
+)
+async def state_diff_artifact(
+    instance_id: str,
+    diff_digest: str,
+) -> contracts.StateDiffArtifactResult:
+    """Read one persisted diff artifact by its content address."""
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return api.state_diff_artifact(resolved_instance_id, diff_digest)
 
 
 @router.post(

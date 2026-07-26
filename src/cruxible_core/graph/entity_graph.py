@@ -172,6 +172,43 @@ class EntityGraph:
             )
         return backfilled
 
+    def annotate_claim_ids_from_map(
+        self,
+        reuse: Mapping[tuple[str, str, str, str, str], Sequence[str]],
+    ) -> tuple[int, int]:
+        """Apply a reconcile map to an id-less image IN MEMORY, MINTING NOTHING.
+
+        The read-path counterpart of ``backfill_missing_claim_ids``. A diff must
+        never mint: a random ``mint_claim_id()`` for every position the map does
+        not cover would make the diff digest nondeterministic by construction,
+        and a read must not persist. So this takes the map, and only the map --
+        edges the map cannot explain STAY id-less and fall through to tuple
+        identity at the comparator.
+
+        Returns ``(resolved, unresolved)`` so the caller can report coverage
+        instead of leaving partial resolution invisible.
+        """
+        resolved = 0
+        unresolved = 0
+        seen_per_identity: dict[tuple[str, str, str, str, str], int] = {}
+        for u, v, _key, edge_data in self._graph.edges(keys=True, data=True):
+            if isinstance(edge_data.get("claim_id"), str) and edge_data["claim_id"]:
+                continue
+            from_type, from_id = split_node_id(u)
+            to_type, to_id = split_node_id(v)
+            identity = (str(edge_data.get("relationship_type")), from_type, from_id, to_type, to_id)
+            position = seen_per_identity.get(identity, 0)
+            seen_per_identity[identity] = position + 1
+            reusable = reuse.get(identity) or ()
+            claim_id = reusable[position] if position < len(reusable) else ""
+            if not claim_id or claim_id in self._claim_ids:
+                unresolved += 1
+                continue
+            edge_data["claim_id"] = claim_id
+            self._claim_ids.add(claim_id)
+            resolved += 1
+        return resolved, unresolved
+
     def has_claim_id(self, claim_id: str) -> bool:
         """Whether an edge with this minted claim identity is in the graph."""
         return claim_id in self._claim_ids

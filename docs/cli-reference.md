@@ -3382,11 +3382,12 @@ cruxible source dereference \
 
 **Usage:** `cruxible state [OPTIONS]`
 
-**Purpose:** Publish immutable states and manage pullable overlays.
+**Purpose:** Compare, publish, and track state across coordinates.
 
 **Subcommands:**
 
 - `cruxible state create-overlay` - Create a new local overlay instance from a published state release.
+- `cruxible state diff` - Diff state between two coordinates (snapshot, current, upstream, origin).
 - `cruxible state health` - Show read-only deterministic state-health maintenance signals.
 - `cruxible state publish` - Publish the current root state-model instance as an immutable release bundle.
 - `cruxible state pull-apply` - Apply a previewed upstream release into the current overlay.
@@ -3425,6 +3426,51 @@ cruxible source dereference \
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible state diff
+
+**Usage:** `cruxible state diff [OPTIONS] [FROM_COORDINATE] [TO_COORDINATE]`
+
+**Purpose:** Diff state between two coordinates.
+
+A coordinate is `current`, a snapshot id (`snap_` plus 16 hex characters,
+exactly as `cruxible snapshot list` prints it), `upstream` (the verified
+materialized tracked release), or `origin` (clone provenance; absent on an
+init-created instance). A release you have not pulled is deliberately NOT a
+coordinate — `cruxible state pull-preview` owns transport and foreign-byte
+verification; once materialized it becomes `upstream` here.
+
+With no arguments the diff is parent-of-head to current, and the result stamps
+`default_basis`. `commit_graph_snapshot` persists a snapshot AND advances live
+state in one boundary, so head-to-current would be the empty diff by
+construction on exactly the instances someone would run this on; the fallback
+when head has no parent is head-to-current, and it says so.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `FROM_COORDINATE` | no | `` | text | Left coordinate; defaults to the parent of the head snapshot. |
+| `TO_COORDINATE` | no | `current` | text | Right coordinate. `added` means present here only. |
+| `--section` | no | `` | choice | Restrict the diff to these sections (repeatable). |
+| `--entity-type` | no | `` | text | Restrict entities to these types. |
+| `--relationship-type` | no | `` | text | Restrict edges to these relationship types. |
+| `--bucket` | no | `` | choice | Report only these buckets (counts stay whole). |
+| `--changed-only` | no | `False` | boolean | Suppress added/removed items. |
+| `--max-items` | no | `500` | integer | Per-bucket cap for the returned view; the persisted artifact is never capped. |
+| `--artifact` | no | `` | text | Re-read a persisted diff artifact by its diff_digest instead of computing one. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only with respect to graph state, but NOT side-effect-free: every diff persists a receipt (`operation_type="state_diff"`, carrying both coordinates and the `diff_digest` in `parameters`) and writes the complete canonical artifact, content-addressed, under `.cruxible/diffs/`. Both persistence failures fail the read. Artifacts are not garbage-collected.
+- The returned body is BOUNDED (per-bucket caps, property values over 2KB elided with `{elided, value_digest, byte_count}`); `diff_digest` always covers the complete unelided body, `view_digest` covers the bounded bytes, and only an `artifact_complete: true` result may be treated as a reviewed plan.
+- Live-view membership is never evaluated (`liveness: "not_evaluated"`): computing it would make the digest depend on the clock.
+
+**Common Errors:**
+- Unknown snapshot id, or a snapshot missing/corrupt `graph.json`.
+- `upstream` on an instance that is not a pullable overlay, or a tracked upstream member that was pinned and no longer matches.
+- `origin` on an instance that was never cloned; a bare diff on an instance with no snapshots.
+- Concurrent `current` drift after one retry.
 
 ## cruxible state health
 

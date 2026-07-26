@@ -29578,6 +29578,539 @@
         "source_artifact_id"
       ]
     },
+    "StateDiffArtifactRef": {
+      "fields": {
+        "byte_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "byte_count",
+          "required": true,
+          "schema": {
+            "title": "Byte Count",
+            "type": "integer"
+          }
+        },
+        "diff_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "diff_digest",
+          "required": true,
+          "schema": {
+            "title": "Diff Digest",
+            "type": "string"
+          }
+        },
+        "path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "path",
+          "required": true,
+          "schema": {
+            "title": "Path",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Where the complete canonical diff artifact was persisted.",
+        "properties": {
+          "byte_count": {
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "diff_digest": {
+            "title": "Diff Digest",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "diff_digest",
+          "byte_count"
+        ],
+        "title": "StateDiffArtifactRef",
+        "type": "object"
+      },
+      "required_fields": [
+        "byte_count",
+        "diff_digest",
+        "path"
+      ]
+    },
+    "StateDiffArtifactResult": {
+      "fields": {
+        "byte_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "byte_count",
+          "required": true,
+          "schema": {
+            "title": "Byte Count",
+            "type": "integer"
+          }
+        },
+        "content": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "content",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Content",
+            "type": "object"
+          }
+        },
+        "diff_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "diff_digest",
+          "required": true,
+          "schema": {
+            "title": "Diff Digest",
+            "type": "string"
+          }
+        },
+        "path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "path",
+          "required": true,
+          "schema": {
+            "title": "Path",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "One persisted diff artifact, fetched by its content address.",
+        "properties": {
+          "byte_count": {
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "content": {
+            "additionalProperties": true,
+            "title": "Content",
+            "type": "object"
+          },
+          "diff_digest": {
+            "title": "Diff Digest",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "diff_digest",
+          "path",
+          "byte_count"
+        ],
+        "title": "StateDiffArtifactResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "byte_count",
+        "diff_digest",
+        "path"
+      ]
+    },
+    "StateDiffResult": {
+      "fields": {
+        "artifact_complete": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_complete",
+          "required": true,
+          "schema": {
+            "title": "Artifact Complete",
+            "type": "boolean"
+          }
+        },
+        "artifact_ref": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_ref",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/StateDiffArtifactRef"
+          }
+        },
+        "artifact_schema_version": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_schema_version",
+          "required": true,
+          "schema": {
+            "title": "Artifact Schema Version",
+            "type": "integer"
+          }
+        },
+        "artifact_trust": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_trust",
+          "required": true,
+          "schema": {
+            "title": "Artifact Trust",
+            "type": "string"
+          }
+        },
+        "context": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "context",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Context",
+            "type": "object"
+          }
+        },
+        "default_basis": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "default_basis",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Default Basis"
+          }
+        },
+        "diff_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "diff_digest",
+          "required": true,
+          "schema": {
+            "title": "Diff Digest",
+            "type": "string"
+          }
+        },
+        "diff_engine_version": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "diff_engine_version",
+          "required": true,
+          "schema": {
+            "title": "Diff Engine Version",
+            "type": "string"
+          }
+        },
+        "from_coordinate": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "from_coordinate",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "From Coordinate",
+            "type": "object"
+          }
+        },
+        "liveness": {
+          "default": "not_evaluated",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "liveness",
+          "required": false,
+          "schema": {
+            "default": "not_evaluated",
+            "title": "Liveness",
+            "type": "string"
+          }
+        },
+        "normalizations": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "normalizations",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Normalizations",
+            "type": "array"
+          }
+        },
+        "omitted_sections": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "omitted_sections",
+          "required": false,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Omitted Sections",
+            "type": "array"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "sections": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "sections",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Sections",
+            "type": "object"
+          }
+        },
+        "selector": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "selector",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Selector",
+            "type": "object"
+          }
+        },
+        "summary": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "summary",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Summary",
+            "type": "object"
+          }
+        },
+        "to_coordinate": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "to_coordinate",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "To Coordinate",
+            "type": "object"
+          }
+        },
+        "view": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "view",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "View",
+            "type": "object"
+          }
+        },
+        "view_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "view_digest",
+          "required": true,
+          "schema": {
+            "title": "View Digest",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "StateDiffArtifactRef": {
+            "description": "Where the complete canonical diff artifact was persisted.",
+            "properties": {
+              "byte_count": {
+                "title": "Byte Count",
+                "type": "integer"
+              },
+              "diff_digest": {
+                "title": "Diff Digest",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "diff_digest",
+              "byte_count"
+            ],
+            "title": "StateDiffArtifactRef",
+            "type": "object"
+          }
+        },
+        "description": "A structured difference between two state coordinates.\n\n``sections`` is the BOUNDED view (per-bucket caps, oversized values elided)\nand ``view_digest`` covers exactly those bytes. ``diff_digest`` always\ncovers the complete unelided body persisted at ``artifact_ref``; only an\n``artifact_complete: true`` result may be treated as a reviewed plan.",
+        "properties": {
+          "artifact_complete": {
+            "title": "Artifact Complete",
+            "type": "boolean"
+          },
+          "artifact_ref": {
+            "$ref": "#/$defs/StateDiffArtifactRef"
+          },
+          "artifact_schema_version": {
+            "title": "Artifact Schema Version",
+            "type": "integer"
+          },
+          "artifact_trust": {
+            "title": "Artifact Trust",
+            "type": "string"
+          },
+          "context": {
+            "additionalProperties": true,
+            "title": "Context",
+            "type": "object"
+          },
+          "default_basis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Default Basis"
+          },
+          "diff_digest": {
+            "title": "Diff Digest",
+            "type": "string"
+          },
+          "diff_engine_version": {
+            "title": "Diff Engine Version",
+            "type": "string"
+          },
+          "from_coordinate": {
+            "additionalProperties": true,
+            "title": "From Coordinate",
+            "type": "object"
+          },
+          "liveness": {
+            "default": "not_evaluated",
+            "title": "Liveness",
+            "type": "string"
+          },
+          "normalizations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Normalizations",
+            "type": "array"
+          },
+          "omitted_sections": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Omitted Sections",
+            "type": "array"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
+          "sections": {
+            "additionalProperties": true,
+            "title": "Sections",
+            "type": "object"
+          },
+          "selector": {
+            "additionalProperties": true,
+            "title": "Selector",
+            "type": "object"
+          },
+          "summary": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Summary",
+            "type": "object"
+          },
+          "to_coordinate": {
+            "additionalProperties": true,
+            "title": "To Coordinate",
+            "type": "object"
+          },
+          "view": {
+            "additionalProperties": true,
+            "title": "View",
+            "type": "object"
+          },
+          "view_digest": {
+            "title": "View Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "diff_digest",
+          "view_digest",
+          "artifact_complete",
+          "artifact_ref",
+          "diff_engine_version",
+          "artifact_schema_version",
+          "artifact_trust"
+        ],
+        "title": "StateDiffResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_complete",
+        "artifact_ref",
+        "artifact_schema_version",
+        "artifact_trust",
+        "diff_digest",
+        "diff_engine_version",
+        "view_digest"
+      ]
+    },
     "StateHealthFreshnessSection": {
       "fields": {
         "config_compatible": {

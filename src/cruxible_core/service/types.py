@@ -1028,6 +1028,57 @@ class StatePullApplyResult:
     receipt_id: str | None = None
 
 
+@dataclass
+class StateDiffArtifactRef:
+    """Where the complete canonical diff artifact was persisted."""
+
+    path: str
+    diff_digest: str
+    byte_count: int
+
+
+@dataclass
+class StateDiffResult:
+    """One state-diff read: the plan digest, plus the BOUNDED view of it.
+
+    ``sections`` is the ``returned_view`` -- bounded by per-bucket caps with
+    oversized values elided -- and ``view_digest`` covers exactly those bytes.
+    ``diff_digest`` covers the complete unelided logical body, always,
+    regardless of what the view returned; only an ``artifact_complete: true``
+    result may be treated as a reviewed plan.
+    """
+
+    diff_digest: str
+    view_digest: str
+    artifact_complete: bool
+    artifact_ref: StateDiffArtifactRef
+    diff_engine_version: str
+    artifact_schema_version: int
+    artifact_trust: str
+    normalizations: list[str]
+    liveness: str
+    selector: dict[str, Any]
+    from_coordinate: dict[str, Any]
+    to_coordinate: dict[str, Any]
+    omitted_sections: list[dict[str, Any]]
+    context: dict[str, Any]
+    sections: dict[str, Any]
+    summary: dict[str, int]
+    view: dict[str, Any]
+    default_basis: str | None = None
+    receipt_id: str | None = None
+
+
+@dataclass
+class StateDiffArtifactResult:
+    """A persisted diff artifact returned by content-addressed retrieval."""
+
+    diff_digest: str
+    path: str
+    byte_count: int
+    content: dict[str, Any]
+
+
 # ---------------------------------------------------------------------------
 # Group result types
 # ---------------------------------------------------------------------------

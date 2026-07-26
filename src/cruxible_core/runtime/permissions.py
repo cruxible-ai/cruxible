@@ -144,6 +144,11 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_list_decision_events": PermissionMode.READ_ONLY,
     "cruxible_state_status": PermissionMode.READ_ONLY,
     "cruxible_state_pull_preview": PermissionMode.READ_ONLY,
+    # READ_ONLY despite persisting a receipt row and a content-addressed diff
+    # artifact: reads are not side-effect-free here (`cruxible_query` and gate
+    # checks persist receipts too), and neither side effect touches graph state
+    # or advances read_revision.
+    "cruxible_state_diff": PermissionMode.READ_ONLY,
     "cruxible_list_snapshots": PermissionMode.READ_ONLY,
     "cruxible_dereference_source_evidence": PermissionMode.READ_ONLY,
     "cruxible_plan_workflow": PermissionMode.READ_ONLY,
