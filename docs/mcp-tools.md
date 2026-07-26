@@ -2037,7 +2037,7 @@ without it, only the active materialized digest is checked.
 | `block_selector` | no | string | null | Block selector within the heading path. |
 | `expected_content_hash` | no | string | null | Expected chunk content hash for drift detection. |
 
-**Returns:** Top-level fields: `status` (one of `available`, `drifted`, `unavailable`), `source_artifact_id`, `chunk_id`, `content_hash`, `expected_artifact_hash`, `current_artifact_hash`, `body_origin`, `body`, `reason`, `chunk`, `artifact_revision_id`, `revision_unpinned`
+**Returns:** Top-level fields: `status` (one of `available`, `drifted`, `unavailable`, `revision_bytes_not_retained` — a pinned read of a superseded revision whose bytes were never archived, which is not drift), `source_artifact_id`, `chunk_id`, `content_hash`, `expected_artifact_hash`, `current_artifact_hash`, `body_origin`, `body`, `reason`, `chunk`, `artifact_revision_id`, `revision_unpinned`
 
 **Side Effects:** Read-only.
 

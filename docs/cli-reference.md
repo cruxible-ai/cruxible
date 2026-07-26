@@ -3210,8 +3210,12 @@ cruxible source dereference \
 ```
 
 **Output And Side Effects:**
-- Read-only. Returns `available`, `drifted`, or `unavailable` plus source body
-  when Cruxible can safely dereference the locator.
+- Read-only. Returns `available`, `drifted`, `unavailable`, or
+  `revision_bytes_not_retained` plus source body when Cruxible can safely
+  dereference the locator.
+- `revision_bytes_not_retained` means the pinned revision has been superseded and
+  its bytes were never archived: the local file now holds a NEWER revision, so
+  Cruxible refuses to call the guaranteed hash mismatch drift.
 - `body_origin` is `archive` when archived bytes are used, or `local_path` when
   Cruxible rereads the registered local file.
 

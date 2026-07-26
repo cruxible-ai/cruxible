@@ -64,7 +64,8 @@
       "values": [
         "available",
         "drifted",
-        "unavailable"
+        "unavailable",
+        "revision_bytes_not_retained"
       ]
     },
     "EntityLifecycleStatus": {
@@ -5739,7 +5740,8 @@
             "enum": [
               "available",
               "drifted",
-              "unavailable"
+              "unavailable",
+              "revision_bytes_not_retained"
             ],
             "title": "Status",
             "type": "string"
@@ -5919,7 +5921,8 @@
             "enum": [
               "available",
               "drifted",
-              "unavailable"
+              "unavailable",
+              "revision_bytes_not_retained"
             ],
             "title": "Status",
             "type": "string"

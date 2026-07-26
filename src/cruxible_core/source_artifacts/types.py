@@ -10,7 +10,12 @@ from cruxible_core.governance.actors import GovernedActorContext
 
 SourceKind = Literal["markdown"]
 SourceRetention = Literal["manifest_only", "archive"]
-DereferenceStatus = Literal["available", "drifted", "unavailable"]
+# ``revision_bytes_not_retained``: the read resolved a SUPERSEDED revision whose
+# bytes were never archived. Distinct from ``unavailable`` (which says nothing
+# about why) and emphatically not ``drifted``: the local path holds a NEWER
+# revision's bytes, so the hash mismatch is guaranteed and says nothing about
+# whether anyone tampered with the cited evidence.
+DereferenceStatus = Literal["available", "drifted", "unavailable", "revision_bytes_not_retained"]
 DereferenceBodyOrigin = Literal["archive", "local_path"]
 
 MARKDOWN_CHUNKS_V1 = "markdown_chunks_v1"

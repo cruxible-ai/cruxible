@@ -566,6 +566,25 @@ def _resolve_artifact_content(
                 current_artifact_hash=archived_hash,
             )
 
+    if artifact.superseded_by is not None:
+        # A SUPERSEDED revision's bytes only survive under archive retention;
+        # the archive branch above is the only honest way to serve them. Under
+        # the default manifest_only retention the local path now holds the
+        # CURRENT revision's bytes, so hashing it compares this revision's
+        # manifest against a different revision's content. The mismatch is
+        # guaranteed and means nothing -- yet the fallthrough below reported it
+        # as "drifted" and called ``record_content_drift``, permanently
+        # stamping the sticky first_drift_observed_hash/_at tamper finding on a
+        # revision nobody ever touched. Replaying a pinned citation is a read;
+        # it must never manufacture a tamper record.
+        return _SourceContentResolution(
+            status="revision_bytes_not_retained",
+            reason=(
+                "superseded revision bytes are not retained (no archived copy); "
+                "the local path holds a newer revision"
+            ),
+        )
+
     if artifact.local_path is None:
         return _SourceContentResolution(
             status="unavailable",

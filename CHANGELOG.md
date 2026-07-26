@@ -247,6 +247,21 @@ the project's own state instance.
   `first_drift_observed_hash` / `first_drift_observed_at` pair is written once on
   the first drift and never cleared. Additive columns, migrated in place.
 
+- **Replaying a pinned citation no longer manufactures a tamper record.** A
+  revision-pinned dereference of a SUPERSEDED revision under the default
+  `manifest_only` retention fell through to the artifact's local path — which now
+  holds the NEWER revision's bytes. The hash mismatch was guaranteed and meant
+  nothing, but the read reported `drifted` and recorded it, permanently stamping
+  the sticky `first_drift_observed_hash` / `_at` pair on a revision nobody had
+  touched. `DereferenceStatus` gains `revision_bytes_not_retained` for this case
+  and no drift is recorded. Archived revisions are unaffected: their bytes are
+  retained and still replay as `available`.
+
+  **Migration:** a caller switching on `status` should treat
+  `revision_bytes_not_retained` as "cannot serve this revision's bytes" (like
+  `unavailable`), NOT as evidence of tampering. Register with
+  `source_retention="archive"` when pinned citations must stay replayable.
+
 ### Documented
 
 - **Under auth-on, every credentialed actor derives to `agent`** (Robert,

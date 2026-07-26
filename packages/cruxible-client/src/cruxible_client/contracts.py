@@ -270,7 +270,9 @@ class SignalBucketBasis(BaseModel):
 
 SourceKind = Literal["markdown"]
 SourceRetention = Literal["manifest_only", "archive"]
-DereferenceStatus = Literal["available", "drifted", "unavailable"]
+# ``revision_bytes_not_retained``: a pinned read of a superseded revision whose
+# bytes were never archived. NOT drift — the local path holds a newer revision.
+DereferenceStatus = Literal["available", "drifted", "unavailable", "revision_bytes_not_retained"]
 DereferenceBodyOrigin = Literal["archive", "local_path"]
 
 

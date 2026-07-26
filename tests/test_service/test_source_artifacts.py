@@ -797,6 +797,99 @@ def test_resolved_evidence_refs_pin_the_revision_they_were_made_against(
     assert [ref.artifact_revision_id for ref in refs] == [first.artifact_revision_id]
 
 
+def test_a_pinned_read_of_an_unretained_revision_is_not_a_tamper_finding(
+    tmp_path: Path,
+) -> None:
+    """Replaying a pinned citation must never manufacture a drift record.
+
+    Under the default ``manifest_only`` retention a superseded revision's bytes
+    are gone: the local path holds the CURRENT revision's content. Hashing it
+    against revision 1's manifest is a guaranteed mismatch that says nothing
+    about tampering — yet the read reported ``drifted`` and called
+    ``record_content_drift``, permanently stamping the sticky
+    ``first_drift_observed_hash``/``_at`` pair on a revision nobody touched.
+    """
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Fitment\n\nFirst BP-1001 claim.\n")
+    first = service_register_source_artifact(instance, source_path=str(source_path))
+    for body in ("Second BP-1001 claim.", "Third BP-1001 claim."):
+        source_path.write_text(f"# Fitment\n\n{body}\n")
+        service_register_source_artifact(
+            instance,
+            source_path=str(source_path),
+            source_artifact_id=first.source_artifact_id,
+        )
+
+    pinned = service_dereference_source_evidence(
+        instance,
+        source_artifact_id=first.source_artifact_id,
+        artifact_revision_id=first.artifact_revision_id,
+        heading_path=["Fitment"],
+        block_selector="paragraph:1",
+    )
+
+    assert pinned.status == "revision_bytes_not_retained"
+    assert pinned.body is None
+    assert pinned.reason is not None
+    assert "not retained" in pinned.reason
+    assert pinned.artifact_revision_id == first.artifact_revision_id
+    assert pinned.revision_unpinned is False
+
+    # No drift record was written against the replayed revision — neither the
+    # clearable pair nor the sticky one.
+    store = instance.get_source_artifact_store()
+    try:
+        replayed = store.get_artifact_revision(first.artifact_revision_id)
+    finally:
+        store.close()
+    assert replayed is not None
+    assert replayed.drift_observed_hash is None
+    assert replayed.drift_observed_at is None
+    assert replayed.first_drift_observed_hash is None
+    assert replayed.first_drift_observed_at is None
+
+
+def test_archive_retention_still_serves_a_superseded_revision(tmp_path: Path) -> None:
+    """The new status is scoped to unretained bytes; archived revisions replay."""
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "evidence.md"
+    source_path.write_text("# Fitment\n\nFirst BP-1001 claim.\n")
+    first = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+        source_retention="archive",
+    )
+    for body in ("Second BP-1001 claim.", "Third BP-1001 claim."):
+        source_path.write_text(f"# Fitment\n\n{body}\n")
+        service_register_source_artifact(
+            instance,
+            source_path=str(source_path),
+            source_artifact_id=first.source_artifact_id,
+            source_retention="archive",
+        )
+
+    pinned = service_dereference_source_evidence(
+        instance,
+        source_artifact_id=first.source_artifact_id,
+        artifact_revision_id=first.artifact_revision_id,
+        heading_path=["Fitment"],
+        block_selector="paragraph:1",
+    )
+
+    assert pinned.status == "available"
+    assert pinned.body == "First BP-1001 claim."
+    assert pinned.body_origin == "archive"
+
+    store = instance.get_source_artifact_store()
+    try:
+        replayed = store.get_artifact_revision(first.artifact_revision_id)
+    finally:
+        store.close()
+    assert replayed is not None
+    assert replayed.first_drift_observed_hash is None
+
+
 def test_a_pin_naming_another_artifact_is_refused(tmp_path: Path) -> None:
     """A cross-artifact pin is a corrupt citation, not a stale one."""
     instance = _instance(tmp_path)
