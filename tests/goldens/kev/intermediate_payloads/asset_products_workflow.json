@@ -639,6 +639,7 @@
       "output": {
         "candidates": [
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -655,6 +656,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -701,6 +703,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Oracle WebLogic Server from Oracle matched reference product Weblogic Server from Oracle based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -717,6 +720,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -763,6 +767,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Oracle Database from Oracle matched reference product Rest Data Services from Oracle based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -779,6 +784,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -825,6 +831,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Apache ActiveMQ from Apache matched reference product Activemq from Apache based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -841,6 +848,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -887,6 +895,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Apache Tomcat from Apache matched reference product Tomcat from Apache based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -903,6 +912,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -949,6 +959,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Microsoft Windows Server from Microsoft matched reference product Windows 2003 Server from Microsoft based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -965,6 +976,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1011,6 +1023,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Apache Struts from Apache matched reference product Struts from Apache based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -1027,6 +1040,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1073,6 +1087,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -1089,6 +1104,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1435,6 +1451,7 @@
         "group_created": null,
         "members": [
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -1451,6 +1468,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1525,6 +1543,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Oracle WebLogic Server from Oracle matched reference product Weblogic Server from Oracle based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -1541,6 +1560,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1615,6 +1635,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Oracle Database from Oracle matched reference product Rest Data Services from Oracle based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -1631,6 +1652,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1705,6 +1727,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Apache ActiveMQ from Apache matched reference product Activemq from Apache based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -1721,6 +1744,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1795,6 +1819,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Apache Tomcat from Apache matched reference product Tomcat from Apache based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -1811,6 +1836,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1885,6 +1911,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Microsoft Windows Server from Microsoft matched reference product Windows 2003 Server from Microsoft based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -1901,6 +1928,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1975,6 +2003,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Apache Struts from Apache matched reference product Struts from Apache based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -1991,6 +2020,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -2065,6 +2095,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
             "evidence_refs": [
@@ -2081,6 +2112,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -2159,7 +2191,6 @@
         "on_empty": null,
         "pending_refresh_mode": "retain_missing",
         "proposal_step_id": "proposal",
-        "proposed_by": "agent",
         "query_receipt_ids": [
           "<RECEIPT_1>"
         ],

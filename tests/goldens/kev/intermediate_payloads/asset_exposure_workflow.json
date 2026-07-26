@@ -564,6 +564,7 @@
         "result_shape": "relationship",
         "results": [
           {
+            "claim_id": "CLM-00765cac1e084353",
             "edge_key": 13757,
             "entry": {
               "entity_id": "ASSET-1",
@@ -596,6 +597,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -645,6 +647,7 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -654,7 +657,8 @@
                 "receipt_id": "<RECEIPT_10>",
                 "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
-                "source_ref": "group:<GROUP_1>"
+                "source_ref": "group:<GROUP_1>",
+                "touched_by": null
               }
             },
             "properties": {
@@ -684,6 +688,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-54099a8c48234956",
             "edge_key": 13758,
             "entry": {
               "entity_id": "ASSET-10",
@@ -716,6 +721,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -765,6 +771,7 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -774,7 +781,8 @@
                 "receipt_id": "<RECEIPT_10>",
                 "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
-                "source_ref": "group:<GROUP_1>"
+                "source_ref": "group:<GROUP_1>",
+                "touched_by": null
               }
             },
             "properties": {
@@ -804,6 +812,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-5c45f6e30a3544b9",
             "edge_key": 13759,
             "entry": {
               "entity_id": "ASSET-11",
@@ -836,6 +845,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -885,6 +895,7 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -894,7 +905,8 @@
                 "receipt_id": "<RECEIPT_10>",
                 "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
-                "source_ref": "group:<GROUP_1>"
+                "source_ref": "group:<GROUP_1>",
+                "touched_by": null
               }
             },
             "properties": {
@@ -924,6 +936,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-b0ec991160224eca",
             "edge_key": 13760,
             "entry": {
               "entity_id": "ASSET-12",
@@ -956,6 +969,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1005,6 +1019,7 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -1014,7 +1029,8 @@
                 "receipt_id": "<RECEIPT_10>",
                 "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
-                "source_ref": "group:<GROUP_1>"
+                "source_ref": "group:<GROUP_1>",
+                "touched_by": null
               }
             },
             "properties": {
@@ -1044,6 +1060,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-3fa67713c54f4be8",
             "edge_key": 13761,
             "entry": {
               "entity_id": "ASSET-12",
@@ -1076,6 +1093,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1125,6 +1143,7 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -1134,7 +1153,8 @@
                 "receipt_id": "<RECEIPT_10>",
                 "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
-                "source_ref": "group:<GROUP_1>"
+                "source_ref": "group:<GROUP_1>",
+                "touched_by": null
               }
             },
             "properties": {
@@ -1164,6 +1184,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-8f14425d56d94a9a",
             "edge_key": 13762,
             "entry": {
               "entity_id": "ASSET-13",
@@ -1196,6 +1217,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1245,6 +1267,7 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -1254,7 +1277,8 @@
                 "receipt_id": "<RECEIPT_10>",
                 "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
-                "source_ref": "group:<GROUP_1>"
+                "source_ref": "group:<GROUP_1>",
+                "touched_by": null
               }
             },
             "properties": {
@@ -1284,6 +1308,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-0ea9110ad04e445c",
             "edge_key": 13763,
             "entry": {
               "entity_id": "ASSET-14",
@@ -1316,6 +1341,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1365,6 +1391,7 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -1374,7 +1401,8 @@
                 "receipt_id": "<RECEIPT_10>",
                 "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
-                "source_ref": "group:<GROUP_1>"
+                "source_ref": "group:<GROUP_1>",
+                "touched_by": null
               }
             },
             "properties": {
@@ -1404,6 +1432,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-762d1460d9a6477b",
             "edge_key": 13764,
             "entry": {
               "entity_id": "ASSET-15",
@@ -1436,6 +1465,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1485,6 +1515,7 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -1494,7 +1525,8 @@
                 "receipt_id": "<RECEIPT_10>",
                 "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
-                "source_ref": "group:<GROUP_1>"
+                "source_ref": "group:<GROUP_1>",
+                "touched_by": null
               }
             },
             "properties": {
@@ -1551,6 +1583,7 @@
         "result_shape": "relationship",
         "results": [
           {
+            "claim_id": "CLM-cbc048d8c9c14f7b",
             "edge_key": 10031,
             "entry": {
               "entity_id": "CVE-2002-0367",
@@ -1603,6 +1636,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1646,6 +1680,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -1655,7 +1690,8 @@
                 "receipt_id": "<RECEIPT_11>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -1691,6 +1727,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-49f8b8ae2ead4ec8",
             "edge_key": 10032,
             "entry": {
               "entity_id": "CVE-2002-0367",
@@ -1743,6 +1780,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1794,6 +1832,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -1803,7 +1842,8 @@
                 "receipt_id": "<RECEIPT_11>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -1846,6 +1886,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-cd3164d45e0b4075",
             "edge_key": 10028,
             "entry": {
               "entity_id": "CVE-2004-0210",
@@ -1896,6 +1937,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -1939,6 +1981,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -1948,7 +1991,8 @@
                 "receipt_id": "<RECEIPT_11>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -1988,6 +2032,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-d437124f5e254f30",
             "edge_key": 10029,
             "entry": {
               "entity_id": "CVE-2004-0210",
@@ -2038,6 +2083,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -2097,6 +2143,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -2106,7 +2153,8 @@
                 "receipt_id": "<RECEIPT_11>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -2142,6 +2190,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-c17f5db397f74039",
             "edge_key": 10030,
             "entry": {
               "entity_id": "CVE-2004-0210",
@@ -2192,6 +2241,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -2251,6 +2301,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -2260,7 +2311,8 @@
                 "receipt_id": "<RECEIPT_11>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -2306,6 +2358,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-4e29a1532cb54e6d",
             "edge_key": 7206,
             "entry": {
               "entity_id": "CVE-2004-1464",
@@ -2358,6 +2411,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -2401,6 +2455,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -2410,7 +2465,8 @@
                 "receipt_id": "<RECEIPT_11>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -2450,6 +2506,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-6c91bc5349854918",
             "edge_key": 9439,
             "entry": {
               "entity_id": "CVE-2005-2773",
@@ -2502,6 +2559,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -2545,6 +2603,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -2554,7 +2613,8 @@
                 "receipt_id": "<RECEIPT_11>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -2595,6 +2655,7 @@
             "to_type": "Product"
           },
           {
+            "claim_id": "CLM-1ed5f5a98f2449e3",
             "edge_key": 10371,
             "entry": {
               "entity_id": "CVE-2006-1547",
@@ -2647,6 +2708,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -2690,6 +2752,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -2699,7 +2762,8 @@
                 "receipt_id": "<RECEIPT_11>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -2758,6 +2822,7 @@
         "items": [
           {
             "asset_product_edge": {
+              "claim_id": "CLM-00765cac1e084353",
               "edge_key": 13757,
               "entry": {
                 "entity_id": "ASSET-1",
@@ -2790,6 +2855,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -2839,6 +2905,7 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -2848,7 +2915,8 @@
                   "receipt_id": "<RECEIPT_10>",
                   "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
-                  "source_ref": "group:<GROUP_1>"
+                  "source_ref": "group:<GROUP_1>",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -2879,6 +2947,7 @@
             },
             "product_id": "apache-http-server",
             "vulnerability_product_edge": {
+              "claim_id": "CLM-b09049958fe14a01",
               "edge_key": 11548,
               "entry": {
                 "entity_id": "CVE-2019-0211",
@@ -2929,6 +2998,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -2972,6 +3042,7 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -2981,7 +3052,8 @@
                   "receipt_id": "<RECEIPT_11>",
                   "resolution_id": null,
                   "source": "workflow_apply",
-                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -3024,6 +3096,7 @@
           },
           {
             "asset_product_edge": {
+              "claim_id": "CLM-00765cac1e084353",
               "edge_key": 13757,
               "entry": {
                 "entity_id": "ASSET-1",
@@ -3056,6 +3129,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -3105,6 +3179,7 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -3114,7 +3189,8 @@
                   "receipt_id": "<RECEIPT_10>",
                   "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
-                  "source_ref": "group:<GROUP_1>"
+                  "source_ref": "group:<GROUP_1>",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -3145,6 +3221,7 @@
             },
             "product_id": "apache-http-server",
             "vulnerability_product_edge": {
+              "claim_id": "CLM-8aa2b2be6618439a",
               "edge_key": 11340,
               "entry": {
                 "entity_id": "CVE-2021-40438",
@@ -3195,6 +3272,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -3238,6 +3316,7 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -3247,7 +3326,8 @@
                   "receipt_id": "<RECEIPT_11>",
                   "resolution_id": null,
                   "source": "workflow_apply",
-                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -3289,6 +3369,7 @@
           },
           {
             "asset_product_edge": {
+              "claim_id": "CLM-00765cac1e084353",
               "edge_key": 13757,
               "entry": {
                 "entity_id": "ASSET-1",
@@ -3321,6 +3402,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -3370,6 +3452,7 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -3379,7 +3462,8 @@
                   "receipt_id": "<RECEIPT_10>",
                   "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
-                  "source_ref": "group:<GROUP_1>"
+                  "source_ref": "group:<GROUP_1>",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -3410,6 +3494,7 @@
             },
             "product_id": "apache-http-server",
             "vulnerability_product_edge": {
+              "claim_id": "CLM-60350b3f3ef44e6b",
               "edge_key": 11544,
               "entry": {
                 "entity_id": "CVE-2021-41773",
@@ -3460,6 +3545,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -3503,6 +3589,7 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -3512,7 +3599,8 @@
                   "receipt_id": "<RECEIPT_11>",
                   "resolution_id": null,
                   "source": "workflow_apply",
-                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -3554,6 +3642,7 @@
           },
           {
             "asset_product_edge": {
+              "claim_id": "CLM-00765cac1e084353",
               "edge_key": 13757,
               "entry": {
                 "entity_id": "ASSET-1",
@@ -3586,6 +3675,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -3635,6 +3725,7 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -3644,7 +3735,8 @@
                   "receipt_id": "<RECEIPT_10>",
                   "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
-                  "source_ref": "group:<GROUP_1>"
+                  "source_ref": "group:<GROUP_1>",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -3675,6 +3767,7 @@
             },
             "product_id": "apache-http-server",
             "vulnerability_product_edge": {
+              "claim_id": "CLM-9bf6a546d82542d1",
               "edge_key": 11538,
               "entry": {
                 "entity_id": "CVE-2021-42013",
@@ -3727,6 +3820,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -3778,6 +3872,7 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -3787,7 +3882,8 @@
                   "receipt_id": "<RECEIPT_11>",
                   "resolution_id": null,
                   "source": "workflow_apply",
-                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -3832,6 +3928,7 @@
           },
           {
             "asset_product_edge": {
+              "claim_id": "CLM-00765cac1e084353",
               "edge_key": 13757,
               "entry": {
                 "entity_id": "ASSET-1",
@@ -3864,6 +3961,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -3913,6 +4011,7 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -3922,7 +4021,8 @@
                   "receipt_id": "<RECEIPT_10>",
                   "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
-                  "source_ref": "group:<GROUP_1>"
+                  "source_ref": "group:<GROUP_1>",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -3953,6 +4053,7 @@
             },
             "product_id": "apache-http-server",
             "vulnerability_product_edge": {
+              "claim_id": "CLM-587710e1036f4e40",
               "edge_key": 4471,
               "entry": {
                 "entity_id": "CVE-2024-38475",
@@ -4003,6 +4104,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -4046,6 +4148,7 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -4055,7 +4158,8 @@
                   "receipt_id": "<RECEIPT_11>",
                   "resolution_id": null,
                   "source": "workflow_apply",
-                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -4099,6 +4203,7 @@
           },
           {
             "asset_product_edge": {
+              "claim_id": "CLM-54099a8c48234956",
               "edge_key": 13758,
               "entry": {
                 "entity_id": "ASSET-10",
@@ -4131,6 +4236,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -4180,6 +4286,7 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -4189,7 +4296,8 @@
                   "receipt_id": "<RECEIPT_10>",
                   "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
-                  "source_ref": "group:<GROUP_1>"
+                  "source_ref": "group:<GROUP_1>",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -4220,6 +4328,7 @@
             },
             "product_id": "oracle-weblogic-server",
             "vulnerability_product_edge": {
+              "claim_id": "CLM-c02e8cebdc704471",
               "edge_key": 12655,
               "entry": {
                 "entity_id": "CVE-2015-4852",
@@ -4270,6 +4379,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -4337,6 +4447,7 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -4346,7 +4457,8 @@
                   "receipt_id": "<RECEIPT_11>",
                   "resolution_id": null,
                   "source": "workflow_apply",
-                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -4397,6 +4509,7 @@
           },
           {
             "asset_product_edge": {
+              "claim_id": "CLM-54099a8c48234956",
               "edge_key": 13758,
               "entry": {
                 "entity_id": "ASSET-10",
@@ -4429,6 +4542,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -4478,6 +4592,7 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -4487,7 +4602,8 @@
                   "receipt_id": "<RECEIPT_10>",
                   "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
-                  "source_ref": "group:<GROUP_1>"
+                  "source_ref": "group:<GROUP_1>",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -4518,6 +4634,7 @@
             },
             "product_id": "oracle-weblogic-server",
             "vulnerability_product_edge": {
+              "claim_id": "CLM-933ee41220e54dbb",
               "edge_key": 10110,
               "entry": {
                 "entity_id": "CVE-2017-10271",
@@ -4570,6 +4687,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -4637,6 +4755,7 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -4646,7 +4765,8 @@
                   "receipt_id": "<RECEIPT_11>",
                   "resolution_id": null,
                   "source": "workflow_apply",
-                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -4697,6 +4817,7 @@
           },
           {
             "asset_product_edge": {
+              "claim_id": "CLM-54099a8c48234956",
               "edge_key": 13758,
               "entry": {
                 "entity_id": "ASSET-10",
@@ -4729,6 +4850,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -4778,6 +4900,7 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -4787,7 +4910,8 @@
                   "receipt_id": "<RECEIPT_10>",
                   "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
-                  "source_ref": "group:<GROUP_1>"
+                  "source_ref": "group:<GROUP_1>",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -4818,6 +4942,7 @@
             },
             "product_id": "oracle-weblogic-server",
             "vulnerability_product_edge": {
+              "claim_id": "CLM-12ff1ae3bc494465",
               "edge_key": 5449,
               "entry": {
                 "entity_id": "CVE-2017-3506",
@@ -4870,6 +4995,7 @@
               "includes": {},
               "metadata": {
                 "assertion": {
+                  "group_approval_drift": null,
                   "group_override": false,
                   "lifecycle": {
                     "closed_at": null,
@@ -4945,6 +5071,7 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "backfilled_at": null,
                   "clone_origin": null,
                   "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
@@ -4954,7 +5081,8 @@
                   "receipt_id": "<RECEIPT_11>",
                   "resolution_id": null,
                   "source": "workflow_apply",
-                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+                  "source_ref": "workflow:build_public_kev_reference:apply_reference_state",
+                  "touched_by": null
                 }
               },
               "properties": {
@@ -5607,6 +5735,7 @@
         "result_shape": "relationship",
         "results": [
           {
+            "claim_id": "CLM-4f271cf5aa9248ba",
             "edge_key": 13695,
             "entry": {
               "entity_id": "ASSET-1",
@@ -5639,6 +5768,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -5660,6 +5790,7 @@
               },
               "evidence": null,
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -5669,7 +5800,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {},
@@ -5689,6 +5821,7 @@
             "to_type": "CompensatingControl"
           },
           {
+            "claim_id": "CLM-bbb4d60803e1461e",
             "edge_key": 13701,
             "entry": {
               "entity_id": "ASSET-10",
@@ -5721,6 +5854,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -5742,6 +5876,7 @@
               },
               "evidence": null,
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -5751,7 +5886,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {},
@@ -5771,6 +5907,7 @@
             "to_type": "CompensatingControl"
           },
           {
+            "claim_id": "CLM-5c8104fe36f1491a",
             "edge_key": 13702,
             "entry": {
               "entity_id": "ASSET-13",
@@ -5803,6 +5940,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -5824,6 +5962,7 @@
               },
               "evidence": null,
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -5833,7 +5972,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {},
@@ -5853,6 +5993,7 @@
             "to_type": "CompensatingControl"
           },
           {
+            "claim_id": "CLM-18e6df51b315467f",
             "edge_key": 13703,
             "entry": {
               "entity_id": "ASSET-16",
@@ -5885,6 +6026,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -5906,6 +6048,7 @@
               },
               "evidence": null,
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -5915,7 +6058,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {},
@@ -5935,6 +6079,7 @@
             "to_type": "CompensatingControl"
           },
           {
+            "claim_id": "CLM-c1dde5756a744c93",
             "edge_key": 13704,
             "entry": {
               "entity_id": "ASSET-17",
@@ -5967,6 +6112,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -5988,6 +6134,7 @@
               },
               "evidence": null,
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -5997,7 +6144,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {},
@@ -6017,6 +6165,7 @@
             "to_type": "CompensatingControl"
           },
           {
+            "claim_id": "CLM-3f6ee527008a4c50",
             "edge_key": 13705,
             "entry": {
               "entity_id": "ASSET-17",
@@ -6049,6 +6198,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -6070,6 +6220,7 @@
               },
               "evidence": null,
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -6079,7 +6230,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {},
@@ -6099,6 +6251,7 @@
             "to_type": "CompensatingControl"
           },
           {
+            "claim_id": "CLM-4263a31926fd40a0",
             "edge_key": 13706,
             "entry": {
               "entity_id": "ASSET-18",
@@ -6131,6 +6284,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -6152,6 +6306,7 @@
               },
               "evidence": null,
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -6161,7 +6316,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {},
@@ -6181,6 +6337,7 @@
             "to_type": "CompensatingControl"
           },
           {
+            "claim_id": "CLM-15ddc8a9bd54455a",
             "edge_key": 13707,
             "entry": {
               "entity_id": "ASSET-19",
@@ -6213,6 +6370,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -6234,6 +6392,7 @@
               },
               "evidence": null,
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -6243,7 +6402,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {},
@@ -6290,6 +6450,7 @@
         "result_shape": "relationship",
         "results": [
           {
+            "claim_id": "CLM-0e1ff096a18940e8",
             "edge_key": 13807,
             "entry": {
               "entity_id": "CVE-2021-41773",
@@ -6340,6 +6501,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -6377,6 +6539,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -6386,7 +6549,8 @@
                 "receipt_id": "<RECEIPT_14>",
                 "resolution_id": "<RESOLUTION_2>",
                 "source": "group_resolve",
-                "source_ref": "group:<GROUP_2>"
+                "source_ref": "group:<GROUP_2>",
+                "touched_by": null
               }
             },
             "properties": {
@@ -6436,6 +6600,7 @@
         "result_shape": "relationship",
         "results": [
           {
+            "claim_id": "CLM-58daa52ab94143b5",
             "edge_key": 13750,
             "entry": {
               "entity_id": "CTRL-1",
@@ -6464,6 +6629,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -6506,6 +6672,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -6515,7 +6682,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -6540,6 +6708,7 @@
             "to_type": "VulnerabilityClass"
           },
           {
+            "claim_id": "CLM-63c1a313796247a8",
             "edge_key": 13749,
             "entry": {
               "entity_id": "CTRL-1",
@@ -6568,6 +6737,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -6610,6 +6780,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -6619,7 +6790,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -6644,6 +6816,7 @@
             "to_type": "VulnerabilityClass"
           },
           {
+            "claim_id": "CLM-1a69eff912ac4ca5",
             "edge_key": 13751,
             "entry": {
               "entity_id": "CTRL-2",
@@ -6672,6 +6845,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -6714,6 +6888,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -6723,7 +6898,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -6748,6 +6924,7 @@
             "to_type": "VulnerabilityClass"
           },
           {
+            "claim_id": "CLM-74141143a2ad4d06",
             "edge_key": 13752,
             "entry": {
               "entity_id": "CTRL-3",
@@ -6776,6 +6953,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -6818,6 +6996,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -6827,7 +7006,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -6852,6 +7032,7 @@
             "to_type": "VulnerabilityClass"
           },
           {
+            "claim_id": "CLM-cf308b62f5df4a66",
             "edge_key": 13753,
             "entry": {
               "entity_id": "CTRL-4",
@@ -6880,6 +7061,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -6922,6 +7104,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -6931,7 +7114,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -6956,6 +7140,7 @@
             "to_type": "VulnerabilityClass"
           },
           {
+            "claim_id": "CLM-610126e1d5f942d3",
             "edge_key": 13754,
             "entry": {
               "entity_id": "CTRL-5",
@@ -6984,6 +7169,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -7026,6 +7212,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -7035,7 +7222,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -7060,6 +7248,7 @@
             "to_type": "VulnerabilityClass"
           },
           {
+            "claim_id": "CLM-67374534c20542fd",
             "edge_key": 13755,
             "entry": {
               "entity_id": "CTRL-5",
@@ -7088,6 +7277,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -7130,6 +7320,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -7139,7 +7330,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -7164,6 +7356,7 @@
             "to_type": "VulnerabilityClass"
           },
           {
+            "claim_id": "CLM-023381b34a5c4700",
             "edge_key": 13756,
             "entry": {
               "entity_id": "CTRL-6",
@@ -7192,6 +7385,7 @@
             "includes": {},
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -7234,6 +7428,7 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "backfilled_at": null,
                 "clone_origin": null,
                 "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
@@ -7243,7 +7438,8 @@
                 "receipt_id": "<RECEIPT_12>",
                 "resolution_id": null,
                 "source": "workflow_apply",
-                "source_ref": "workflow:build_local_state:apply_local_state"
+                "source_ref": "workflow:build_local_state:apply_local_state",
+                "touched_by": null
               }
             },
             "properties": {
@@ -7806,6 +8002,7 @@
       "output": {
         "candidates": [
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
             "evidence_refs": [
@@ -7837,6 +8034,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -7920,6 +8118,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
             "evidence_refs": [
@@ -7952,6 +8151,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -8035,6 +8235,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
             "evidence_refs": [
@@ -8059,6 +8260,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -8142,6 +8344,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "evidence_refs": [
@@ -8190,6 +8393,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -8273,6 +8477,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "evidence_refs": [
@@ -8313,6 +8518,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -8396,6 +8602,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "evidence_refs": [
@@ -8452,6 +8659,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -8535,6 +8743,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "evidence_refs": [
@@ -8591,6 +8800,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -8674,6 +8884,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "evidence_refs": [
@@ -8730,6 +8941,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -11174,6 +11386,7 @@
         "group_created": null,
         "members": [
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
             "evidence_refs": [
@@ -11205,6 +11418,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -11373,6 +11587,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
             "evidence_refs": [
@@ -11405,6 +11620,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -11576,6 +11792,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
             "evidence_refs": [
@@ -11600,6 +11817,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -11747,6 +11965,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "evidence_refs": [
@@ -11795,6 +12014,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -12014,6 +12234,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "evidence_refs": [
@@ -12054,6 +12275,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -12249,6 +12471,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "evidence_refs": [
@@ -12305,6 +12528,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -12548,6 +12772,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "evidence_refs": [
@@ -12604,6 +12829,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -12847,6 +13073,7 @@
             "to_type": "Vulnerability"
           },
           {
+            "claim_id": null,
             "edge_key": null,
             "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "evidence_refs": [
@@ -12903,6 +13130,7 @@
             "from_type": "Asset",
             "metadata": {
               "assertion": {
+                "group_approval_drift": null,
                 "group_override": false,
                 "lifecycle": {
                   "closed_at": null,
@@ -13150,7 +13378,6 @@
         "on_empty": null,
         "pending_refresh_mode": "replace",
         "proposal_step_id": "proposal",
-        "proposed_by": "agent",
         "query_receipt_ids": [
           "<RECEIPT_1>",
           "<RECEIPT_2>",

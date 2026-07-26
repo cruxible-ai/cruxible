@@ -5845,6 +5845,7 @@
       "member_count": 50,
       "members": [
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -5860,6 +5861,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -5931,6 +5933,7 @@
           "to_type": "Product"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "Oracle WebLogic Server from Oracle matched reference product Weblogic Server from Oracle based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -5946,6 +5949,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -6017,6 +6021,7 @@
           "to_type": "Product"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "Oracle Database from Oracle matched reference product Rest Data Services from Oracle based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -6032,6 +6037,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -6103,6 +6109,7 @@
           "to_type": "Product"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "Apache ActiveMQ from Apache matched reference product Activemq from Apache based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -6118,6 +6125,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -6189,6 +6197,7 @@
           "to_type": "Product"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "Apache Tomcat from Apache matched reference product Tomcat from Apache based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -6204,6 +6213,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -6275,6 +6285,7 @@
           "to_type": "Product"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "Microsoft Windows Server from Microsoft matched reference product Windows 2003 Server from Microsoft based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -6290,6 +6301,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -6361,6 +6373,7 @@
           "to_type": "Product"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "Apache Struts from Apache matched reference product Struts from Apache based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -6376,6 +6389,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -6447,6 +6461,7 @@
           "to_type": "Product"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -6462,6 +6477,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -6533,6 +6549,7 @@
           "to_type": "Product"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "PHP from PHP matched reference product Php from Php based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -6548,6 +6565,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -6619,6 +6637,7 @@
           "to_type": "Product"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "Google Chrome from Google matched reference product Chrome from Google based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -6634,6 +6653,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -6705,6 +6725,7 @@
           "to_type": "Product"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "Mozilla Firefox from Mozilla matched reference product Firefox from Mozilla based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -6720,6 +6741,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -6791,6 +6813,7 @@
           "to_type": "Product"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "Google Chrome from Google matched reference product Chrome from Google based on vendor and product-name similarity.",
           "evidence_refs": [
@@ -6806,6 +6829,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -6879,7 +6903,7 @@
       ],
       "pending_version": 1,
       "proposed_actor_context": null,
-      "proposed_by": "agent",
+      "proposed_by": "unknown",
       "relationship_type": "asset_runs_product",
       "resolution": {
         "action": "approve",
@@ -6900,14 +6924,15 @@
           ]
         },
         "confirmed": true,
-        "group_signature": "sigv1:c00077da84cea1556739abd9728f185f8ed707fc42ba8021871a2fa7af25a46e",
+        "group_signature": "sigv1:2ebea11567a2530c38523e814fec3ae2de63456e8159378afc4c78243b8d154e",
         "rationale": "",
         "receipt_id": "<RECEIPT_4>",
         "relationship_type": "asset_runs_product",
         "resolution_id": "<RESOLUTION_1>",
+        "resolution_source": "review",
         "resolved_actor_context": null,
         "resolved_at": "<TIMESTAMP>",
-        "resolved_by": "human",
+        "resolved_by": "unknown",
         "thesis_facts": {
           "candidates": {
             "from_alias": "candidates"
@@ -6915,7 +6940,7 @@
           "origin": {
             "evidence_mode": "workflow_generated",
             "kind": "workflow",
-            "proposal_logic_digest": "sha256:43c6f72a91290343891d83e115cd75ffd15b1b4f162b39d3b0f891ad1ae8afed",
+            "proposal_logic_digest": "sha256:ef5b19b989c4fd716cf79cf60a483cab6b74eea33dc2ac221cc7e8012bf07ac9",
             "step_id": "proposal",
             "workflow_name": "propose_asset_products"
           },
@@ -6948,7 +6973,7 @@
       "signal_sources_used": [
         "software_product_match"
       ],
-      "signature": "sigv1:c00077da84cea1556739abd9728f185f8ed707fc42ba8021871a2fa7af25a46e",
+      "signature": "sigv1:2ebea11567a2530c38523e814fec3ae2de63456e8159378afc4c78243b8d154e",
       "source_query_receipt_ids": [
         "<RECEIPT_3>"
       ],
@@ -6971,7 +6996,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:43c6f72a91290343891d83e115cd75ffd15b1b4f162b39d3b0f891ad1ae8afed",
+          "proposal_logic_digest": "sha256:ef5b19b989c4fd716cf79cf60a483cab6b74eea33dc2ac221cc7e8012bf07ac9",
           "step_id": "proposal",
           "workflow_name": "propose_asset_products"
         },
@@ -7023,6 +7048,7 @@
       "member_count": 60,
       "members": [
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
           "evidence_refs": [
@@ -7053,6 +7079,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -7216,6 +7243,7 @@
           "to_type": "Vulnerability"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
           "evidence_refs": [
@@ -7247,6 +7275,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -7413,6 +7442,7 @@
           "to_type": "Vulnerability"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
           "evidence_refs": [
@@ -7436,6 +7466,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -7578,6 +7609,7 @@
           "to_type": "Vulnerability"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
           "evidence_refs": [
@@ -7625,6 +7657,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -7839,6 +7872,7 @@
           "to_type": "Vulnerability"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
           "evidence_refs": [
@@ -7878,6 +7912,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -8068,6 +8103,7 @@
           "to_type": "Vulnerability"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
           "evidence_refs": [
@@ -8123,6 +8159,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -8361,6 +8398,7 @@
           "to_type": "Vulnerability"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
           "evidence_refs": [
@@ -8416,6 +8454,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -8654,6 +8693,7 @@
           "to_type": "Vulnerability"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
           "evidence_refs": [
@@ -8709,6 +8749,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -8947,6 +8988,7 @@
           "to_type": "Vulnerability"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
           "evidence_refs": [
@@ -8986,6 +9028,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -9176,6 +9219,7 @@
           "to_type": "Vulnerability"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
           "evidence_refs": [
@@ -9215,6 +9259,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -9405,6 +9450,7 @@
           "to_type": "Vulnerability"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "analytics-worker-01 is production asset with unsure exploitability and has no active compensating controls",
           "evidence_refs": [
@@ -9452,6 +9498,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -9666,6 +9713,7 @@
           "to_type": "Vulnerability"
         },
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": "analytics-worker-01 is production asset with unsure exploitability and has no active compensating controls",
           "evidence_refs": [
@@ -10065,6 +10113,7 @@
           "from_type": "Asset",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -11337,7 +11386,7 @@
       ],
       "pending_version": 1,
       "proposed_actor_context": null,
-      "proposed_by": "agent",
+      "proposed_by": "unknown",
       "relationship_type": "asset_vulnerability_posture",
       "resolution": {
         "action": "approve",
@@ -11362,14 +11411,15 @@
           ]
         },
         "confirmed": true,
-        "group_signature": "sigv1:a30d1a3efc82544a729ca03edc1ba527cd2bec681465d3cd19a8789223828859",
+        "group_signature": "sigv1:0f41202c75346bc5de933fd4c99cf1248e57881014534fd8277f1b5f1e6d1022",
         "rationale": "",
         "receipt_id": "<RECEIPT_13>",
         "relationship_type": "asset_vulnerability_posture",
         "resolution_id": "<RESOLUTION_2>",
+        "resolution_source": "review",
         "resolved_actor_context": null,
         "resolved_at": "<TIMESTAMP>",
-        "resolved_by": "human",
+        "resolved_by": "unknown",
         "thesis_facts": {
           "candidates": {
             "from_alias": "candidates"
@@ -11377,7 +11427,7 @@
           "origin": {
             "evidence_mode": "workflow_generated",
             "kind": "workflow",
-            "proposal_logic_digest": "sha256:20e2f171756680da68d628ac6f1452174c7dd399acf972ebf41425bef1078660",
+            "proposal_logic_digest": "sha256:6ec47836a0dca82bc27a0a133e87bded1fa66bd3c83c6ec1c50bb8d226762711",
             "step_id": "proposal",
             "workflow_name": "propose_asset_exposure"
           },
@@ -11416,7 +11466,7 @@
         "exploitability_signal",
         "control_effectiveness"
       ],
-      "signature": "sigv1:a30d1a3efc82544a729ca03edc1ba527cd2bec681465d3cd19a8789223828859",
+      "signature": "sigv1:0f41202c75346bc5de933fd4c99cf1248e57881014534fd8277f1b5f1e6d1022",
       "source_query_receipt_ids": [
         "<RECEIPT_6>",
         "<RECEIPT_7>",
@@ -11447,7 +11497,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:20e2f171756680da68d628ac6f1452174c7dd399acf972ebf41425bef1078660",
+          "proposal_logic_digest": "sha256:6ec47836a0dca82bc27a0a133e87bded1fa66bd3c83c6ec1c50bb8d226762711",
           "step_id": "proposal",
           "workflow_name": "propose_asset_exposure"
         },
@@ -11493,6 +11543,7 @@
       "member_count": 1,
       "members": [
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": null,
           "evidence_refs": [],
@@ -11500,6 +11551,7 @@
           "from_type": "Vulnerability",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -11548,7 +11600,7 @@
       ],
       "pending_version": 1,
       "proposed_actor_context": null,
-      "proposed_by": "agent",
+      "proposed_by": "unknown",
       "relationship_type": "vulnerability_classified_as",
       "resolution": {
         "action": "approve",
@@ -11563,14 +11615,15 @@
           ]
         },
         "confirmed": true,
-        "group_signature": "sigv1:7283b389a95212cc4be61b3f62c2a0d2774ad9cef0968f978a2a51a648a565de",
+        "group_signature": "sigv1:df325af001b7e56f729fab6d398f6d53be8fc99c5ad86208228b778e6d1631ad",
         "rationale": "",
         "receipt_id": "<RECEIPT_15>",
         "relationship_type": "vulnerability_classified_as",
         "resolution_id": "<RESOLUTION_3>",
+        "resolution_source": "review",
         "resolved_actor_context": null,
         "resolved_at": "<TIMESTAMP>",
-        "resolved_by": "human",
+        "resolved_by": "unknown",
         "thesis_facts": {
           "candidates": {
             "from_alias": "candidates"
@@ -11578,7 +11631,7 @@
           "origin": {
             "evidence_mode": "workflow_generated",
             "kind": "workflow",
-            "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
+            "proposal_logic_digest": "sha256:d40be488dad751572f4df535e16e7fc98212a447f854bffb3b85b0bce633867d",
             "step_id": "proposal",
             "workflow_name": "propose_vulnerability_classification"
           },
@@ -11611,7 +11664,7 @@
       "signal_sources_used": [
         "vulnerability_classification"
       ],
-      "signature": "sigv1:7283b389a95212cc4be61b3f62c2a0d2774ad9cef0968f978a2a51a648a565de",
+      "signature": "sigv1:df325af001b7e56f729fab6d398f6d53be8fc99c5ad86208228b778e6d1631ad",
       "source_query_receipt_ids": [],
       "source_step_ids": [
         "proposal",
@@ -11629,7 +11682,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
+          "proposal_logic_digest": "sha256:d40be488dad751572f4df535e16e7fc98212a447f854bffb3b85b0bce633867d",
           "step_id": "proposal",
           "workflow_name": "propose_vulnerability_classification"
         },
@@ -11676,7 +11729,7 @@
       "operation_type": "group_resolve",
       "parameters": {
         "_cruxible_payload_omitted": {
-          "byte_count": 102,
+          "byte_count": 131,
           "payload_digest": "<DIGEST>",
           "retention": "metadata"
         }

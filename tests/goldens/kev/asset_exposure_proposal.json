@@ -53,7 +53,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:20e2f171756680da68d628ac6f1452174c7dd399acf972ebf41425bef1078660",
+        "proposal_logic_digest": "sha256:6ec47836a0dca82bc27a0a133e87bded1fa66bd3c83c6ec1c50bb8d226762711",
         "step_id": "proposal",
         "workflow_name": "propose_asset_exposure"
       },
@@ -3349,6 +3349,7 @@
     "group_created": null,
     "members": [
       {
+        "claim_id": null,
         "edge_key": null,
         "evidence_rationale": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
         "evidence_refs": [
@@ -3380,6 +3381,7 @@
         "from_type": "Asset",
         "metadata": {
           "assertion": {
+            "group_approval_drift": null,
             "group_override": false,
             "lifecycle": {
               "closed_at": null,
@@ -3548,6 +3550,7 @@
         "to_type": "Vulnerability"
       },
       {
+        "claim_id": null,
         "edge_key": null,
         "evidence_rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
         "evidence_refs": [
@@ -3580,6 +3583,7 @@
         "from_type": "Asset",
         "metadata": {
           "assertion": {
+            "group_approval_drift": null,
             "group_override": false,
             "lifecycle": {
               "closed_at": null,
@@ -3751,6 +3755,7 @@
         "to_type": "Vulnerability"
       },
       {
+        "claim_id": null,
         "edge_key": null,
         "evidence_rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
         "evidence_refs": [
@@ -3775,6 +3780,7 @@
         "from_type": "Asset",
         "metadata": {
           "assertion": {
+            "group_approval_drift": null,
             "group_override": false,
             "lifecycle": {
               "closed_at": null,
@@ -3922,6 +3928,7 @@
         "to_type": "Vulnerability"
       },
       {
+        "claim_id": null,
         "edge_key": null,
         "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
         "evidence_refs": [
@@ -3962,6 +3969,7 @@
         "from_type": "Asset",
         "metadata": {
           "assertion": {
+            "group_approval_drift": null,
             "group_override": false,
             "lifecycle": {
               "closed_at": null,
@@ -4157,6 +4165,7 @@
         "to_type": "Vulnerability"
       },
       {
+        "claim_id": null,
         "edge_key": null,
         "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
         "evidence_refs": [
@@ -4197,6 +4206,7 @@
         "from_type": "Asset",
         "metadata": {
           "assertion": {
+            "group_approval_drift": null,
             "group_override": false,
             "lifecycle": {
               "closed_at": null,
@@ -4392,6 +4402,7 @@
         "to_type": "Vulnerability"
       },
       {
+        "claim_id": null,
         "edge_key": null,
         "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
         "evidence_refs": [
@@ -4432,6 +4443,7 @@
         "from_type": "Asset",
         "metadata": {
           "assertion": {
+            "group_approval_drift": null,
             "group_override": false,
             "lifecycle": {
               "closed_at": null,
@@ -4627,6 +4639,7 @@
         "to_type": "Vulnerability"
       },
       {
+        "claim_id": null,
         "edge_key": null,
         "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
         "evidence_refs": [
@@ -4667,6 +4680,7 @@
         "from_type": "Asset",
         "metadata": {
           "assertion": {
+            "group_approval_drift": null,
             "group_override": false,
             "lifecycle": {
               "closed_at": null,
@@ -4862,6 +4876,7 @@
         "to_type": "Vulnerability"
       },
       {
+        "claim_id": null,
         "edge_key": null,
         "evidence_rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
         "evidence_refs": [
@@ -4902,6 +4917,7 @@
         "from_type": "Asset",
         "metadata": {
           "assertion": {
+            "group_approval_drift": null,
             "group_override": false,
             "lifecycle": {
               "closed_at": null,
@@ -5124,7 +5140,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:20e2f171756680da68d628ac6f1452174c7dd399acf972ebf41425bef1078660",
+        "proposal_logic_digest": "sha256:6ec47836a0dca82bc27a0a133e87bded1fa66bd3c83c6ec1c50bb8d226762711",
         "step_id": "proposal",
         "workflow_name": "propose_asset_exposure"
       },

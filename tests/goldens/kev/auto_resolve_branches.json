@@ -24,7 +24,7 @@
         "classification_signals"
       ],
       "source_workflow_name": "propose_vulnerability_classification",
-      "status": "auto_resolved",
+      "status": "resolved",
       "thesis_facts": {
         "candidates": {
           "from_alias": "candidates"
@@ -32,7 +32,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
+          "proposal_logic_digest": "sha256:d40be488dad751572f4df535e16e7fc98212a447f854bffb3b85b0bce633867d",
           "step_id": "proposal",
           "workflow_name": "propose_vulnerability_classification"
         },
@@ -57,7 +57,7 @@
       }
     },
     "group_id": "<GROUP_1>",
-    "group_status": "auto_resolved",
+    "group_status": "resolved",
     "member_count": 1,
     "members": [
       {
@@ -105,6 +105,7 @@
       "group_created": null,
       "members": [
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": null,
           "evidence_refs": [],
@@ -113,6 +114,7 @@
           "from_type": "Vulnerability",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -179,7 +181,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
+          "proposal_logic_digest": "sha256:d40be488dad751572f4df535e16e7fc98212a447f854bffb3b85b0bce633867d",
           "step_id": "proposal",
           "workflow_name": "propose_vulnerability_classification"
         },
@@ -285,7 +287,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
+          "proposal_logic_digest": "sha256:d40be488dad751572f4df535e16e7fc98212a447f854bffb3b85b0bce633867d",
           "step_id": "proposal",
           "workflow_name": "propose_vulnerability_classification"
         },
@@ -358,6 +360,7 @@
       "group_created": null,
       "members": [
         {
+          "claim_id": null,
           "edge_key": null,
           "evidence_rationale": null,
           "evidence_refs": [],
@@ -366,6 +369,7 @@
           "from_type": "Vulnerability",
           "metadata": {
             "assertion": {
+              "group_approval_drift": null,
               "group_override": false,
               "lifecycle": {
                 "closed_at": null,
@@ -432,7 +436,7 @@
         "origin": {
           "evidence_mode": "workflow_generated",
           "kind": "workflow",
-          "proposal_logic_digest": "sha256:8b8f84066cbd8eb0cca4aed99e71f1a70f60e785fc75def40f1b649ee1005785",
+          "proposal_logic_digest": "sha256:d40be488dad751572f4df535e16e7fc98212a447f854bffb3b85b0bce633867d",
           "step_id": "proposal",
           "workflow_name": "propose_vulnerability_classification"
         },

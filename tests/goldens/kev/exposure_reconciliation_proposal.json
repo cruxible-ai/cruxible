@@ -36,7 +36,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:a5eebee9ae457c59d57da6c45279a16b9b01ff5b8718d8a351771028ab4f7aef",
+        "proposal_logic_digest": "sha256:a6422b04d087efed3cc82fe72e36ca795631f21ae2c58ee9946fb518c3598ba4",
         "step_id": "proposal",
         "workflow_name": "propose_exposure_reconciliation"
       },
@@ -137,6 +137,7 @@
     "group_created": null,
     "members": [
       {
+        "claim_id": null,
         "edge_key": null,
         "evidence_rationale": "ASSET-1->CVE-2002-0367 via product apache-http-server is no longer supported by the reference vulnerability_affects_product edge",
         "evidence_refs": [
@@ -154,6 +155,7 @@
         "from_type": "Asset",
         "metadata": {
           "assertion": {
+            "group_approval_drift": null,
             "group_override": false,
             "lifecycle": {
               "closed_at": null,
@@ -253,7 +255,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:a5eebee9ae457c59d57da6c45279a16b9b01ff5b8718d8a351771028ab4f7aef",
+        "proposal_logic_digest": "sha256:a6422b04d087efed3cc82fe72e36ca795631f21ae2c58ee9946fb518c3598ba4",
         "step_id": "proposal",
         "workflow_name": "propose_exposure_reconciliation"
       },
