@@ -23,12 +23,35 @@ import sqlite3
 def split_schema_statements(script: str) -> list[str]:
     """Split a DDL script into individual statements.
 
-    A plain semicolon split is correct for these scripts and only for these:
-    they are CREATE TABLE / CREATE INDEX statements whose string literals never
-    contain a semicolon, and there are no triggers or BEGIN...END bodies. A
-    schema that needs either must not be routed through here.
+    Statements are accumulated line by line until
+    :func:`sqlite3.complete_statement` says one is complete, so a semicolon
+    inside an ``--`` comment (or a string literal) never splits a statement in
+    half. Chunks containing only comments and whitespace are dropped rather
+    than executed. Triggers/BEGIN...END bodies remain out of scope: SQLite
+    treats the first ``;`` inside a body as completing the statement, so a
+    schema that needs them must not be routed through here.
     """
-    return [statement.strip() for statement in script.split(";") if statement.strip()]
+    statements: list[str] = []
+    pending: list[str] = []
+    for line in script.splitlines():
+        pending.append(line)
+        candidate = "\n".join(pending)
+        if sqlite3.complete_statement(candidate):
+            statements.append(candidate.strip().rstrip(";").strip())
+            pending = []
+    tail = "\n".join(pending).strip()
+    if tail:
+        statements.append(tail)
+    return [statement for statement in statements if _has_executable_content(statement)]
+
+
+def _has_executable_content(statement: str) -> bool:
+    """Return whether a chunk contains anything beyond comments and ``;``."""
+    for line in statement.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("--") and stripped != ";":
+            return True
+    return False
 
 
 def execute_schema_script(conn: sqlite3.Connection, script: str) -> None:

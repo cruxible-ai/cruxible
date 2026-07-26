@@ -370,6 +370,20 @@ def test_schema_scripts_never_use_executescript() -> None:
     assert offenders == []
 
 
+def test_split_schema_statements_survives_semicolons_in_comments() -> None:
+    """A `;` inside an SQL comment must not split a statement in half."""
+    script = (
+        "CREATE TABLE a (\n"
+        "    -- cheap filtering/display; the model derives it\n"
+        "    x TEXT\n"
+        ");\n"
+        "-- trailing comment only\n"
+    )
+    statements = split_schema_statements(script)
+    assert len(statements) == 1
+    assert statements[0].startswith("CREATE TABLE a")
+
+
 def test_split_schema_statements_drops_blanks() -> None:
     assert split_schema_statements("CREATE TABLE a (x TEXT);\n\n CREATE INDEX i ON a(x);\n") == [
         "CREATE TABLE a (x TEXT)",

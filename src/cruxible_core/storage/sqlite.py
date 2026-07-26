@@ -678,13 +678,14 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
         # The oldest state DBs predate the actor column too; add it so the
         # copy below can read a uniform legacy shape.
         self._ensure_actor_context_columns()
-        self._conn.executescript(
+        execute_schema_script(
+            self._conn,
             """
             ALTER TABLE source_artifacts RENAME TO source_artifacts_pre_revision;
             ALTER TABLE source_artifact_chunks RENAME TO source_artifact_chunks_pre_revision;
-            """
+            """,
         )
-        self._conn.executescript(_SOURCE_ARTIFACT_SCHEMA)
+        execute_schema_script(self._conn, _SOURCE_ARTIFACT_SCHEMA)
         self._conn.execute(
             "INSERT INTO source_artifacts "
             "(artifact_revision_id, source_artifact_id, revision, source_kind, "
@@ -704,11 +705,12 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
             "block_type, content_hash, line_start, line_end, preview, label "
             "FROM source_artifact_chunks_pre_revision"
         )
-        self._conn.executescript(
+        execute_schema_script(
+            self._conn,
             """
             DROP TABLE source_artifact_chunks_pre_revision;
             DROP TABLE source_artifacts_pre_revision;
-            """
+            """,
         )
 
     def save_artifact(
