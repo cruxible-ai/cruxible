@@ -4749,5 +4749,6 @@ def state_diff_artifact(
         diff_digest=result.diff_digest,
         path=result.path,
         byte_count=result.byte_count,
+        content_bytes=result.content_bytes,
         content=result.content,
     )

@@ -279,13 +279,63 @@ def test_cross_bucket_duplicate_id_is_identity_conflict_and_matches_nothing() ->
     _edge(after, claim_id="CLM-a", from_id="P-2")
 
     section = diff_edges(_side(before), _side(after), NO_SELECTOR)
-    assert section.counts["identity_conflict"] == 1
+    assert section.counts["identity_conflict_from"] == 1
+    assert section.counts["identity_conflict_to"] == 1
     assert section.counts["added"] == 0
     assert section.counts["removed"] == 0
     conflict = section.identity_conflict[0]
     assert conflict["claim_id"] == "CLM-a"
-    assert conflict["from"]["from_id"] == "P-1"
-    assert conflict["to"]["from_id"] == "P-2"
+    assert conflict["kind"] == "cross_bucket"
+    assert conflict["from_items"][0]["from_id"] == "P-1"
+    assert conflict["to_items"][0]["from_id"] == "P-2"
+    _assert_partition(section)
+
+
+def _duplicate_claim_id_graph(claim_id: str) -> EntityGraph:
+    """Hand-build the shape three write-path layers make unreachable.
+
+    ``add_relationship`` refuses a duplicate id, the storage INSERT has a
+    UNIQUE column, and ``from_dict`` raises -- so this can only arrive from a
+    hand-edited image, which is exactly why the comparator must name it rather
+    than let a dict comprehension pick a winner.
+    """
+    graph = _graph(_entity("P-1"))
+    _edge(graph, claim_id=claim_id, properties={"grade": "oem"})
+    _edge(graph, claim_id="CLM-other", properties={"grade": "aftermarket"})
+    for _u, _v, _key, data in graph._graph.edges(keys=True, data=True):
+        if data.get("claim_id") == "CLM-other":
+            data["claim_id"] = claim_id
+    return graph
+
+
+def test_intra_side_duplicate_claim_id_is_identity_conflict_not_last_write_wins() -> None:
+    before = _duplicate_claim_id_graph("CLM-dup")
+    after = _graph(_entity("P-1"))
+    _edge(after, claim_id="CLM-dup", properties={"grade": "oem"})
+
+    section = diff_edges(_side(before), _side(after), NO_SELECTOR)
+    conflict = section.identity_conflict[0]
+    assert conflict["kind"] == "duplicate_within_side"
+    assert conflict["counts"] == {"from": 2, "to": 1}
+    # BOTH from-side rows are reported, not just whichever indexed last.
+    assert len(conflict["from_items"]) == 2
+    assert section.counts["identity_conflict_from"] == 2
+    assert section.counts["identity_conflict_to"] == 1
+    assert section.counts["added"] == 0
+    assert section.counts["removed"] == 0
+    assert section.counts["changed"] == 0
+    _assert_partition(section)
+
+
+def test_duplicate_claim_id_on_one_side_only_still_partitions() -> None:
+    before = _duplicate_claim_id_graph("CLM-dup")
+    after = _graph(_entity("P-1"))
+    _edge(after, claim_id="CLM-elsewhere", properties={"grade": "reman"})
+
+    section = diff_edges(_side(before), _side(after), NO_SELECTOR)
+    assert section.counts["identity_conflict_from"] == 2
+    assert section.counts["identity_conflict_to"] == 0
+    assert section.counts["added"] == 1
     _assert_partition(section)
 
 

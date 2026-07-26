@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -38,6 +40,7 @@ from cruxible_core.graph.diff import (
     GraphDiffSide,
     OwnershipBasis,
     SectionDiff,
+    apply_selector_to_section,
     diff_edges,
     diff_entities,
     normalize_json_value,
@@ -149,6 +152,14 @@ class ResolvedStateCoordinate:
     graph: EntityGraph = field(default_factory=EntityGraph)
     procedures_source: bytes | None = None
     procedures_records: list[ProcedureRecord] | None = None
+    procedures_loader: Callable[[], list[ProcedureRecord]] | None = None
+    """Deferred read for coordinates whose procedures live in a STORE, not bytes.
+
+    ``current``'s procedure table is an unbounded full-table fetch, so it must
+    not run for an edges-only diff. The loader is only ever called through
+    ``load_procedures``, which the section builder reaches solely when the
+    procedures section is selected AND available on both sides.
+    """
 
     def payload(self, *, ownership: OwnershipBasis) -> dict[str, Any]:
         """Digest-preimage payload. ``ownership`` is the RECONCILED basis (D2)."""
@@ -180,6 +191,9 @@ class ResolvedStateCoordinate:
         one section's artifact cannot block a diff of another.
         """
         if self.procedures_records is not None:
+            return self.procedures_records
+        if self.procedures_loader is not None:
+            self.procedures_records = self.procedures_loader()
             return self.procedures_records
         if self.procedures_source is None:
             return []
@@ -339,7 +353,7 @@ def _resolve_current(
         verification="not_applicable",
         default_basis=default_basis,
         graph=graph,
-        procedures_records=_load_current_procedures(instance),
+        procedures_loader=lambda: _load_current_procedures(instance),
     )
 
 
@@ -443,28 +457,49 @@ def _resolve_snapshot(
 
 
 def _snapshot_ownership_basis(instance: InstanceProtocol, snapshot_id: str) -> OwnershipBasis:
-    """Pinned basis from ``upstream.json``, else ``unknown`` -- never recomputed."""
+    """Pinned basis from ``upstream.json``, else ``unknown`` -- never recomputed.
+
+    A corrupt member DEGRADES rather than refuses: ownership is an annotation,
+    and losing it must not make an otherwise-readable snapshot undiffable. But
+    the degrade is NAMED, because an unexplained ``unknown`` -- and the
+    ``stub_detection: disabled`` it forces -- is indistinguishable from a bug
+    in the diff.
+    """
     raw = instance.get_snapshot_artifact(snapshot_id, _UPSTREAM_ARTIFACT)
     if raw is None:
-        return OwnershipBasis.unknown_basis()
+        return OwnershipBasis.unknown_basis(
+            f"'{_UPSTREAM_ARTIFACT}' absent: this snapshot predates the pinned ownership "
+            "basis, which is never recomputed from current instance metadata"
+        )
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
-        return OwnershipBasis.unknown_basis()
+    except (UnicodeDecodeError, ValueError) as exc:
+        return OwnershipBasis.unknown_basis(
+            f"'{_UPSTREAM_ARTIFACT}' unreadable ({exc.__class__.__name__}): the pinned "
+            "ownership basis cannot be recovered from this snapshot"
+        )
     if payload is None:
         return OwnershipBasis.pinned()
     if not isinstance(payload, dict):
-        return OwnershipBasis.unknown_basis()
+        return OwnershipBasis.unknown_basis(
+            f"'{_UPSTREAM_ARTIFACT}' is neither an object nor null: the pinned ownership "
+            "basis cannot be recovered from this snapshot"
+        )
     return OwnershipBasis.pinned(
         owned_entity_types=payload.get("owned_entity_types") or (),
         owned_relationship_types=payload.get("owned_relationship_types") or (),
     )
 
 
-_REPORTED_UPSTREAM_MEMBERS: tuple[tuple[UpstreamMember, str, str | None], ...] = (
-    ("graph.json", "graph_digest", "graph_artifact_digest"),
-    ("config.yaml", "upstream_config_digest", "materialized_config_digest"),
-    ("cruxible.lock.yaml", "upstream_lock_digest", "lock_file_digest"),
+_REPORTED_UPSTREAM_MEMBERS: tuple[tuple[UpstreamMember, str, str | None, str], ...] = (
+    ("graph.json", "graph_digest", "graph_artifact_digest", "graph_path"),
+    (
+        "config.yaml",
+        "upstream_config_digest",
+        "materialized_config_digest",
+        "upstream_config_path",
+    ),
+    ("cruxible.lock.yaml", "upstream_lock_digest", "lock_file_digest", "lock_path"),
 )
 
 
@@ -556,23 +591,26 @@ def _verify_reported_upstream_members(
     members: dict[str, str] = {}
     digests: dict[str, dict[str, Any]] = {}
     any_unpinned = False
-    for member, digest_field, domain in _REPORTED_UPSTREAM_MEMBERS:
+    for member, digest_field, domain, path_field in _REPORTED_UPSTREAM_MEMBERS:
         expected = getattr(upstream, digest_field)
+        # ONE hash per member. The value the header reports and the value the
+        # pinned-digest comparison needs are the same bytes; re-reading a large
+        # graph.json to produce each of them separately is cost paid for
+        # nothing.
+        actual = sha256_file(root / getattr(upstream, path_field))
         if expected is None:
             members[member] = "unpinned_legacy"
             any_unpinned = True
-        else:
-            verify_tracked_upstream(root, upstream, members=(member,))
+        elif actual == expected:
             members[member] = "verified"
-        if domain is None:
-            continue
-        path_field = {
-            "graph.json": "graph_path",
-            "config.yaml": "upstream_config_path",
-            "cruxible.lock.yaml": "lock_path",
-        }[member]
-        actual = sha256_file(root / getattr(upstream, path_field))
-        if actual is not None:
+        else:
+            # Delegated rather than paraphrased, so the refusal is the
+            # verifier's own message with its own repair guidance.
+            verify_tracked_upstream(root, upstream, members=(member,))
+            raise AssertionError(  # pragma: no cover - the verifier must refuse
+                f"Upstream member '{member}' mismatched but verification passed"
+            )
+        if domain is not None and actual is not None:
             digests[domain] = {"value": actual, "scope": "bytes"}
     return members, ("unverified_legacy" if any_unpinned else "verified"), digests
 
@@ -602,8 +640,15 @@ def _procedure_state(record: ProcedureRecord) -> dict[str, Any]:
 def diff_procedures(
     from_records: list[ProcedureRecord],
     to_records: list[ProcedureRecord],
+    selector: GraphDiffSelector,
 ) -> SectionDiff:
-    """Procedure definitions compared by ``procedure_id``."""
+    """Procedure definitions compared by ``procedure_id``.
+
+    Bucket selection applies here exactly as it does to the graph sections:
+    the selector is part of the diff's DEFINITION and rides inside the digest
+    preimage, so a section that quietly ignored it would make two differently
+    filtered artifacts carry different digests over identical bodies.
+    """
     result = SectionDiff(
         counts={
             "from_total": len(from_records),
@@ -615,7 +660,8 @@ def diff_procedures(
             "annotation_only": 0,
             "ambiguous_from": 0,
             "ambiguous_to": 0,
-            "identity_conflict": 0,
+            "identity_conflict_from": 0,
+            "identity_conflict_to": 0,
             "excluded_from": 0,
             "excluded_to": 0,
         }
@@ -672,6 +718,7 @@ def diff_procedures(
         )
     result.diagnostics = {"stub_detection": "not_applicable"}
     result.assert_partition()
+    apply_selector_to_section(result, selector)
     return result
 
 
@@ -711,6 +758,31 @@ def _normalized_selector(
         "buckets": sorted(set(buckets)) if buckets is not None else None,
         "changed_only": bool(changed_only),
     }
+
+
+def _reconciled_basis(
+    own: OwnershipBasis,
+    other: ResolvedStateCoordinate,
+    *,
+    known: bool,
+) -> OwnershipBasis:
+    """Apply the both-sides-unknown rule while PRESERVING why it is unknown.
+
+    A side that is unknown in its own right keeps its own reason; a pinned side
+    dragged to unknown by the other coordinate says so, and names which one --
+    otherwise the two situations, which have different fixes, are
+    indistinguishable in the artifact.
+    """
+    if known:
+        return own
+    if not own.is_known:
+        return own
+    return OwnershipBasis.unknown_basis(
+        f"propagated: the '{other.spec}' coordinate's ownership basis is unknown "
+        f"({other.ownership.reason or 'reason unrecorded'}), and mixing a pinned "
+        "basis with an unpinned one produces annotations that are individually "
+        "plausible and jointly meaningless"
+    )
 
 
 def _validate_type_filters(
@@ -794,7 +866,8 @@ def _section_summary(sections: dict[str, Any]) -> dict[str, Any]:
         "annotation_only": 0,
         "ambiguous_from": 0,
         "ambiguous_to": 0,
-        "identity_conflict": 0,
+        "identity_conflict_from": 0,
+        "identity_conflict_to": 0,
         "unchanged": 0,
     }
     for body in sections.values():
@@ -838,6 +911,28 @@ def _build_logical_body(
 # ---------------------------------------------------------------------------
 # Bounded view
 # ---------------------------------------------------------------------------
+
+
+_ITEM_DIAGNOSTIC_KEY = "diagnostic"
+
+
+def _without_item_diagnostics(value: Any) -> Any:
+    """Project the body without per-item ``diagnostic`` blocks.
+
+    Strips the singular ``diagnostic`` key (the per-side ``edge_key``), NOT the
+    plural section-level ``diagnostics`` -- stub-exclusion accounting and
+    ``stub_detection`` are semantic claims about what the diff did and did not
+    compare, and dropping them would make the artifact silently incomplete.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _without_item_diagnostics(item)
+            for key, item in value.items()
+            if key != _ITEM_DIAGNOSTIC_KEY
+        }
+    if isinstance(value, list):
+        return [_without_item_diagnostics(item) for item in value]
+    return value
 
 
 @dataclass
@@ -955,10 +1050,20 @@ def _persist_artifact(
     preimage, and the pin would be an assertion about bytes nobody can produce.
     Content addressing makes repeats free and makes tampering self-evident.
     Retention is deliberately NOT garbage-collected in v1.
+
+    Written through a sibling temp file and ``os.replace`` (the precedent is
+    ``service_backup_instance``): the final name is content-addressed, so a
+    reader is entitled to assume the bytes under it hash to the name it asked
+    for. A direct ``write_bytes`` can leave a truncated file under exactly that
+    name after a crash or a full disk -- a partial artifact masquerading as a
+    complete plan. ``os.replace`` is atomic within a filesystem, so the final
+    name only ever names complete bytes.
     """
     path = _artifact_path(instance, diff_digest)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(payload)
+    temp_path = path.with_name(f".{path.name}.tmp")
+    temp_path.write_bytes(payload)
+    os.replace(temp_path, path)
     return StateDiffArtifactRef(
         path=str(path),
         diff_digest=diff_digest,
@@ -1029,6 +1134,16 @@ def service_state_diff(
     max_items_per_bucket: int = DEFAULT_BUCKET_CAP,
 ) -> StateDiffResult:
     """Compare two state coordinates and persist the canonical plan artifact."""
+    if max_items_per_bucket < 1:
+        # A cap of 0 returns every bucket empty while the counts still say what
+        # was found -- a view that reports nothing and looks complete enough to
+        # skim. Refuse rather than emit it; the honest way to ask for counts
+        # only is to read `summary`.
+        raise ConfigError(
+            f"max_items_per_bucket must be at least 1 (got {max_items_per_bucket}). "
+            "A zero cap returns an empty view of a non-empty diff; read `summary` "
+            "for counts without items."
+        )
     selector = _normalized_selector(
         sections=sections,
         entity_types=entity_types,
@@ -1059,8 +1174,8 @@ def service_state_diff(
     # the whole diff: mixing a pinned basis with a recomputed one produces
     # annotations that are individually plausible and jointly meaningless.
     ownership_known = resolved_from.ownership.is_known and resolved_to.ownership.is_known
-    from_basis = resolved_from.ownership if ownership_known else OwnershipBasis.unknown_basis()
-    to_basis = resolved_to.ownership if ownership_known else OwnershipBasis.unknown_basis()
+    from_basis = _reconciled_basis(resolved_from.ownership, resolved_to, known=ownership_known)
+    to_basis = _reconciled_basis(resolved_to.ownership, resolved_from, known=ownership_known)
     from_side = GraphDiffSide(
         graph=resolved_from.graph,
         ownership=from_basis,
@@ -1115,6 +1230,7 @@ def service_state_diff(
             built[name] = diff_procedures(
                 resolved_from.load_procedures(),
                 resolved_to.load_procedures(),
+                graph_selector,
             )
 
     normalizations = [*resolved_from.normalizations, *resolved_to.normalizations]
@@ -1134,7 +1250,15 @@ def service_state_diff(
         artifact_trust=artifact_trust,
         normalizations=normalizations,
     )
-    payload = canonical_json(body).encode("utf-8")
+    # ONE representation for the digest AND the persisted bytes: the artifact
+    # body is the preimage. ``edge_key`` is DURABLE but semantically
+    # meaningless across re-serialization, so a diagnostics-carrying preimage
+    # would make two artifacts over identical semantic state carry different
+    # digests -- the plan-artifact role's whole point, inverted. Diagnostics
+    # survive on the returned view, where they are for a human's eyes and no
+    # digest depends on them.
+    preimage = _without_item_diagnostics(body)
+    payload = canonical_json(preimage).encode("utf-8")
     diff_digest = f"sha256:{hashlib.sha256(payload).hexdigest()}"
     artifact_ref = _persist_artifact(instance, diff_digest=diff_digest, payload=payload)
     view, artifact_complete = _build_view(body, cap=max_items_per_bucket)
@@ -1173,7 +1297,15 @@ def service_state_diff_artifact(
     instance: InstanceProtocol,
     diff_digest: str,
 ) -> StateDiffArtifactResult:
-    """Return one persisted diff artifact's exact bytes, content-addressed."""
+    """Return one persisted diff artifact's exact bytes, content-addressed.
+
+    The read RE-DIGESTS. Content addressing only makes tampering self-evident
+    if somebody actually checks, and the only party positioned to check before
+    the bytes are used is the reader that just loaded them. A file whose
+    contents no longer hash to the name it sits under is not a stale artifact,
+    it is a corrupted or substituted one, and returning it would launder an
+    edited plan into a verified-looking answer.
+    """
     path = _artifact_path(instance, diff_digest)
     if not path.exists():
         raise ConfigError(
@@ -1183,10 +1315,20 @@ def service_state_diff_artifact(
             "carry them). Re-run the diff to reproduce it."
         )
     payload = path.read_bytes()
+    actual = f"sha256:{hashlib.sha256(payload).hexdigest()}"
+    if actual != diff_digest:
+        raise ConfigError(
+            f"Persisted diff artifact at {path} does not match the digest it is stored "
+            f"under: requested {diff_digest}, its bytes hash to {actual}. Diff artifacts "
+            "are content-addressed and immutable, so this file was edited or replaced "
+            "after it was written. It is refused rather than returned; re-run the diff "
+            "to reproduce the artifact from state."
+        )
     return StateDiffArtifactResult(
         diff_digest=diff_digest,
         path=str(path),
         byte_count=len(payload),
+        content_bytes=payload.decode("utf-8"),
         content=json.loads(payload.decode("utf-8")),
     )
 

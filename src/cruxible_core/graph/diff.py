@@ -18,9 +18,16 @@ Four contracts this module is written to:
   digest)``. Insertion order and ``edge_key`` never affect it.
 * **No pre-comparison truncation.** Bounds apply to the returned view, never to
   what the comparator sees.
-* **``edge_key`` is never identity.** It is minted fresh on every load
-  (``EntityGraph.add_relationship``), so it may only ever be emitted as a
-  per-side diagnostic. It never enters a key, a bucket order, or a match.
+* **``edge_key`` is never identity.** Not because it is ephemeral -- it is
+  DURABLE: ``graph_relationships.edge_key`` is a NOT NULL UNIQUE column, loads
+  are ordered by it, and ``to_dict``/``from_dict`` round-trip it through
+  node-link ``links[].key``. It is excluded because it is semantically
+  MEANINGLESS ACROSS RE-SERIALIZATION: every path that re-materializes a graph
+  (``add_relationship``'s counter, ``extract_owned_subgraph``, ``merge_graphs``,
+  a clone, a pull) re-assigns keys, so two byte-identical semantic states can
+  carry different keys and the same key can name different claims in two
+  images. It is emitted as a per-side diagnostic only, is kept OUT of the digest
+  preimage, and never enters a key, a bucket order, or a match.
 """
 
 from __future__ import annotations
@@ -125,10 +132,18 @@ class OwnershipBasis:
     basis: Literal["pinned", "unknown"]
     owned_entity_types: frozenset[str] = frozenset()
     owned_relationship_types: frozenset[str] = frozenset()
+    reason: str | None = None
+    """Why the basis is unknown, so ``stub_detection: disabled`` is explicable.
+
+    An unexplained ``unknown`` reads as a bug in the diff; the honest cases --
+    an image written before the basis was pinned, a member that will not parse,
+    and propagation from the other coordinate -- are different situations with
+    different fixes, and the artifact says which one fired.
+    """
 
     @classmethod
-    def unknown_basis(cls) -> OwnershipBasis:
-        return cls(basis="unknown")
+    def unknown_basis(cls, reason: str | None = None) -> OwnershipBasis:
+        return cls(basis="unknown", reason=reason)
 
     @classmethod
     def pinned(
@@ -150,6 +165,7 @@ class OwnershipBasis:
     def payload(self) -> dict[str, Any]:
         return {
             "basis": self.basis,
+            "reason": self.reason,
             "owned_entity_types": sorted(self.owned_entity_types),
             "owned_relationship_types": sorted(self.owned_relationship_types),
         }
@@ -273,8 +289,11 @@ class SectionDiff:
     def assert_partition(self) -> None:
         """The buckets are a PARTITION; nothing is counted twice or dropped.
 
-        An ``ambiguous`` residual is never also ``added`` or ``removed``, and an
-        ``identity_conflict`` pair consumes exactly one item from each side.
+        An ``ambiguous`` residual is never also ``added`` or ``removed``.
+        ``identity_conflict`` is counted PER SIDE rather than per pair: the
+        ordinary cross-bucket case consumes one item from each side, but an
+        intra-side duplicated id can consume several from one side and none
+        from the other, and a per-pair count could not express that.
         Asserted here rather than only in tests because a silent violation
         would make a plan artifact's counts non-reconstructible.
         """
@@ -284,7 +303,7 @@ class SectionDiff:
             + counts["removed"]
             + counts["changed"]
             + counts["ambiguous_from"]
-            + counts["identity_conflict"]
+            + counts["identity_conflict_from"]
             + counts["excluded_from"]
         )
         to_total = (
@@ -292,7 +311,7 @@ class SectionDiff:
             + counts["added"]
             + counts["changed"]
             + counts["ambiguous_to"]
-            + counts["identity_conflict"]
+            + counts["identity_conflict_to"]
             + counts["excluded_to"]
         )
         if from_total != counts["from_total"] or to_total != counts["to_total"]:
@@ -314,7 +333,8 @@ def _empty_counts() -> dict[str, int]:
         "annotation_only": 0,
         "ambiguous_from": 0,
         "ambiguous_to": 0,
-        "identity_conflict": 0,
+        "identity_conflict_from": 0,
+        "identity_conflict_to": 0,
         "excluded_from": 0,
         "excluded_to": 0,
     }
@@ -778,6 +798,15 @@ def _reidentification_permitted(
     return from_row.ownership == "upstream" and to_row.ownership == "upstream"
 
 
+def _index_by_claim_id(rows: list[_EdgeRow]) -> dict[str, list[_EdgeRow]]:
+    """Group rows by claim id, PRESERVING duplicates rather than overwriting."""
+    index: dict[str, list[_EdgeRow]] = defaultdict(list)
+    for row in rows:
+        if row.claim_id is not None:
+            index[row.claim_id].append(row)
+    return dict(index)
+
+
 def diff_edges(
     from_side: GraphDiffSide,
     to_side: GraphDiffSide,
@@ -790,37 +819,61 @@ def diff_edges(
     result.counts["from_total"] = len(from_rows)
     result.counts["to_total"] = len(to_rows)
 
-    # PHASE 0 -- index. The claim_id dict is load-bearing for performance:
-    # find_relationship_by_claim_id is a linear scan and calling it inside the
-    # match loop would be quadratic.
-    from_by_claim = {row.claim_id: row for row in from_rows if row.claim_id is not None}
-    to_by_claim = {row.claim_id: row for row in to_rows if row.claim_id is not None}
-
     consumed_from: set[int] = set()
     consumed_to: set[int] = set()
-    from_index = {id(row): position for position, row in enumerate(from_rows)}
-    to_index = {id(row): position for position, row in enumerate(to_rows)}
+
+    # PHASE 0 -- index. Grouped by id rather than dict-assigned, because a dict
+    # comprehension here is LAST-WRITE-WINS on a duplicated id, which is the
+    # defect class this module's contracts forbid. The three write-path layers
+    # (the in-memory index, the storage INSERT, and the merge guard) make an
+    # intra-side duplicate unreachable through the public API, so its
+    # appearance means a hand-edited image -- exactly the case that must be
+    # named rather than silently resolved to whichever row happened to be last.
+    from_by_claim = _index_by_claim_id(from_rows)
+    to_by_claim = _index_by_claim_id(to_rows)
+    duplicated_ids = {
+        claim_id
+        for index in (from_by_claim, to_by_claim)
+        for claim_id, rows in index.items()
+        if len(rows) > 1
+    }
 
     matched: list[tuple[_EdgeRow, _EdgeRow]] = []
-    # PHASE 1 -- claim-id matching plus the global cross-bucket sweep. Nothing
-    # in the write path can produce the same id under two different tuples
-    # (add_relationship is preserve-or-raise), so this shape means a
-    # hand-edited image or two instances that minted colliding ids -- a case
-    # where NAMING beats guessing.
-    for claim_id in sorted(set(from_by_claim) & set(to_by_claim)):
-        from_row = from_by_claim[claim_id]
-        to_row = to_by_claim[claim_id]
-        consumed_from.add(from_index[id(from_row)])
-        consumed_to.add(to_index[id(to_row)])
-        if from_row.tuple_key == to_row.tuple_key:
-            matched.append((from_row, to_row))
-            continue
-        result.counts["identity_conflict"] += 1
+    # PHASE 1 -- claim-id matching plus the global sweep for the two shapes no
+    # write path can produce: the same id under two different tuples, and the
+    # same id twice on one side. Both mean a hand-edited image or two instances
+    # that minted colliding ids -- a case where NAMING beats guessing, so every
+    # row carrying such an id is reported and matched by nothing.
+    from_index = {id(row): position for position, row in enumerate(from_rows)}
+    to_index = {id(row): position for position, row in enumerate(to_rows)}
+    for claim_id in sorted(duplicated_ids | (set(from_by_claim) & set(to_by_claim))):
+        conflict_from = from_by_claim.get(claim_id, [])
+        conflict_to = to_by_claim.get(claim_id, [])
+        if claim_id not in duplicated_ids:
+            from_row, to_row = conflict_from[0], conflict_to[0]
+            consumed_from.add(from_index[id(from_row)])
+            consumed_to.add(to_index[id(to_row)])
+            if from_row.tuple_key == to_row.tuple_key:
+                matched.append((from_row, to_row))
+                continue
+        else:
+            for row in conflict_from:
+                consumed_from.add(from_index[id(row)])
+            for row in conflict_to:
+                consumed_to.add(to_index[id(row)])
+        result.counts["identity_conflict_from"] += len(conflict_from)
+        result.counts["identity_conflict_to"] += len(conflict_to)
         result.identity_conflict.append(
             {
                 "claim_id": claim_id,
-                "from": {**_edge_identity(from_row), **_edge_side_summary(from_row)},
-                "to": {**_edge_identity(to_row), **_edge_side_summary(to_row)},
+                "kind": ("duplicate_within_side" if claim_id in duplicated_ids else "cross_bucket"),
+                "counts": {"from": len(conflict_from), "to": len(conflict_to)},
+                "from_items": [
+                    {**_edge_identity(row), **_edge_side_summary(row)} for row in conflict_from
+                ],
+                "to_items": [
+                    {**_edge_identity(row), **_edge_side_summary(row)} for row in conflict_to
+                ],
             }
         )
 
@@ -878,7 +931,7 @@ def diff_edges(
     result.identity_conflict.sort(key=lambda item: str(item.get("claim_id")))
     result.diagnostics = {"stub_detection": "not_applicable"}
     result.assert_partition()
-    _apply_selector_to_section(result, selector)
+    apply_selector_to_section(result, selector)
     return result
 
 
@@ -1069,7 +1122,7 @@ def diff_entities(
         ),
     }
     result.assert_partition()
-    _apply_selector_to_section(result, selector)
+    apply_selector_to_section(result, selector)
     return result
 
 
@@ -1095,7 +1148,7 @@ def _item_sort_key(item: dict[str, Any]) -> tuple[str, ...]:
     return (*identity, digest)
 
 
-def _apply_selector_to_section(section: SectionDiff, selector: GraphDiffSelector) -> None:
+def apply_selector_to_section(section: SectionDiff, selector: GraphDiffSelector) -> None:
     """Drop deselected buckets from the BODY; counts stay whole.
 
     The bucket selector narrows what is reported, never what was compared: the
@@ -1118,6 +1171,7 @@ __all__ = [
     "OwnershipBasis",
     "OwnershipLabel",
     "SectionDiff",
+    "apply_selector_to_section",
     "boundary_stub_keys",
     "diff_edges",
     "diff_entities",

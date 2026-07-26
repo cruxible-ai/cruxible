@@ -7,6 +7,7 @@ driving the real ``CruxibleClient`` and the real CLI over them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -115,6 +116,23 @@ def test_client_parity_for_both_routes(app_client: TestClient, tmp_path: Path) -
     artifact = client.state_diff_artifact(instance_id, result.diff_digest)
     assert artifact.diff_digest == result.diff_digest
     assert artifact.byte_count == result.artifact_ref.byte_count
+    # A client re-digests the EXACT bytes; nothing of Cruxible's serializer is
+    # required on the verifying side.
+    payload = artifact.content_bytes.encode("utf-8")
+    assert f"sha256:{hashlib.sha256(payload).hexdigest()}" == result.diff_digest
+    assert json.loads(artifact.content_bytes) == artifact.content
+
+
+def test_max_items_per_bucket_is_rejected_below_one(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    instance_id, snapshot_id = _seeded_instance(app_client, tmp_path)
+    response = app_client.post(
+        f"/api/v1/{instance_id}/state/diff",
+        json={"from_coordinate": snapshot_id, "max_items_per_bucket": 0},
+    )
+    assert response.status_code == 422
 
 
 def test_unknown_artifact_digest_is_a_structured_error(

@@ -77,7 +77,7 @@ _DIFF_COORDINATE_HELP = (
 @click.option("--changed-only", is_flag=True, default=False, help="Suppress added/removed items.")
 @click.option(
     "--max-items",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help="Per-bucket cap for the returned view; the persisted artifact is never capped.",
 )
@@ -182,7 +182,8 @@ def _render_state_diff(payload: dict[str, Any]) -> None:
         f"changed={summary['changed']} (annotation_only={summary['annotation_only']}) "
         f"unchanged={summary['unchanged']} "
         f"ambiguous={summary['ambiguous_from']}/{summary['ambiguous_to']} "
-        f"identity_conflict={summary['identity_conflict']}"
+        f"identity_conflict={summary['identity_conflict_from']}/"
+        f"{summary['identity_conflict_to']}"
     )
     for entry in payload["omitted_sections"]:
         click.secho(

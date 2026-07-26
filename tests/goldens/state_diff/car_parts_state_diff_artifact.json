@@ -50,7 +50,8 @@
     "ownership": {
       "basis": "pinned",
       "owned_entity_types": [],
-      "owned_relationship_types": []
+      "owned_relationship_types": [],
+      "reason": null
     },
     "sections": {
       "edges": "available",
@@ -68,9 +69,6 @@
       "added": [
         {
           "claim_id": "<CLAIM_1>",
-          "diagnostic": {
-            "edge_key": 1
-          },
           "from_id": "BP-1234",
           "from_type": "Part",
           "ownership": "local",
@@ -112,10 +110,6 @@
             "review_transition",
             "lifecycle_transition"
           ],
-          "diagnostic": {
-            "from_edge_key": 0,
-            "to_edge_key": 0
-          },
           "from_claim_id": "<CLAIM_2>",
           "from_id": "BP-1001",
           "from_ownership": "local",
@@ -157,7 +151,8 @@
         "excluded_from": 0,
         "excluded_to": 0,
         "from_total": 1,
-        "identity_conflict": 0,
+        "identity_conflict_from": 0,
+        "identity_conflict_to": 0,
         "removed": 0,
         "to_total": 2,
         "unchanged": 0
@@ -217,7 +212,8 @@
         "excluded_from": 0,
         "excluded_to": 0,
         "from_total": 3,
-        "identity_conflict": 0,
+        "identity_conflict_from": 0,
+        "identity_conflict_to": 0,
         "removed": 0,
         "to_total": 3,
         "unchanged": 2
@@ -246,7 +242,8 @@
         "excluded_from": 0,
         "excluded_to": 0,
         "from_total": 0,
-        "identity_conflict": 0,
+        "identity_conflict_from": 0,
+        "identity_conflict_to": 0,
         "removed": 0,
         "to_total": 0,
         "unchanged": 0
@@ -271,7 +268,8 @@
     "ambiguous_to": 0,
     "annotation_only": 0,
     "changed": 2,
-    "identity_conflict": 0,
+    "identity_conflict_from": 0,
+    "identity_conflict_to": 0,
     "removed": 0,
     "unchanged": 2
   },
@@ -299,7 +297,8 @@
     "ownership": {
       "basis": "pinned",
       "owned_entity_types": [],
-      "owned_relationship_types": []
+      "owned_relationship_types": [],
+      "reason": null
     },
     "sections": {
       "edges": "available",

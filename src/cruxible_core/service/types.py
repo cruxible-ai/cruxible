@@ -1071,11 +1071,20 @@ class StateDiffResult:
 
 @dataclass
 class StateDiffArtifactResult:
-    """A persisted diff artifact returned by content-addressed retrieval."""
+    """A persisted diff artifact returned by content-addressed retrieval.
+
+    ``content_bytes`` is the file's EXACT UTF-8 text and is what a caller
+    re-digests: hashing it reproduces ``diff_digest`` with no serializer of the
+    caller's own involved. ``content`` is the same body parsed, for callers
+    that only want to read it -- re-serializing that dict reproduces the digest
+    only under Cruxible's exact canonical form, which is not a burden a
+    verifier should have to carry.
+    """
 
     diff_digest: str
     path: str
     byte_count: int
+    content_bytes: str
     content: dict[str, Any]
 
 

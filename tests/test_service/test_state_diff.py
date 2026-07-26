@@ -9,6 +9,8 @@ licensed to claim, and what the read persisted.
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import shutil
 import sqlite3
 from pathlib import Path
@@ -516,7 +518,64 @@ def test_artifact_retrieval_returns_the_persisted_body(instance: CruxibleInstanc
 
     fetched = service_state_diff_artifact(instance, result.diff_digest)
     assert fetched.diff_digest == result.diff_digest
-    assert canonical_json(fetched.content).encode("utf-8") == Path(fetched.path).read_bytes()
+    # content_bytes is what a verifier hashes: no serializer of the caller's
+    # own is involved, so reproducing the digest needs nothing from Cruxible.
+    payload = fetched.content_bytes.encode("utf-8")
+    assert payload == Path(fetched.path).read_bytes()
+    assert f"sha256:{hashlib.sha256(payload).hexdigest()}" == result.diff_digest
+    assert fetched.content == json.loads(fetched.content_bytes)
+
+
+def test_artifact_retrieval_refuses_bytes_that_no_longer_match_their_address(
+    instance: CruxibleInstance,
+) -> None:
+    """Content addressing is only self-evident if the READER checks."""
+    snapshot = service_create_snapshot(instance).snapshot
+    service_add_entities(instance, [_case("CASE-C", "Gamma")])
+    result = service_state_diff(instance, from_coordinate=snapshot.snapshot_id)
+
+    path = Path(result.artifact_ref.path)
+    tampered = json.loads(path.read_text())
+    tampered["summary"]["added"] = 999
+    path.write_text(canonical_json(tampered))
+
+    with pytest.raises(ConfigError) as excinfo:
+        service_state_diff_artifact(instance, result.diff_digest)
+    message = str(excinfo.value)
+    assert "does not match the digest it is stored under" in message
+    assert result.diff_digest in message
+
+
+def test_artifact_is_published_atomically_under_its_final_name(
+    instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No partial file is ever visible under the content-addressed name."""
+    import cruxible_core.service.state_diff as state_diff_module
+
+    observed: dict[str, Any] = {}
+    real_replace = os.replace
+
+    def _watch(src: Any, dst: Any) -> None:
+        # At the moment of publication the final name must not exist yet, and
+        # the complete bytes must already be on disk under the temp name.
+        observed["final_existed_before_replace"] = Path(dst).exists()
+        observed["temp_name"] = Path(src).name
+        observed["temp_bytes"] = Path(src).read_bytes()
+        real_replace(src, dst)
+
+    monkeypatch.setattr(state_diff_module.os, "replace", _watch)
+    snapshot = service_create_snapshot(instance).snapshot
+    service_add_entities(instance, [_case("CASE-C", "Gamma")])
+    result = service_state_diff(instance, from_coordinate=snapshot.snapshot_id)
+
+    assert observed["final_existed_before_replace"] is False
+    assert observed["temp_name"].startswith(".") and observed["temp_name"].endswith(".tmp")
+    assert f"sha256:{hashlib.sha256(observed['temp_bytes']).hexdigest()}" == result.diff_digest
+    # The temp sibling never survives a successful publish.
+    assert sorted(p.name for p in Path(result.artifact_ref.path).parent.iterdir()) == [
+        Path(result.artifact_ref.path).name
+    ]
 
 
 def test_artifact_retrieval_for_an_unknown_digest_refuses(instance: CruxibleInstance) -> None:
@@ -598,6 +657,165 @@ def test_a_selector_change_changes_the_diff_digest(instance: CruxibleInstance) -
     )
     assert whole.diff_digest != filtered.diff_digest
     assert filtered.selector["sections"] == ["entities"]
+
+
+def test_edge_key_is_not_in_the_digest_preimage(instance: CruxibleInstance) -> None:
+    """``edge_key`` is durable but semantically meaningless across images.
+
+    Two graphs with identical semantic state but different ``edge_key``
+    assignments must produce the same ``diff_digest``, or the plan artifact
+    pins a serialization detail instead of the state it describes.
+    """
+    snapshot = service_create_snapshot(instance).snapshot
+    service_add_relationships(
+        instance,
+        [
+            RelationshipInstance(
+                from_type="Case",
+                from_id="CASE-A",
+                relationship_type="cites",
+                to_type="Case",
+                to_id="CASE-B",
+            )
+        ],
+        source="test",
+        source_ref="seed",
+    )
+    result = service_state_diff(instance, from_coordinate=snapshot.snapshot_id)
+
+    artifact = json.loads(Path(result.artifact_ref.path).read_text())
+    assert "diagnostic" not in _all_keys(artifact)
+    # The section-level `diagnostics` accounting IS semantic and stays.
+    assert "diagnostics" in _all_keys(artifact)
+    assert artifact["sections"]["entities"]["diagnostics"]["stub_detection"] == "enabled"
+    # The RETURNED VIEW keeps the per-item diagnostic for a human's eyes: the
+    # key was moved out of the preimage, not deleted from the product.
+    assert result.sections["edges"]["added"][0]["diagnostic"]["edge_key"] is not None
+
+
+def test_reassigning_every_edge_key_leaves_the_preimage_identical(
+    instance: CruxibleInstance,
+) -> None:
+    """A pure re-serialization must not move the plan digest.
+
+    ``edge_key`` survives a round-trip, so it is stable WITHIN one lineage --
+    but every path that re-materializes a graph re-assigns it, so two images of
+    the same semantic state disagree on it. Comparing preimages directly keeps
+    this test about the projection rather than about ``read_revision``, which
+    legitimately moves whenever anything writes.
+    """
+    from cruxible_core.service.state_diff import _without_item_diagnostics
+
+    snapshot = service_create_snapshot(instance).snapshot
+    service_add_relationships(
+        instance,
+        [
+            RelationshipInstance(
+                from_type="Case",
+                from_id="CASE-A",
+                relationship_type="cites",
+                to_type="Case",
+                to_id="CASE-B",
+            )
+        ],
+        source="test",
+        source_ref="seed",
+    )
+    body = json.loads(
+        Path(
+            service_state_diff(instance, from_coordinate=snapshot.snapshot_id).artifact_ref.path
+        ).read_text()
+    )
+
+    rekeyed = json.loads(canonical_json(body))
+    for item in rekeyed["sections"]["edges"]["added"]:
+        item["diagnostic"] = {"edge_key": 987654}
+    assert _without_item_diagnostics(rekeyed) == _without_item_diagnostics(body)
+
+
+def test_procedures_section_honors_the_bucket_selector(instance: CruxibleInstance) -> None:
+    """The selector is part of the diff's definition in EVERY section."""
+    snapshot = service_create_snapshot(instance).snapshot
+    _seed_procedure(instance, "PRC-alpha")
+
+    whole = service_state_diff(
+        instance,
+        from_coordinate=snapshot.snapshot_id,
+        sections=("procedures",),
+    )
+    assert whole.sections["procedures"]["counts"]["added"] == 1
+    assert len(whole.sections["procedures"]["added"]) == 1
+
+    filtered = service_state_diff(
+        instance,
+        from_coordinate=snapshot.snapshot_id,
+        sections=("procedures",),
+        buckets=("changed",),
+    )
+    # Counts stay whole; only the reported body narrows.
+    assert filtered.sections["procedures"]["counts"]["added"] == 1
+    assert filtered.sections["procedures"]["added"] == []
+    assert filtered.diff_digest != whole.diff_digest
+
+    changed_only = service_state_diff(
+        instance,
+        from_coordinate=snapshot.snapshot_id,
+        sections=("procedures",),
+        changed_only=True,
+    )
+    assert changed_only.sections["procedures"]["added"] == []
+    assert changed_only.diff_digest not in {whole.diff_digest, filtered.diff_digest}
+
+
+def test_edges_only_diff_never_queries_the_procedure_store(
+    instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``current``'s procedure table is an unbounded fetch; it must stay lazy."""
+    snapshot = service_create_snapshot(instance).snapshot
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("procedure store queried for an edges-only diff")
+
+    monkeypatch.setattr(CruxibleInstance, "get_procedure_store", _boom)
+    result = service_state_diff(
+        instance,
+        from_coordinate=snapshot.snapshot_id,
+        sections=("edges",),
+    )
+    assert set(result.sections) == {"edges"}
+
+
+def test_max_items_per_bucket_must_be_at_least_one(instance: CruxibleInstance) -> None:
+    with pytest.raises(ConfigError, match="at least 1"):
+        service_state_diff(instance, from_coordinate="current", max_items_per_bucket=0)
+
+
+def test_corrupt_upstream_json_degrades_with_a_named_reason(
+    instance: CruxibleInstance,
+) -> None:
+    """Ownership is an annotation: losing it must not make a snapshot undiffable."""
+    snapshot = service_create_snapshot(instance).snapshot
+    _overwrite_snapshot_artifact(instance, snapshot.snapshot_id, "upstream.json", b"{ not json")
+
+    result = service_state_diff(instance, from_coordinate=snapshot.snapshot_id)
+    ownership = result.from_coordinate["ownership"]
+    assert ownership["basis"] == "unknown"
+    assert "upstream.json" in (ownership["reason"] or "")
+    assert "unreadable" in (ownership["reason"] or "")
+    assert result.sections["entities"]["diagnostics"]["stub_detection"] == "disabled"
+
+
+def test_absent_upstream_json_names_a_different_reason_than_a_corrupt_one(
+    instance: CruxibleInstance,
+) -> None:
+    snapshot = service_create_snapshot(instance).snapshot
+    _delete_snapshot_artifact(instance, snapshot.snapshot_id, "upstream.json")
+
+    reason = service_state_diff(instance, from_coordinate=snapshot.snapshot_id).from_coordinate[
+        "ownership"
+    ]["reason"]
+    assert "absent" in (reason or "")
 
 
 def test_invalid_selector_values_refuse_listing_the_valid_ones(
@@ -727,6 +945,43 @@ def test_diff_persists_a_listable_receipt_with_both_coordinates(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _seed_procedure(instance: CruxibleInstance, procedure_id: str) -> None:
+    """Persist one minimal procedure definition so the section has content."""
+    from cruxible_core.procedure import compute_procedure_definition_digest
+    from cruxible_core.procedure.types import ProcedureDefinition, ProcedureRecord
+
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "fixture_procedure",
+            "steps": [{"id": "eligible", "assert_exists": {"ref": "$input.value"}}],
+            "returns": "eligible",
+            "precondition": {"entity_type": "Case", "condition": {"title": "Alpha"}},
+            "budget": {"wall_clock_s": 60, "max_provider_calls": 0},
+        }
+    )
+    with instance.write_transaction() as uow:
+        uow.procedures.save_procedure(
+            ProcedureRecord(
+                procedure_id=procedure_id,
+                definition=definition,
+                definition_digest=compute_procedure_definition_digest(definition),
+                proposed_actor_context=None,
+            )
+        )
+
+
+def _all_keys(value: Any) -> set[str]:
+    keys: set[str] = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            keys.add(str(key))
+            keys |= _all_keys(item)
+    elif isinstance(value, list):
+        for item in value:
+            keys |= _all_keys(item)
+    return keys
 
 
 def _is_elided(value: Any) -> bool:

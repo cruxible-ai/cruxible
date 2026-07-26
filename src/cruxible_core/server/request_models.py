@@ -555,7 +555,7 @@ class StateDiffRequest(BaseModel):
     relationship_types: list[str] | None = None
     buckets: list[str] | None = None
     changed_only: bool = False
-    max_items_per_bucket: int | None = None
+    max_items_per_bucket: int | None = Field(default=None, ge=1)
 
 
 class StatePullApplyRequest(BaseModel):

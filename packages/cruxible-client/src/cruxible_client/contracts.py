@@ -1900,11 +1900,19 @@ class StateDiffResult(BaseModel):
 
 
 class StateDiffArtifactResult(BaseModel):
-    """One persisted diff artifact, fetched by its content address."""
+    """One persisted diff artifact, fetched by its content address.
+
+    ``content_bytes`` is the file's exact UTF-8 text: hashing it reproduces
+    ``diff_digest`` with no serializer of the caller's own involved.
+    ``content`` is the same body parsed, for reading rather than verifying --
+    re-serializing it reproduces the digest only under Cruxible's exact
+    canonical form.
+    """
 
     diff_digest: str
     path: str
     byte_count: int
+    content_bytes: str = ""
     content: dict[str, Any] = Field(default_factory=dict)
 
 

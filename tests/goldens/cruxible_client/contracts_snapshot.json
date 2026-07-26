@@ -29664,6 +29664,19 @@
             "type": "object"
           }
         },
+        "content_bytes": {
+          "default": "",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "content_bytes",
+          "required": false,
+          "schema": {
+            "default": "",
+            "title": "Content Bytes",
+            "type": "string"
+          }
+        },
         "diff_digest": {
           "has_default": false,
           "has_default_factory": false,
@@ -29686,7 +29699,7 @@
         }
       },
       "json_schema": {
-        "description": "One persisted diff artifact, fetched by its content address.",
+        "description": "One persisted diff artifact, fetched by its content address.\n\n``content_bytes`` is the file's exact UTF-8 text: hashing it reproduces\n``diff_digest`` with no serializer of the caller's own involved.\n``content`` is the same body parsed, for reading rather than verifying --\nre-serializing it reproduces the digest only under Cruxible's exact\ncanonical form.",
         "properties": {
           "byte_count": {
             "title": "Byte Count",
@@ -29696,6 +29709,11 @@
             "additionalProperties": true,
             "title": "Content",
             "type": "object"
+          },
+          "content_bytes": {
+            "default": "",
+            "title": "Content Bytes",
+            "type": "string"
           },
           "diff_digest": {
             "title": "Diff Digest",
