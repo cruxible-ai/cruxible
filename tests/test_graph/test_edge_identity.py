@@ -465,6 +465,27 @@ def test_a_stale_claim_id_over_a_live_tuple_refuses_and_names_both_ids(
     assert live.claim_id is not None and live.claim_id in message
 
 
+def test_a_blank_claim_id_is_an_absent_id_not_a_stale_one(
+    config: CoreConfig,
+) -> None:
+    """JSON "" from a client serializer must resolve tuple-first, not refuse."""
+    graph = _seeded_graph()
+    live = _apply(graph, config, confidence=0.5)
+    for blank in ("", "   ", "\t\n"):
+        resolved = resolve_claim_target(
+            graph,
+            relationship_type="fits",
+            from_type="Part",
+            from_id="P1",
+            to_type="Vehicle",
+            to_id="V1",
+            claim_id=blank,
+        )
+        assert resolved.relationship is not None
+        assert resolved.relationship.claim_id == live.claim_id
+        assert resolved.resolved_by is None
+
+
 # ------------------------------------------------------------------- ordering
 
 

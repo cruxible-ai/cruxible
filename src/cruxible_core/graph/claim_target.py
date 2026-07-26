@@ -61,6 +61,11 @@ def resolve_claim_target(
     resolves to a claim whose identity tuple is not the one asked for, or when
     an unknown ``claim_id`` is supplied for a tuple that IS live here.
     """
+    # A blank id is an absent id, not a stale one: JSON "" is a common client
+    # serializer shape, and letting it fall into the unknown-id refusal would
+    # hard-fail requests that never named a claim at all.
+    if claim_id is not None:
+        claim_id = claim_id.strip() or None
     tuple_match = graph.get_relationship(
         from_type,
         from_id,

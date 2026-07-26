@@ -107,9 +107,12 @@ def legacy_identity_map_digest(entries: LegacyIdentityMap) -> str:
 
     Recorded on the upstream metadata beside the member digests: two pulls of
     the same release whose upstream ids moved produce different digests here
-    even though every content digest is identical. The canonicalization runs
-    over the same sorted, list-valued encoding that is persisted, so parallel
-    edges reordering within a tuple is itself churn the digest reports.
+    even though every content digest is identical. Scope honesty: the digest
+    covers the map's VALUES, so it reports tail changes (ids added, dropped,
+    or replaced) — it cannot see a head-drop that shifts surviving parallel
+    edges onto their neighbours' positions, because the reconciliation is
+    positional and the shifted map is byte-identical. That residual is
+    inherent to positional reconciliation over id-less legacy images.
     """
     payload = canonical_json(dump_legacy_identity_map(entries)).encode("utf-8")
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
