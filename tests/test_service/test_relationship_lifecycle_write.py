@@ -21,6 +21,8 @@ from cruxible_core.graph.assertion_state import (
     RelationshipLifecycleState,
     RelationshipReviewState,
 )
+from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.query.enums import QueryVisibilityState
 from cruxible_core.service import service_list
 from cruxible_core.service.lifecycle_inputs import relationship_lifecycle_state
 from cruxible_core.service.mutations import (
@@ -60,7 +62,11 @@ def _retract_fits_via_batch(
         BatchDirectWriteInput(
             relationships=[
                 BatchRelationshipWriteInput(
-                    **_FITS,
+                    from_type="Part",
+                    from_id="BP-1001",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-CIVIC-EX",
                     properties={"verified": True, "source": "catalog"},
                     lifecycle=RelationshipLifecycleState(status=status, reason=reason),  # type: ignore[arg-type]
                 )
@@ -91,7 +97,7 @@ def _seed_retracted_fits(
     )
 
 
-def _get_fits(instance: CruxibleInstance):
+def _get_fits(instance: CruxibleInstance) -> RelationshipInstance | None:
     return service_get_relationship(
         instance,
         from_type="Part",
@@ -151,7 +157,7 @@ def test_retracted_edge_is_gated_out_of_live_reads(
 ) -> None:
     _seed_retracted_fits(populated_instance)
 
-    def _edge_ids(state: str) -> set[tuple[str, str]]:
+    def _edge_ids(state: QueryVisibilityState) -> set[tuple[str, str]]:
         result = service_list(
             populated_instance,
             "edges",
@@ -210,8 +216,10 @@ def test_lifecycle_write_cannot_mutate_review_state(
     )
     populated_instance.save_graph(graph)
 
-    review_before = _get_fits(populated_instance).metadata.assertion.review.model_dump(mode="json")
-    override_before = _get_fits(populated_instance).metadata.assertion.group_override
+    before = _get_fits(populated_instance)
+    assert before is not None
+    review_before = before.metadata.assertion.review.model_dump(mode="json")
+    override_before = before.metadata.assertion.group_override
     assert review_before["status"] == "approved"
     assert override_before is True
 
@@ -260,7 +268,7 @@ def test_relationship_lifecycle_status_validated_against_relationship_vocab() ->
 
 
 # ---------------------------------------------------------------------------
-# Terminal statuses are NOT free-writable (interim, pending wi-lifecycle-verbs)
+# Terminal statuses are NOT free-writable
 # ---------------------------------------------------------------------------
 
 
@@ -271,7 +279,7 @@ def test_terminal_relationship_lifecycle_is_refused_on_the_free_write_path(
     """Retracting/superseding a claim is a judgement, not a property edit."""
     with pytest.raises(
         TerminalLifecycleWriteRefusedError,
-        match="terminal lifecycle transitions require",
+        match="cruxible relationship retract",
     ):
         relationship_lifecycle_state(
             contracts.RelationshipLifecycleInput(status=status, reason="because")  # type: ignore[arg-type]
@@ -306,7 +314,7 @@ def test_batch_direct_write_service_refuses_terminal_lifecycle(
     """The BATCH shape is refused at the chokepoint, and nothing is persisted."""
     with pytest.raises(
         TerminalLifecycleWriteRefusedError,
-        match="terminal lifecycle transitions require",
+        match="cruxible relationship retract",
     ):
         _retract_fits_via_batch(populated_instance, status=status)
 
@@ -325,9 +333,13 @@ def test_batch_direct_write_dry_run_refuses_terminal_lifecycle(
             BatchDirectWriteInput(
                 relationships=[
                     BatchRelationshipWriteInput(
-                        **_FITS,
+                        from_type="Part",
+                        from_id="BP-1001",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-2024-CIVIC-EX",
                         properties={"verified": True, "source": "catalog"},
-                        lifecycle=RelationshipLifecycleState(status="retracted"),  # type: ignore[arg-type]
+                        lifecycle=RelationshipLifecycleState(status="retracted"),
                     )
                 ]
             ),
@@ -346,7 +358,11 @@ def test_service_add_relationship_inputs_refuses_terminal_lifecycle(
             populated_instance,
             [
                 RelationshipWriteInput(
-                    **_FITS,
+                    from_type="Part",
+                    from_id="BP-1001",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-CIVIC-EX",
                     properties={"verified": True, "source": "catalog"},
                     lifecycle=RelationshipLifecycleState(status=status),  # type: ignore[arg-type]
                 )
@@ -382,7 +398,7 @@ def test_terminal_lifecycle_refused_on_a_NEW_edge_too(
                         to_type="Vehicle",
                         to_id="V-2024-ACCORD-SPORT",
                         properties={"verified": True, "source": "catalog"},
-                        lifecycle=RelationshipLifecycleState(status="retracted"),  # type: ignore[arg-type]
+                        lifecycle=RelationshipLifecycleState(status="retracted"),
                     )
                 ]
             ),
@@ -425,7 +441,11 @@ def _deactivate_fits_via_add_relationship(
             instance_id,
             [
                 contracts.RelationshipInput(
-                    **_FITS,
+                    from_type="Part",
+                    from_id="BP-1001",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-CIVIC-EX",
                     properties={"verified": True, "source": "catalog"},
                     lifecycle=contracts.RelationshipLifecycleInput(
                         status=status,  # type: ignore[arg-type]
@@ -496,7 +516,9 @@ def test_add_relationship_lifecycle_write_preserves_review_and_override(
     )
     populated_instance.save_graph(graph)
 
-    review_before = _get_fits(populated_instance).metadata.assertion.review.model_dump(mode="json")
+    before = _get_fits(populated_instance)
+    assert before is not None
+    review_before = before.metadata.assertion.review.model_dump(mode="json")
     assert review_before["status"] == "approved"
 
     _deactivate_fits_via_add_relationship(populated_instance)

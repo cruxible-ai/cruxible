@@ -55,11 +55,20 @@ WritePolicy = Literal["direct", "proposal_only", "mint_only"]
 # bypass governance — it is refused until it is deliberately added here.
 #   - "workflow_apply": canonical workflow apply_entities / apply_relationships
 #   - "group_resolve":  proposal group resolution (group propose -> resolve)
+#   - "lifecycle_supersede": receipted claim/entity supersession
+#   - "lifecycle_retract": receipted claim retraction / entity retirement
 # Add any future governed verb here, with a comment naming it.
 # NOTE: this set governs ``proposal_only`` ONLY. A ``mint_only`` type refuses
 # every source except ``TOKEN_MINT_SOURCE`` — the governed verbs included — so
 # ``TOKEN_MINT_SOURCE`` is deliberately NOT a member here.
-_GOVERNED_SOURCES: frozenset[str] = frozenset({"workflow_apply", "group_resolve"})
+_GOVERNED_SOURCES: frozenset[str] = frozenset(
+    {
+        "workflow_apply",
+        "group_resolve",
+        "lifecycle_supersede",
+        "lifecycle_retract",
+    }
+)
 
 # The sole source permitted to write a ``mint_only`` (auth-managed) entity type.
 # Exclusive: a ``mint_only`` type refuses ALL other sources, including the

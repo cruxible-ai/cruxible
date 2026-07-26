@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import click
 
-from cruxible_client import contracts
+from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _echo_continuation_hint,
@@ -23,6 +23,7 @@ from cruxible_core.cli.commands._common import (
     console,
     continuation_option,
     json_option,
+    lifecycle_status_option,
     profile_option,
     state_option,
     ws_option,
@@ -98,6 +99,7 @@ def list_group() -> None:
 @click.option("--limit", default=50, help="Max entities to show.")
 @click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @state_option
+@lifecycle_status_option
 @profile_option
 @continuation_option
 @ws_option
@@ -110,6 +112,7 @@ def list_entities(
     limit: int,
     offset: int,
     state: str | None,
+    lifecycle_status: str | None,
     profile: str,
     continuation: str | None,
     ws_capture: bool,
@@ -119,11 +122,13 @@ def list_entities(
     projected_fields = list(fields) or None
     where = _parse_where_options(where_values)
     visibility_state = cast("contracts.QueryVisibilityState | None", state)
+    exact_lifecycle = cast("contracts.LifecycleStatus | None", lifecycle_status)
     filters: dict[str, Any] = {
         "resource_type": "entities",
         "entity_type": entity_type,
         "where": where,
         "relationship_state": visibility_state,
+        "lifecycle_status": exact_lifecycle,
     }
 
     def _local_fetch(instance: Any) -> tuple[ServiceListResult, str | None]:
@@ -141,6 +146,7 @@ def list_entities(
             limit=limit,
             offset=local_offset,
             relationship_state=visibility_state,
+            lifecycle_status=exact_lifecycle,
             where=where,
             fields=projected_fields,
         )
@@ -154,9 +160,11 @@ def list_entities(
             )
         return result, token_out
 
-    result, continuation_token = _dispatch_cli_instance(
-        lambda client, instance_id: (lambda r: (r, r.continuation_token))(
-            client.list(
+    def _remote_fetch(
+        client: CruxibleClient, instance_id: str
+    ) -> tuple[contracts.ListResult, str | None]:
+        if exact_lifecycle is None:
+            result = client.list(
                 instance_id,
                 resource_type="entities",
                 entity_type=entity_type,
@@ -167,7 +175,23 @@ def list_entities(
                 fields=projected_fields,
                 continuation=continuation,
             )
-        ),
+        else:
+            result = client.list(
+                instance_id,
+                resource_type="entities",
+                entity_type=entity_type,
+                limit=limit,
+                offset=offset,
+                relationship_state=visibility_state,
+                lifecycle_status=exact_lifecycle,
+                where=where,
+                fields=projected_fields,
+                continuation=continuation,
+            )
+        return result, result.continuation_token
+
+    result, continuation_token = _dispatch_cli_instance(
+        _remote_fetch,
         _local_fetch,
     )
     entities = (
@@ -388,6 +412,7 @@ def list_outcomes(receipt_id: str | None, limit: int, offset: int, output_json: 
 @click.option("--limit", default=50, help="Max edges to show.")
 @click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @state_option
+@lifecycle_status_option
 @profile_option
 @continuation_option
 @ws_option
@@ -399,6 +424,7 @@ def list_edges(
     limit: int,
     offset: int,
     state: str | None,
+    lifecycle_status: str | None,
     profile: str,
     continuation: str | None,
     ws_capture: bool,
@@ -413,11 +439,13 @@ def list_edges(
     """
     where = _parse_where_options(where_values)
     visibility_state = cast("contracts.QueryVisibilityState | None", state)
+    exact_lifecycle = cast("contracts.LifecycleStatus | None", lifecycle_status)
     filters: dict[str, Any] = {
         "resource_type": "edges",
         "relationship_type": relationship,
         "where": where,
         "relationship_state": visibility_state,
+        "lifecycle_status": exact_lifecycle,
     }
 
     def _local_fetch(instance: Any) -> tuple[ServiceListResult, str | None]:
@@ -435,6 +463,7 @@ def list_edges(
             limit=limit,
             offset=local_offset,
             relationship_state=visibility_state,
+            lifecycle_status=exact_lifecycle,
             where=where,
         )
         token_out = None
@@ -447,9 +476,11 @@ def list_edges(
             )
         return result, token_out
 
-    result, continuation_token = _dispatch_cli_instance(
-        lambda client, instance_id: (lambda r: (r, r.continuation_token))(
-            client.list(
+    def _remote_fetch(
+        client: CruxibleClient, instance_id: str
+    ) -> tuple[contracts.ListResult, str | None]:
+        if exact_lifecycle is None:
+            result = client.list(
                 instance_id,
                 resource_type="edges",
                 relationship_type=relationship,
@@ -459,7 +490,22 @@ def list_edges(
                 where=where,
                 continuation=continuation,
             )
-        ),
+        else:
+            result = client.list(
+                instance_id,
+                resource_type="edges",
+                relationship_type=relationship,
+                limit=limit,
+                offset=offset,
+                relationship_state=visibility_state,
+                lifecycle_status=exact_lifecycle,
+                where=where,
+                continuation=continuation,
+            )
+        return result, result.continuation_token
+
+    result, continuation_token = _dispatch_cli_instance(
+        _remote_fetch,
         _local_fetch,
     )
     if output_json:

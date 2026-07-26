@@ -17,7 +17,7 @@ import re
 from collections import deque
 from dataclasses import dataclass, replace
 from functools import cmp_to_key
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from cruxible_core.config.property_validation import (
     entity_properties_with_identity,
@@ -36,8 +36,18 @@ from cruxible_core.predicate import (
     evaluate_typed_comparison,
 )
 from cruxible_core.query.entity_state import entity_matches_query_state
-from cruxible_core.query.enums import QueryDedupe, QueryResultShape, QueryVisibilityState
+from cruxible_core.query.enums import (
+    LifecycleStatus,
+    QueryDedupe,
+    QueryResultShape,
+    QueryVisibilityState,
+)
 from cruxible_core.query.filters import matches_exact_filter
+from cruxible_core.query.lifecycle_status import (
+    entity_matches_lifecycle_status,
+    relationship_matches_lifecycle_status,
+    validate_lifecycle_status,
+)
 from cruxible_core.query.predicates import (
     build_predicate_context,
     evaluate_query_predicates,
@@ -104,16 +114,20 @@ class _TraversalState:
 class _EffectiveQueryOptions:
     relationship_state: QueryVisibilityState
     relationship_state_source: str
+    lifecycle_status: LifecycleStatus | None
     result_shape: QueryResultShape
     dedupe: QueryDedupe
 
     def receipt_options(self) -> dict[str, str]:
-        return {
+        options = {
             "relationship_state": self.relationship_state,
             "relationship_state_source": self.relationship_state_source,
             "result_shape": self.result_shape,
             "dedupe": self.dedupe,
         }
+        if self.lifecycle_status is not None:
+            options["lifecycle_status"] = self.lifecycle_status
+        return options
 
 
 @dataclass(frozen=True)
@@ -150,6 +164,7 @@ def execute_query(
     params: dict[str, Any],
     *,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
 ) -> QueryResult:
     """Execute a named query from the config against the graph.
 
@@ -179,6 +194,7 @@ def execute_query(
         query_schema,
         params,
         relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
     )
 
 
@@ -188,6 +204,7 @@ def effective_query_receipt_options(
     query_schema: NamedQuerySchema,
     *,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
 ) -> dict[str, str]:
     """Return the execution options a run of this query would stamp on its receipt.
 
@@ -201,6 +218,7 @@ def effective_query_receipt_options(
         query_name,
         query_schema,
         relationship_state,
+        lifecycle_status,
     ).receipt_options()
 
 
@@ -212,6 +230,7 @@ def execute_query_definition(
     params: dict[str, Any],
     *,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
 ) -> QueryResult:
     """Execute a named or inline query definition against the graph."""
     effective_options = _resolve_effective_query_options(
@@ -219,6 +238,7 @@ def execute_query_definition(
         query_name,
         query_schema,
         relationship_state,
+        lifecycle_status,
     )
     declared_entity_return_type = _resolve_declared_entity_return_type(
         config,
@@ -303,6 +323,7 @@ def execute_query_definition(
             query_name=query_name,
             requires_path_retention=requires_path_retention,
             relationship_state=effective_options.relationship_state,
+            lifecycle_status=effective_options.lifecycle_status,
             traversal_budget=traversal_budget,
             step_index=step_index,
             policy_summary=policy_summary,
@@ -337,6 +358,7 @@ def execute_query_definition(
         result_contexts,
         params,
         relationship_state=effective_options.relationship_state,
+        lifecycle_status=effective_options.lifecycle_status,
         builder=builder,
     )
     budget_result = _apply_path_budgets(
@@ -403,6 +425,7 @@ def execute_query_definition(
         result_shape=effective_options.result_shape,
         dedupe=effective_options.dedupe,
         relationship_state=effective_options.relationship_state,
+        lifecycle_status=effective_options.lifecycle_status,
         steps_executed=steps_executed,
         total_results=total_results,
         limit=query_schema.limit,
@@ -572,6 +595,15 @@ def _execute_collection_query(
             query_schema,
             params,
         )
+        if effective_options.lifecycle_status is not None:
+            contexts = [
+                context
+                for context in contexts
+                if entity_matches_lifecycle_status(
+                    context.result.metadata,
+                    effective_options.lifecycle_status,
+                )
+            ]
         policy_summary: dict[str, int] = {}
     elif query_schema.result_shape == "relationship":
         contexts, policy_summary = _collection_relationship_contexts(
@@ -581,6 +613,7 @@ def _execute_collection_query(
             query_schema,
             params,
             relationship_state=effective_options.relationship_state,
+            lifecycle_status=effective_options.lifecycle_status,
             builder=builder,
         )
     else:
@@ -600,6 +633,7 @@ def _execute_collection_query(
         contexts,
         params,
         relationship_state=effective_options.relationship_state,
+        lifecycle_status=effective_options.lifecycle_status,
         builder=builder,
     )
     contexts = sort_query_row_contexts(
@@ -648,6 +682,7 @@ def _execute_collection_query(
         result_shape=query_schema.result_shape,
         dedupe=effective_options.dedupe,
         relationship_state=effective_options.relationship_state,
+        lifecycle_status=effective_options.lifecycle_status,
         steps_executed=0,
         total_results=total_results,
         limit=query_schema.limit,
@@ -882,6 +917,7 @@ def _collection_relationship_contexts(
     params: dict[str, Any],
     *,
     relationship_state: QueryVisibilityState,
+    lifecycle_status: LifecycleStatus | None,
     builder: ReceiptBuilder,
 ) -> tuple[list[QueryRowContext], dict[str, int]]:
     resolved = config.resolve_relationship_reference(query_schema.returns)
@@ -913,6 +949,10 @@ def _collection_relationship_contexts(
         key=lambda item: _relationship_instance_identity(item),
     ):
         if not relationship_matches_query_state(relationship.metadata, relationship_state):
+            continue
+        if lifecycle_status is not None and not relationship_matches_lifecycle_status(
+            relationship.metadata, lifecycle_status
+        ):
             continue
         from_entity = graph.get_entity(relationship.from_type, relationship.from_id)
         to_entity = graph.get_entity(relationship.to_type, relationship.to_id)
@@ -1100,6 +1140,7 @@ def _resolve_effective_query_options(
     query_name: str,
     query_schema: NamedQuerySchema,
     relationship_state_override: QueryVisibilityState | None,
+    lifecycle_status: LifecycleStatus | None,
 ) -> _EffectiveQueryOptions:
     effective_relationship_state = (
         query_schema.relationship_state
@@ -1115,10 +1156,12 @@ def _resolve_effective_query_options(
         query_schema,
         effective_relationship_state,
         relationship_state_override=relationship_state_override,
+        lifecycle_status=lifecycle_status,
     )
     return _EffectiveQueryOptions(
         relationship_state=effective_relationship_state,
         relationship_state_source=relationship_state_source,
+        lifecycle_status=lifecycle_status,
         result_shape=query_schema.result_shape,
         dedupe=query_schema.dedupe,
     )
@@ -1131,6 +1174,7 @@ def _validate_effective_query_options(
     effective_relationship_state: QueryVisibilityState,
     *,
     relationship_state_override: QueryVisibilityState | None,
+    lifecycle_status: LifecycleStatus | None,
 ) -> None:
     """Validate execution-time query options after runtime overrides are applied."""
     is_collection = query_schema.mode == "collection"
@@ -1148,6 +1192,16 @@ def _validate_effective_query_options(
         "reviewable",
     }:
         raise QueryExecutionError(f"Unsupported visibility state '{effective_relationship_state}'")
+    if lifecycle_status is not None:
+        lifecycle_kind: Literal["entity", "relationship"] = (
+            "entity"
+            if query_schema.mode == "collection" and query_schema.result_shape == "entity"
+            else "relationship"
+        )
+        try:
+            validate_lifecycle_status(lifecycle_status, kind=lifecycle_kind)
+        except ValueError as exc:
+            raise QueryExecutionError(str(exc)) from exc
     if query_schema.result_shape == "entity" and query_schema.dedupe != "entity":
         raise QueryExecutionError(
             f"Named query '{query_name}' with result_shape 'entity' requires dedupe 'entity'"
@@ -1258,6 +1312,7 @@ def _execute_step(
     query_name: str,
     requires_path_retention: bool,
     relationship_state: QueryVisibilityState,
+    lifecycle_status: LifecycleStatus | None,
     traversal_budget: _TraversalBudgetState,
     step_index: int,
     policy_summary: dict[str, int],
@@ -1374,6 +1429,10 @@ def _execute_step(
                     queue.clear()
                     break
                 if not relationship_matches_query_state(segment.metadata, relationship_state):
+                    continue
+                if lifecycle_status is not None and not relationship_matches_lifecycle_status(
+                    segment.metadata, lifecycle_status
+                ):
                     continue
 
                 nid = neighbor.node_id()
@@ -1887,6 +1946,7 @@ def _apply_includes(
     params: dict[str, Any],
     *,
     relationship_state: QueryVisibilityState,
+    lifecycle_status: LifecycleStatus | None,
     builder: ReceiptBuilder | None,
 ) -> list[QueryRowContext]:
     """Attach one-hop include side context to base query row contexts."""
@@ -1939,6 +1999,7 @@ def _apply_includes(
                 context,
                 params,
                 relationship_state=relationship_state,
+                lifecycle_status=lifecycle_status,
             )
             summary = summaries[alias]
             summary["rows_evaluated"] += 1
@@ -1976,6 +2037,7 @@ def _evaluate_include(
     params: dict[str, Any],
     *,
     relationship_state: QueryVisibilityState,
+    lifecycle_status: LifecycleStatus | None,
 ) -> QueryIncludeResult:
     anchor = _resolve_include_anchor(alias, spec.from_, context)
     if anchor is None:
@@ -2002,6 +2064,10 @@ def _evaluate_include(
     items: list[QueryIncludeItem] = []
     for neighbor, segment, _relative_direction in relationships:
         if not relationship_matches_query_state(segment.metadata, relationship_state):
+            continue
+        if lifecycle_status is not None and not relationship_matches_lifecycle_status(
+            segment.metadata, lifecycle_status
+        ):
             continue
         predicate_context = build_predicate_context(
             entry=context.entry,

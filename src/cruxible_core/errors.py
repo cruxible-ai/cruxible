@@ -497,10 +497,9 @@ class TerminalLifecycleWriteRefusedError(CoreError):
     one-call way to make live state vanish from every live-gated read with no
     reviewer, no required reason, and nothing recording who decided it.
 
-    Interim posture (Robert's 2026-07-25 ruling) until the dedicated receipted
-    verbs land in ``wi-lifecycle-verbs``: refuse and teach. Non-terminal statuses
-    (relationship ``active``/``inactive``, entity ``live``) stay freely writable
-    because they are reversible participation flips, not terminations.
+    The dedicated receipted lifecycle verbs own these transitions. Non-terminal
+    statuses (relationship ``active``/``inactive``, entity ``live``) stay freely
+    writable because they are reversible participation flips, not settled acts.
     """
 
     error_code = "terminal_lifecycle_write_refused"
@@ -511,9 +510,10 @@ class TerminalLifecycleWriteRefusedError(CoreError):
         self.writable = writable
         super().__init__(
             f"Refusing to write terminal {kind} lifecycle status '{status}' through a "
-            "plain add/update: terminal lifecycle transitions require the dedicated "
-            "receipted verbs (coming in wi-lifecycle-verbs). Meanwhile attest a "
-            "contradiction against the claim or use the review machinery. "
+            "plain add/update: use 'cruxible relationship supersede' or 'cruxible "
+            "relationship retract' for claims, and 'cruxible entity supersede' or "
+            "'cruxible entity retire' for entities. These settled lifecycle transitions require "
+            "a reason, actor attribution, and a mutation receipt. "
             f"Writable here: {writable}."
         )
 

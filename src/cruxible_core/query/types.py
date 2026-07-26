@@ -7,7 +7,12 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.query.enums import QueryDedupe, QueryResultShape, QueryVisibilityState
+from cruxible_core.query.enums import (
+    LifecycleStatus,
+    QueryDedupe,
+    QueryResultShape,
+    QueryVisibilityState,
+)
 from cruxible_core.query.profiles import ReadProfile, profile_query_item
 from cruxible_core.receipt.types import Receipt
 
@@ -109,6 +114,7 @@ class QueryResult(BaseModel):
     result_shape: QueryResultShape = "path"
     dedupe: QueryDedupe = "path"
     relationship_state: QueryVisibilityState = "live"
+    lifecycle_status: LifecycleStatus | None = None
     steps_executed: int
     total_results: int | None = None
     limit: int | None = None
@@ -130,6 +136,7 @@ class QueryResult(BaseModel):
 
 __all__ = [
     "BaseQueryRow",
+    "LifecycleStatus",
     "ProjectedQueryRow",
     "QueryDedupe",
     "QueryIncludeItem",

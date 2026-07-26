@@ -1,4 +1,9 @@
-const RESERVED_VIEW_PARAMS = new Set(["limit", "offset", "relationship_state"]);
+const RESERVED_VIEW_PARAMS = new Set([
+  "limit",
+  "offset",
+  "relationship_state",
+  "lifecycle_status",
+]);
 
 export class CruxibleHttpError extends Error {
   constructor(message, { status = 0, errorType = "HttpError", payload = null } = {}) {
@@ -71,7 +76,10 @@ export function createHttpAdapter({
       });
     },
 
-    runView(queryName, { params = {}, limit, offset = 0, relationshipState } = {}) {
+    runView(
+      queryName,
+      { params = {}, limit, offset = 0, relationshipState, lifecycleStatus } = {},
+    ) {
       const reserved = Object.keys(params).filter((key) => RESERVED_VIEW_PARAMS.has(key));
       if (reserved.length) {
         throw new Error(`View params may not use reserved keys: ${reserved.join(", ")}`);
@@ -82,6 +90,7 @@ export function createHttpAdapter({
           limit,
           offset,
           relationship_state: relationshipState,
+          lifecycle_status: lifecycleStatus,
         }),
       });
     },

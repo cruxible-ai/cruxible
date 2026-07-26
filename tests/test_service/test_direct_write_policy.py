@@ -55,11 +55,21 @@ def _build_config(
 # ---------------------------------------------------------------------------
 
 
-def test_governed_sources_are_exactly_workflow_apply_and_group_resolve() -> None:
-    assert _GOVERNED_SOURCES == frozenset({"workflow_apply", "group_resolve"})
+def test_governed_sources_are_exactly_the_receipted_mutation_sources() -> None:
+    assert _GOVERNED_SOURCES == frozenset(
+        {
+            "workflow_apply",
+            "group_resolve",
+            "lifecycle_supersede",
+            "lifecycle_retract",
+        }
+    )
 
 
-@pytest.mark.parametrize("source", ["workflow_apply", "group_resolve"])
+@pytest.mark.parametrize(
+    "source",
+    ["workflow_apply", "group_resolve", "lifecycle_supersede", "lifecycle_retract"],
+)
 def test_governed_sources_recognized(source: str) -> None:
     assert is_governed_source(source) is True
 

@@ -58,6 +58,10 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
             "cruxible_test_workflow",
             "cruxible_add_entity",
             "cruxible_add_relationship",
+            "cruxible_supersede_claim",
+            "cruxible_retract_claim",
+            "cruxible_supersede_entity",
+            "cruxible_retire_entity",
             "cruxible_batch_direct_write",
             "cruxible_apply_workflow",
             "cruxible_lock_workflow",
@@ -96,6 +100,10 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
             "cruxible_propose_group",
             "cruxible_resolve_group",
             "cruxible_update_trust_status",
+            "cruxible_supersede_claim",
+            "cruxible_retract_claim",
+            "cruxible_supersede_entity",
+            "cruxible_retire_entity",
         }
     ),
 }

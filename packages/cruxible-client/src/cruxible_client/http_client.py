@@ -339,6 +339,7 @@ class CruxibleClient:
         limit: int | None = None,
         offset: int = 0,
         relationship_state: contracts.QueryVisibilityState | None = None,
+        lifecycle_status: contracts.LifecycleStatus | None = None,
         decision_record_id: str | None = None,
         profile: contracts.ReadProfile | None = None,
         layout: contracts.QueryLayout | None = None,
@@ -357,6 +358,7 @@ class CruxibleClient:
             "limit": limit,
             "offset": offset,
             "relationship_state": relationship_state,
+            "lifecycle_status": lifecycle_status,
             "decision_record_id": decision_record_id,
         }
         if profile is not None:
@@ -379,14 +381,15 @@ class CruxibleClient:
         limit: int | None = None,
         offset: int = 0,
         relationship_state: contracts.QueryVisibilityState | None = None,
+        lifecycle_status: contracts.LifecycleStatus | None = None,
     ) -> contracts.QueryToolResult:
         """Run a named query through the GET /views read-model shim.
 
         View query parameters are string-valued; ``limit``, ``offset``, and
-        ``relationship_state`` are reserved view keys and must not appear in
-        ``params``.
+        ``relationship_state`` and ``lifecycle_status`` are reserved view keys
+        and must not appear in ``params``.
         """
-        reserved = {"limit", "offset", "relationship_state"} & set(params or {})
+        reserved = {"limit", "offset", "relationship_state", "lifecycle_status"} & set(params or {})
         if reserved:
             raise ValueError(f"params may not use reserved view keys: {sorted(reserved)}")
         query_params: dict[str, Any] = dict(params or {})
@@ -396,6 +399,8 @@ class CruxibleClient:
             query_params["offset"] = offset
         if relationship_state is not None:
             query_params["relationship_state"] = relationship_state
+        if lifecycle_status is not None:
+            query_params["lifecycle_status"] = lifecycle_status
         response = self._client.get(
             f"/api/v1/{instance_id}/views/{query_name}",
             params=query_params,
@@ -409,6 +414,7 @@ class CruxibleClient:
         params: dict[str, Any] | None = None,
         limit: int | None = None,
         relationship_state: contracts.QueryVisibilityState | None = None,
+        lifecycle_status: contracts.LifecycleStatus | None = None,
         decision_record_id: str | None = None,
         profile: contracts.ReadProfile | None = None,
         layout: contracts.QueryLayout | None = None,
@@ -424,6 +430,7 @@ class CruxibleClient:
             "params": params,
             "limit": limit,
             "relationship_state": relationship_state,
+            "lifecycle_status": lifecycle_status,
             "decision_record_id": decision_record_id,
         }
         if profile is not None:
@@ -751,6 +758,7 @@ class CruxibleClient:
         operation_type: str | None = None,
         fields: builtins.list[str] | None = None,
         relationship_state: contracts.QueryVisibilityState | None = None,
+        lifecycle_status: contracts.LifecycleStatus | None = None,
         profile: contracts.ReadProfile | None = None,
         continuation: str | None = None,
     ) -> contracts.ListResult:
@@ -764,6 +772,7 @@ class CruxibleClient:
             "operation_type": operation_type,
             "fields": fields,
             "relationship_state": relationship_state,
+            "lifecycle_status": lifecycle_status,
             "profile": profile,
             "continuation": continuation,
         }
@@ -1147,6 +1156,98 @@ class CruxibleClient:
             ),
         )
         return self._parse_model(response, contracts.AddEntityResult)
+
+    def supersede_claim(
+        self,
+        instance_id: str,
+        claim_id: str,
+        successor_claim_id: str,
+        reason: str,
+        *,
+        evidence_ref: contracts.EvidenceRef | dict[str, Any] | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.ClaimLifecycleResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/claims/{claim_id}/supersede",
+            json=self._with_actor_context(
+                {
+                    "successor_claim_id": successor_claim_id,
+                    "reason": reason,
+                    "evidence_ref": self._model_or_mapping(evidence_ref),
+                },
+                actor_context,
+            ),
+        )
+        return self._parse_model(response, contracts.ClaimLifecycleResult)
+
+    def retract_claim(
+        self,
+        instance_id: str,
+        claim_id: str,
+        reason: str,
+        *,
+        evidence_ref: contracts.EvidenceRef | dict[str, Any] | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.ClaimLifecycleResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/claims/{claim_id}/retract",
+            json=self._with_actor_context(
+                {"reason": reason, "evidence_ref": self._model_or_mapping(evidence_ref)},
+                actor_context,
+            ),
+        )
+        return self._parse_model(response, contracts.ClaimLifecycleResult)
+
+    def supersede_entity(
+        self,
+        instance_id: str,
+        entity_type: str,
+        entity_id: str,
+        successor_entity_type: str,
+        successor_entity_id: str,
+        reason: str,
+        *,
+        evidence_ref: contracts.EvidenceRef | dict[str, Any] | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.EntityLifecycleResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/entities/{entity_type}/{entity_id}/supersede",
+            json=self._with_actor_context(
+                {
+                    "successor_entity_type": successor_entity_type,
+                    "successor_entity_id": successor_entity_id,
+                    "reason": reason,
+                    "evidence_ref": self._model_or_mapping(evidence_ref),
+                },
+                actor_context,
+            ),
+        )
+        return self._parse_model(response, contracts.EntityLifecycleResult)
+
+    def retire_entity(
+        self,
+        instance_id: str,
+        entity_type: str,
+        entity_id: str,
+        reason: str,
+        *,
+        evidence_ref: contracts.EvidenceRef | dict[str, Any] | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.EntityLifecycleResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/entities/{entity_type}/{entity_id}/retire",
+            json=self._with_actor_context(
+                {"reason": reason, "evidence_ref": self._model_or_mapping(evidence_ref)},
+                actor_context,
+            ),
+        )
+        return self._parse_model(response, contracts.EntityLifecycleResult)
+
+    @staticmethod
+    def _model_or_mapping(value: BaseModel | Mapping[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        return value.model_dump(mode="json") if isinstance(value, BaseModel) else dict(value)
 
     def batch_direct_write(
         self,

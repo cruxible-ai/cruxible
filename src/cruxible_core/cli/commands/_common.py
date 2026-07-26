@@ -144,6 +144,14 @@ state_option = click.option(
     ),
 )
 
+lifecycle_status_option = click.option(
+    "--lifecycle-status",
+    "lifecycle_status",
+    type=click.Choice(["active", "inactive", "superseded", "retracted", "live", "retired"]),
+    default=None,
+    help="Exact kind-correct lifecycle status to read.",
+)
+
 
 # Continuation token option shared by resumable read commands. Tokens are
 # opaque, bound to the instance/config/read_revision/filter set; replay after

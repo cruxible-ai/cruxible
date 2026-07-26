@@ -123,9 +123,8 @@ class SupersessionPointer(BaseModel):
     to ``None`` (see ``_tolerate_incoherent_stored_pointer``): the damage stays
     the size of the one field.
 
-    Nothing writes these today. The dedicated receipted lifecycle verbs
-    (``wi-lifecycle-verbs``) are the first writer; this pass only gives the
-    field a shape those verbs can target.
+    The dedicated receipted relationship/entity supersede verbs are the only
+    writers of these pointers.
     """
 
     model_config = ConfigDict(extra="allow")

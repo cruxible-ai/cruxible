@@ -148,6 +148,16 @@
         "reference_model"
       ]
     },
+    "LifecycleStatus": {
+      "values": [
+        "active",
+        "inactive",
+        "superseded",
+        "retracted",
+        "live",
+        "retired"
+      ]
+    },
     "NeighborhoodTruncationReason": {
       "values": [
         "node_budget",
@@ -3731,6 +3741,144 @@
         "view"
       ]
     },
+    "ClaimLifecycleResult": {
+      "fields": {
+        "action": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "action",
+          "required": true,
+          "schema": {
+            "enum": [
+              "supersede",
+              "retract"
+            ],
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "claim": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Claim",
+            "type": "object"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "successor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "successor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Successor"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "supersede",
+              "retract"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "claim": {
+            "additionalProperties": true,
+            "title": "Claim",
+            "type": "object"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
+          "successor": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Successor"
+          }
+        },
+        "required": [
+          "action",
+          "claim",
+          "reason"
+        ],
+        "title": "ClaimLifecycleResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "action",
+        "claim",
+        "reason"
+      ]
+    },
     "CloneSnapshotResult": {
       "fields": {
         "admin_credential": {
@@ -7259,6 +7407,162 @@
       },
       "required_fields": [
         "status"
+      ]
+    },
+    "EntityLifecycleResult": {
+      "fields": {
+        "action": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "action",
+          "required": true,
+          "schema": {
+            "enum": [
+              "supersede",
+              "retire"
+            ],
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "entity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Entity",
+            "type": "object"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "stranded_live_edge_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "stranded_live_edge_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Stranded Live Edge Count",
+            "type": "integer"
+          }
+        },
+        "successor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "successor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Successor"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "supersede",
+              "retire"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "entity": {
+            "additionalProperties": true,
+            "title": "Entity",
+            "type": "object"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
+          "stranded_live_edge_count": {
+            "default": 0,
+            "title": "Stranded Live Edge Count",
+            "type": "integer"
+          },
+          "successor": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Successor"
+          }
+        },
+        "required": [
+          "action",
+          "entity",
+          "reason"
+        ],
+        "title": "EntityLifecycleResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "action",
+        "entity",
+        "reason"
       ]
     },
     "EvaluateResult": {
@@ -19258,6 +19562,34 @@
             "type": "string"
           }
         },
+        "lifecycle_status": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lifecycle_status",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "inactive",
+                  "superseded",
+                  "retracted",
+                  "live",
+                  "retired"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lifecycle Status"
+          }
+        },
         "limit": {
           "default": null,
           "default_json_serializable": true,
@@ -20061,6 +20393,26 @@
             "default": "graph",
             "title": "Layout",
             "type": "string"
+          },
+          "lifecycle_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "inactive",
+                  "superseded",
+                  "retracted",
+                  "live",
+                  "retired"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lifecycle Status"
           },
           "limit": {
             "anyOf": [
@@ -23156,6 +23508,34 @@
             "type": "array"
           }
         },
+        "lifecycle_status": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lifecycle_status",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "inactive",
+                  "superseded",
+                  "retracted",
+                  "live",
+                  "retired"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lifecycle Status"
+          }
+        },
         "limit": {
           "default": null,
           "default_json_serializable": true,
@@ -23932,6 +24312,26 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "lifecycle_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "inactive",
+                  "superseded",
+                  "retracted",
+                  "live",
+                  "retired"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lifecycle Status"
           },
           "limit": {
             "anyOf": [

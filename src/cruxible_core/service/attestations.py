@@ -24,6 +24,7 @@ from cruxible_core.attestation.types import (
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
+    SupersessionPointer,
     relationship_assertion_from_metadata,
     relationship_is_live,
     relationship_lifecycle_is_active,
@@ -319,6 +320,7 @@ def service_list_attestations(
                 target_identity_mismatch_kind=mismatch_kind,
                 stale_content=(record.claim_content_digest != _relationship_digest(relationship)),
                 current_claim_state=_claim_state(relationship),
+                successor_ref=_claim_successor_ref(relationship),
             )
         )
     return ListResult(
@@ -570,6 +572,13 @@ def _claim_state(relationship: RelationshipInstance) -> ClaimStateAtRecord:
     if not relationship_lifecycle_is_active(assertion):
         return "inactive"
     return "live"
+
+
+def _claim_successor_ref(relationship: RelationshipInstance) -> SupersessionPointer | None:
+    assertion = relationship_assertion_from_metadata(relationship.metadata)
+    if assertion.lifecycle.status != "superseded":
+        return None
+    return assertion.lifecycle.superseded_by
 
 
 def _target_identity_mismatch(

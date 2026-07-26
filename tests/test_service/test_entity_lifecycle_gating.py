@@ -8,12 +8,16 @@ while ``entity get <id>`` still returns it and reveals its lifecycle status.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import TerminalLifecycleWriteRefusedError
+from cruxible_core.errors import DataValidationError, TerminalLifecycleWriteRefusedError
 from cruxible_core.graph.assertion_state import EntityLifecycleState
-from cruxible_core.graph.types import EntityMetadata
+from cruxible_core.graph.types import EntityInstance, EntityMetadata
+from cruxible_core.query.enums import QueryVisibilityState
+from cruxible_core.query.types import QueryPathRow, QueryRelationshipRow
 from cruxible_core.service import service_list, service_query_surface
 from cruxible_core.service.mutations import (
     service_add_entities,
@@ -28,7 +32,7 @@ from tests.support.terminal_lifecycle import (
 )
 
 
-def _lifecycle_metadata(status: str) -> dict:
+def _lifecycle_metadata(status: str) -> dict[str, Any]:
     """Build a stored entity-metadata dict carrying a typed lifecycle status.
 
     The production write path runs through the typed ``EntityMetadata`` envelope
@@ -40,7 +44,7 @@ def _lifecycle_metadata(status: str) -> dict:
     ).to_metadata_dict()
 
 
-def _entity_lifecycle_status(metadata) -> str:
+def _entity_lifecycle_status(metadata: Any) -> str:
     """Decode the typed lifecycle status from a stored entity-metadata dict."""
     return EntityMetadata.from_metadata(metadata).lifecycle_status()
 
@@ -64,7 +68,10 @@ def _retire_part(instance: CruxibleInstance, part_id: str, status: str) -> None:
     _retire_entity(instance, "Part", part_id, status)
 
 
-def _list_part_ids(instance: CruxibleInstance, state: str | None) -> set[str]:
+def _list_part_ids(
+    instance: CruxibleInstance,
+    state: QueryVisibilityState | None,
+) -> set[str]:
     result = service_list(
         instance,
         "entities",
@@ -74,7 +81,10 @@ def _list_part_ids(instance: CruxibleInstance, state: str | None) -> set[str]:
     return {item.entity_id for item in result.items}
 
 
-def _query_part_ids(instance: CruxibleInstance, state: str | None) -> set[str]:
+def _query_part_ids(
+    instance: CruxibleInstance,
+    state: QueryVisibilityState | None,
+) -> set[str]:
     # Inline entity-collection query equivalent to `list entities`.
     definition = {
         "name": "all_parts",
@@ -91,10 +101,13 @@ def _query_part_ids(instance: CruxibleInstance, state: str | None) -> set[str]:
         {},
         relationship_state=state,
     )
-    return {item.entity_id for item in res.items}
+    return {cast(EntityInstance, item).entity_id for item in res.items}
 
 
-def _traversal_part_ids(instance: CruxibleInstance, state: str | None) -> set[str]:
+def _traversal_part_ids(
+    instance: CruxibleInstance,
+    state: QueryVisibilityState | None,
+) -> set[str]:
     res = service_query_surface(
         instance,
         "parts_for_vehicle",
@@ -104,10 +117,13 @@ def _traversal_part_ids(instance: CruxibleInstance, state: str | None) -> set[st
     # `parts_for_vehicle` defaults to result_shape `path`; the terminal entity of
     # each path is the Part. Entity-lifecycle gating drops paths whose result
     # entity is retired.
-    return {item.result.entity_id for item in res.items}
+    return {cast(QueryPathRow, item).result.entity_id for item in res.items}
 
 
-def _inline_traversal_part_ids(instance: CruxibleInstance, state: str | None) -> set[str]:
+def _inline_traversal_part_ids(
+    instance: CruxibleInstance,
+    state: QueryVisibilityState | None,
+) -> set[str]:
     """Run the `parts_for_vehicle` traversal allowing a runtime state override.
 
     The config's `parts_for_vehicle` query forbids runtime relationship-state
@@ -137,7 +153,7 @@ def _inline_traversal_part_ids(instance: CruxibleInstance, state: str | None) ->
         {"vehicle_id": "V-2024-CIVIC-EX"},
         relationship_state=state,
     )
-    return {item.result.entity_id for item in res.items}
+    return {cast(QueryPathRow, item).result.entity_id for item in res.items}
 
 
 # ---------------------------------------------------------------------------
@@ -158,8 +174,7 @@ def test_trusted_lifecycle_transition_sets_and_round_trips_terminal_status(
     """The trusted capability CAN write a terminal status, and it round-trips.
 
     This is the other half of the refusal: the chokepoint refuses the free-write
-    path but stays open to machinery that has earned the transition, so the
-    dedicated receipted verbs of ``wi-lifecycle-verbs`` have a seam to land on.
+    path but stays open only to the dedicated receipted lifecycle verbs.
     """
     _retire_part(populated_instance, "BP-1001", "retired")
     entity = service_get_entity(populated_instance, "Part", "BP-1001")
@@ -183,7 +198,7 @@ def test_batch_direct_write_service_refuses_terminal_lifecycle(
     """
     with pytest.raises(
         TerminalLifecycleWriteRefusedError,
-        match="terminal lifecycle transitions require",
+        match="cruxible entity retire",
     ):
         service_batch_direct_write(
             populated_instance,
@@ -256,8 +271,6 @@ def test_entity_update_refuses_terminal_lifecycle_and_preserves_metadata(
     persisted a hand-built ``EntityMetadata`` carrying ``superseded``. It is now
     refused at the chokepoint, and the entity's earlier metadata is untouched.
     """
-    from cruxible_core.graph.types import EntityInstance
-
     # Seed an unrelated metadata key through the still-permitted write path.
     service_add_entities(
         populated_instance,
@@ -266,7 +279,7 @@ def test_entity_update_refuses_terminal_lifecycle_and_preserves_metadata(
                 entity_type="Part",
                 entity_id="BP-1002",
                 properties={},
-                metadata={"note": "keep-me"},
+                metadata=EntityMetadata.from_metadata({"note": "keep-me"}),
             )
         ],
     )
@@ -278,7 +291,7 @@ def test_entity_update_refuses_terminal_lifecycle_and_preserves_metadata(
                     entity_type="Part",
                     entity_id="BP-1002",
                     properties={},
-                    metadata=_lifecycle_metadata("superseded"),
+                    metadata=EntityMetadata.from_metadata(_lifecycle_metadata("superseded")),
                 )
             ],
         )
@@ -290,27 +303,31 @@ def test_entity_update_refuses_terminal_lifecycle_and_preserves_metadata(
     assert entity.metadata.extra["note"] == "keep-me"
 
 
-def test_non_terminal_entity_lifecycle_stays_writable_through_the_service(
+def test_retired_entity_cannot_be_reactivated_through_the_service(
     populated_instance: CruxibleInstance,
 ) -> None:
-    """``live`` is a reversible state, not a termination — it stays freely writable."""
+    """A retired identity is preserved for the future receipted reinstate verb."""
     _retire_part(populated_instance, "BP-1002", "retired")
-    service_batch_direct_write(
-        populated_instance,
-        BatchDirectWriteInput(
-            entities=[
-                EntityWriteInput(
-                    entity_type="Part",
-                    entity_id="BP-1002",
-                    properties={},
-                    metadata=_lifecycle_metadata("live"),
-                )
-            ]
-        ),
-    )
+    with pytest.raises(
+        DataValidationError,
+        match=r"Part:BP-1002.*cruxible entity reinstate",
+    ):
+        service_batch_direct_write(
+            populated_instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="Part",
+                        entity_id="BP-1002",
+                        properties={},
+                        metadata=_lifecycle_metadata("live"),
+                    )
+                ]
+            ),
+        )
     entity = service_get_entity(populated_instance, "Part", "BP-1002")
     assert entity is not None
-    assert _entity_lifecycle_status(entity.metadata) == "live"
+    assert _entity_lifecycle_status(entity.metadata) == "retired"
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +383,7 @@ def test_live_is_default_for_list_entities(populated_instance: CruxibleInstance)
 @pytest.mark.parametrize("review_value", ["accepted", "pending", "reviewable"])
 def test_review_only_states_resolve_to_live_for_entities(
     populated_instance: CruxibleInstance,
-    review_value: str,
+    review_value: QueryVisibilityState,
 ) -> None:
     _retire_part(populated_instance, "BP-1001", "retired")
     # Entities have no review axis: review-only selectors behave like `live`.
@@ -462,7 +479,7 @@ def test_missing_entry_still_raises_entity_not_found(
 @pytest.mark.parametrize("review_value", ["accepted", "pending", "reviewable"])
 def test_review_only_states_gate_traversal_entry_like_live(
     populated_instance: CruxibleInstance,
-    review_value: str,
+    review_value: QueryVisibilityState,
 ) -> None:
     """Review-only selectors resolve to `live` for the entry, exactly like results."""
     _retire_entity(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
@@ -674,7 +691,7 @@ def test_terminal_entity_lifecycle_is_refused_on_the_free_write_path(
         )
         with pytest.raises(
             TerminalLifecycleWriteRefusedError,
-            match="terminal lifecycle transitions require",
+            match="cruxible entity retire",
         ):
             api.batch_direct_write(instance_id, payload)
 
@@ -732,7 +749,10 @@ def _retract_fits_endpoints_live(instance: CruxibleInstance) -> None:
     )
 
 
-def _list_edge_ids(instance: CruxibleInstance, state: str | None) -> set[tuple[str, str]]:
+def _list_edge_ids(
+    instance: CruxibleInstance,
+    state: QueryVisibilityState | None,
+) -> set[tuple[str, str]]:
     result = service_list(
         instance,
         "edges",
@@ -742,7 +762,10 @@ def _list_edge_ids(instance: CruxibleInstance, state: str | None) -> set[tuple[s
     return {(item["from_id"], item["to_id"]) for item in result.items}
 
 
-def _query_edge_ids(instance: CruxibleInstance, state: str | None) -> set[tuple[str, str]]:
+def _query_edge_ids(
+    instance: CruxibleInstance,
+    state: QueryVisibilityState | None,
+) -> set[tuple[str, str]]:
     """Relationship-shaped collection query equivalent to `list edges`."""
     from cruxible_core.service import service_query_inline_surface
 
@@ -758,13 +781,16 @@ def _query_edge_ids(instance: CruxibleInstance, state: str | None) -> set[tuple[
         {},
         relationship_state=state,
     )
-    return {(item.from_id, item.to_id) for item in res.items}
+    return {
+        (cast(QueryRelationshipRow, item).from_id, cast(QueryRelationshipRow, item).to_id)
+        for item in res.items
+    }
 
 
 @pytest.mark.parametrize("state", ["not-live", "live", "all"])
 def test_retracted_edge_with_live_endpoints_agrees_across_surfaces(
     populated_instance: CruxibleInstance,
-    state: str,
+    state: QueryVisibilityState,
 ) -> None:
     """`list edges` and a relationship-shaped collection query AGREE per state.
 

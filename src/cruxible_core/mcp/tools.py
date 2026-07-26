@@ -185,6 +185,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         limit: int | None = None,
         offset: int = 0,
         relationship_state: contracts.QueryVisibilityState | None = None,
+        lifecycle_status: contracts.LifecycleStatus | None = None,
         decision_record_id: str | None = None,
         profile: contracts.ReadProfile | None = None,
         layout: contracts.QueryLayout = "rows",
@@ -230,6 +231,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             limit=limit,
             offset=offset,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             decision_record_id=decision_record_id,
             profile=profile,
             layout=layout,
@@ -242,6 +244,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         params: dict[str, Any] | None = None,
         limit: int | None = None,
         relationship_state: contracts.QueryVisibilityState | None = None,
+        lifecycle_status: contracts.LifecycleStatus | None = None,
         decision_record_id: str | None = None,
         profile: contracts.ReadProfile | None = None,
         layout: contracts.QueryLayout = "rows",
@@ -274,6 +277,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             params,
             limit=limit,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             decision_record_id=decision_record_id,
             profile=profile,
             layout=layout,
@@ -486,6 +490,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         operation_type: str | None = None,
         fields: list[str] | None = None,
         relationship_state: contracts.QueryVisibilityState | None = None,
+        lifecycle_status: contracts.LifecycleStatus | None = None,
         profile: contracts.ReadProfile | None = None,
         continuation: str | None = None,
     ) -> contracts.ListResult:
@@ -504,6 +509,9 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         not-live|pending|reviewable`): for entities it gates by lifecycle, for
         edges by review+lifecycle. Entities default to `live`; edges return all
         stored edges unless a selector is given.
+        `lifecycle_status` selects one exact, kind-correct lifecycle state
+        (`live|retired|superseded` for entities; `active|inactive|superseded|
+        retracted` for edges) without adding visibility-state vocabulary.
         `profile` shapes entity/edge item payloads: `compact` (default here)
         returns bounded identity cards with governance markers; pass `standard`
         or `full` when you need provenance or actor context.
@@ -530,6 +538,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             operation_type=operation_type,
             fields=fields,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             profile=profile,
             continuation=continuation,
         )
@@ -843,6 +852,92 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         is not available.
         """
         return handlers.handle_add_entity(instance_id, entities, dry_run=dry_run)
+
+    @_tool
+    def cruxible_supersede_claim(
+        instance_id: str,
+        claim_id: str,
+        successor_claim_id: str,
+        reason: str,
+        evidence_ref: contracts.EvidenceRef | None = None,
+    ) -> contracts.ClaimLifecycleResult:
+        """Settle a claim as superseded by an existing live same-type claim.
+
+        This is a GRAPH_WRITE adjudication: it requires a reason, records actor
+        attribution and a mutation receipt, and writes typed pointers in both
+        directions. It links the successor; it never creates one.
+        """
+        return handlers.handle_supersede_claim(
+            instance_id,
+            claim_id,
+            successor_claim_id,
+            reason,
+            evidence_ref,
+        )
+
+    @_tool
+    def cruxible_retract_claim(
+        instance_id: str,
+        claim_id: str,
+        reason: str,
+        evidence_ref: contracts.EvidenceRef | None = None,
+    ) -> contracts.ClaimLifecycleResult:
+        """Settle a claim as retracted without a successor.
+
+        This is a GRAPH_WRITE adjudication with required reason, actor
+        attribution, and a mutation receipt. The settled claim remains
+        addressable by claim_id for historical reads.
+        """
+        return handlers.handle_retract_claim(instance_id, claim_id, reason, evidence_ref)
+
+    @_tool
+    def cruxible_supersede_entity(
+        instance_id: str,
+        entity_type: str,
+        entity_id: str,
+        successor_entity_type: str,
+        successor_entity_id: str,
+        reason: str,
+        evidence_ref: contracts.EvidenceRef | None = None,
+    ) -> contracts.EntityLifecycleResult:
+        """Settle an entity as superseded by an existing live same-type entity.
+
+        This is a GRAPH_WRITE adjudication with required reason, actor
+        attribution, two-way typed pointers, and a mutation receipt. Inbound
+        and outbound edges do not migrate to the successor; re-point them
+        explicitly when needed.
+        """
+        return handlers.handle_supersede_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            successor_entity_type,
+            successor_entity_id,
+            reason,
+            evidence_ref,
+        )
+
+    @_tool
+    def cruxible_retire_entity(
+        instance_id: str,
+        entity_type: str,
+        entity_id: str,
+        reason: str,
+        evidence_ref: contracts.EvidenceRef | None = None,
+    ) -> contracts.EntityLifecycleResult:
+        """Settle an entity as retired without a successor or edge cascade.
+
+        This is a GRAPH_WRITE adjudication with required reason, actor
+        attribution, and a mutation receipt. The result reports how many
+        still-live attached edges the retirement strands.
+        """
+        return handlers.handle_retire_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            reason,
+            evidence_ref,
+        )
 
     @_tool
     def cruxible_batch_direct_write(

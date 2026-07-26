@@ -158,7 +158,9 @@ from cruxible_core.service import (
     service_resolve_group,
     service_resolve_outcome,
     service_restore_instance,
+    service_retire_entity,
     service_retire_procedure,
+    service_retract_claim,
     service_run,
     service_run_procedure,
     service_sample,
@@ -167,6 +169,8 @@ from cruxible_core.service import (
     service_state_health,
     service_state_status,
     service_stats,
+    service_supersede_claim,
+    service_supersede_entity,
     service_test,
     service_update_trust_status,
     service_validate,
@@ -1681,6 +1685,7 @@ def query(
     *,
     offset: int = 0,
     relationship_state: contracts.QueryVisibilityState | None = None,
+    lifecycle_status: contracts.LifecycleStatus | None = None,
     decision_record_id: str | None = None,
     surface: str = "local",
     profile: contracts.ReadProfile = "standard",
@@ -1696,6 +1701,7 @@ def query(
         limit=limit,
         offset=offset,
         relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
         context=_operation_context(decision_record_id, surface=surface),
     )
 
@@ -1718,6 +1724,7 @@ def query_inline(
     limit: int | None = None,
     *,
     relationship_state: contracts.QueryVisibilityState | None = None,
+    lifecycle_status: contracts.LifecycleStatus | None = None,
     decision_record_id: str | None = None,
     surface: str = "local",
     profile: contracts.ReadProfile = "standard",
@@ -1737,6 +1744,7 @@ def query_inline(
         params or {},
         limit=limit,
         relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
         context=_operation_context(decision_record_id, surface=surface),
     )
 
@@ -1802,6 +1810,7 @@ def _query_tool_result(
             result_shape=result.result_shape,
             dedupe=result.dedupe,
             relationship_state=result.relationship_state,
+            lifecycle_status=result.lifecycle_status,
             policy_summary=result.policy_summary,
             param_hints=(
                 contracts.QueryParamHints(
@@ -1836,6 +1845,7 @@ def _query_tool_result(
         result_shape=result.result_shape,
         dedupe=result.dedupe,
         relationship_state=result.relationship_state,
+        lifecycle_status=result.lifecycle_status,
         policy_summary=result.policy_summary,
         param_hints=(
             contracts.QueryParamHints(
@@ -2111,6 +2121,7 @@ def list_resources(
     fields: list[str] | None = None,
     offset: int = 0,
     relationship_state: contracts.QueryVisibilityState | None = None,
+    lifecycle_status: contracts.LifecycleStatus | None = None,
     profile: contracts.ReadProfile = "standard",
     continuation: str | None = None,
 ) -> contracts.ListResult:
@@ -2135,6 +2146,7 @@ def list_resources(
             "where": where,
             "operation_type": operation_type,
             "relationship_state": relationship_state,
+            "lifecycle_status": lifecycle_status,
         }
     )
     token = _accept_continuation(
@@ -2169,6 +2181,7 @@ def list_resources(
         operation_type=operation_type,
         fields=fields,
         relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
         limit=limit,
         offset=offset,
         receipt_before=receipt_before,
@@ -3444,6 +3457,121 @@ def add_entities(
         entities_updated=result.updated,
         receipt_id=result.receipt_id,
     )
+
+
+def supersede_claim(
+    instance_id: str,
+    claim_id: str,
+    successor_claim_id: str,
+    reason: str,
+    *,
+    evidence_ref: contracts.EvidenceRef | dict[str, Any] | None = None,
+    actor_context: Any | None = None,
+) -> contracts.ClaimLifecycleResult:
+    """Settle a claim as superseded by an existing live same-type claim."""
+    result = service_supersede_claim(
+        get_manager().get(instance_id),
+        claim_id,
+        successor_claim_id,
+        reason=reason,
+        actor_context=_hosted_actor_context(actor_context),
+        evidence_ref=_optional_model_payload(evidence_ref),
+    )
+    return contracts.ClaimLifecycleResult(
+        action=result.action,
+        claim=result.claim.model_dump(mode="json"),
+        successor=(result.successor.model_dump(mode="json") if result.successor else None),
+        reason=result.reason,
+        receipt_id=result.receipt_id,
+    )
+
+
+def retract_claim(
+    instance_id: str,
+    claim_id: str,
+    reason: str,
+    *,
+    evidence_ref: contracts.EvidenceRef | dict[str, Any] | None = None,
+    actor_context: Any | None = None,
+) -> contracts.ClaimLifecycleResult:
+    """Settle a claim as retracted without a successor."""
+    result = service_retract_claim(
+        get_manager().get(instance_id),
+        claim_id,
+        reason=reason,
+        actor_context=_hosted_actor_context(actor_context),
+        evidence_ref=_optional_model_payload(evidence_ref),
+    )
+    return contracts.ClaimLifecycleResult(
+        action=result.action,
+        claim=result.claim.model_dump(mode="json"),
+        reason=result.reason,
+        receipt_id=result.receipt_id,
+    )
+
+
+def supersede_entity(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str,
+    successor_entity_type: str,
+    successor_entity_id: str,
+    reason: str,
+    *,
+    evidence_ref: contracts.EvidenceRef | dict[str, Any] | None = None,
+    actor_context: Any | None = None,
+) -> contracts.EntityLifecycleResult:
+    """Settle an entity as superseded; its inbound edges do not migrate."""
+    result = service_supersede_entity(
+        get_manager().get(instance_id),
+        entity_type,
+        entity_id,
+        successor_entity_type,
+        successor_entity_id,
+        reason=reason,
+        actor_context=_hosted_actor_context(actor_context),
+        evidence_ref=_optional_model_payload(evidence_ref),
+    )
+    return contracts.EntityLifecycleResult(
+        action=result.action,
+        entity=result.entity.model_dump(mode="json"),
+        successor=(result.successor.model_dump(mode="json") if result.successor else None),
+        reason=result.reason,
+        receipt_id=result.receipt_id,
+    )
+
+
+def retire_entity(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str,
+    reason: str,
+    *,
+    evidence_ref: contracts.EvidenceRef | dict[str, Any] | None = None,
+    actor_context: Any | None = None,
+) -> contracts.EntityLifecycleResult:
+    """Settle an entity as retired without cascading attached edges."""
+    result = service_retire_entity(
+        get_manager().get(instance_id),
+        entity_type,
+        entity_id,
+        reason=reason,
+        actor_context=_hosted_actor_context(actor_context),
+        evidence_ref=_optional_model_payload(evidence_ref),
+    )
+    return contracts.EntityLifecycleResult(
+        action=result.action,
+        entity=result.entity.model_dump(mode="json"),
+        reason=result.reason,
+        stranded_live_edge_count=result.stranded_live_edge_count,
+        receipt_id=result.receipt_id,
+    )
+
+
+def _optional_model_payload(value: BaseModel | dict[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return value.model_dump(mode="python") if isinstance(value, BaseModel) else dict(value)
 
 
 def add_constraint(

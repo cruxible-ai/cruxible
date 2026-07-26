@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.graph.assertion_state import SupersessionPointer
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.temporal import ensure_utc, utc_now
@@ -167,6 +168,7 @@ class AttestationListItem(BaseModel):
     target_identity_mismatch_kind: Literal["claim_id", "edge_key"] | None = None
     stale_content: bool = False
     current_claim_state: ClaimStateAtRecord | None = None
+    successor_ref: SupersessionPointer | None = None
 
 
 class StaleContentSummary(BaseModel):

@@ -14,6 +14,7 @@ from typing import Any, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 QueryVisibilityState = Literal["live", "accepted", "all", "not-live", "pending", "reviewable"]
+LifecycleStatus = Literal["active", "inactive", "superseded", "retracted", "live", "retired"]
 # Output profile for entity-shaped read payloads: `standard` is the unchanged
 # full shape (HTTP default), `compact` is the bounded identity card that keeps
 # governance markers (lifecycle / review status) but drops actor_context and
@@ -891,6 +892,7 @@ class QueryToolResult(BaseModel):
     result_shape: Literal["entity", "path", "relationship"] = "path"
     dedupe: Literal["entity", "path", "none"] = "path"
     relationship_state: QueryVisibilityState = "live"
+    lifecycle_status: LifecycleStatus | None = None
     param_hints: "QueryParamHints | None" = None
     policy_summary: dict[str, int] = Field(default_factory=dict)
     # Monotonic state revision at read time; receipts prove computation,
@@ -1055,6 +1057,7 @@ class QueryGraphToolResult(BaseModel):
     result_shape: Literal["entity", "path", "relationship"] = "path"
     dedupe: Literal["entity", "path", "none"] = "path"
     relationship_state: QueryVisibilityState = "live"
+    lifecycle_status: LifecycleStatus | None = None
     param_hints: "QueryParamHints | None" = None
     policy_summary: dict[str, int] = Field(default_factory=dict)
     # Monotonic state revision at read time; receipts prove computation,
@@ -1329,6 +1332,23 @@ class AddRelationshipResult(BaseModel):
 class AddEntityResult(BaseModel):
     entities_added: int
     entities_updated: int
+    receipt_id: str | None = None
+
+
+class ClaimLifecycleResult(BaseModel):
+    action: Literal["supersede", "retract"]
+    claim: dict[str, Any]
+    reason: str
+    successor: dict[str, Any] | None = None
+    receipt_id: str | None = None
+
+
+class EntityLifecycleResult(BaseModel):
+    action: Literal["supersede", "retire"]
+    entity: dict[str, Any]
+    reason: str
+    successor: dict[str, Any] | None = None
+    stranded_live_edge_count: int = 0
     receipt_id: str | None = None
 
 

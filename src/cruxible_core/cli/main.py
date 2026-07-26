@@ -61,8 +61,12 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("outcome", "record"): "active",
     ("entity", "add"): "active",
     ("entity", "update"): "active",
+    ("entity", "supersede"): "active",
+    ("entity", "retire"): "active",
     ("relationship", "add"): "active",
     ("relationship", "update"): "active",
+    ("relationship", "supersede"): "active",
+    ("relationship", "retract"): "active",
     ("batch-direct-write",): "active",
     ("group", "propose"): "active",
     ("group", "resolve"): "active",
@@ -788,6 +792,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "update_entity_cmd",
                 "Update one existing entity's properties and/or lifecycle state.",
             ),
+            "supersede": _command(
+                "lifecycle_verbs",
+                "entity_supersede_cmd",
+                "Supersede an entity with an existing live same-type successor.",
+            ),
+            "retire": _command(
+                "lifecycle_verbs",
+                "entity_retire_cmd",
+                "Retire an entity without cascading attached edges.",
+            ),
             "get": _command("reads", "get_entity_cmd", "Look up a specific entity by type and ID."),
             "inspect": _command(
                 "reads", "inspect_entity_cmd", "Inspect an entity and its bounded neighborhood."
@@ -811,6 +825,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "mutations",
                 "update_relationship_cmd",
                 "Update one existing relationship's properties, evidence, or lifecycle.",
+            ),
+            "supersede": _command(
+                "lifecycle_verbs",
+                "relationship_supersede_cmd",
+                "Supersede a claim with an existing live same-type successor.",
+            ),
+            "retract": _command(
+                "lifecycle_verbs",
+                "relationship_retract_cmd",
+                "Retract a claim without a successor.",
             ),
             "get": _command(
                 "reads",

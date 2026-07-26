@@ -6,6 +6,14 @@ from typing import Literal
 
 QueryResultShape = Literal["entity", "path", "relationship"]
 QueryDedupe = Literal["entity", "path", "none"]
+LifecycleStatus = Literal[
+    "active",
+    "inactive",
+    "superseded",
+    "retracted",
+    "live",
+    "retired",
+]
 
 # Unified read-visibility selector. Applies uniformly to entities (gated by
 # lifecycle) and relationships (gated by review AND lifecycle):
@@ -31,6 +39,7 @@ REVIEW_ONLY_VISIBILITY_STATES: frozenset[str] = frozenset({"accepted", "pending"
 
 __all__ = [
     "REVIEW_ONLY_VISIBILITY_STATES",
+    "LifecycleStatus",
     "QueryDedupe",
     "QueryResultShape",
     "QueryVisibilityState",

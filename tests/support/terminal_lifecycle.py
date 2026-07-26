@@ -8,13 +8,15 @@ refusals are asserted directly in ``tests/test_service/
 test_relationship_lifecycle_write.py`` and ``test_entity_lifecycle_gating.py``.
 
 Read-gating tests still need retired/retracted state to exist. They seed it here,
-through ``trusted_lifecycle_transition=True`` — the internal capability the
-dedicated receipted verbs of ``wi-lifecycle-verbs`` will carry. The flag is a
-Python keyword argument on the graph operation; no contract payload field maps to
-it, so nothing a caller can send reaches this path.
+through ``trusted_lifecycle_transition=True`` — the internal capability carried
+by the dedicated receipted lifecycle verbs. The flag is a Python keyword argument
+on the graph operation; no contract payload field maps to it, so nothing a caller
+can send reaches this path.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from cruxible_core.graph.assertion_state import (
     EntityLifecycleState,
@@ -30,7 +32,7 @@ from cruxible_core.graph.types import EntityMetadata
 from cruxible_core.instance_protocol import InstanceProtocol
 
 TRUSTED_LIFECYCLE_SOURCE = "lifecycle_verb"
-"""Stand-in source for the future dedicated receipted lifecycle verbs."""
+"""Source used by tests that seed terminal lifecycle state directly."""
 
 
 def seed_entity_lifecycle(
@@ -74,7 +76,7 @@ def seed_relationship_lifecycle(
     to_id: str,
     status: str,
     reason: str | None = None,
-    properties: dict | None = None,
+    properties: dict[str, Any] | None = None,
 ) -> None:
     """Set an edge's typed lifecycle status via the trusted capability."""
     config = instance.load_config()
