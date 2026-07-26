@@ -1673,3 +1673,51 @@ class TestServiceSeamGovernanceRail:
         )
         assert still_pending is not None
         assert still_pending.metadata.assertion.review.status == "pending"
+
+
+class TestTerminalStatusesAreNotResolvable:
+    """Resolve accepts ``pending_review`` only — ``applying`` for approve retry."""
+
+    def test_withdrawn_group_cannot_be_approved_afterwards(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """A withdrawn group keeps its members; that must not make it approvable.
+
+        Withdraw preserves the proposal deliberately (it is governance history).
+        Resolve used to accept any status that was not ``resolved``, so the
+        preserved proposal stayed approvable by id — including after a fresh
+        pending group for the same signature had been opened and reviewed on its
+        own terms.
+        """
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        _update_group_status(instance, group_id, "withdrawn")
+
+        with pytest.raises(ConfigError, match="withdrawn and cannot be resolved"):
+            service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
+    def test_withdrawn_group_cannot_be_rejected_afterwards(
+        self, instance: CruxibleInstance
+    ) -> None:
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        _update_group_status(instance, group_id, "withdrawn")
+
+        with pytest.raises(ConfigError, match="withdrawn and cannot be resolved"):
+            service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
+
+    def test_legacy_auto_resolved_group_cannot_be_resolved(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """The deprecated legacy status is terminal, not a back door into approve."""
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        _update_group_status(instance, group_id, "auto_resolved")
+
+        with pytest.raises(ConfigError, match="auto_resolved and cannot be resolved"):
+            service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
+    def test_pending_review_group_still_resolves(self, instance: CruxibleInstance) -> None:
+        """The allowlist must not have closed the door on the normal path."""
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
+        assert result.action == "approve"

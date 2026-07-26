@@ -499,8 +499,19 @@ class GroupStore(GroupStoreProtocol):
         *,
         exclude_group_id: str | None = None,
         statuses: tuple[str, ...] = ("pending_review", "applying"),
-    ) -> dict[tuple[str, str, str, str, str], CandidateGroup]:
-        """Return live proposal groups containing any of the given tuple identities."""
+    ) -> dict[tuple[str, str, str, str, str], list[CandidateGroup]]:
+        """Return live proposal groups containing any of the given tuple identities.
+
+        EVERY matching group per tuple, newest first — not just the newest. Two
+        live groups may legitimately claim the same edge, and collapsing them to
+        one meant the newest group absorbed the whole interaction: it alone was
+        annotated with the direct-write conflict and got its ``pending_version``
+        bumped, while the older group stayed at the version its reviewer had
+        read. That reviewer's ``expected_pending_version`` guard then did not
+        trip, and their approve went through against state that had moved. A
+        decoy group is all it takes to hide the conflict from the group that
+        matters.
+        """
         mismatched = [item for item in tuples if item[4] != relationship_type]
         if mismatched:
             raise ValueError("all tuple identities must match the requested relationship_type")
@@ -540,7 +551,8 @@ class GroupStore(GroupStoreProtocol):
             tuple(params),
         ).fetchall()
 
-        conflicts: dict[tuple[str, str, str, str, str], CandidateGroup] = {}
+        conflicts: dict[tuple[str, str, str, str, str], list[CandidateGroup]] = {}
+        seen: set[tuple[tuple[str, str, str, str, str], str]] = set()
         for row in rows:
             key = (
                 row["member_from_type"],
@@ -549,7 +561,11 @@ class GroupStore(GroupStoreProtocol):
                 row["member_to_id"],
                 row["member_relationship_type"],
             )
-            conflicts.setdefault(key, self._row_to_group(row))
+            group_id = row["group_id"]
+            if (key, group_id) in seen:
+                continue
+            seen.add((key, group_id))
+            conflicts.setdefault(key, []).append(self._row_to_group(row))
         return conflicts
 
     @staticmethod

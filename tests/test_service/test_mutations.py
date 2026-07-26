@@ -13,6 +13,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import (
     ConfigError,
     DataValidationError,
+    GovernedSourceSpoofRefusedError,
     GroupApprovedContentWriteRefusedError,
 )
 from cruxible_core.governance.actors import GovernedActorContext
@@ -40,7 +41,10 @@ from cruxible_core.service import (
     service_register_source_artifact,
     service_resolve_group,
 )
-from cruxible_core.service.mutations import _MAX_CONFLICT_RECORDS_PER_TUPLE
+from cruxible_core.service.mutations import (
+    _MAX_CONFLICT_RECORDS_PER_TUPLE,
+    _detect_direct_write_group_interactions,
+)
 from cruxible_core.storage.sqlite import SQLiteGraphRepository
 from cruxible_core.temporal import utc_now
 
@@ -549,6 +553,14 @@ entity_types:
       category:
         type: string
         enum: [brakes, suspension, engine, electrical, body, interior]
+  StrictPart:
+    write_policy: proposal_only
+    properties:
+      part_number:
+        type: string
+        primary_key: true
+      name:
+        type: string
 
 relationships:
   - name: fits
@@ -3082,14 +3094,21 @@ class TestGroupApprovedContentBinding:
         assert edge is not None
         return edge.metadata.assertion.group_approval_drift
 
-    def test_proposal_only_content_change_is_refused_and_receipted(
+    def test_proposal_only_content_change_via_a_spoofed_source_is_refused(
         self,
         tmp_path: Path,
     ) -> None:
-        instance, group_id = self._approved_edge(tmp_path, relationship_type="fits_strict")
+        """The spoof is now refused at the SEAM, before content binding matters.
+
+        ``source`` is caller-supplied at this entry and the chokepoint exempts
+        the governed verbs, so naming one used to be the way in. The seam
+        allowlist refuses the NAME, which closes the same hole for creates and
+        for entities — cases content binding could never reach.
+        """
+        instance, _group_id = self._approved_edge(tmp_path, relationship_type="fits_strict")
         before = _receipt_count(instance)
 
-        with pytest.raises(GroupApprovedContentWriteRefusedError) as excinfo:
+        with pytest.raises(GovernedSourceSpoofRefusedError) as excinfo:
             service_add_relationships(
                 instance,
                 [
@@ -3102,20 +3121,14 @@ class TestGroupApprovedContentBinding:
                         properties={"verified": True},
                     )
                 ],
-                # A governed source is exactly the hole the plain chokepoint
-                # refusal leaves open, and `source` is caller-supplied.
                 source="workflow_apply",
                 source_ref="spoofed-governed",
             )
 
         message = str(excinfo.value)
-        assert "fits_strict" in message
-        assert "Part:BP-1 -> Vehicle:V-1" in message
-        assert group_id in message
-        assert "verified" in message
-        assert "re-proposed" in message
-        assert excinfo.value.group_id == group_id
-        assert excinfo.value.changed_properties == ["verified"]
+        assert "workflow_apply" in message
+        assert "GOVERNED write verb" in message
+        assert "group propose" in message
 
         # Receipted refusal, rolled-back write.
         assert excinfo.value.mutation_receipt_id is not None
@@ -3130,6 +3143,48 @@ class TestGroupApprovedContentBinding:
         assert edge is not None
         assert edge.properties["verified"] is False
         assert edge.metadata.assertion.group_approval_drift is None
+
+    def test_content_binding_guard_still_refuses_below_the_seam(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Defense in depth: the inner guard survives the seam allowlist.
+
+        The seam refuses governed source NAMES at the public entries, so nothing
+        reachable from outside gets this far any more. The content-binding
+        refusal stays as the backstop for any future in-tree caller that reaches
+        the shared detection helper with a governed source.
+        """
+        instance, group_id = self._approved_edge(tmp_path, relationship_type="fits_strict")
+        graph = instance.load_graph()
+
+        with pytest.raises(GroupApprovedContentWriteRefusedError) as excinfo:
+            _detect_direct_write_group_interactions(
+                instance,
+                graph,
+                [
+                    RelationshipInstance(
+                        from_type="Part",
+                        from_id="BP-1",
+                        relationship_type="fits_strict",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        properties={"verified": True},
+                    )
+                ],
+                config=instance.load_config(),
+                source="workflow_apply",
+                pending_flags=[False],
+            )
+
+        message = str(excinfo.value)
+        assert "fits_strict" in message
+        assert "Part:BP-1 -> Vehicle:V-1" in message
+        assert group_id in message
+        assert "verified" in message
+        assert "re-proposed" in message
+        assert excinfo.value.group_id == group_id
+        assert excinfo.value.changed_properties == ["verified"]
 
     def test_ordinary_type_content_change_succeeds_with_a_drift_marker(
         self,
@@ -3225,27 +3280,26 @@ class TestGroupApprovedContentBinding:
         self,
         tmp_path: Path,
     ) -> None:
-        instance, _group_id = self._approved_edge(tmp_path, relationship_type="fits_strict")
+        instance, _group_id = self._approved_edge(tmp_path, relationship_type="fits")
 
-        # Same content the group approved, through the same governed source that
-        # the refusal test uses: a no-op is not drift.
+        # Restating exactly what the group approved: a no-op is not drift.
         result = service_add_relationships(
             instance,
             [
                 RelationshipInstance(
                     from_type="Part",
                     from_id="BP-1",
-                    relationship_type="fits_strict",
+                    relationship_type="fits",
                     to_type="Vehicle",
                     to_id="V-1",
                     properties={"verified": False},
                 )
             ],
-            source="workflow_apply",
+            source="test",
             source_ref="restate",
         )
         assert result.updated == 1
-        assert self._drift(instance, "fits_strict") is None
+        assert self._drift(instance, "fits") is None
 
     def test_property_less_touch_of_an_ordinary_approved_edge_is_not_drift(
         self,
@@ -4145,3 +4199,246 @@ class TestAddRelationships:
             )
             is not None
         )
+
+
+class TestOverlappingPendingGroupsAllSeeTheConflict:
+    """Two live groups may claim the same tuple; both must be told it moved."""
+
+    def test_every_live_group_claiming_the_tuple_is_annotated_and_bumped(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A decoy group must not absorb the conflict for an older one.
+
+        ``find_pending_groups_for_tuples`` collapsed same-tuple matches to the
+        NEWEST group. Only that group got the direct-write conflict record and
+        the ``pending_version`` bump, so a reviewer holding the older group never
+        tripped their ``expected_pending_version`` guard and approved against
+        state that had already moved underneath them.
+        """
+        instance = _group_write_instance(tmp_path)
+        older = _propose_fits_group(instance)
+        newer = service_propose_group(
+            instance,
+            "fits",
+            [_candidate_member(from_id="BP-1", to_id="V-1")],
+            thesis_text="decoy proposal",
+            thesis_facts={"source": "decoy"},
+            source_workflow_name="test_group_flow",
+            signal_sources_used=["check_v1"],
+        ).group_id
+        assert newer != older
+        assert _stored_group(instance, older).pending_version == 1
+        assert _stored_group(instance, newer).pending_version == 1
+
+        result = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True, "source": "direct"},
+                )
+            ],
+            source="test",
+            source_ref="direct",
+        )
+
+        assert {conflict.group_id for conflict in result.pending_conflicts} == {older, newer}
+        for group_id in (older, newer):
+            conflicts = _direct_write_conflicts(instance, group_id)
+            assert len(conflicts) == 1, group_id
+            assert conflicts[0]["receipt_id"] == result.receipt_id
+            assert _stored_group(instance, group_id).pending_version == 2
+
+    def test_the_older_group_can_no_longer_resolve_against_its_stale_version(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The bump is the point: the stale reviewer's guard must now trip."""
+        instance = _group_write_instance(tmp_path)
+        older = _propose_fits_group(instance)
+        service_propose_group(
+            instance,
+            "fits",
+            [_candidate_member(from_id="BP-1", to_id="V-1")],
+            thesis_text="decoy proposal",
+            thesis_facts={"source": "decoy"},
+            source_workflow_name="test_group_flow",
+            signal_sources_used=["check_v1"],
+        )
+
+        service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True, "source": "direct"},
+                )
+            ],
+            source="test",
+            source_ref="direct",
+        )
+
+        with pytest.raises(ConfigError, match="Group changed during review"):
+            service_resolve_group(instance, older, "approve", expected_pending_version=1)
+
+
+class TestGovernedSourceSpoofAtTheDirectWriteSeam:
+    """Governed verb NAMES are reserved for the governed machinery.
+
+    ``source`` is caller-supplied at the public direct-write entries, and the
+    chokepoint in ``graph/operations.py`` exempts ``workflow_apply`` /
+    ``group_resolve`` from the ``proposal_only`` refusal. Naming one therefore
+    let a bare direct write create ``proposal_only`` edges and write
+    ``proposal_only`` entities with no proposal behind them — cases the
+    content-binding refusal (which needs a pre-existing group-approved edge)
+    could never reach.
+    """
+
+    @pytest.mark.parametrize("source", ["workflow_apply", "group_resolve"])
+    def test_single_add_relationship_refuses_a_governed_source(
+        self,
+        tmp_path: Path,
+        source: str,
+    ) -> None:
+        instance = _group_write_instance(tmp_path)
+
+        with pytest.raises(GovernedSourceSpoofRefusedError) as excinfo:
+            service_add_relationships(
+                instance,
+                [
+                    RelationshipInstance(
+                        from_type="Part",
+                        from_id="BP-1",
+                        relationship_type="fits_strict",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        properties={"verified": True},
+                    )
+                ],
+                source=source,
+                source_ref="spoofed",
+            )
+
+        assert excinfo.value.source == source
+        assert excinfo.value.entry_point == "add_relationship"
+        # Nothing was created: the refusal lands before the write.
+        assert (
+            instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits_strict")
+            is None
+        )
+
+    @pytest.mark.parametrize("source", ["workflow_apply", "group_resolve"])
+    def test_batch_direct_write_refuses_a_governed_source_for_entities(
+        self,
+        tmp_path: Path,
+        source: str,
+    ) -> None:
+        """The entity chokepoint exempts governed sources with no other backstop."""
+        instance = _group_write_instance(tmp_path)
+        payload = BatchDirectWriteInput(
+            entities=[
+                EntityWriteInput(
+                    entity_type="StrictPart",
+                    entity_id="SP-1",
+                    properties={"part_number": "SP-1", "name": "Strict pad"},
+                )
+            ],
+        )
+
+        with pytest.raises(GovernedSourceSpoofRefusedError):
+            service_batch_direct_write(instance, payload, source=source)
+
+        assert instance.load_graph().get_entity("StrictPart", "SP-1") is None
+
+    def test_batch_dry_run_refuses_the_same_way(self, tmp_path: Path) -> None:
+        """A preview must not report a spoofed write as valid."""
+        instance = _group_write_instance(tmp_path)
+
+        with pytest.raises(GovernedSourceSpoofRefusedError):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        EntityWriteInput(
+                            entity_type="StrictPart",
+                            entity_id="SP-1",
+                            properties={"part_number": "SP-1", "name": "Strict pad"},
+                        )
+                    ],
+                ),
+                dry_run=True,
+                source="workflow_apply",
+            )
+
+    def test_the_refusal_is_receipted(self, tmp_path: Path) -> None:
+        instance = _group_write_instance(tmp_path)
+        before = _receipt_count(instance)
+
+        with pytest.raises(GovernedSourceSpoofRefusedError) as excinfo:
+            service_add_relationships(
+                instance,
+                [
+                    RelationshipInstance(
+                        from_type="Part",
+                        from_id="BP-1",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        properties={"verified": True},
+                    )
+                ],
+                source="group_resolve",
+                source_ref="spoofed",
+            )
+
+        assert excinfo.value.mutation_receipt_id is not None
+        assert _receipt_count(instance) == before + 1
+
+    def test_an_honest_source_still_writes(self, tmp_path: Path) -> None:
+        """The seam refuses the NAME, not the verb."""
+        instance = _group_write_instance(tmp_path)
+
+        result = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True},
+                )
+            ],
+            source="csv_import",
+            source_ref="parts.csv",
+        )
+
+        assert result.added == 1
+
+    def test_group_resolve_still_applies_proposal_only_edges(self, tmp_path: Path) -> None:
+        """The genuine governed path does not route through the public entries.
+
+        ``service/group_transitions.py`` calls ``apply_relationship`` directly,
+        so the seam allowlist costs it nothing.
+        """
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(instance, relationship_type="fits_strict")
+
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
+        edge = instance.load_graph().get_relationship(
+            "Part", "BP-1", "Vehicle", "V-1", "fits_strict"
+        )
+        assert edge is not None
+        assert edge.metadata.provenance is not None
+        assert edge.metadata.provenance.source == "group_resolve"

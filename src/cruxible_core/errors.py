@@ -34,7 +34,8 @@ errors (runtime data), making it easy to catch by category.
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
     ├── PermissionDeniedError (MCP permission mode)
     ├── DirectWriteRefusedError (governed proposal_only direct-write refusal)
-    │   └── GroupApprovedContentWriteRefusedError (content change to an approved edge)
+    │   ├── GroupApprovedContentWriteRefusedError (content change to an approved edge)
+    │   └── GovernedSourceSpoofRefusedError (direct write naming a governed verb)
     └── PendingEdgeWriteRefusedError (non-pending write onto a pending proposal)
 """
 
@@ -546,6 +547,43 @@ class GroupApprovedContentWriteRefusedError(DirectWriteRefusedError):
             f"'{relationship_type}' is a proposal_only type — the change must be "
             "re-proposed and re-approved (group propose -> group resolve), not "
             "written directly.",
+        )
+
+
+class GovernedSourceSpoofRefusedError(DirectWriteRefusedError):
+    """A public direct-write entry named a GOVERNED write verb as its source.
+
+    ``source`` is caller-supplied at the public direct-write API
+    (``add_relationships_with_provenance`` / ``batch_direct_write``), and the
+    chokepoint in ``graph/operations.py`` EXEMPTS the governed verbs
+    (``workflow_apply`` / ``group_resolve``) from the ``proposal_only`` refusal.
+    Naming one of them therefore let a bare direct write create brand-new
+    ``proposal_only`` relationships and write ``proposal_only`` entities with no
+    proposal, no workflow, and no reviewer anywhere in the act.
+
+    Closed at the SEAM rather than at the chokepoint: the genuine governed paths
+    (``service/group_transitions.py`` and ``workflow/apply.py``) call
+    ``apply_entity`` / ``apply_relationship`` directly and never route through
+    these public entries, so refusing the names here costs them nothing while
+    removing the only way to borrow their authority.
+    """
+
+    error_code = "governed_source_spoof_refused"
+
+    def __init__(self, source: str, *, entry_point: str):
+        self.kind = "relationship"
+        self.type_name = source
+        self.source = source
+        self.policy = "proposal_only"
+        self.entry_point = entry_point
+        CoreError.__init__(
+            self,
+            f"Direct write through '{entry_point}' is refused: "
+            f"provenance source '{source}' names a GOVERNED write verb. Those "
+            "names carry the authority of the proposal and workflow machinery "
+            "and are reserved for it. Use 'group propose' -> 'group resolve' to "
+            "stage governed state, run the canonical workflow, or pick a "
+            "provenance source that honestly describes this direct write.",
         )
 
 

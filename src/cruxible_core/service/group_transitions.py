@@ -319,10 +319,23 @@ def _load_group_for_resolve(
         if group is None:
             raise GroupNotFoundError(group_id)
 
+        # ALLOWLIST, not a denylist of terminal states. Resolve used to accept
+        # any status that was not ``resolved``, which left every OTHER terminal
+        # state resolvable: a WITHDRAWN group keeps its members (that is the
+        # point of withdrawing rather than deleting), so its preserved proposal
+        # could still be approved by id afterwards — even once a fresh pending
+        # group for the same signature existed and had been reviewed on its own
+        # terms. ``pending_review`` is the only reviewable state; ``applying``
+        # is admitted solely so an interrupted approve can be retried.
         if group.status == "resolved":
             raise ConfigError("Group already resolved")
         if group.status == "applying" and action != "approve":
             raise ConfigError("Group is in applying state from a prior approve — cannot reject")
+        if group.status not in ("pending_review", "applying"):
+            raise ConfigError(
+                f"Group is {group.status} and cannot be resolved; only a "
+                "pending_review group is reviewable"
+            )
 
         return _ResolveTarget(
             group=group,

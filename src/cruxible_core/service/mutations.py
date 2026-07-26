@@ -47,6 +47,7 @@ from cruxible_core.instance_protocol import (
 from cruxible_core.service.direct_write_policy import (
     effective_relationship_write_policy,
     is_governed_source,
+    refuse_governed_source_at_direct_write_entry,
 )
 from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.mutation_guards import (
@@ -274,7 +275,7 @@ def _detect_direct_write_group_interactions(
         for relationship in relationships:
             tuples_by_type[relationship.relationship_type].append(relationship.identity_tuple())
 
-        pending_by_type: dict[str, dict[tuple[str, str, str, str, str], CandidateGroup]] = {}
+        pending_by_type: dict[str, dict[tuple[str, str, str, str, str], list[CandidateGroup]]] = {}
         for relationship_type, tuples in tuples_by_type.items():
             pending_by_type[relationship_type] = store.find_pending_groups_for_tuples(
                 relationship_type,
@@ -286,10 +287,14 @@ def _detect_direct_write_group_interactions(
         updated_group_backed_edges: list[DirectWriteGroupInteraction] = []
         content_drift: dict[tuple[str, str, str, str, str], _ContentDrift] = {}
         for index, relationship in enumerate(relationships):
-            pending_group = pending_by_type.get(relationship.relationship_type, {}).get(
+            # One conflict record per LIVE group claiming this tuple, not just
+            # the newest. Every one of them is annotated and version-bumped
+            # downstream, so a reviewer on an older overlapping group still sees
+            # that live state moved under their proposal.
+            pending_groups = pending_by_type.get(relationship.relationship_type, {}).get(
                 relationship.identity_tuple()
             )
-            if pending_group is not None:
+            for pending_group in pending_groups or []:
                 pending_conflicts.append(
                     _group_interaction_from_relationship(
                         relationship,
@@ -816,6 +821,10 @@ def _prepare_batch_direct_write(
     group_store: GroupStoreProtocol | None = None,
     resolution_contract_store: ResolutionContractStoreProtocol | None = None,
 ) -> _PreparedBatchDirectWrite:
+    # Seam check, ahead of every validation and every write: a batch direct
+    # write may not name a governed verb as its provenance source. Placed in
+    # prepare so the dry-run preview and the applied path refuse identically.
+    refuse_governed_source_at_direct_write_entry(source, entry_point="batch_direct_write")
     config = instance.load_config()
     current_graph = instance.load_graph()
     graph = EntityGraph.from_dict(deepcopy(current_graph.to_dict()))
@@ -1458,6 +1467,10 @@ def service_add_relationships(
 ) -> AddRelationshipResult:
     """Add or update relationships in the graph (batch upsert).
 
+    Refuses a caller-supplied ``source`` that names a governed write verb: the
+    chokepoint exempts those names from the ``proposal_only`` refusal, and this
+    is a bare direct write, not the proposal or workflow machinery.
+
     Validates all relationships first, then applies atomically.
     New edges get provenance stamped. Updated edges merge domain properties and
     preserve existing relationship metadata.
@@ -1487,6 +1500,11 @@ def service_add_relationships(
         enabled=_create_receipt and not dry_run,
         actor_context=actor_context,
     ) as ctx:
+        # INSIDE the receipt boundary: a spoof attempt is the single most
+        # interesting negative-experience row this entry produces, so it is
+        # receipted and the open write transaction rolls back, exactly like the
+        # tier checks on the governed rails.
+        refuse_governed_source_at_direct_write_entry(source, entry_point="add_relationship")
         builder = ctx.builder
         if builder:
             proposal, subjects = build_proposal(

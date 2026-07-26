@@ -296,7 +296,7 @@ class GroupStoreProtocol(ABC):
         *,
         exclude_group_id: str | None = None,
         statuses: tuple[str, ...] = ("pending_review", "applying"),
-    ) -> dict[tuple[str, str, str, str, str], CandidateGroup]: ...
+    ) -> dict[tuple[str, str, str, str, str], list[CandidateGroup]]: ...
     @abstractmethod
     def save_resolution(
         self,

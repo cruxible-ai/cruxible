@@ -143,6 +143,42 @@ the project's own state instance.
   feedback. `reject` / `flag` stay available — they move edges *out* of
   live state.
 
+### Fixed (governance)
+
+- **A withdrawn group can no longer be resurrected.** `resolve_group` accepted
+  any status that was not `resolved`, and withdrawing PRESERVES the proposal and
+  its members (that is the point of withdrawing rather than deleting) — so the
+  preserved proposal stayed approvable by id afterwards, including once a fresh
+  pending group for the same signature existed and had been reviewed on its own
+  terms. Resolve now takes an allowlist: `pending_review` only, plus `applying`
+  for an approve retry. Every other status is terminal.
+
+- **Overlapping pending groups all see a direct-write conflict.**
+  `find_pending_groups_for_tuples` collapsed same-tuple matches to the newest
+  group, so a newer (or decoy) group absorbed the whole interaction: it alone was
+  annotated with the conflict record and had its `pending_version` bumped, while
+  an older group claiming the same edge stayed at the version its reviewer had
+  read. That reviewer's `expected_pending_version` guard then never tripped and
+  their approve went through against state that had already moved. Every live
+  group claiming the tuple is now returned, annotated, and bumped.
+
+- **Governed write-verb names are refused at the public direct-write seam.**
+  `provenance_source` is caller-supplied on `add_relationships` /
+  `batch_direct_write`, and the chokepoint EXEMPTS `workflow_apply` and
+  `group_resolve` from the `proposal_only` refusal — so naming one let a bare
+  direct write create brand-new `proposal_only` relationships and write
+  `proposal_only` entities with no proposal, no workflow, and no reviewer in the
+  act. (The content-binding refusal shipped earlier in this batch only covered
+  rewrites of an already-approved EDGE.) Those names are now reserved: the public
+  entries raise a receipted `GovernedSourceSpoofRefusedError` (HTTP 403). The
+  genuine governed paths are untouched — group resolution and workflow apply call
+  `apply_entity` / `apply_relationship` directly and never route through these
+  entries.
+
+  **Migration:** a caller passing `provenance_source="workflow_apply"` or
+  `"group_resolve"` to a direct-write verb must pick a source that honestly
+  describes the write, or go through `group propose` / the canonical workflow.
+
 ### Deprecated
 
 Deprecate-then-remove applies to every shipped surface: these all still work,
