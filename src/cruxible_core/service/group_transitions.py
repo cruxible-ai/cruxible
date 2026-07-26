@@ -690,6 +690,24 @@ def _blessed_metadata_for_existing(
     only touches ``last_modified_*``), and the prior direct-write receipt remains in
     the audit chain. A null-provenance direct-add is backfilled with fresh group
     provenance so it becomes auditable.
+
+    This is the THIRD write path for ``group_approval_drift``, and the ruling
+    (the marker reports CURRENT divergence against the NEWEST approval) applies
+    here too: the content this approval blesses IS the new approved baseline, so
+    any marker the edge was carrying is stale by construction and is dropped.
+    Carrying it verbatim meant an edge that drifted under group A and was then
+    re-proposed and approved by group B — with exactly the content B signed off
+    on — still reported drift against A, while its provenance already read
+    ``group:B``. A reviewer reading that saw a divergence that does not exist
+    against a group that no longer owns the edge.
+
+    Verified: this path can never bless content the approver did not see.
+    ``_validate_approval_members`` skips every member whose tuple is already
+    live (``edge_exists``), so approval NEVER applies proposed properties over a
+    surviving edge — only these already-live properties are blessed. The new
+    baseline is therefore the edge's current content, whatever the group's
+    members proposed, and a later divergent write drifts against those values
+    under group B.
     """
     metadata = existing.metadata
     now = utc_now()
@@ -722,7 +740,9 @@ def _blessed_metadata_for_existing(
         updated_by=source_ref,
         actor_context=actor_context,
     )
-    assertion = metadata.assertion.model_copy(update={"review": review})
+    assertion = metadata.assertion.model_copy(
+        update={"review": review, "group_approval_drift": None}
+    )
     return metadata.model_copy(update={"provenance": provenance, "assertion": assertion})
 
 

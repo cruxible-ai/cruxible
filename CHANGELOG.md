@@ -196,6 +196,17 @@ the project's own state instance.
   edited and then exactly restored still read as drifted forever. History of each
   excursion lives in receipts, not in live state.
 
+- **Re-approving an edge makes the newly blessed content the drift baseline.**
+  The third write path for the marker is `resolve_group --stamp-existing`, which
+  blesses a surviving edge with the approving group's review and provenance. It
+  copied the assertion with only `review` replaced, so a marker raised under
+  group A survived group B's approval verbatim: the edge reported drift against
+  a group that no longer owned it, over content B had just signed off on. The
+  marker is now cleared on re-approval, which is the same ruling as above —
+  divergence is measured against the NEWEST approval. (Approval never applies a
+  proposed property set over a surviving edge; a member whose tuple is already
+  live is skipped, so the blessed baseline is always the edge's current content.)
+
 - **Decision-record terminal transitions are race-safe, and the raw setter is
   private.** `update_record`'s "is it still open?" check lived only in a
   preceding SELECT, so two writers on separate connections could both read
