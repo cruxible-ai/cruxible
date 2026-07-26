@@ -6399,3 +6399,120 @@ class TestPathIdentityEdgeKeyNoneSafety:
         # Identical endpoints + mixed edge_keys previously raised TypeError here.
         ordered = sorted(states, key=_traversal_state_identity)
         assert len(ordered) == 2
+
+
+class TestLifecycleStatusFilter:
+    """The orthogonal, kind-correct exact lifecycle filter (D4).
+
+    Distinct from ``relationship_state``: that is the coarse read-visibility
+    selector, this is an exact-match filter on the lifecycle axis, whose
+    vocabulary differs by artifact kind (``retracted`` vs ``retired``).
+    """
+
+    @staticmethod
+    def _admit_every_edge(config: CoreConfig) -> None:
+        """Widen the named query's own visibility rather than overriding it.
+
+        ``parts_for_vehicle`` does not set ``allow_relationship_state_override``,
+        and this suite is about the lifecycle filter, not about the override
+        rule — so configure the query and leave the override path alone.
+        """
+        config.named_queries["parts_for_vehicle"].relationship_state = "all"
+
+    def _seed_retracted_fit(self, graph: EntityGraph) -> str:
+        claim_id = mint_claim_id()
+        graph.add_relationship(
+            RelationshipInstance(
+                claim_id=claim_id,
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-9999",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                properties={"verified": True},
+                metadata=_metadata(lifecycle_status="retracted"),
+            )
+        )
+        return claim_id
+
+    def test_traversal_segments_are_filtered_to_the_named_lifecycle_status(self, config, graph):
+        """A traversal keeps only segments whose lifecycle status matches exactly."""
+        self._seed_retracted_fit(graph)
+        self._admit_every_edge(config)
+
+        # `all` visibility admits every edge; the lifecycle filter then narrows
+        # to exactly the retracted ones, so ONLY the seeded edge survives.
+        retracted = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-CIVIC"},
+            lifecycle_status="retracted",
+        )
+        assert _terminal_ids(retracted.results) == ["BP-9999"]
+
+        # ...and the active ones are exactly its complement on this tuple set.
+        active = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-CIVIC"},
+            lifecycle_status="active",
+        )
+        assert "BP-9999" not in _terminal_ids(active.results)
+        assert "BP-1234" in _terminal_ids(active.results)
+
+        # Without the filter, `all` returns both — the filter is doing the work,
+        # not the visibility selector.
+        unfiltered = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-CIVIC"},
+        )
+        assert set(_terminal_ids(unfiltered.results)) >= {"BP-1234", "BP-9999"}
+
+    def test_wrong_kind_vocabulary_is_refused(self, config, graph):
+        """Entity vocabulary on a relationship-shaped read is a QueryExecutionError.
+
+        The two kinds\' terminal words differ on purpose (``retracted`` vs
+        ``retired``). Accepting the wrong one would silently return zero rows
+        and read as "nothing matched" rather than "you asked the wrong
+        question".
+        """
+        self._admit_every_edge(config)
+        with pytest.raises(QueryExecutionError, match="retired"):
+            execute_query(
+                config,
+                graph,
+                "parts_for_vehicle",
+                {"vehicle_id": "V-CIVIC"},
+                lifecycle_status="retired",
+            )
+
+    def test_receipt_options_stamp_the_filter_only_when_set(self, config, graph):
+        """Absent means ABSENT: an unset filter adds no receipt key.
+
+        Stamping ``lifecycle_status: None`` on every query receipt would move
+        every pinned receipt shape in the repo for a filter nobody asked for.
+        """
+        stamped = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-CIVIC"},
+            lifecycle_status="active",
+        )
+        assert stamped.receipt is not None
+        assert stamped.receipt.execution_options["lifecycle_status"] == "active"
+        assert stamped.lifecycle_status == "active"
+
+        unstamped = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-CIVIC"},
+        )
+        assert unstamped.receipt is not None
+        assert "lifecycle_status" not in unstamped.receipt.execution_options
+        assert unstamped.lifecycle_status is None

@@ -64,6 +64,7 @@ from cruxible_core.cli.commands._common import (
     decision_record_option,
     json_option,
     layout_option,
+    lifecycle_status_option,
     profile_option,
     state_option,
     ws_option,
@@ -413,6 +414,7 @@ def _emit_query_command_result(
             "result_shape": result.result_shape,
             "dedupe": result.dedupe,
             "relationship_state": result.relationship_state,
+            "lifecycle_status": result.lifecycle_status,
             "receipt_id": result.receipt_id,
             "param_hints": (
                 param_hints.model_dump(mode="python")
@@ -468,6 +470,7 @@ def _run_query_command(
     param: tuple[str, ...],
     limit: int | None,
     relationship_state: str | None,
+    lifecycle_status: str | None,
     count_only: bool,
     output_json: bool,
     decision_record_id: str | None,
@@ -481,28 +484,50 @@ def _run_query_command(
         contracts.QueryVisibilityState | None,
         relationship_state,
     )
+    exact_lifecycle = cast(contracts.LifecycleStatus | None, lifecycle_status)
     client = _common._get_client()
     if client is not None:
         response_limit = 1 if count_only and limit is None else limit
         instance_id = _require_instance_id()
         try:
             if effective_relationship_state is None:
-                remote_result = client.query(
-                    instance_id,
-                    query_name,
-                    params,
-                    limit=response_limit,
-                    decision_record_id=resolved_decision_record_id,
-                )
+                if exact_lifecycle is None:
+                    remote_result = client.query(
+                        instance_id,
+                        query_name,
+                        params,
+                        limit=response_limit,
+                        decision_record_id=resolved_decision_record_id,
+                    )
+                else:
+                    remote_result = client.query(
+                        instance_id,
+                        query_name,
+                        params,
+                        limit=response_limit,
+                        lifecycle_status=exact_lifecycle,
+                        decision_record_id=resolved_decision_record_id,
+                    )
             else:
-                remote_result = client.query(
-                    instance_id,
-                    query_name,
-                    params,
-                    limit=response_limit,
-                    relationship_state=effective_relationship_state,
-                    decision_record_id=resolved_decision_record_id,
-                )
+                if exact_lifecycle is None:
+                    remote_result = client.query(
+                        instance_id,
+                        query_name,
+                        params,
+                        limit=response_limit,
+                        relationship_state=effective_relationship_state,
+                        decision_record_id=resolved_decision_record_id,
+                    )
+                else:
+                    remote_result = client.query(
+                        instance_id,
+                        query_name,
+                        params,
+                        limit=response_limit,
+                        relationship_state=effective_relationship_state,
+                        lifecycle_status=exact_lifecycle,
+                        decision_record_id=resolved_decision_record_id,
+                    )
         except ClientCoreError as exc:
             if _is_query_not_found_error(exc):
                 _print_query_list_guidance()
@@ -538,6 +563,7 @@ def _run_query_command(
             params,
             limit=response_limit,
             relationship_state=effective_relationship_state,
+            lifecycle_status=exact_lifecycle,
             context=_operation_context(resolved_decision_record_id),
         )
     except CoreError as exc:
@@ -602,6 +628,7 @@ def _run_query_command(
             "result_shape": local_result.result_shape,
             "dedupe": local_result.dedupe,
             "relationship_state": local_result.relationship_state,
+            "lifecycle_status": local_result.lifecycle_status,
             "receipt_id": local_result.receipt_id,
             "param_hints": (
                 asdict(local_result.param_hints) if local_result.param_hints is not None else None
@@ -753,6 +780,7 @@ def query(ctx: click.Context) -> None:
 @click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
 @state_option
+@lifecycle_status_option
 @profile_option
 @layout_option
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
@@ -765,6 +793,7 @@ def query_run(
     param: tuple[str, ...],
     limit: int | None,
     state: str | None,
+    lifecycle_status: str | None,
     profile: str,
     layout: str,
     count_only: bool,
@@ -778,6 +807,7 @@ def query_run(
         param=param,
         limit=limit,
         relationship_state=state,
+        lifecycle_status=lifecycle_status,
         count_only=count_only,
         output_json=output_json,
         decision_record_id=decision_record_id,
@@ -802,6 +832,7 @@ def query_run(
 @click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
 @state_option
+@lifecycle_status_option
 @layout_option
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
 @decision_record_option
@@ -813,6 +844,7 @@ def query_inline_cmd(
     param: tuple[str, ...],
     limit: int | None,
     state: str | None,
+    lifecycle_status: str | None,
     layout: str,
     count_only: bool,
     decision_record_id: str | None,
@@ -829,20 +861,32 @@ def query_inline_cmd(
         contracts.QueryVisibilityState | None,
         state,
     )
+    exact_lifecycle = cast(contracts.LifecycleStatus | None, lifecycle_status)
     response_limit = 1 if count_only and limit is None else limit
     query_name = f"inline:{definition.name}"
     client = _common._get_client()
     summary_instance: CruxibleInstance | None = None
     result: Any
     if client is not None:
-        result = client.query_inline(
-            _require_instance_id(),
-            definition,
-            params,
-            limit=response_limit,
-            relationship_state=effective_relationship_state,
-            decision_record_id=resolved_decision_record_id,
-        )
+        if exact_lifecycle is None:
+            result = client.query_inline(
+                _require_instance_id(),
+                definition,
+                params,
+                limit=response_limit,
+                relationship_state=effective_relationship_state,
+                decision_record_id=resolved_decision_record_id,
+            )
+        else:
+            result = client.query_inline(
+                _require_instance_id(),
+                definition,
+                params,
+                limit=response_limit,
+                relationship_state=effective_relationship_state,
+                lifecycle_status=exact_lifecycle,
+                decision_record_id=resolved_decision_record_id,
+            )
     else:
         _common._guard_local_read_fallback()
         instance = _load_local_instance()
@@ -854,6 +898,7 @@ def query_inline_cmd(
             params,
             limit=response_limit,
             relationship_state=effective_relationship_state,
+            lifecycle_status=exact_lifecycle,
             context=_operation_context(resolved_decision_record_id),
         )
     _emit_query_command_result(

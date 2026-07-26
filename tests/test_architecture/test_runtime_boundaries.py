@@ -210,6 +210,87 @@ _ADJUDICATION_ENFORCEMENT_SEAMS = frozenset(
 )
 
 
+# The service-layer files allowed to enforce a tool's STATIC tier for an
+# adjudication act. Distinct from ``_ADJUDICATION_ENFORCEMENT_SEAMS`` above,
+# which raises a tier via ``required_override``: these seams check the tool's
+# own registered requirement, so they carry no gate power and the
+# ``required_override``/``audit_success`` ban above cannot see them at all.
+#
+# The lifecycle verbs (``supersede``/``retract``/``retire``) sit here because
+# their exported service functions are reachable by a direct library caller who
+# never passes through the ``runtime/api.py`` facade — the facade gate alone
+# would leave that channel untiered. The same receipted-refusal requirement
+# applies and is pinned below: the check runs with the write transaction
+# already open, so a denial is a receipted refusal that rolls back rather than
+# a bare exception thrown before any receipt exists.
+_STATIC_TIER_ADJUDICATION_SEAMS = frozenset(
+    {
+        "cruxible_core/service/artifact_lifecycle.py",
+    }
+)
+
+
+def _service_files_calling_check_permission() -> set[str]:
+    src_root = _repo_root() / "src"
+    found: set[str] = set()
+    for path in (src_root / "cruxible_core" / "service").rglob("*.py"):
+        if "check_permission" in path.read_text():
+            found.add(str(path.relative_to(src_root)))
+    return found
+
+
+def test_service_layer_permission_checks_stay_on_the_named_seams():
+    """No service module enforces permissions except the reviewed seams.
+
+    Enforcement scattered across the service layer is how a tier check ends up
+    somewhere with no receipt around it. Set-equality in BOTH directions: a new
+    service-layer ``check_permission`` fails here until it is named (and
+    reviewed), and a seam that stops checking fails here too.
+    """
+    assert _service_files_calling_check_permission() == set(
+        _ADJUDICATION_ENFORCEMENT_SEAMS | _STATIC_TIER_ADJUDICATION_SEAMS
+    )
+
+
+def test_static_tier_service_seams_check_inside_a_mutation_receipt():
+    """A static-tier service seam earns its place the same way: by being receipted.
+
+    Same contract as ``test_service_seam_tier_checks_are_reached_only_inside_a_
+    mutation_receipt``, for seams that enforce a tool's registered tier instead
+    of overriding it. Every ``check_permission`` call in the seam must sit
+    lexically inside a ``with mutation_receipt(...)`` block, and there must be
+    at least one.
+    """
+    src_root = _repo_root() / "src"
+    offenders: list[str] = []
+    for relative in sorted(_STATIC_TIER_ADJUDICATION_SEAMS):
+        path = src_root / relative
+        tree = ast.parse(path.read_text(), filename=str(path))
+
+        receipted: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.With) and any(
+                isinstance(item.context_expr, ast.Call)
+                and isinstance(item.context_expr.func, ast.Name)
+                and item.context_expr.func.id == "mutation_receipt"
+                for item in node.items
+            ):
+                receipted.update(id(inner) for inner in ast.walk(node))
+
+        checks = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "check_permission"
+        ]
+        assert checks, f"{relative} is listed as a seam but carries no tier check"
+        offenders.extend(
+            f"{relative}:{node.lineno}" for node in checks if id(node) not in receipted
+        )
+    assert offenders == []
+
+
 def test_gate_powers_never_leave_the_permission_module_and_api_gates():
     """Repo-wide: required_override / audit_success appear only in the
     permission module (definition), runtime/api.py (the facade gates), and the

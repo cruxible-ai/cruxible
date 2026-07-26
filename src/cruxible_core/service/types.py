@@ -35,7 +35,12 @@ from cruxible_core.group.types import (
 )
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
-from cruxible_core.query.enums import QueryDedupe, QueryResultShape, QueryVisibilityState
+from cruxible_core.query.enums import (
+    LifecycleStatus,
+    QueryDedupe,
+    QueryResultShape,
+    QueryVisibilityState,
+)
 from cruxible_core.query.evaluate import EvaluationReport
 from cruxible_core.query.types import QueryRow
 from cruxible_core.receipt.types import Receipt
@@ -213,6 +218,29 @@ class AddEntityResult:
 
 
 @dataclass
+class ClaimLifecycleResult:
+    """Result of one settled relationship-claim lifecycle adjudication."""
+
+    action: Literal["supersede", "retract"]
+    claim: RelationshipInstance
+    reason: str
+    successor: RelationshipInstance | None = None
+    receipt_id: str | None = None
+
+
+@dataclass
+class EntityLifecycleResult:
+    """Result of one settled entity lifecycle adjudication."""
+
+    action: Literal["supersede", "retire"]
+    entity: EntityInstance
+    reason: str
+    successor: EntityInstance | None = None
+    stranded_live_edge_count: int = 0
+    receipt_id: str | None = None
+
+
+@dataclass
 class DirectWriteGroupInteraction:
     relationship_type: str
     from_type: str
@@ -286,6 +314,7 @@ class QueryServiceResult:
     result_shape: QueryResultShape = "path"
     dedupe: QueryDedupe = "path"
     relationship_state: QueryVisibilityState = "live"
+    lifecycle_status: LifecycleStatus | None = None
     param_hints: QueryParamHints | None = None
     policy_summary: dict[str, int] = field(default_factory=dict)
 

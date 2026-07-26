@@ -13,6 +13,12 @@ from cruxible_core.service.analysis import (
     service_lint,
     service_state_health,
 )
+from cruxible_core.service.artifact_lifecycle import (
+    service_retire_entity,
+    service_retract_claim,
+    service_supersede_claim,
+    service_supersede_entity,
+)
 from cruxible_core.service.attestations import (
     attach_corroboration_summaries,
     service_attest,
@@ -161,6 +167,7 @@ from cruxible_core.service.types import (
     BatchDirectWriteResult,
     BatchRelationshipWriteInput,
     CanonicalViewResult,
+    ClaimLifecycleResult,
     CloneSnapshotResult,
     ConfigStatusResult,
     ConstraintSuggestion,
@@ -172,6 +179,7 @@ from cruxible_core.service.types import (
     DirectWriteGroupInteraction,
     EntityChangeHistoryItem,
     EntityChangeHistoryResult,
+    EntityLifecycleResult,
     EntityWriteInput,
     ExportEdgesResult,
     FeedbackBatchServiceResult,
@@ -262,6 +270,8 @@ __all__ = [
     "BatchDirectWriteInput",
     "BatchDirectWriteResult",
     "BatchRelationshipWriteInput",
+    "ClaimLifecycleResult",
+    "EntityLifecycleResult",
     "ConstraintSuggestion",
     "DecisionPolicySuggestion",
     "DecisionEventListResult",
@@ -434,6 +444,10 @@ __all__ = [
     "service_add_entities",
     "service_add_relationship_inputs",
     "service_add_relationships",
+    "service_supersede_claim",
+    "service_retract_claim",
+    "service_supersede_entity",
+    "service_retire_entity",
     # Queries
     "service_get_entity",
     "service_get_entity_change_history",

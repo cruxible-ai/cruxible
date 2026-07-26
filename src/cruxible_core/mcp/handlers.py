@@ -413,6 +413,7 @@ def handle_query(
     limit: int | None = None,
     offset: int = 0,
     relationship_state: contracts.QueryVisibilityState | None = None,
+    lifecycle_status: contracts.LifecycleStatus | None = None,
     decision_record_id: str | None = None,
     profile: contracts.ReadProfile | None = None,
     layout: contracts.QueryLayout = "rows",
@@ -428,6 +429,7 @@ def handle_query(
             limit=limit,
             offset=offset,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             decision_record_id=decision_record_id,
             profile=resolved_profile,
             layout=layout,
@@ -439,6 +441,7 @@ def handle_query(
             limit=limit,
             offset=offset,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             decision_record_id=decision_record_id,
             surface="mcp",
             profile=resolved_profile,
@@ -454,6 +457,7 @@ def handle_query_inline(
     params: dict[str, Any] | None = None,
     limit: int | None = None,
     relationship_state: contracts.QueryVisibilityState | None = None,
+    lifecycle_status: contracts.LifecycleStatus | None = None,
     decision_record_id: str | None = None,
     profile: contracts.ReadProfile | None = None,
     layout: contracts.QueryLayout = "rows",
@@ -461,17 +465,17 @@ def handle_query_inline(
     """Execute a bounded inline query definition without persisting it to config."""
     resolved_profile = resolve_mcp_read_profile(profile)
     result = _dispatch_remote_or_local(
-        lambda client: client.query_inline(
-            instance_id,
-            definition,
-            params,
+        lambda client: _client_query_inline(
+            client,
+            instance_id=instance_id,
+            definition=definition,
+            params=params,
             limit=limit,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             decision_record_id=decision_record_id,
             profile=resolved_profile,
-            # Sent only when opting into graph so rows-layout requests stay
-            # unchanged for older servers (and older client stubs).
-            **({"layout": layout} if layout == "graph" else {}),
+            layout=layout,
         ),
         lambda: api.query_inline(
             instance_id,
@@ -479,6 +483,7 @@ def handle_query_inline(
             params,
             limit=limit,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             decision_record_id=decision_record_id,
             surface="mcp",
             profile=resolved_profile,
@@ -486,6 +491,64 @@ def handle_query_inline(
         ),
     )
     return _captured_read(result, tool="cruxible_query_inline", instance_id=instance_id)
+
+
+def _client_query_inline(
+    client: CruxibleClient,
+    *,
+    instance_id: str,
+    definition: contracts.InlineQueryDefinition,
+    params: dict[str, Any] | None,
+    limit: int | None,
+    relationship_state: contracts.QueryVisibilityState | None,
+    lifecycle_status: contracts.LifecycleStatus | None,
+    decision_record_id: str | None,
+    profile: contracts.ReadProfile | None,
+    layout: contracts.QueryLayout,
+) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
+    if lifecycle_status is None:
+        if layout == "graph":
+            return client.query_inline(
+                instance_id,
+                definition,
+                params,
+                limit=limit,
+                relationship_state=relationship_state,
+                decision_record_id=decision_record_id,
+                profile=profile,
+                layout="graph",
+            )
+        return client.query_inline(
+            instance_id,
+            definition,
+            params,
+            limit=limit,
+            relationship_state=relationship_state,
+            decision_record_id=decision_record_id,
+            profile=profile,
+        )
+    if layout == "graph":
+        return client.query_inline(
+            instance_id,
+            definition,
+            params,
+            limit=limit,
+            relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
+            decision_record_id=decision_record_id,
+            profile=profile,
+            layout="graph",
+        )
+    return client.query_inline(
+        instance_id,
+        definition,
+        params,
+        limit=limit,
+        relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
+        decision_record_id=decision_record_id,
+        profile=profile,
+    )
 
 
 def _client_query(
@@ -497,6 +560,7 @@ def _client_query(
     limit: int | None,
     offset: int,
     relationship_state: contracts.QueryVisibilityState | None,
+    lifecycle_status: contracts.LifecycleStatus | None,
     decision_record_id: str | None,
     profile: contracts.ReadProfile | None = None,
     layout: contracts.QueryLayout = "rows",
@@ -504,47 +568,21 @@ def _client_query(
     # `layout` is only passed when it opts into graph so rows-layout requests
     # stay unchanged for older servers (and older client stubs).
     layout_kwargs: dict[str, Any] = {"layout": layout} if layout == "graph" else {}
-    if relationship_state is None and decision_record_id is None:
-        return client.query(
-            instance_id,
-            query_name,
-            params,
-            limit=limit,
-            offset=offset,
-            profile=profile,
-            **layout_kwargs,
-        )
-    if relationship_state is None:
-        return client.query(
-            instance_id,
-            query_name,
-            params,
-            limit=limit,
-            offset=offset,
-            decision_record_id=decision_record_id,
-            profile=profile,
-            **layout_kwargs,
-        )
-    if decision_record_id is None:
-        return client.query(
-            instance_id,
-            query_name,
-            params,
-            limit=limit,
-            offset=offset,
-            relationship_state=relationship_state,
-            profile=profile,
-            **layout_kwargs,
-        )
+    optional_kwargs: dict[str, Any] = {}
+    if relationship_state is not None:
+        optional_kwargs["relationship_state"] = relationship_state
+    if lifecycle_status is not None:
+        optional_kwargs["lifecycle_status"] = lifecycle_status
+    if decision_record_id is not None:
+        optional_kwargs["decision_record_id"] = decision_record_id
     return client.query(
         instance_id,
         query_name,
         params,
         limit=limit,
         offset=offset,
-        relationship_state=relationship_state,
-        decision_record_id=decision_record_id,
         profile=profile,
+        **optional_kwargs,
         **layout_kwargs,
     )
 
@@ -1066,14 +1104,16 @@ def handle_list(
     operation_type: str | None = None,
     fields: list[str] | None = None,
     relationship_state: contracts.QueryVisibilityState | None = None,
+    lifecycle_status: contracts.LifecycleStatus | None = None,
     profile: contracts.ReadProfile | None = None,
     continuation: str | None = None,
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
     resolved_profile = resolve_mcp_read_profile(profile)
     result = _dispatch_remote_or_local(
-        lambda client: client.list(
-            instance_id,
+        lambda client: _client_list(
+            client,
+            instance_id=instance_id,
             resource_type=resource_type,
             entity_type=entity_type,
             relationship_type=relationship_type,
@@ -1086,6 +1126,7 @@ def handle_list(
             operation_type=operation_type,
             fields=fields,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             profile=resolved_profile,
             continuation=continuation,
         ),
@@ -1103,11 +1144,70 @@ def handle_list(
             operation_type=operation_type,
             fields=fields,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             profile=resolved_profile,
             continuation=continuation,
         ),
     )
     return _captured_read(result, tool="cruxible_list", instance_id=instance_id)
+
+
+def _client_list(
+    client: CruxibleClient,
+    *,
+    instance_id: str,
+    resource_type: contracts.ResourceType,
+    entity_type: str | None,
+    relationship_type: str | None,
+    query_name: str | None,
+    receipt_id: str | None,
+    limit: int,
+    offset: int,
+    property_filter: dict[str, Any] | None,
+    where: dict[str, dict[str, Any]] | None,
+    operation_type: str | None,
+    fields: list[str] | None,
+    relationship_state: contracts.QueryVisibilityState | None,
+    lifecycle_status: contracts.LifecycleStatus | None,
+    profile: contracts.ReadProfile | None,
+    continuation: str | None,
+) -> contracts.ListResult:
+    if lifecycle_status is None:
+        return client.list(
+            instance_id,
+            resource_type=resource_type,
+            entity_type=entity_type,
+            relationship_type=relationship_type,
+            query_name=query_name,
+            receipt_id=receipt_id,
+            limit=limit,
+            offset=offset,
+            property_filter=property_filter,
+            where=where,
+            operation_type=operation_type,
+            fields=fields,
+            relationship_state=relationship_state,
+            profile=profile,
+            continuation=continuation,
+        )
+    return client.list(
+        instance_id,
+        resource_type=resource_type,
+        entity_type=entity_type,
+        relationship_type=relationship_type,
+        query_name=query_name,
+        receipt_id=receipt_id,
+        limit=limit,
+        offset=offset,
+        property_filter=property_filter,
+        where=where,
+        operation_type=operation_type,
+        fields=fields,
+        relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
+        profile=profile,
+        continuation=continuation,
+    )
 
 
 def handle_evaluate(
@@ -1385,6 +1485,116 @@ def handle_add_entity(
         lambda: api.add_entities(instance_id, entities, dry_run=dry_run),
         allow_local=False,
         operation_name="cruxible_add_entity",
+    )
+
+
+def handle_supersede_claim(
+    instance_id: str,
+    claim_id: str,
+    successor_claim_id: str,
+    reason: str,
+    evidence_ref: contracts.EvidenceRef | None = None,
+) -> contracts.ClaimLifecycleResult:
+    """Settle a claim as superseded by an existing live claim."""
+    return _dispatch_remote_or_local(
+        lambda client: client.supersede_claim(
+            instance_id,
+            claim_id,
+            successor_claim_id,
+            reason,
+            evidence_ref=evidence_ref,
+        ),
+        lambda: api.supersede_claim(
+            instance_id,
+            claim_id,
+            successor_claim_id,
+            reason,
+            evidence_ref=evidence_ref,
+        ),
+        allow_local=False,
+        operation_name="cruxible_supersede_claim",
+    )
+
+
+def handle_retract_claim(
+    instance_id: str,
+    claim_id: str,
+    reason: str,
+    evidence_ref: contracts.EvidenceRef | None = None,
+) -> contracts.ClaimLifecycleResult:
+    """Settle a claim as retracted without a successor."""
+    return _dispatch_remote_or_local(
+        lambda client: client.retract_claim(
+            instance_id,
+            claim_id,
+            reason,
+            evidence_ref=evidence_ref,
+        ),
+        lambda: api.retract_claim(instance_id, claim_id, reason, evidence_ref=evidence_ref),
+        allow_local=False,
+        operation_name="cruxible_retract_claim",
+    )
+
+
+def handle_supersede_entity(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str,
+    successor_entity_type: str,
+    successor_entity_id: str,
+    reason: str,
+    evidence_ref: contracts.EvidenceRef | None = None,
+) -> contracts.EntityLifecycleResult:
+    """Settle an entity as superseded without migrating attached edges."""
+    return _dispatch_remote_or_local(
+        lambda client: client.supersede_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            successor_entity_type,
+            successor_entity_id,
+            reason,
+            evidence_ref=evidence_ref,
+        ),
+        lambda: api.supersede_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            successor_entity_type,
+            successor_entity_id,
+            reason,
+            evidence_ref=evidence_ref,
+        ),
+        allow_local=False,
+        operation_name="cruxible_supersede_entity",
+    )
+
+
+def handle_retire_entity(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str,
+    reason: str,
+    evidence_ref: contracts.EvidenceRef | None = None,
+) -> contracts.EntityLifecycleResult:
+    """Settle an entity as retired without cascading attached edges."""
+    return _dispatch_remote_or_local(
+        lambda client: client.retire_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            reason,
+            evidence_ref=evidence_ref,
+        ),
+        lambda: api.retire_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            reason,
+            evidence_ref=evidence_ref,
+        ),
+        allow_local=False,
+        operation_name="cruxible_retire_entity",
     )
 
 

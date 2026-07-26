@@ -60,6 +60,8 @@ OperationType = Literal[
     "decision_record_abandon",
     "source_artifact_register",
     "snapshot_create",
+    "lifecycle_supersede",
+    "lifecycle_retract",
 ]
 """Coarse-grained category of operation that produced a receipt."""
 

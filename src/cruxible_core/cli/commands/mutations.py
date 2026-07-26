@@ -624,9 +624,8 @@ def _require_property_assignments(properties: Mapping[str, Any], *, command_name
     type=click.Choice(_ENTITY_LIFECYCLE_STATUSES),
     default=None,
     help=(
-        "Typed entity lifecycle status. Only 'live' is writable here; the terminal "
-        "statuses 'retired'/'superseded' are refused on add/update pending the "
-        "receipted lifecycle verbs (wi-lifecycle-verbs)."
+        "Typed entity lifecycle status. Only 'live' is writable here; use "
+        "'cruxible entity retire' or 'cruxible entity supersede' for settled changes."
     ),
 )
 @click.option(
@@ -703,9 +702,8 @@ def add_entity_cmd(
     type=click.Choice(_ENTITY_LIFECYCLE_STATUSES),
     default=None,
     help=(
-        "Typed entity lifecycle status. Only 'live' is writable here; the terminal "
-        "statuses 'retired'/'superseded' are refused on add/update pending the "
-        "receipted lifecycle verbs (wi-lifecycle-verbs)."
+        "Typed entity lifecycle status. Only 'live' is writable here; use "
+        "'cruxible entity retire' or 'cruxible entity supersede' for settled changes."
     ),
 )
 @click.option(
@@ -734,10 +732,8 @@ def update_entity_cmd(
     ``--lifecycle-status`` writes the entity-lifecycle axis, but only its
     non-terminal value: ``live``. The terminal statuses ``retired`` and
     ``superseded`` are REFUSED here — retiring an entity is a governed judgement
-    about its standing, not a property edit, and the dedicated receipted verbs
-    for it land in ``wi-lifecycle-verbs``. Until then, record what you observed
-    against the claim (``cruxible attest record --stance contradict``) or move it
-    through the review machinery (``cruxible feedback``). The typed lifecycle
+    about its standing, not a property edit; use ``cruxible entity retire`` or
+    ``cruxible entity supersede``. The typed lifecycle
     write replaces the entity's lifecycle state and preserves other metadata.
     """
     entity_type, entity_id = _resolve_entity_identity(
@@ -824,9 +820,9 @@ def update_entity_cmd(
     type=click.Choice(_RELATIONSHIP_LIFECYCLE_STATUSES),
     default=None,
     help=(
-        "Typed edge lifecycle status. Only 'active'/'inactive' are writable here; "
-        "the terminal statuses 'retracted'/'superseded' are refused on add/update "
-        "pending the receipted lifecycle verbs (wi-lifecycle-verbs). "
+        "Typed edge lifecycle status. Only 'active'/'inactive' are writable here; use "
+        "'cruxible relationship retract' or 'cruxible relationship supersede' for "
+        "settled changes. "
         "Sets only assertion.lifecycle; cannot approve/reject the edge."
     ),
 )
@@ -969,9 +965,9 @@ def add_relationship_cmd(
     default=None,
     help=(
         "Typed edge lifecycle status -- e.g. deactivate a live edge. Only "
-        "'active'/'inactive' are writable here; the terminal statuses "
-        "'retracted'/'superseded' are refused on add/update pending the receipted "
-        "lifecycle verbs (wi-lifecycle-verbs). Sets only assertion.lifecycle; "
+        "'active'/'inactive' are writable here; use 'cruxible relationship retract' "
+        "or 'cruxible relationship supersede' for settled changes. Sets only "
+        "assertion.lifecycle; "
         "cannot approve/reject the edge."
     ),
 )
@@ -1010,10 +1006,8 @@ def update_relationship_cmd(
     ``--lifecycle-status`` writes only the reversible half of the edge-lifecycle
     axis: ``active``/``inactive``. The terminal statuses ``retracted`` and
     ``superseded`` are REFUSED here — retracting a claim is a governed judgement
-    about its standing, not a property edit, and the dedicated receipted verbs
-    for it land in ``wi-lifecycle-verbs``. Until then, record what you observed
-    against the claim (``cruxible attest record --stance contradict``) or move it
-    through the review machinery (``cruxible feedback``). This typed lifecycle
+    about its standing, not a property edit; use ``cruxible relationship retract``
+    or ``cruxible relationship supersede``. This typed lifecycle
     write sets ONLY the edge's lifecycle state -- it can never approve or reject
     the edge (that stays exclusive to the governed feedback / group-resolve
     paths).

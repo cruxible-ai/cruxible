@@ -129,10 +129,26 @@ def test_state_resolution_tier_table_matches_the_declared_state_pull_tiers() -> 
 
 
 _LIFECYCLE_OPTION_HELP = {
-    "add_entity_cmd": (TERMINAL_ENTITY_LIFECYCLE_STATUSES, ("live",)),
-    "update_entity_cmd": (TERMINAL_ENTITY_LIFECYCLE_STATUSES, ("live",)),
-    "add_relationship_cmd": (TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES, ("active", "inactive")),
-    "update_relationship_cmd": (TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES, ("active", "inactive")),
+    "add_entity_cmd": (
+        TERMINAL_ENTITY_LIFECYCLE_STATUSES,
+        ("live",),
+        ("cruxible entity retire", "cruxible entity supersede"),
+    ),
+    "update_entity_cmd": (
+        TERMINAL_ENTITY_LIFECYCLE_STATUSES,
+        ("live",),
+        ("cruxible entity retire", "cruxible entity supersede"),
+    ),
+    "add_relationship_cmd": (
+        TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES,
+        ("active", "inactive"),
+        ("cruxible relationship retract", "cruxible relationship supersede"),
+    ),
+    "update_relationship_cmd": (
+        TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES,
+        ("active", "inactive"),
+        ("cruxible relationship retract", "cruxible relationship supersede"),
+    ),
 }
 
 
@@ -147,17 +163,16 @@ def _lifecycle_status_help(command_name: str) -> str:
 def test_mutation_cli_help_does_not_instruct_writing_terminal_lifecycle_statuses() -> None:
     """``--lifecycle-status`` help names what IS writable and calls the rest refused.
 
-    The terminal statuses may still be *mentioned* (the option's click.Choice
-    still accepts them syntactically, and the refusal is worth explaining), but
-    the help must never read as an instruction to set one.
+    The option's click.Choice still accepts terminal states syntactically, but
+    the help must route those transitions through the dedicated verbs.
     """
-    for command_name, (terminal, writable) in _LIFECYCLE_OPTION_HELP.items():
+    for command_name, (_terminal, writable, verbs) in _LIFECYCLE_OPTION_HELP.items():
         help_text = _lifecycle_status_help(command_name)
-        assert "refused" in help_text, command_name
-        assert "wi-lifecycle-verbs" in help_text, command_name
+        assert "settled changes" in help_text, command_name
+        assert "wi-lifecycle-verbs" not in help_text, command_name
+        for verb in verbs:
+            assert verb in help_text, (command_name, verb)
         for status in writable:
-            assert status in help_text, (command_name, status)
-        for status in sorted(terminal):
             assert status in help_text, (command_name, status)
 
     source = mutations_module.__file__
@@ -180,9 +195,16 @@ def test_mutation_cli_help_does_not_instruct_writing_terminal_lifecycle_statuses
 
 def test_mutation_cli_points_at_the_verbs_that_replace_terminal_writes() -> None:
     """Refusing without a route forward is a dead end; the docstrings name one."""
-    for command_name in ("update_entity_cmd", "update_relationship_cmd"):
+    expected = {
+        "update_entity_cmd": ("cruxible entity retire", "cruxible entity supersede"),
+        "update_relationship_cmd": (
+            "cruxible relationship retract",
+            "cruxible relationship supersede",
+        ),
+    }
+    for command_name, verbs in expected.items():
         doc = _flat(getattr(mutations_module, command_name).callback.__doc__ or "")
         assert "refused" in doc, command_name
-        assert "wi-lifecycle-verbs" in doc, command_name
-        assert "cruxible attest record" in doc, command_name
-        assert "cruxible feedback" in doc, command_name
+        assert "wi-lifecycle-verbs" not in doc, command_name
+        for verb in verbs:
+            assert verb in doc, (command_name, verb)

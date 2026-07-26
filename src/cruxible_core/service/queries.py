@@ -30,7 +30,11 @@ from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.query.engine import execute_query_definition
 from cruxible_core.query.entity_state import resolve_entity_visibility_state
-from cruxible_core.query.enums import QueryVisibilityState
+from cruxible_core.query.enums import LifecycleStatus, QueryVisibilityState
+from cruxible_core.query.lifecycle_status import (
+    relationship_matches_lifecycle_status,
+    validate_lifecycle_status,
+)
 from cruxible_core.query.predicates import (
     build_predicate_context,
     evaluate_query_predicates,
@@ -116,6 +120,7 @@ def service_query(
     params: dict[str, Any],
     *,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
     context: OperationContext | None = None,
 ) -> QueryServiceResult:
     """Execute a named query and persist the receipt.
@@ -127,6 +132,7 @@ def service_query(
         "query_name": query_name,
         "params": params,
         "relationship_state": relationship_state,
+        "lifecycle_status": lifecycle_status,
     }
     try:
         result = _evaluate_query_result(
@@ -134,6 +140,7 @@ def service_query(
             query_name,
             params,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
         )
 
         if result.receipt:
@@ -172,6 +179,7 @@ def service_evaluate_query(
     params: dict[str, Any],
     *,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
 ) -> QueryServiceResult:
     """Evaluate a named query without persisting receipts or decision events."""
     return _evaluate_query_result(
@@ -179,6 +187,7 @@ def service_evaluate_query(
         query_name,
         params,
         relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
     )
 
 
@@ -190,6 +199,7 @@ def service_query_surface(
     limit: int | None = None,
     offset: int = 0,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
     context: OperationContext | None = None,
 ) -> QueryServiceResult:
     """Execute a named query and apply caller-facing result windowing."""
@@ -204,6 +214,7 @@ def service_query_surface(
         query_name,
         params,
         relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
         context=context,
     )
     return _query_result_with_response_limit(
@@ -221,6 +232,7 @@ def service_query_inline_surface(
     *,
     limit: int | None = None,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
     context: OperationContext | None = None,
 ) -> QueryServiceResult:
     """Execute a bounded inline query definition without persisting it to config."""
@@ -236,6 +248,7 @@ def service_query_inline_surface(
         "definition": _inline_query_definition_payload(inline_name, query_schema),
         "params": params,
         "relationship_state": relationship_state,
+        "lifecycle_status": lifecycle_status,
     }
     try:
         result = _evaluate_inline_query_result(
@@ -244,6 +257,7 @@ def service_query_inline_surface(
             query_schema,
             params,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
         )
 
         if result.receipt:
@@ -287,6 +301,7 @@ def service_evaluate_query_surface(
     *,
     limit: int | None = None,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
 ) -> QueryServiceResult:
     """Evaluate a named query with caller-facing truncation and no persisted receipt."""
     surface_limit = limit
@@ -298,6 +313,7 @@ def service_evaluate_query_surface(
         query_name,
         params,
         relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
     )
     return _query_result_with_response_limit(
         result,
@@ -312,6 +328,7 @@ def _evaluate_query_result(
     params: dict[str, Any],
     *,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
 ) -> QueryServiceResult:
     config = instance.load_config()
     graph = instance.load_graph()
@@ -321,6 +338,7 @@ def _evaluate_query_result(
         query_name,
         params,
         relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
     )
     _stamp_query_receipt_state_coordinates(instance, query_result)
     total = query_result.total_results or len(query_result.results)
@@ -342,6 +360,7 @@ def _evaluate_query_result(
         result_shape=query_result.result_shape,
         dedupe=query_result.dedupe,
         relationship_state=query_result.relationship_state,
+        lifecycle_status=query_result.lifecycle_status,
         param_hints=_query_param_hints(config, graph, query_name),
         policy_summary=query_result.policy_summary,
     )
@@ -375,6 +394,7 @@ def _evaluate_inline_query_result(
     params: dict[str, Any],
     *,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
 ) -> QueryServiceResult:
     config = instance.load_config()
     graph = instance.load_graph()
@@ -385,6 +405,7 @@ def _evaluate_inline_query_result(
         query_schema,
         params,
         relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
     )
     _stamp_query_receipt_state_coordinates(instance, query_result)
     total = query_result.total_results or len(query_result.results)
@@ -406,6 +427,7 @@ def _evaluate_inline_query_result(
         result_shape=query_result.result_shape,
         dedupe=query_result.dedupe,
         relationship_state=query_result.relationship_state,
+        lifecycle_status=query_result.lifecycle_status,
         param_hints=_query_param_hints_for_schema(config, graph, query_schema),
         policy_summary=query_result.policy_summary,
     )
@@ -496,6 +518,7 @@ def _query_output_payload(result: QueryServiceResult) -> dict[str, Any]:
         "result_shape": result.result_shape,
         "dedupe": result.dedupe,
         "relationship_state": result.relationship_state,
+        "lifecycle_status": result.lifecycle_status,
     }
 
 
@@ -1104,6 +1127,7 @@ def service_list(
     property_filter: dict[str, Any] | None = None,
     where: Mapping[str, Mapping[str, Any]] | None = None,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
     operation_type: str | None = None,
     fields: list[str] | None = None,
     limit: int = 50,
@@ -1131,6 +1155,11 @@ def service_list(
     the stored-edge inspection contract returns every stored edge regardless of
     review/lifecycle state. Pass an explicit selector (``all`` / ``not-live`` /
     ...) to override either.
+
+    ``lifecycle_status`` is an orthogonal exact filter with kind-correct
+    vocabulary. When listing entities without an explicit visibility selector,
+    it replaces the implicit live-only default so ``retired`` and ``superseded``
+    remain directly inspectable; an explicit selector still composes normally.
     """
     _VALID_RESOURCES = ("entities", "edges", "receipts", "feedback", "outcomes")
     if resource not in _VALID_RESOURCES:
@@ -1144,6 +1173,8 @@ def service_list(
         raise ConfigError("property_filter and where are mutually exclusive")
     if relationship_state is not None and resource not in ("entities", "edges"):
         raise ConfigError("state is only supported for entities and edges")
+    if lifecycle_status is not None and resource not in ("entities", "edges"):
+        raise ConfigError("lifecycle_status is only supported for entities and edges")
     if fields is not None and resource != "entities":
         raise ConfigError("fields is only supported for entities")
     if receipt_before is not None and resource != "receipts":
@@ -1160,6 +1191,7 @@ def service_list(
             property_filter=property_filter,
             where=where,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             fields=fields,
             limit=limit,
             offset=offset,
@@ -1171,6 +1203,7 @@ def service_list(
             property_filter=property_filter,
             where=where,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             limit=limit,
             offset=offset,
         )
@@ -1259,12 +1292,15 @@ def _service_list_entities(
     property_filter: Mapping[str, Any] | None,
     where: Mapping[str, Mapping[str, Any]] | None,
     relationship_state: QueryVisibilityState | None,
+    lifecycle_status: LifecycleStatus | None,
     fields: list[str] | None,
     limit: int,
     offset: int,
 ) -> ListResult:
     config = instance.load_config()
     _require_list_entity_type(config, entity_type)
+    if lifecycle_status is not None:
+        _validate_list_lifecycle_status(lifecycle_status, kind="entity")
     validate_entity_projection_fields(config, entity_type, fields)
     query_where = _compile_entity_list_where(
         config,
@@ -1278,7 +1314,9 @@ def _service_list_entities(
     # applied by the same chokepoint every other read path uses. Entities have no
     # review axis, so the review-only selectors collapse to ``live`` here (they
     # would otherwise trip the path-shape constraints those values carry).
-    entity_state = resolve_entity_visibility_state(relationship_state or "live")
+    entity_state = resolve_entity_visibility_state(
+        relationship_state or ("all" if lifecycle_status is not None else "live")
+    )
     query_schema = NamedQuerySchema(
         mode="collection",
         returns=entity_type,
@@ -1292,6 +1330,7 @@ def _service_list_entities(
         "__list_entities__",
         query_schema,
         {},
+        lifecycle_status=lifecycle_status,
     )
     entities = sorted(
         [cast(EntityInstance, row) for row in query_result.results],
@@ -1311,11 +1350,14 @@ def _service_list_edges(
     property_filter: Mapping[str, Any] | None,
     where: Mapping[str, Mapping[str, Any]] | None,
     relationship_state: QueryVisibilityState | None,
+    lifecycle_status: LifecycleStatus | None,
     limit: int,
     offset: int,
 ) -> ListResult:
     config = instance.load_config()
     graph = instance.load_graph()
+    if lifecycle_status is not None:
+        _validate_list_lifecycle_status(lifecycle_status, kind="relationship")
     if relationship_type is not None:
         _require_list_relationship_type(config, relationship_type)
         relationship_types = [relationship_type]
@@ -1339,6 +1381,10 @@ def _service_list_edges(
             relationship_state is None
             or relationship_matches_query_state(relationship.metadata, relationship_state)
         )
+        if (
+            lifecycle_status is None
+            or relationship_matches_lifecycle_status(relationship.metadata, lifecycle_status)
+        )
         if _relationship_matches_list_where(config, graph, relationship, query_where)
     ]
     relationships = sorted(relationships, key=relationship_sort_key)
@@ -1354,6 +1400,17 @@ def _service_list_edges(
 
 def _paginate_items(items: list[Any], *, limit: int, offset: int) -> list[Any]:
     return items[offset : offset + limit]
+
+
+def _validate_list_lifecycle_status(
+    status: LifecycleStatus,
+    *,
+    kind: Literal["entity", "relationship"],
+) -> None:
+    try:
+        validate_lifecycle_status(status, kind=kind)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def _compile_entity_list_where(

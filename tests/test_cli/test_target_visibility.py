@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import click
 import pytest
@@ -46,8 +47,12 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("outcome", "record"): "active",
     ("entity", "add"): "active",
     ("entity", "update"): "active",
+    ("entity", "supersede"): "active",
+    ("entity", "retire"): "active",
     ("relationship", "add"): "active",
     ("relationship", "update"): "active",
+    ("relationship", "supersede"): "active",
+    ("relationship", "retract"): "active",
     ("batch-direct-write",): "active",
     ("group", "propose"): "active",
     ("group", "resolve"): "active",
@@ -60,7 +65,13 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
 
 
 class _BatchWriteClient:
-    def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+    def batch_direct_write(
+        self,
+        instance_id: str,
+        payload: Any,
+        *,
+        dry_run: bool = False,
+    ) -> contracts.BatchDirectWriteResult:
         return contracts.BatchDirectWriteResult(
             dry_run=dry_run,
             valid=True,
@@ -69,7 +80,7 @@ class _BatchWriteClient:
             receipt_id="RCP-target",
         )
 
-    def schema(self, instance_id):
+    def schema(self, instance_id: str) -> dict[str, Any]:
         return {"entity_types": {}, "relationships": [], "named_queries": {}}
 
 

@@ -207,6 +207,20 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_add_entity": (
         "Use when you need to add or update a small number of explicit entities."
     ),
+    "cruxible_supersede_claim": (
+        "Use when the settled, receipted adjudication replaces one claim with an "
+        "already-existing live same-type successor."
+    ),
+    "cruxible_retract_claim": (
+        "Use when the settled, receipted adjudication withdraws a claim without a successor."
+    ),
+    "cruxible_supersede_entity": (
+        "Use when the settled, receipted adjudication replaces one entity with an "
+        "already-existing live same-type successor; edges do not migrate."
+    ),
+    "cruxible_retire_entity": (
+        "Use when the settled, receipted adjudication retires an entity without cascading edges."
+    ),
     "cruxible_batch_direct_write": (
         "Use when you need to validate or apply one coherent batch of explicit "
         "entities and relationships; set dry_run first."

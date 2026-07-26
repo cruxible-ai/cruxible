@@ -684,3 +684,95 @@ class TestContextVarIsolation:
             assert get_current_mode() == PermissionMode.GRAPH_WRITE
         # After all scopes exit, global default (ADMIN) is restored
         assert get_current_mode() == PermissionMode.ADMIN
+
+
+# ── Lifecycle verbs over the MCP path ─────────────────────────────────
+
+
+class TestLifecycleVerbMcpPath:
+    """One lifecycle verb, driven through the real MCP handler.
+
+    The service and HTTP surfaces are covered elsewhere; this pins that the MCP
+    handler is wired to the same gated facade rather than to an unguarded call —
+    the tier is enforced and the required reason is enforced, over the transport
+    an agent actually uses.
+    """
+
+    @staticmethod
+    def _seeded_instance(tmp_path):
+        from cruxible_core.cli.instance import CruxibleInstance
+        from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
+        from cruxible_core.runtime.instance_manager import get_manager
+        from tests.test_cli.conftest import CAR_PARTS_YAML
+
+        (tmp_path / "config.yaml").write_text(CAR_PARTS_YAML)
+        instance = CruxibleInstance.init(tmp_path, "config.yaml")
+        graph = instance.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id="BP-1001",
+                properties={"part_number": "BP-1001", "name": "Pads", "category": "brakes"},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-1",
+                properties={
+                    "vehicle_id": "V-1",
+                    "year": 2024,
+                    "make": "Honda",
+                    "model": "Civic",
+                },
+            )
+        )
+        claim_id = mint_claim_id()
+        graph.add_relationship(
+            RelationshipInstance(
+                claim_id=claim_id,
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1001",
+                to_type="Vehicle",
+                to_id="V-1",
+                properties={"verified": True},
+            )
+        )
+        instance.save_graph(graph)
+        instance_id = str(tmp_path)
+        get_manager().register(instance_id, instance)
+        return instance, instance_id, claim_id
+
+    def test_retract_claim_over_mcp_enforces_tier_and_required_reason(
+        self, tmp_path, governed_client
+    ):
+        from cruxible_core.graph.assertion_state import relationship_assertion_from_metadata
+        from cruxible_core.mcp import handlers
+
+        instance, instance_id, claim_id = self._seeded_instance(tmp_path)
+
+        # Below GRAPH_WRITE the verb is denied outright.
+        init_permissions(PermissionMode.GOVERNED_WRITE)
+        with pytest.raises(PermissionDeniedError):
+            handlers.handle_retract_claim(instance_id, claim_id, "not permitted at this tier")
+
+        reset_permissions()
+        init_permissions(PermissionMode.GRAPH_WRITE)
+        # At tier, an EMPTY reason is still refused: adjudication without a
+        # reason is the corpus starving itself, so it is not a formatting nit.
+        with pytest.raises(ConfigError, match="requires a non-empty reason"):
+            handlers.handle_retract_claim(instance_id, claim_id, "   ")
+
+        stored = instance.load_graph().find_relationship_by_claim_id(claim_id)
+        assert stored is not None
+        assert relationship_assertion_from_metadata(stored.metadata).lifecycle.status == "active"
+
+        # ...and with both satisfied it settles, receipted.
+        result = handlers.handle_retract_claim(instance_id, claim_id, "withdrawn by the supplier")
+        assert result.action == "retract"
+        assert result.receipt_id is not None
+        settled = instance.load_graph().find_relationship_by_claim_id(claim_id)
+        assert settled is not None
+        settled_status = relationship_assertion_from_metadata(settled.metadata).lifecycle.status
+        assert settled_status == "retracted"

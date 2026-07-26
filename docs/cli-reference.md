@@ -193,6 +193,8 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 - `cruxible entity get` - Look up a specific entity by type and ID.
 - `cruxible entity history` - Inspect receipt-derived entity change history for one entity type or entity.
 - `cruxible entity inspect` - Inspect an entity and its immediate neighbors.
+- `cruxible entity retire` - Retire an entity without cascading attached edges.
+- `cruxible entity supersede` - Supersede an entity with an existing live same-type successor.
 - `cruxible entity update` - Update one existing entity.
 
 **Output And Side Effects:**
@@ -220,7 +222,7 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 | `--props` | no | `` | text | JSON object of properties. |
 | `--set` | no | `` | text | String property assignment FIELD=VALUE. Repeat for multiple properties. |
 | `--set-json` | no | `` | text | Typed JSON property assignment FIELD=JSON. Repeat for multiple properties. |
-| `--lifecycle-status` | no | `` | choice | Typed entity lifecycle status. Only `live` is writable here; the terminal statuses `retired`/`superseded` are refused on add/update pending the receipted lifecycle verbs (`wi-lifecycle-verbs`). |
+| `--lifecycle-status` | no | `` | choice | Typed entity lifecycle status. Only `live` is writable here; the terminal statuses `retired`/`superseded` are refused on add/update — use `cruxible entity supersede` or `cruxible entity retire`. |
 | `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |
@@ -252,7 +254,7 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 | `--props` | no | `` | text | JSON object of properties. |
 | `--set` | no | `` | text | String property assignment FIELD=VALUE. Repeat for multiple properties. |
 | `--set-json` | no | `` | text | Typed JSON property assignment FIELD=JSON. Repeat for multiple properties. |
-| `--lifecycle-status` | no | `` | choice | Typed entity lifecycle status. Only `live` is writable here; the terminal statuses `retired`/`superseded` are refused on add/update pending the receipted lifecycle verbs (`wi-lifecycle-verbs`). |
+| `--lifecycle-status` | no | `` | choice | Typed entity lifecycle status. Only `live` is writable here; the terminal statuses `retired`/`superseded` are refused on add/update — use `cruxible entity supersede` or `cruxible entity retire`. |
 | `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |
@@ -267,6 +269,73 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible entity supersede
+
+**Usage:** `cruxible entity supersede [OPTIONS] ENTITY_TYPE ENTITY_ID SUCCESSOR_ENTITY_TYPE SUCCESSOR_ENTITY_ID`
+
+**Purpose:** Settle an entity as superseded by an existing live same-type successor.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `ENTITY_TYPE` | yes | `` | argument | Predecessor entity type. |
+| `ENTITY_ID` | yes | `` | argument | Predecessor entity ID. |
+| `SUCCESSOR_ENTITY_TYPE` | yes | `` | argument | Successor entity type; must equal the predecessor's type. |
+| `SUCCESSOR_ENTITY_ID` | yes | `` | argument | Successor entity ID; the successor must already exist and be live. |
+| `--reason` | yes | `Sentinel.UNSET` | text | Required adjudication reason. |
+| `--evidence-ref` | no | `` | text | Optional evidence reference as a JSON object. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- A settled adjudication at `GRAPH_WRITE`, recorded in one mutation receipt with
+  the subject, the transition, the reason, and the successor reference.
+- Writes typed supersession pointers in BOTH directions
+  (`successor.supersedes`, `predecessor.superseded_by`), moves the predecessor's
+  `lifecycle.status` to `superseded`, and stamps `closed_at`/`closed_by`.
+- Inbound edges do NOT migrate: a superseded entity's attached claims stay
+  pointed at the predecessor. Re-pointing is the caller's job.
+- Refused when the successor is missing, not live, of a different type, is the
+  subject itself, or already supersedes another entity; and when the
+  predecessor is not live.
+
+**Common Errors:**
+- Empty or missing `--reason` — a settled transition without a reason is refused.
+- Permission mode below `GRAPH_WRITE`.
+- Successor absent, not live, or already recorded as superseding something else.
+
+## cruxible entity retire
+
+**Usage:** `cruxible entity retire [OPTIONS] ENTITY_TYPE ENTITY_ID`
+
+**Purpose:** Settle an entity as retired, with no successor and no cascade.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `ENTITY_TYPE` | yes | `` | argument | Entity type. |
+| `ENTITY_ID` | yes | `` | argument | Entity ID. |
+| `--reason` | yes | `Sentinel.UNSET` | text | Required adjudication reason. |
+| `--evidence-ref` | no | `` | text | Optional evidence reference as a JSON object. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- A settled adjudication at `GRAPH_WRITE`, recorded in one mutation receipt.
+- Moves `lifecycle.status` to `retired` and stamps `closed_at`/`closed_by`.
+- Reports `stranded_live_edge_count`: still-live edges attached to the retired
+  entity, which stay visible in edge-level reads but drop out of traversals.
+  Cascade is deliberately not performed — re-pointing is the caller's job.
+- The retired `entity_id` is preserved, not freed: a later DIRECT add/update of
+  that id is refused rather than minting a doppelganger with none of the
+  original's history. Governed sources (workflow apply, group resolve) still
+  reach the entity; reversing a retirement awaits the deferred reinstate verb.
+
+**Common Errors:**
+- Empty or missing `--reason`.
+- Permission mode below `GRAPH_WRITE`.
+- The entity is not live (already retired or superseded).
 
 ## cruxible entity get
 
@@ -391,6 +460,8 @@ table output groups nodes by depth.
 - `cruxible relationship add` - Create one relationship.
 - `cruxible relationship get` - Look up a specific relationship by its endpoints and type.
 - `cruxible relationship lineage` - Inspect a relationship's stored provenance lineage.
+- `cruxible relationship retract` - Retract a claim without a successor.
+- `cruxible relationship supersede` - Supersede a claim with an existing live same-type successor.
 - `cruxible relationship update` - Update one existing relationship.
 
 **Output And Side Effects:**
@@ -428,7 +499,7 @@ table output groups nodes by depth.
 | `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
 | `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
 | `--pending` | no | `False` | boolean | Create the relationship as pending review instead of live state. |
-| `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status. Only `active`/`inactive` are writable here; the terminal statuses `retracted`/`superseded` are refused on add/update pending the receipted lifecycle verbs (`wi-lifecycle-verbs`). Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
+| `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status. Only `active`/`inactive` are writable here; the terminal statuses `retracted`/`superseded` are refused on add/update — use `cruxible relationship supersede` or `cruxible relationship retract`. Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
 | `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |
@@ -483,7 +554,7 @@ cruxible relationship add \
 | `--evidence-ref` | no | `` | text | JSON evidence ref object. Repeat to attach multiple refs. |
 | `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
 | `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
-| `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status -- e.g. deactivate a live edge. Only `active`/`inactive` are writable here; the terminal statuses `retracted`/`superseded` are refused on add/update pending the receipted lifecycle verbs (`wi-lifecycle-verbs`). Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
+| `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status -- e.g. deactivate a live edge. Only `active`/`inactive` are writable here; the terminal statuses `retracted`/`superseded` are refused on add/update — use `cruxible relationship supersede` or `cruxible relationship retract`. Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
 | `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 | `--json` | no | `False` | boolean | Output as JSON. |
@@ -498,6 +569,72 @@ cruxible relationship add \
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible relationship supersede
+
+**Usage:** `cruxible relationship supersede [OPTIONS] CLAIM_ID SUCCESSOR_CLAIM_ID`
+
+**Purpose:** Settle a claim as superseded by an existing live same-type claim.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `CLAIM_ID` | yes | `` | argument | Predecessor claim ID. |
+| `SUCCESSOR_CLAIM_ID` | yes | `` | argument | Successor claim ID; must already exist, be live, and share the relationship type. |
+| `--reason` | yes | `Sentinel.UNSET` | text | Required adjudication reason. |
+| `--evidence-ref` | no | `` | text | Optional evidence reference as a JSON object. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- A settled adjudication at `GRAPH_WRITE`, recorded in one mutation receipt with
+  the subject, the transition, the reason, and the successor reference.
+- Writes typed `claim_id` supersession pointers in BOTH directions, moves the
+  predecessor's `lifecycle.status` to `superseded`, and stamps
+  `closed_at`/`closed_by`.
+- Addresses exactly the named claim: on a tuple carrying parallel edges, the
+  siblings are untouched and the subject's properties are carried verbatim.
+- The predecessor stays resolvable by `claim_id` afterwards, with its settled
+  state — it is never "gone".
+- Refused on self-supersession, a missing/non-live/wrong-type successor, a
+  successor that already supersedes another claim, or a predecessor that is not
+  lifecycle-`active` (or whose review is pending/rejected). A window-expired but
+  active claim IS supersedable.
+
+**Common Errors:**
+- Empty or missing `--reason`.
+- Permission mode below `GRAPH_WRITE`.
+- Successor absent, not live, wrong relationship type, or already recorded as
+  superseding another claim.
+
+## cruxible relationship retract
+
+**Usage:** `cruxible relationship retract [OPTIONS] CLAIM_ID`
+
+**Purpose:** Settle a claim as retracted, withdrawn with no successor.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `CLAIM_ID` | yes | `` | argument | Claim ID to retract. |
+| `--reason` | yes | `Sentinel.UNSET` | text | Required adjudication reason. |
+| `--evidence-ref` | no | `` | text | Optional evidence reference as a JSON object — a retraction's motivating observation is often a contradiction attestation. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- A settled adjudication at `GRAPH_WRITE`, recorded in one mutation receipt.
+- Moves `lifecycle.status` to `retracted` and stamps `closed_at`/`closed_by`.
+  Properties are carried verbatim: a retraction never rewrites content, and it
+  succeeds even when the type's schema has since grown a required property.
+- The claim stays resolvable by `claim_id` afterwards with its settled state.
+- Refused when the claim is not lifecycle-`active`, or its review is
+  pending/rejected — resolve the review instead.
+
+**Common Errors:**
+- Empty or missing `--reason`.
+- Permission mode below `GRAPH_WRITE`.
+- The claim is already settled (retracted or superseded).
 
 ## cruxible relationship get
 
@@ -2130,6 +2267,7 @@ Text output labels an interrupted record as
 | `--limit` | no | `50` | integer | Max edges to show. |
 | `--offset` | no | `0` | integer | Rows to skip. |
 | `--state` | no | `` | choice | Read-visibility state: `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Omit to return every stored edge (the inspection default); `not-live` surfaces rejected/closed edges, `live` hides them. |
+| `--lifecycle-status` | no | `` | choice | Exact kind-correct lifecycle status to read: relationships take `active`/`inactive`/`superseded`/`retracted`, entities take `live`/`retired`/`superseded`. Orthogonal to `--state`: `--state` is the coarse visibility selector, this is an exact-match filter on the lifecycle axis. Vocabulary from the wrong kind is refused. |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
 | `--continue` | no | `` | text | Continuation token from a previous truncated page; repeat the same filters. Bound to the instance, config, and `read_revision` — stale after any state mutation (restart the read); malformed tokens are rejected. |
 | `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
@@ -2165,6 +2303,7 @@ Text output labels an interrupted record as
 | `--limit` | no | `50` | integer | Max entities to show. |
 | `--offset` | no | `0` | integer | Rows to skip. |
 | `--state` | no | `` | choice | Read-visibility state by entity lifecycle: `live` (default — hides retired/superseded entities), `all`, or `not-live` (only the gated-out set). Review-only values resolve to `live` (entities have no review axis). |
+| `--lifecycle-status` | no | `` | choice | Exact kind-correct lifecycle status to read: relationships take `active`/`inactive`/`superseded`/`retracted`, entities take `live`/`retired`/`superseded`. Orthogonal to `--state`: `--state` is the coarse visibility selector, this is an exact-match filter on the lifecycle axis. Vocabulary from the wrong kind is refused. |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
 | `--continue` | no | `` | text | Continuation token from a previous truncated page; repeat the same filters. Bound to the instance, config, and `read_revision` — stale after any state mutation (restart the read); malformed tokens are rejected. |
 | `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
@@ -2630,6 +2769,7 @@ cruxible outcome due [--queue due|overdue|contradicted] [--limit N] [--offset N]
 | `--param` | no | `Sentinel.UNSET` | text | Query parameter as KEY=VALUE. |
 | `--limit` | no | `` | integer range | Max results to display. |
 | `--state` | no | `` | choice | Read-visibility state: `live` (default), `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. Overriding a named query's configured state requires `allow_relationship_state_override: true`. |
+| `--lifecycle-status` | no | `` | choice | Exact kind-correct lifecycle status to read: relationships take `active`/`inactive`/`superseded`/`retracted`, entities take `live`/`retired`/`superseded`. Orthogonal to `--state`: `--state` is the coarse visibility selector, this is an exact-match filter on the lifecycle axis. Vocabulary from the wrong kind is refused. |
 | `--count` | no | `False` | boolean | Show only summary metadata. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
@@ -2660,6 +2800,7 @@ cruxible outcome due [--queue due|overdue|contradicted] [--limit N] [--offset N]
 | `--param` | no | `Sentinel.UNSET` | text | Query parameter as KEY=VALUE. |
 | `--limit` | no | `` | integer range | Max results to display. |
 | `--state` | no | `` | choice | Read-visibility state: `live` (default), `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. Overriding the inline definition's configured state requires `allow_relationship_state_override: true`. |
+| `--lifecycle-status` | no | `` | choice | Exact kind-correct lifecycle status to read: relationships take `active`/`inactive`/`superseded`/`retracted`, entities take `live`/`retired`/`superseded`. Orthogonal to `--state`: `--state` is the coarse visibility selector, this is an exact-match filter on the lifecycle axis. Vocabulary from the wrong kind is refused. |
 | `--layout` | no | `rows` | choice | Query output layout: `rows` (per-row items) or `graph` (normalized nodes/edges with results as ordered references; each entity and relationship serialized once). |
 | `--count` | no | `False` | boolean | Show only summary metadata. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |

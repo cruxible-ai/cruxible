@@ -192,10 +192,9 @@ def _refuse_terminal_lifecycle_write(
     standing, not a property edit. Reachable from a plain add/update it is a
     one-call, unreceipted way to make live state vanish from every live-gated
     read with no reviewer, no required reason, and nothing recording who decided
-    it. Interim posture per Robert's 2026-07-25 ruling: refuse and teach, until
-    the dedicated receipted verbs land in ``wi-lifecycle-verbs``. ``writable``
-    statuses stay writable — those are reversible participation flips, not
-    terminations.
+    it. Refuse and teach callers to use ``relationship supersede|retract`` or
+    ``entity supersede|retire`` instead. ``writable`` statuses stay writable —
+    those are reversible participation flips, not settled adjudications.
 
     WHY HERE, and not only at the contract mappers: the contract mappers
     (``service/lifecycle_inputs.py``) only cover payloads that arrive as
@@ -212,9 +211,7 @@ def _refuse_terminal_lifecycle_write(
     EARNED the transition: it is an internal keyword argument, deliberately not
     reachable from any contract payload (no ``EntityInput`` /
     ``RelationshipInput`` / batch-input field maps to it), so no caller-supplied
-    JSON can set it. The dedicated receipted verbs of ``wi-lifecycle-verbs`` will
-    pass it; today no governed constructor needs it, because none of them writes
-    a terminal lifecycle status (see :func:`apply_relationship`).
+    JSON can set it. Only the dedicated receipted lifecycle verbs pass it.
     """
     if trusted_lifecycle_transition or status is None:
         return
@@ -265,6 +262,43 @@ def apply_entity(
         raise DirectWriteRefusedError("entity", entity_type, source, policy=policy)
     if not is_governed_source(source) and policy == "proposal_only":
         raise DirectWriteRefusedError("entity", entity_type, source, policy=policy)
+
+    existing_entity = graph.get_entity(
+        validated.entity.entity_type,
+        validated.entity.entity_id,
+    )
+    # The v3 forward-compatibility requirement: a retired entity_id must not be
+    # quietly re-occupied by a DIRECT write. Re-adding the id would mint a
+    # doppelganger carrying the identity but none of the retired original's
+    # history, foreclosing the deferred reinstate verb.
+    #
+    # SCOPED TO DIRECT WRITES on purpose. The seam cannot tell a "re-add" from an
+    # "update" — the row exists either way, so ``is_update`` is True for both —
+    # which means the only honest axis to narrow on is the SOURCE. Refusing every
+    # source would have made one retirement permanently break the governed
+    # ingest paths: a KEV-shaped ``workflow_apply`` that re-ingests a retired id
+    # (unattended, on a schedule, one row among thousands) would fail the WHOLE
+    # apply forever, since the apply loop raises out rather than reporting
+    # per-row outcomes — there is no partial-failure shape to route a per-row
+    # refusal into. Governed sources therefore pass through unchanged and a
+    # retired entity's governed updates remain possible; that is a KNOWN, stated
+    # gap pending the reinstate verb, and it is the smaller one: a governed
+    # re-ingest is receipted and attributable, an unreviewed direct re-add is not.
+    if (
+        validated.is_update
+        and existing_entity is not None
+        and existing_entity.metadata.lifecycle_status() == "retired"
+        and not trusted_lifecycle_transition
+        and not is_governed_source(source)
+        and source != TOKEN_MINT_SOURCE
+    ):
+        raise DataValidationError(
+            f"Entity {entity_type}:{validated.entity.entity_id} is retired: a direct "
+            "add/update would re-occupy a settled identity with none of its history. "
+            "Retirement is reversed by the deferred reinstate adjudication, which no "
+            "verb performs in this release; 'cruxible entity supersede' links a live "
+            "predecessor to a successor and does not apply to an already-retired one."
+        )
 
     # Ordered AFTER the write-policy refusals on purpose: "you may not direct-write
     # this type at all" is the coarser, harder answer, and reporting it first keeps
@@ -425,12 +459,13 @@ def apply_relationship(
 
     The single relationship chokepoint, so the ``refuse_direct_writes`` governance
     check lives here: a write whose ``source`` is NOT a governed verb
-    (``workflow_apply`` / ``group_resolve``) AND is ``not pending`` is refused when
-    the relationship type resolves to ``proposal_only``. A ``pending=True`` write
-    is PERMITTED even under ``proposal_only`` — it stages for review, it is not
-    live. The typed lifecycle write carries the same ``source`` and so is covered
-    by this one predicate (no extra hook). Resolved INSIDE the chokepoint
-    (callers pass ``config``) to keep the decision in one funnel.
+    (``workflow_apply`` / ``group_resolve`` / the receipted lifecycle verbs) AND
+    is ``not pending`` is refused when the relationship type resolves to
+    ``proposal_only``. A ``pending=True`` write is PERMITTED even under
+    ``proposal_only`` — it stages for review, it is not live. The typed lifecycle
+    write carries the same ``source`` and so is covered by this one predicate (no
+    extra hook). Resolved INSIDE the chokepoint (callers pass ``config``) to keep
+    the decision in one funnel.
 
     The same chokepoint refuses a non-pending write whose target edge is an
     unresolved PENDING proposal (:func:`_refuse_write_onto_pending_edge`), so no
@@ -479,6 +514,7 @@ def apply_relationship(
             rel.to_type,
             rel.to_id,
             rel.relationship_type,
+            edge_key=rel.edge_key,
         )
         _refuse_write_onto_pending_edge(existing_rel, pending=pending)
         replace_props = dict(rel.properties)
@@ -514,6 +550,7 @@ def apply_relationship(
             rel.relationship_type,
             properties=replace_props,
             metadata=rel.metadata,
+            edge_key=rel.edge_key,
         )
         return _durable_relationship(graph, rel)
     else:
@@ -565,10 +602,10 @@ def _durable_relationship(
         rel.to_type,
         rel.to_id,
         rel.relationship_type,
-        # Creates address the brand-new sibling by its assigned key; updates
-        # re-resolve by first-match tuple, exactly as replace_relationship_state
-        # did, so the edge returned is always the edge written.
-        edge_key=edge_key,
+        # Creates address the brand-new sibling by its assigned key. Exact-edge
+        # updates (including claim lifecycle adjudication) retain the incoming
+        # edge key; ordinary tuple upserts keep the historical first-match path.
+        edge_key=edge_key if edge_key is not None else rel.edge_key,
     )
     if persisted is None:  # pragma: no cover - the apply above just wrote it
         raise ValueError(

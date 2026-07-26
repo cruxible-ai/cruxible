@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/v1", tags=["queries"])
 
 # Query-string keys owned by the view surface itself; everything else is
 # forwarded to the named query as a string-valued parameter.
-VIEW_RESERVED_QUERY_KEYS = frozenset({"limit", "offset", "relationship_state"})
+VIEW_RESERVED_QUERY_KEYS = frozenset({"limit", "offset", "relationship_state", "lifecycle_status"})
 
 
 def _parse_property_filter(property_filter: str | None) -> dict[str, Any] | None:
@@ -66,6 +66,7 @@ async def query(
         limit=req.limit,
         offset=req.offset,
         relationship_state=req.relationship_state,
+        lifecycle_status=req.lifecycle_status,
         decision_record_id=req.decision_record_id,
         surface="http",
         profile=req.profile,
@@ -81,6 +82,7 @@ async def view(
     limit: int | None = Query(default=None, ge=1),
     offset: int = Query(default=0, ge=0),
     relationship_state: contracts.QueryVisibilityState | None = None,
+    lifecycle_status: contracts.LifecycleStatus | None = None,
 ) -> contracts.QueryToolResult:
     """GET shim over named-query execution for read-model consumers.
 
@@ -107,6 +109,7 @@ async def view(
             limit=limit,
             offset=offset,
             relationship_state=relationship_state,
+            lifecycle_status=lifecycle_status,
             surface="http",
         ),
     )
@@ -127,6 +130,7 @@ async def query_inline(
         params=req.params,
         limit=req.limit,
         relationship_state=req.relationship_state,
+        lifecycle_status=req.lifecycle_status,
         decision_record_id=req.decision_record_id,
         surface="http",
         profile=req.profile,
@@ -198,6 +202,7 @@ async def list_resources(
     operation_type: str | None = None,
     fields: list[str] | None = Query(default=None),
     relationship_state: contracts.QueryVisibilityState | None = None,
+    lifecycle_status: contracts.LifecycleStatus | None = None,
     profile: contracts.ReadProfile = Query(default="standard"),
     continuation: str | None = None,
 ) -> contracts.ListResult:
@@ -216,6 +221,7 @@ async def list_resources(
         operation_type=operation_type,
         fields=fields,
         relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
         profile=profile,
         continuation=continuation,
     )

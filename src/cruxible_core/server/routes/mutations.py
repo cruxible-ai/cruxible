@@ -16,12 +16,98 @@ from cruxible_core.server.request_models import (
     AddEntitiesRequest,
     AddRelationshipsRequest,
     BatchDirectWriteRequest,
+    ClaimSupersedeRequest,
     ConfigStatusRequest,
+    EntitySupersedeRequest,
+    LifecycleRetractRequest,
     ReloadConfigRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
 
 router = APIRouter(prefix="/api/v1", tags=["mutations"])
+
+
+@router.post(
+    "/{instance_id}/claims/{claim_id}/supersede",
+    response_model=contracts.ClaimLifecycleResult,
+    include_in_schema=False,
+)
+async def supersede_claim(
+    instance_id: str,
+    claim_id: str,
+    req: ClaimSupersedeRequest,
+) -> contracts.ClaimLifecycleResult:
+    return api.supersede_claim(
+        resolve_server_instance_id(instance_id),
+        claim_id,
+        req.successor_claim_id,
+        req.reason,
+        evidence_ref=req.evidence_ref,
+        actor_context=req.actor_context,
+    )
+
+
+@router.post(
+    "/{instance_id}/claims/{claim_id}/retract",
+    response_model=contracts.ClaimLifecycleResult,
+    include_in_schema=False,
+)
+async def retract_claim(
+    instance_id: str,
+    claim_id: str,
+    req: LifecycleRetractRequest,
+) -> contracts.ClaimLifecycleResult:
+    return api.retract_claim(
+        resolve_server_instance_id(instance_id),
+        claim_id,
+        req.reason,
+        evidence_ref=req.evidence_ref,
+        actor_context=req.actor_context,
+    )
+
+
+@router.post(
+    "/{instance_id}/entities/{entity_type}/{entity_id}/supersede",
+    response_model=contracts.EntityLifecycleResult,
+    include_in_schema=False,
+)
+async def supersede_entity(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str,
+    req: EntitySupersedeRequest,
+) -> contracts.EntityLifecycleResult:
+    return api.supersede_entity(
+        resolve_server_instance_id(instance_id),
+        entity_type,
+        entity_id,
+        req.successor_entity_type,
+        req.successor_entity_id,
+        req.reason,
+        evidence_ref=req.evidence_ref,
+        actor_context=req.actor_context,
+    )
+
+
+@router.post(
+    "/{instance_id}/entities/{entity_type}/{entity_id}/retire",
+    response_model=contracts.EntityLifecycleResult,
+    include_in_schema=False,
+)
+async def retire_entity(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str,
+    req: LifecycleRetractRequest,
+) -> contracts.EntityLifecycleResult:
+    return api.retire_entity(
+        resolve_server_instance_id(instance_id),
+        entity_type,
+        entity_id,
+        req.reason,
+        evidence_ref=req.evidence_ref,
+        actor_context=req.actor_context,
+    )
 
 
 @router.post("/{instance_id}/entities", response_model=contracts.AddEntityResult)

@@ -118,6 +118,7 @@ class QueryRequest(BaseModel):
     limit: int | None = None
     offset: int = Field(default=0, ge=0)
     relationship_state: contracts.QueryVisibilityState | None = None
+    lifecycle_status: contracts.LifecycleStatus | None = None
     decision_record_id: str | None = None
     profile: contracts.ReadProfile = "standard"
     layout: contracts.QueryLayout = "rows"
@@ -128,6 +129,7 @@ class InlineQueryRequest(BaseModel):
     params: dict[str, Any] | None = None
     limit: int | None = None
     relationship_state: contracts.QueryVisibilityState | None = None
+    lifecycle_status: contracts.LifecycleStatus | None = None
     decision_record_id: str | None = None
     profile: contracts.ReadProfile = "standard"
     layout: contracts.QueryLayout = "rows"
@@ -153,6 +155,27 @@ class AddRelationshipsRequest(BaseModel):
 class BatchDirectWriteRequest(BaseModel):
     payload: contracts.BatchDirectWritePayload
     dry_run: bool = False
+    actor_context: contracts.GovernedActorContext | None = None
+
+
+class ClaimSupersedeRequest(BaseModel):
+    successor_claim_id: str
+    reason: str
+    evidence_ref: contracts.EvidenceRef | None = None
+    actor_context: contracts.GovernedActorContext | None = None
+
+
+class LifecycleRetractRequest(BaseModel):
+    reason: str
+    evidence_ref: contracts.EvidenceRef | None = None
+    actor_context: contracts.GovernedActorContext | None = None
+
+
+class EntitySupersedeRequest(BaseModel):
+    successor_entity_type: str
+    successor_entity_id: str
+    reason: str
+    evidence_ref: contracts.EvidenceRef | None = None
     actor_context: contracts.GovernedActorContext | None = None
 
 

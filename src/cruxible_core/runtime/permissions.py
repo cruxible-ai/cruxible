@@ -181,6 +181,10 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_retire_procedure": PermissionMode.GRAPH_WRITE,
     "cruxible_resolve_attestation": PermissionMode.GRAPH_WRITE,
     "cruxible_dispose_outcome_resolution": PermissionMode.GRAPH_WRITE,
+    "cruxible_supersede_claim": PermissionMode.GRAPH_WRITE,
+    "cruxible_retract_claim": PermissionMode.GRAPH_WRITE,
+    "cruxible_supersede_entity": PermissionMode.GRAPH_WRITE,
+    "cruxible_retire_entity": PermissionMode.GRAPH_WRITE,
     # Creating a snapshot MOVES the instance head. Every outstanding
     # state-pull apply and every receipt coordinate that named the previous head
     # is invalidated by it, which is the same class of authority as committing

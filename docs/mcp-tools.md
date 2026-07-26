@@ -351,11 +351,12 @@ The cache is NON-AUTHORITATIVE and its files are same-user-writable by design: a
 | `limit` | no | integer | null |  |
 | `offset` | no | integer | Number of results to skip before the returned window. |
 | `relationship_state` | no | string | null | Read-visibility state: one of `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. |
+| `lifecycle_status` | no | string | null | Exact kind-correct lifecycle status: relationships take `active`/`inactive`/`superseded`/`retracted`, entities take `live`/`retired`/`superseded`. Orthogonal to `relationship_state`, which is the coarse visibility selector; this is an exact-match filter on the lifecycle axis. Vocabulary from the wrong kind is refused. |
 | `decision_record_id` | no | string | null |  |
 | `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
 | `layout` | no | string | Transport layout: `rows` (default, per-row items) or `graph` (normalized transport: `nodes`/`edges` carry each unique entity and relationship once, `results` preserves row order as index references, `paths` holds step-ref sequences (edge index + traversal-step alias) for path-shaped results). |
 
-**Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary` (rows layout). With `layout='graph'` the `items` field is replaced by `layout`, `nodes`, `edges`, `results`, and `paths`; every other field is unchanged.
+**Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `lifecycle_status`, `param_hints`, `policy_summary` (rows layout). With `layout='graph'` the `items` field is replaced by `layout`, `nodes`, `edges`, `results`, and `paths`; every other field is unchanged.
 
 **Side Effects:** Read-only.
 
@@ -379,11 +380,12 @@ The cache is NON-AUTHORITATIVE and its files are same-user-writable by design: a
 | `params` | no | object | null |  |
 | `limit` | no | integer | null |  |
 | `relationship_state` | no | string | null | Read-visibility state: one of `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. |
+| `lifecycle_status` | no | string | null | Exact kind-correct lifecycle status: relationships take `active`/`inactive`/`superseded`/`retracted`, entities take `live`/`retired`/`superseded`. Orthogonal to `relationship_state`, which is the coarse visibility selector; this is an exact-match filter on the lifecycle axis. Vocabulary from the wrong kind is refused. |
 | `decision_record_id` | no | string | null |  |
 | `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
 | `layout` | no | string | Transport layout: `rows` (default, per-row items) or `graph` (normalized transport: `nodes`/`edges` carry each unique entity and relationship once, `results` preserves row order as index references, `paths` holds step-ref sequences (edge index + traversal-step alias) for path-shaped results). |
 
-**Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary` (rows layout). With `layout='graph'` the `items` field is replaced by `layout`, `nodes`, `edges`, `results`, and `paths`; every other field is unchanged.
+**Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `lifecycle_status`, `param_hints`, `policy_summary` (rows layout). With `layout='graph'` the `items` field is replaced by `layout`, `nodes`, `edges`, `results`, and `paths`; every other field is unchanged.
 
 **Side Effects:** Read-only.
 
@@ -660,6 +662,7 @@ happened; they never prove its inputs are still current.
 | `operation_type` | no | string | null |  |
 | `fields` | no | array[string] | null | Entity property fields to include for `resource_type="entities"`. |
 | `relationship_state` | no | string | null | Read-visibility state (`live`, `accepted`, `all`, `not-live`, `pending`, `reviewable`). For entities it gates by lifecycle (default `live`); for edges by review+lifecycle (default returns all stored edges). |
+| `lifecycle_status` | no | string | null | Exact kind-correct lifecycle status: relationships take `active`/`inactive`/`superseded`/`retracted`, entities take `live`/`retired`/`superseded`. Orthogonal to `relationship_state`, which is the coarse visibility selector; this is an exact-match filter on the lifecycle axis. Vocabulary from the wrong kind is refused. |
 | `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
 | `continuation` | no | string | null | Continuation token from a previous truncated page; repeat the SAME filters. Bound to the instance, config, and `read_revision`; replay after a mutation fails with a typed 409 stale-continuation error — restart the read. Malformed or re-bound tokens fail with 422. |
 
@@ -1154,6 +1157,107 @@ error-level finding exists.
 - Unknown `instance_id` or missing daemon configuration.
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_supersede_claim
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Use when the settled, receipted adjudication replaces one claim with an already-existing live same-type successor.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `claim_id` | yes | string | Predecessor claim; must be lifecycle-`active` with review not pending/rejected. |
+| `successor_claim_id` | yes | string | Existing live claim of the SAME relationship type. This verb links, it never creates the successor. |
+| `reason` | yes | string | Required. A settled transition with no reason is refused — the corpus would be starving itself. |
+| `evidence_ref` | no | EvidenceRef | null | Optional evidence reference (`source`, `source_record_id`, plus optional artifact/table/row/label/metadata). |
+
+**Returns:** Top-level fields: `action`, `claim`, `reason`, `successor`, `receipt_id`
+
+**Side Effects:** A settled adjudication. Writes typed `claim_id` supersession pointers in BOTH directions (`successor.supersedes`, `predecessor.superseded_by`), moves the predecessor to `superseded`, stamps `closed_at`/`closed_by`, and records one mutation receipt naming the subject, transition, reason, and successor. The predecessor stays resolvable by `claim_id` afterwards. Properties are carried verbatim from the exact addressed edge; parallel siblings on the same tuple are untouched.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Empty `reason`; self-supersession; successor missing, not live, of a different relationship type, or already superseding another claim; predecessor not lifecycle-`active` or under pending/rejected review.
+
+## cruxible_retract_claim
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Use when the settled, receipted adjudication withdraws a claim without a successor.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `claim_id` | yes | string | Claim to retract; must be lifecycle-`active` with review not pending/rejected. |
+| `reason` | yes | string | Required. |
+| `evidence_ref` | no | EvidenceRef | null | Optional evidence reference — a retraction's motivating observation is often a contradiction attestation. |
+
+**Returns:** Top-level fields: `action`, `claim`, `reason`, `receipt_id`
+
+**Side Effects:** A settled adjudication. Moves the claim to `retracted`, stamps `closed_at`/`closed_by`, and records one mutation receipt. Content is carried verbatim — a retraction never rewrites properties, and it succeeds even when the type's schema has since grown a required property. The `claim_id` stays resolvable with its settled state.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Empty `reason`; the claim is already settled, or its review is pending/rejected.
+
+## cruxible_supersede_entity
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Use when the settled, receipted adjudication replaces one entity with an already-existing live same-type successor; edges do not migrate.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `entity_type` | yes | string | Predecessor entity type. |
+| `entity_id` | yes | string | Predecessor entity ID; must be live. |
+| `successor_entity_type` | yes | string | Must equal `entity_type` — cross-type supersession is a modeling error. |
+| `successor_entity_id` | yes | string | Existing live entity. May be a DIFFERENT id from the predecessor (rename-via-supersession). |
+| `reason` | yes | string | Required. |
+| `evidence_ref` | no | EvidenceRef | null | Optional evidence reference. |
+
+**Returns:** Top-level fields: `action`, `entity`, `reason`, `successor`, `stranded_live_edge_count`, `receipt_id`
+
+**Side Effects:** A settled adjudication. Writes typed `entity_type`/`entity_id` supersession pointers in BOTH directions, moves the predecessor to `superseded`, stamps `closed_at`/`closed_by`, and records one mutation receipt. Inbound edges do NOT migrate: a renamed successor starts with zero edges and re-pointing is the caller's job, so a rename can look "broken" until you re-point.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Empty `reason`; self-supersession; successor missing, not live, of a different entity type, or already superseding another entity; predecessor not live.
+
+## cruxible_retire_entity
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Use when the settled, receipted adjudication retires an entity without cascading edges.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `entity_type` | yes | string | Entity type. |
+| `entity_id` | yes | string | Entity ID; must be live. |
+| `reason` | yes | string | Required. |
+| `evidence_ref` | no | EvidenceRef | null | Optional evidence reference. |
+
+**Returns:** Top-level fields: `action`, `entity`, `reason`, `stranded_live_edge_count`, `receipt_id`
+
+**Side Effects:** A settled adjudication. Moves the entity to `retired`, stamps `closed_at`/`closed_by`, and records one mutation receipt. Reports `stranded_live_edge_count` — still-live attached edges, which stay visible in edge-level reads but drop out of traversals; cascade is deliberately not performed. The retired `entity_id` is preserved rather than freed: a later DIRECT add/update of that id is refused instead of minting a doppelganger with none of the history, while governed sources (workflow apply, group resolve) still reach it pending the deferred reinstate verb.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Empty `reason`; the entity is already retired or superseded.
 
 ## cruxible_add_constraint
 

@@ -20,7 +20,7 @@ from cruxible_core.errors import (
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.query.engine import execute_query
-from cruxible_core.query.enums import QueryVisibilityState
+from cruxible_core.query.enums import LifecycleStatus, QueryVisibilityState
 from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.query.types import QueryResult
 
@@ -128,6 +128,7 @@ def run_query(
     params: dict[str, Any],
     *,
     relationship_state: QueryVisibilityState | None = None,
+    lifecycle_status: LifecycleStatus | None = None,
 ) -> QueryResult:
     """Execute a named query against graph state without persistence side effects."""
     return execute_query(
@@ -136,6 +137,7 @@ def run_query(
         query_name,
         params,
         relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
     )
 
 
