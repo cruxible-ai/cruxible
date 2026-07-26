@@ -24,7 +24,6 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -152,14 +151,6 @@ class ResolvedStateCoordinate:
     graph: EntityGraph = field(default_factory=EntityGraph)
     procedures_source: bytes | None = None
     procedures_records: list[ProcedureRecord] | None = None
-    procedures_loader: Callable[[], list[ProcedureRecord]] | None = None
-    """Deferred read for coordinates whose procedures live in a STORE, not bytes.
-
-    ``current``'s procedure table is an unbounded full-table fetch, so it must
-    not run for an edges-only diff. The loader is only ever called through
-    ``load_procedures``, which the section builder reaches solely when the
-    procedures section is selected AND available on both sides.
-    """
 
     def payload(self, *, ownership: OwnershipBasis) -> dict[str, Any]:
         """Digest-preimage payload. ``ownership`` is the RECONCILED basis (D2)."""
@@ -191,9 +182,6 @@ class ResolvedStateCoordinate:
         one section's artifact cannot block a diff of another.
         """
         if self.procedures_records is not None:
-            return self.procedures_records
-        if self.procedures_loader is not None:
-            self.procedures_records = self.procedures_loader()
             return self.procedures_records
         if self.procedures_source is None:
             return []
@@ -275,7 +263,12 @@ def resolve_state_coordinate(
     """Resolve one coordinate to a typed, self-describing side of the diff."""
     kind = parse_state_coordinate(spec)
     if kind == "current":
-        return _resolve_current(instance, spec, default_basis=default_basis)
+        return _resolve_current(
+            instance,
+            spec,
+            sections=sections,
+            default_basis=default_basis,
+        )
     if kind == "upstream":
         return _resolve_upstream(instance, spec, default_basis=default_basis)
     if kind == "origin":
@@ -308,6 +301,7 @@ def _resolve_current(
     instance: InstanceProtocol,
     spec: str,
     *,
+    sections: frozenset[str],
     default_basis: str | None,
 ) -> ResolvedStateCoordinate:
     """Capture ``current`` under the invalidate + revision-sandwich + one retry.
@@ -316,15 +310,30 @@ def _resolve_current(
     unsynchronized reads, so without this the stamped coordinate could describe
     a graph it does not match. The invalidate is REQUIRED: another process's
     write does not clear this process's cache.
+
+    EVERY section this coordinate will contribute is read INSIDE the sandwich.
+    The procedure table is a separate store from the graph, so deferring its
+    read until section assembly -- after the closing revision was taken -- let a
+    concurrent procedure mutation produce an artifact whose graph is revision N
+    and whose procedures are revision N+1, stamped as a single coordinate. The
+    sandwich is a claim about the whole coordinate, not about the graph alone,
+    so a bump between any two of its reads must retry or refuse.
+
+    It stays lazy where it can: the store is not touched at all unless the
+    procedures section was selected, so an edges-only diff still pays nothing
+    for an unbounded full-table fetch.
     """
+    wants_procedures = "procedures" in sections
     opening = 0
     closing = 0
     graph: EntityGraph | None = None
     head: str | None = None
+    procedures: list[ProcedureRecord] | None = None
     for _attempt in range(2):
         instance.invalidate_graph_cache()
         opening = instance.get_read_revision()
         graph = instance.load_graph()
+        procedures = _load_current_procedures(instance) if wants_procedures else None
         closing = instance.get_read_revision()
         head = instance.get_head_snapshot_id()
         if closing == opening:
@@ -353,7 +362,7 @@ def _resolve_current(
         verification="not_applicable",
         default_basis=default_basis,
         graph=graph,
-        procedures_loader=lambda: _load_current_procedures(instance),
+        procedures_records=procedures,
     )
 
 
@@ -414,7 +423,12 @@ def _resolve_snapshot(
         # this instance is not upstream-origin, so applying it would fabricate
         # identity out of an unrelated namespace.
         graph = EntityGraph.from_dict(graph_data)
-    except (UnicodeDecodeError, ValueError) as exc:
+    # KeyError and TypeError are in the net because networkx's node-link
+    # deserializer raises them, not ValueError, for a dict that is well-formed
+    # JSON but not node-link data -- ``{}`` raises KeyError('nodes'). Without
+    # them a corrupt member escaped the named D12 refusal as an unhandled
+    # server error.
+    except (UnicodeDecodeError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise ConfigError(
             f"Snapshot '{snapshot_id}' has a '{_GRAPH_ARTIFACT}' artifact that is not "
             f"valid node-link graph data: {exc}"
@@ -479,15 +493,32 @@ def _snapshot_ownership_basis(instance: InstanceProtocol, snapshot_id: str) -> O
             "ownership basis cannot be recovered from this snapshot"
         )
     if payload is None:
+        # The snapshot was written on an instance tracking no upstream. That is
+        # a PINNED empty boundary -- "nothing was upstream-owned then" -- not an
+        # unknown one.
         return OwnershipBasis.pinned()
     if not isinstance(payload, dict):
         return OwnershipBasis.unknown_basis(
             f"'{_UPSTREAM_ARTIFACT}' is neither an object nor null: the pinned ownership "
             "basis cannot be recovered from this snapshot"
         )
+    try:
+        # VALIDATED, not duck-typed. ``_write_snapshot`` writes exactly an
+        # ``UpstreamMetadata`` dump or ``null``, so anything else is a
+        # hand-edited or truncated member. Reading the fields off an arbitrary
+        # dict accepted syntactically-valid garbage: ``{}`` became a pinned
+        # EMPTY boundary that silently enabled stub detection, and a string
+        # where a list belongs became a pinned boundary over its CHARACTERS.
+        metadata = UpstreamMetadata.model_validate(payload)
+    except ValidationError as exc:
+        return OwnershipBasis.unknown_basis(
+            f"'{_UPSTREAM_ARTIFACT}' is not a valid upstream record "
+            f"({exc.error_count()} validation error(s)): the pinned ownership basis "
+            "cannot be recovered from this snapshot"
+        )
     return OwnershipBasis.pinned(
-        owned_entity_types=payload.get("owned_entity_types") or (),
-        owned_relationship_types=payload.get("owned_relationship_types") or (),
+        owned_entity_types=metadata.owned_entity_types,
+        owned_relationship_types=metadata.owned_relationship_types,
     )
 
 
@@ -521,7 +552,9 @@ def _resolve_upstream(
     graph_path = root / upstream.graph_path
     try:
         graph = EntityGraph.from_dict(json.loads(graph_path.read_text()))
-    except (OSError, ValueError) as exc:
+    # Same net as the snapshot path: networkx raises KeyError/TypeError for a
+    # JSON object that is not node-link data.
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise ConfigError(
             f"Materialized upstream '{_GRAPH_ARTIFACT}' at {upstream.graph_path} could not "
             f"be read as node-link graph data: {exc}"
@@ -914,25 +947,67 @@ def _build_logical_body(
 
 
 _ITEM_DIAGNOSTIC_KEY = "diagnostic"
+_NESTED_ITEM_LIST_KEYS = ("from_items", "to_items")
+_RECORD_SHAPED_BUCKETS = frozenset({"ambiguous", "identity_conflict"})
+"""Buckets whose entries are per-side RECORDS, not single items.
+
+Both decline to guess at a granularity coarser than one item -- a bucket of
+residuals, a colliding id -- so one entry covers several rows on each side. The
+shape is deliberate and shared; the counts that go with it are per side.
+"""
 
 
-def _without_item_diagnostics(value: Any) -> Any:
-    """Project the body without per-item ``diagnostic`` blocks.
+def _without_item_diagnostics(body: dict[str, Any]) -> dict[str, Any]:
+    """Project the body without per-item ``diagnostic`` blocks, BY PATH.
 
-    Strips the singular ``diagnostic`` key (the per-side ``edge_key``), NOT the
-    plural section-level ``diagnostics`` -- stub-exclusion accounting and
-    ``stub_detection`` are semantic claims about what the diff did and did not
-    compare, and dropping them would make the artifact silently incomplete.
+    Strictly path-scoped, never a recursive key sweep. Domain state is
+    caller-authored: an entity or edge may legitimately carry a property
+    literally named ``diagnostic``, and a blanket recursive strip would delete
+    it from the persisted plan while ``artifact_complete`` still said the body
+    was whole -- silent data loss inside the one artifact whose entire job is
+    to be complete.
+
+    Only two shapes carry the ephemeral block: a bucket item's own top-level
+    ``diagnostic``, and the same key on each entry of an ``ambiguous`` /
+    ``identity_conflict`` record's per-side item lists. Nothing below those is
+    touched, so ``state``, ``properties``, and every property value survive
+    verbatim.
+
+    The plural section-level ``diagnostics`` is NOT stripped: stub-exclusion
+    accounting and ``stub_detection`` are semantic claims about what the diff
+    did and did not compare.
     """
-    if isinstance(value, dict):
-        return {
-            key: _without_item_diagnostics(item)
-            for key, item in value.items()
-            if key != _ITEM_DIAGNOSTIC_KEY
-        }
-    if isinstance(value, list):
-        return [_without_item_diagnostics(item) for item in value]
-    return value
+    projected = dict(body)
+    projected["sections"] = {
+        name: _section_without_item_diagnostics(section)
+        for name, section in body.get("sections", {}).items()
+    }
+    return projected
+
+
+def _section_without_item_diagnostics(section: dict[str, Any]) -> dict[str, Any]:
+    projected = dict(section)
+    for bucket in DIFF_BUCKET_NAMES:
+        if bucket not in section:
+            continue
+        projected[bucket] = [_item_without_diagnostics(item) for item in section[bucket]]
+    return projected
+
+
+def _item_without_diagnostics(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    projected = {key: value for key, value in item.items() if key != _ITEM_DIAGNOSTIC_KEY}
+    for list_key in _NESTED_ITEM_LIST_KEYS:
+        nested = projected.get(list_key)
+        if isinstance(nested, list):
+            projected[list_key] = [
+                {key: value for key, value in entry.items() if key != _ITEM_DIAGNOSTIC_KEY}
+                if isinstance(entry, dict)
+                else entry
+                for entry in nested
+            ]
+    return projected
 
 
 @dataclass
@@ -997,6 +1072,12 @@ def _build_view(body: dict[str, Any], *, cap: int) -> tuple[dict[str, Any], bool
                 "total": total,
                 "returned": len(kept),
                 "truncated": total > len(kept),
+                # ``ambiguous`` and ``identity_conflict`` emit one RECORD per
+                # bucket / per colliding id, each carrying per-side item lists,
+                # while ``counts`` tallies the individual ROWS those records
+                # cover. Naming the unit here is what stops a reader treating
+                # "1 record" against "2 rows" as an accounting bug.
+                "unit": "records" if name in _RECORD_SHAPED_BUCKETS else "items",
             }
             truncated_any = truncated_any or total > len(kept)
         section["view"] = accounting

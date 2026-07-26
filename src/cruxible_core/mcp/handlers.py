@@ -2415,8 +2415,10 @@ def handle_state_diff(
     relationship_types: list[str] | None = None,
     buckets: list[str] | None = None,
     changed_only: bool = False,
+    max_items_per_bucket: int | None = None,
 ) -> contracts.StateDiffResult:
     """Compare two state coordinates."""
+    cap = {"max_items_per_bucket": max_items_per_bucket} if max_items_per_bucket is not None else {}
     return _dispatch_remote_or_local(
         lambda client: client.state_diff(
             instance_id,
@@ -2427,6 +2429,7 @@ def handle_state_diff(
             relationship_types=relationship_types,
             buckets=buckets,
             changed_only=changed_only,
+            max_items_per_bucket=max_items_per_bucket,
         ),
         lambda: api.state_diff(
             instance_id,
@@ -2437,6 +2440,7 @@ def handle_state_diff(
             relationship_types=relationship_types,
             buckets=buckets,
             changed_only=changed_only,
+            **cap,
         ),
     )
 

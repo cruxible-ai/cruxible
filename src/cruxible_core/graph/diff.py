@@ -798,6 +798,11 @@ def _reidentification_permitted(
     return from_row.ownership == "upstream" and to_row.ownership == "upstream"
 
 
+def _content_ordered(rows: list[_EdgeRow]) -> list[_EdgeRow]:
+    """Total order over one side's rows: tuple identity, then state digest."""
+    return sorted(rows, key=lambda row: (row.tuple_key, row.digest))
+
+
 def _index_by_claim_id(rows: list[_EdgeRow]) -> dict[str, list[_EdgeRow]]:
     """Group rows by claim id, PRESERVING duplicates rather than overwriting."""
     index: dict[str, list[_EdgeRow]] = defaultdict(list)
@@ -868,11 +873,18 @@ def diff_edges(
                 "claim_id": claim_id,
                 "kind": ("duplicate_within_side" if claim_id in duplicated_ids else "cross_bucket"),
                 "counts": {"from": len(conflict_from), "to": len(conflict_to)},
+                # CONTENT-ORDERED, like every other emitted list. These two
+                # come out of the per-side claim index, whose order is graph
+                # iteration order -- the one place in this module where an
+                # emitted list was still insertion-ordered, which would have
+                # made the digest depend on load order.
                 "from_items": [
-                    {**_edge_identity(row), **_edge_side_summary(row)} for row in conflict_from
+                    {**_edge_identity(row), **_edge_side_summary(row)}
+                    for row in _content_ordered(conflict_from)
                 ],
                 "to_items": [
-                    {**_edge_identity(row), **_edge_side_summary(row)} for row in conflict_to
+                    {**_edge_identity(row), **_edge_side_summary(row)}
+                    for row in _content_ordered(conflict_to)
                 ],
             }
         )

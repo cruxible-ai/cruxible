@@ -1667,6 +1667,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         relationship_types: list[str] | None = None,
         buckets: list[str] | None = None,
         changed_only: bool = False,
+        max_items_per_bucket: int | None = None,
         artifact_digest: str | None = None,
     ) -> contracts.StateDiffResult | contracts.StateDiffArtifactResult:
         """Diff two state coordinates: `current`, a `snap_...` id, `upstream`, or `origin`.
@@ -1687,6 +1688,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             relationship_types=relationship_types,
             buckets=buckets,
             changed_only=changed_only,
+            max_items_per_bucket=max_items_per_bucket,
         )
 
     @_tool

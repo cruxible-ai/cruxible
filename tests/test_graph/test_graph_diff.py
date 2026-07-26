@@ -327,6 +327,41 @@ def test_intra_side_duplicate_claim_id_is_identity_conflict_not_last_write_wins(
     _assert_partition(section)
 
 
+def test_conflict_item_lists_are_content_ordered_not_insertion_ordered() -> None:
+    """The per-side conflict lists come out of a claim index keyed by load order.
+
+    Every other emitted list is content-ordered; this one was the last place an
+    insertion order could reach the digest.
+    """
+
+    def _build(reverse: bool) -> EntityGraph:
+        graph = _graph(_entity("P-1"), _entity("P-2"), _entity("P-3"))
+        rows = [("P-1", "a"), ("P-2", "b"), ("P-3", "c")]
+        for from_id, grade in reversed(rows) if reverse else rows:
+            _edge(graph, from_id=from_id, claim_id=f"CLM-{grade}", properties={"grade": grade})
+        for _u, _v, _key, data in graph._graph.edges(keys=True, data=True):
+            data["claim_id"] = "CLM-dup"
+        graph._claim_ids = {"CLM-dup"}
+        return graph
+
+    after = _graph(_entity("P-1"))
+    _edge(after, claim_id="CLM-dup", properties={"grade": "z"})
+
+    forward = diff_edges(_side(_build(False)), _side(after), NO_SELECTOR)
+    reverse = diff_edges(_side(_build(True)), _side(after), NO_SELECTOR)
+    # Compared without the per-side `diagnostic` block, which is the projection
+    # the digest is taken over -- `edge_key` legitimately differs between two
+    # insertion orders, and is excluded for exactly that reason.
+    assert _without_diagnostics(forward.identity_conflict) == _without_diagnostics(
+        reverse.identity_conflict
+    )
+    assert [item["from_id"] for item in forward.identity_conflict[0]["from_items"]] == [
+        "P-1",
+        "P-2",
+        "P-3",
+    ]
+
+
 def test_duplicate_claim_id_on_one_side_only_still_partitions() -> None:
     before = _duplicate_claim_id_graph("CLM-dup")
     after = _graph(_entity("P-1"))
@@ -679,6 +714,17 @@ def test_changed_only_suppresses_added_and_removed_items() -> None:
 )
 def test_non_finite_floats_never_take_down_the_artifact(value: float, expected: Any) -> None:
     assert normalize_json_value({"score": value}) == {"score": expected}
+
+
+def _without_diagnostics(value: Any) -> Any:
+    """Drop per-side ``diagnostic`` blocks, mirroring the digest projection."""
+    if isinstance(value, dict):
+        return {
+            key: _without_diagnostics(item) for key, item in value.items() if key != "diagnostic"
+        }
+    if isinstance(value, list):
+        return [_without_diagnostics(item) for item in value]
+    return value
 
 
 def _flatten_keys(value: Any) -> set[str]:

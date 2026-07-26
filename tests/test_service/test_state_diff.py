@@ -52,6 +52,9 @@ entity_types:
         primary_key: true
       title:
         type: string
+      notes:
+        type: json
+        optional: true
 
 relationships:
   - name: cites
@@ -605,7 +608,11 @@ def test_caps_do_not_move_the_diff_digest_but_do_move_the_view_digest(
     assert uncapped.artifact_complete is True
     assert capped.artifact_complete is False
     accounting = capped.sections["entities"]["view"]["added"]
-    assert accounting == {"total": 6, "returned": 2, "truncated": True}
+    assert accounting == {"total": 6, "returned": 2, "truncated": True, "unit": "items"}
+    # The two record-shaped buckets say so, because their `counts` tally ROWS
+    # while their bodies list per-side records.
+    assert capped.sections["edges"]["view"]["identity_conflict"]["unit"] == "records"
+    assert capped.sections["edges"]["view"]["ambiguous"]["unit"] == "records"
 
 
 def test_view_digest_differs_from_diff_digest_even_when_complete(
@@ -691,6 +698,79 @@ def test_edge_key_is_not_in_the_digest_preimage(instance: CruxibleInstance) -> N
     # The RETURNED VIEW keeps the per-item diagnostic for a human's eyes: the
     # key was moved out of the preimage, not deleted from the product.
     assert result.sections["edges"]["added"][0]["diagnostic"]["edge_key"] is not None
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
+        {"diagnostic": {"code": "E-42"}},
+        {"nested": {"diagnostic": ["kept"]}},
+        [{"diagnostic": "list entry"}],
+        {"diagnostic": {"diagnostic": {"diagnostic": "deep"}}},
+    ],
+)
+def test_domain_values_named_diagnostic_survive_into_the_artifact(
+    instance: CruxibleInstance,
+    notes: Any,
+) -> None:
+    """The preimage projection is PATH-scoped, never a recursive key sweep.
+
+    A caller-authored property literally named ``diagnostic`` is domain data.
+    Sweeping it out of the persisted body while ``artifact_complete`` still
+    said the plan was whole would be silent data loss in the one artifact whose
+    entire job is to be complete.
+    """
+    snapshot = service_create_snapshot(instance).snapshot
+    service_add_entities(
+        instance,
+        [
+            EntityInstance(
+                entity_type="Case",
+                entity_id="CASE-A",
+                properties={"case_id": "CASE-A", "title": "Alpha", "notes": notes},
+            )
+        ],
+    )
+    result = service_state_diff(instance, from_coordinate=snapshot.snapshot_id)
+    assert result.artifact_complete is True
+
+    artifact = json.loads(Path(result.artifact_ref.path).read_text())
+    changed = artifact["sections"]["entities"]["changed"][0]
+    to_values = {
+        change["property"]: change["to_value"] for change in changed["properties"]["changes"]
+    }
+    assert to_values["notes"] == notes
+    # And the digest covers it: the persisted bytes carrying the value are
+    # exactly what diff_digest is taken over.
+    persisted = Path(result.artifact_ref.path).read_bytes()
+    assert result.diff_digest == f"sha256:{hashlib.sha256(persisted).hexdigest()}"
+    assert "diagnostic" in persisted.decode("utf-8")
+
+
+def test_added_and_removed_items_keep_domain_diagnostic_values(
+    instance: CruxibleInstance,
+) -> None:
+    payload = {"diagnostic": {"probe": "kept"}}
+    snapshot = service_create_snapshot(instance).snapshot
+    service_add_entities(
+        instance,
+        [
+            EntityInstance(
+                entity_type="Case",
+                entity_id="CASE-NEW",
+                properties={"case_id": "CASE-NEW", "title": "New", "notes": payload},
+            )
+        ],
+    )
+    artifact = json.loads(
+        Path(
+            service_state_diff(instance, from_coordinate=snapshot.snapshot_id).artifact_ref.path
+        ).read_text()
+    )
+    added = artifact["sections"]["entities"]["added"][0]
+    assert added["state"]["properties"]["notes"] == payload
+    # The item's OWN ephemeral slot is still gone.
+    assert "diagnostic" not in added
 
 
 def test_reassigning_every_edge_key_leaves_the_preimage_identical(
@@ -786,6 +866,66 @@ def test_edges_only_diff_never_queries_the_procedure_store(
     assert set(result.sections) == {"edges"}
 
 
+def test_procedures_are_captured_inside_the_revision_sandwich(
+    instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A coordinate is one revision across ALL its sections, or it refuses.
+
+    The graph and the procedure table are separate stores. Reading procedures
+    after the closing revision was taken let a concurrent procedure mutation
+    produce an artifact stamped revision N whose procedures were N+1 -- a
+    mixed-revision plan that looked atomic.
+    """
+    snapshot = service_create_snapshot(instance).snapshot
+    real_load = CruxibleInstance.load_graph
+    bumped: dict[str, bool] = {}
+
+    def _mutate_between_graph_and_closing_read(self: CruxibleInstance) -> Any:
+        graph = real_load(self)
+        if not bumped:
+            # A concurrent writer lands a procedure between the graph capture
+            # and the closing revision read.
+            bumped["done"] = True
+            _seed_procedure(self, "PRC-racer")
+        return graph
+
+    monkeypatch.setattr(CruxibleInstance, "load_graph", _mutate_between_graph_and_closing_read)
+    result = service_state_diff(
+        instance,
+        from_coordinate=snapshot.snapshot_id,
+        sections=("procedures",),
+    )
+    # The retry saw a settled revision; the artifact is single-revision and the
+    # procedure the racer wrote is inside it.
+    assert bumped == {"done": True}
+    assert result.to_coordinate["identity"]["read_revision"] == instance.get_read_revision()
+    assert result.sections["procedures"]["counts"]["added"] == 1
+
+
+def test_persistent_procedure_drift_refuses_rather_than_mixing_revisions(
+    instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = service_create_snapshot(instance).snapshot
+    real_load = CruxibleInstance.load_graph
+    counter = {"n": 0}
+
+    def _always_drift(self: CruxibleInstance) -> Any:
+        graph = real_load(self)
+        counter["n"] += 1
+        _seed_procedure(self, f"PRC-racer-{counter['n']}")
+        return graph
+
+    monkeypatch.setattr(CruxibleInstance, "load_graph", _always_drift)
+    with pytest.raises(ConcurrentStateDriftError):
+        service_state_diff(
+            instance,
+            from_coordinate=snapshot.snapshot_id,
+            sections=("procedures",),
+        )
+
+
 def test_max_items_per_bucket_must_be_at_least_one(instance: CruxibleInstance) -> None:
     with pytest.raises(ConfigError, match="at least 1"):
         service_state_diff(instance, from_coordinate="current", max_items_per_bucket=0)
@@ -804,6 +944,69 @@ def test_corrupt_upstream_json_degrades_with_a_named_reason(
     assert "upstream.json" in (ownership["reason"] or "")
     assert "unreadable" in (ownership["reason"] or "")
     assert result.sections["entities"]["diagnostics"]["stub_detection"] == "disabled"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"{}",
+        b'{"owned_entity_types": "Case"}',
+        b'{"state_id": "case-law"}',
+        b'{"owned_entity_types": [1, 2], "owned_relationship_types": []}',
+        b"[]",
+    ],
+)
+def test_syntactically_valid_garbage_upstream_json_degrades_to_unknown(
+    instance: CruxibleInstance,
+    payload: bytes,
+) -> None:
+    """Parsing is not validating.
+
+    ``{}`` used to become a PINNED EMPTY boundary that silently enabled stub
+    detection, and a string where a list belongs became a boundary over its
+    individual characters -- both confidently wrong rather than honestly
+    unknown.
+    """
+    snapshot = service_create_snapshot(instance).snapshot
+    _overwrite_snapshot_artifact(instance, snapshot.snapshot_id, "upstream.json", payload)
+
+    result = service_state_diff(instance, from_coordinate=snapshot.snapshot_id)
+    ownership = result.from_coordinate["ownership"]
+    assert ownership["basis"] == "unknown"
+    assert "upstream.json" in (ownership["reason"] or "")
+    assert ownership["owned_entity_types"] == []
+    assert result.sections["entities"]["diagnostics"]["stub_detection"] == "disabled"
+
+
+def test_a_null_upstream_json_is_a_pinned_empty_boundary(instance: CruxibleInstance) -> None:
+    """No upstream THEN is a pinned fact, not an unknown one."""
+    snapshot = service_create_snapshot(instance).snapshot
+    _overwrite_snapshot_artifact(instance, snapshot.snapshot_id, "upstream.json", b"null")
+
+    result = service_state_diff(instance, from_coordinate=snapshot.snapshot_id)
+    assert result.from_coordinate["ownership"]["basis"] == "pinned"
+    assert result.sections["entities"]["diagnostics"]["stub_detection"] == "enabled"
+
+
+@pytest.mark.parametrize("payload", [b"{}", b'{"nodes": []}', b'{"directed": true}'])
+def test_malformed_graph_json_objects_get_the_named_refusal(
+    instance: CruxibleInstance,
+    payload: bytes,
+) -> None:
+    """Well-formed JSON that is not node-link data is still a NAMED refusal.
+
+    ``{}`` parses, passes the object check, then makes networkx raise
+    ``KeyError('nodes')`` -- which escaped the D12 message entirely and
+    surfaced as an unhandled server error.
+    """
+    snapshot = service_create_snapshot(instance).snapshot
+    _overwrite_snapshot_artifact(instance, snapshot.snapshot_id, "graph.json", payload)
+
+    with pytest.raises(ConfigError) as excinfo:
+        service_state_diff(instance, from_coordinate=snapshot.snapshot_id)
+    message = str(excinfo.value)
+    assert "graph.json" in message
+    assert snapshot.snapshot_id in message
 
 
 def test_absent_upstream_json_names_a_different_reason_than_a_corrupt_one(

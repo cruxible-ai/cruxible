@@ -113,7 +113,13 @@ def state_diff_cmd(
             lambda client, instance_id: client.state_diff_artifact(instance_id, artifact_digest),
             lambda instance: service_state_diff_artifact(instance, artifact_digest),
         )
-        _emit_json(_as_payload(artifact.content))
+        # VERBATIM, and with no trailing newline. This is the one CLI output
+        # that is supposed to hash to the digest the caller asked for, so it
+        # must not go through _emit_json -- re-indenting a parsed body and
+        # appending a newline produces bytes that hash to nothing in
+        # particular, which silently breaks `cruxible state diff --artifact D |
+        # sha256sum` as a verification step.
+        click.echo(artifact.content_bytes, nl=False)
         return
 
     result = _dispatch_cli_instance(
@@ -212,16 +218,54 @@ def _render_state_diff(payload: dict[str, Any]) -> None:
             click.echo(f"  {type_name}: +{tally['added']} -{tally['removed']} ~{tally['changed']}")
         for item in section["changed"][:10]:
             click.echo(f"  ~ {_item_label(item)} [{', '.join(item['channels'])}]")
-            for change in (item.get("properties") or {}).get("changes", [])[:5]:
-                click.echo(
-                    f"      {change['property']}: "
-                    f"{_value_label(change['from_value'])} -> "
-                    f"{_value_label(change['to_value'])}"
-                )
+            _render_change_detail(item)
         for item in section["added"][:10]:
             click.echo(f"  + {_item_label(item)}")
         for item in section["removed"][:10]:
             click.echo(f"  - {_item_label(item)}")
+
+
+_CHANGE_DETAIL_LIMIT = 5
+
+
+def _render_change_detail(item: dict[str, Any]) -> None:
+    """Show WHAT changed on each axis, not merely that the axis moved.
+
+    A bare ``[lifecycle_transition]`` tells a reviewer an adjudication happened
+    and withholds which one -- and distinguishing ``active -> superseded`` from
+    ``active -> retracted`` is the entire point of keeping the axes apart.
+    """
+    for axis in ("review_transition", "lifecycle_transition"):
+        transition = item.get(axis)
+        if isinstance(transition, dict):
+            click.echo(f"      {axis}: {transition['from']} -> {transition['to']}")
+    for axis, changes in (
+        ("review", item.get("review_changes") or []),
+        ("lifecycle", item.get("lifecycle_changes") or []),
+        ("property", (item.get("properties") or {}).get("changes") or []),
+    ):
+        for change in changes[:_CHANGE_DETAIL_LIMIT]:
+            click.echo(
+                f"      {axis} {change['property']}: "
+                f"{_value_label(change['from_value'])} -> "
+                f"{_value_label(change['to_value'])}"
+            )
+        if len(changes) > _CHANGE_DETAIL_LIMIT:
+            click.secho(
+                f"      {axis}: showing {_CHANGE_DETAIL_LIMIT} of {len(changes)}",
+                fg="yellow",
+            )
+    annotations = item.get("annotations")
+    if isinstance(annotations, dict):
+        stamps = annotations.get("provenance_stamps_changed") or []
+        if stamps:
+            click.echo(f"      provenance stamps: {', '.join(stamps)}")
+        evidence = annotations.get("evidence") or {}
+        if evidence.get("added") or evidence.get("removed"):
+            click.echo(
+                f"      evidence refs: +{len(evidence.get('added') or [])} "
+                f"-{len(evidence.get('removed') or [])}"
+            )
 
 
 def _counts_by_type(section: dict[str, Any]) -> dict[str, dict[str, int]]:

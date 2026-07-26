@@ -17,7 +17,12 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient
 from cruxible_core.cli.main import cli
-from cruxible_core.graph.types import EntityInstance
+from cruxible_core.graph.assertion_state import (
+    RelationshipAssertion,
+    RelationshipLifecycleState,
+    RelationshipReviewState,
+)
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
@@ -25,7 +30,7 @@ from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import reset_registry
-from cruxible_core.service import service_add_entities
+from cruxible_core.service import service_add_entities, service_add_relationships
 from cruxible_core.service.snapshots import service_create_snapshot
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
@@ -184,6 +189,105 @@ def test_cli_renders_the_diff_and_reads_the_artifact_back(tmp_path: Path) -> Non
         artifact = runner.invoke(cli, ["state", "diff", "--artifact", payload["diff_digest"]])
         assert artifact.exit_code == 0, artifact.output
         assert json.loads(artifact.output)["summary"] == payload["summary"]
+        # STDOUT IS THE ARTIFACT. `cruxible state diff --artifact D | sha256sum`
+        # is a verification step, so the bytes on stdout must hash to D --
+        # re-indenting a parsed body or appending a newline silently breaks it.
+        stdout_bytes = artifact.stdout_bytes
+        assert not stdout_bytes.endswith(b"\n")
+        assert f"sha256:{hashlib.sha256(stdout_bytes).hexdigest()}" == payload["diff_digest"]
+
+
+def test_cli_human_table_names_the_transition_values(tmp_path: Path) -> None:
+    """A bare ``[lifecycle_transition]`` withholds the adjudication it reports."""
+    root = tmp_path / "local"
+    root.mkdir()
+    (root / "config.yaml").write_text(CAR_PARTS_YAML)
+    instance = CruxibleInstance.init(root, "config.yaml")
+    service_add_entities(
+        instance,
+        [
+            EntityInstance(
+                entity_type="Part",
+                entity_id="BP-1",
+                properties={"part_number": "BP-1", "name": "Pads", "category": "brakes"},
+            ),
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-1",
+                properties={"vehicle_id": "V-1", "year": 2024, "make": "H", "model": "C"},
+            ),
+        ],
+    )
+    service_add_relationships(
+        instance,
+        [
+            RelationshipInstance(
+                from_type="Part",
+                from_id="BP-1",
+                relationship_type="fits",
+                to_type="Vehicle",
+                to_id="V-1",
+                properties={"verified": False},
+            )
+        ],
+        source="fixture",
+        source_ref="seed",
+    )
+    snapshot = service_create_snapshot(instance).snapshot
+
+    graph = instance.load_graph()
+    edge = graph.get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+    assert edge is not None
+    graph.replace_relationship_state(
+        "Part",
+        "BP-1",
+        "Vehicle",
+        "V-1",
+        "fits",
+        properties={"verified": True},
+        metadata=RelationshipMetadata(
+            provenance=edge.metadata.provenance,
+            assertion=RelationshipAssertion(
+                review=RelationshipReviewState(status="approved", source="human"),
+                lifecycle=RelationshipLifecycleState(status="superseded"),
+            ),
+        ),
+    )
+    instance.save_graph(graph)
+
+    runner = CliRunner()
+    import os
+
+    os.chdir(root)
+    result = runner.invoke(cli, ["state", "diff", snapshot.snapshot_id])
+    assert result.exit_code == 0, result.output
+    assert "lifecycle_transition: active -> superseded" in result.output
+    assert "review_transition: unreviewed -> approved" in result.output
+    assert "property verified: false -> true" in result.output
+
+
+def test_mcp_tool_declares_and_forwards_the_bucket_cap(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    """Every other surface exposes the cap; the MCP tool must not be the gap."""
+    import asyncio
+
+    from cruxible_core.mcp.server import create_server
+
+    tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
+    properties = tools["cruxible_state_diff"].inputSchema["properties"]
+    assert "max_items_per_bucket" in properties
+
+    instance_id, snapshot_id = _seeded_instance(app_client, tmp_path)
+    capped = handlers.handle_state_diff(
+        instance_id,
+        from_coordinate=snapshot_id,
+        max_items_per_bucket=1,
+    )
+    assert capped.view["max_items_per_bucket"] == 1
+    uncapped = handlers.handle_state_diff(instance_id, from_coordinate=snapshot_id)
+    assert uncapped.view["max_items_per_bucket"] == 500
 
 
 def test_mcp_tool_dispatches_to_both_shapes(app_client: TestClient, tmp_path: Path) -> None:

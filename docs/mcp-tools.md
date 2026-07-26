@@ -2110,6 +2110,7 @@ without it, only the active materialized digest is checked.
 | `relationship_types` | no | array | Restrict edges to these relationship types. |
 | `buckets` | no | array | Report only these buckets; counts stay whole. |
 | `changed_only` | no | boolean | Suppress added/removed items. |
+| `max_items_per_bucket` | no | integer | Per-bucket cap for the returned view (default 500, minimum 1); the persisted artifact is never capped. |
 | `artifact_digest` | no | string | Re-read a persisted artifact by content address instead of computing a diff. |
 
 **Returns:** Top-level fields: `diff_digest`, `view_digest`, `artifact_complete`, `artifact_ref`, `diff_engine_version`, `artifact_schema_version`, `artifact_trust`, `normalizations`, `liveness`, `selector`, `from_coordinate`, `to_coordinate`, `omitted_sections`, `context`, `sections`, `summary`, `view`, `default_basis`, `receipt_id`
