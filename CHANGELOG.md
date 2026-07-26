@@ -179,6 +179,23 @@ the project's own state instance.
   `"group_resolve"` to a direct-write verb must pick a source that honestly
   describes the write, or go through `group propose` / the canonical workflow.
 
+- **`workflow_apply` marks group-approval drift too, and the marker now reports
+  CURRENT divergence.** A canonical workflow apply is a legitimate governed write
+  and is not refused when it changes a group-approved edge — but it never routed
+  through the direct-write group-interaction detection, so it overwrote approved
+  content leaving no trace on the edge at all. Detection and stamping moved to a
+  shared `graph/group_drift.py` that both write paths use.
+
+  RULING (Robert, 2026-07-25) on the marker's semantics, applied to both sites:
+  `group_approval_drift` reflects divergence RIGHT NOW. It is recomputed against
+  the approved content on every write and DROPPED when the content fully matches
+  the approval again; a partial revert lists only the properties that still
+  diverge. The approved baseline is still carried forward across writes (so the
+  record says what the GROUP approved, not what the edge said last time). The
+  previous accumulate-only behavior left a permanent stain: an edge that had been
+  edited and then exactly restored still read as drifted forever. History of each
+  excursion lives in receipts, not in live state.
+
 ### Deprecated
 
 Deprecate-then-remove applies to every shipped surface: these all still work,

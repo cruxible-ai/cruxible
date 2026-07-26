@@ -3230,7 +3230,17 @@ class TestGroupApprovedContentBinding:
             "approved_values": {"verified": False},
         }
 
-    def test_second_drift_keeps_the_original_approved_values(self, tmp_path: Path) -> None:
+    def test_a_partial_revert_lists_only_the_still_divergent_properties(
+        self, tmp_path: Path
+    ) -> None:
+        """RULING: the marker is CURRENT divergence, not accumulated history.
+
+        The second write puts ``verified`` back to the value the group approved
+        while introducing a new ``source``. The approved baseline is still
+        carried forward (so the record says what the GROUP signed off on, not
+        what the edge said last time), but only what still diverges is reported.
+        The history of both writes lives in receipts.
+        """
         instance, group_id = self._approved_edge(tmp_path, relationship_type="fits")
 
         first = service_add_relationships(
@@ -3268,13 +3278,64 @@ class TestGroupApprovedContentBinding:
         drift = self._drift(instance, "fits")
         assert drift is not None
         assert drift.group_id == group_id
-        assert drift.changed_properties == ["source", "verified"]
-        # `verified` was False at approval; the second write's "before" value was
-        # the FIRST drift's True, which must not overwrite the approved value.
-        assert drift.approved_values == {"verified": False}
+        # `verified` matches the approved value again, so it drops off; `source`
+        # was never approved at all, so it stays.
+        assert drift.changed_properties == ["source"]
+        assert drift.approved_values == {}
         assert drift.receipt_id == second.receipt_id
+        # The marker persisted across both writes, so first_detected_at is the
+        # first one's.
         assert drift.first_detected_at is not None
-        assert drift.first_detected_at <= drift.detected_at
+        assert drift.first_detected_at < drift.detected_at
+
+    def test_a_full_revert_drops_the_marker(self, tmp_path: Path) -> None:
+        """RULING: drift reflects CURRENT divergence; a restored edge is not drifted.
+
+        Accumulate-only left a permanent stain: once an edge had been edited it
+        read as diverged from its approval forever, even after the exact
+        approved content was written back. History of the excursion is on the
+        receipts of both writes.
+        """
+        instance, _group_id = self._approved_edge(tmp_path, relationship_type="fits")
+
+        service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True},
+                )
+            ],
+            source="test",
+            source_ref="drift",
+        )
+        assert self._drift(instance, "fits") is not None
+
+        service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": False},
+                )
+            ],
+            source="test",
+            source_ref="revert",
+        )
+
+        assert self._drift(instance, "fits") is None
+        edge = instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+        assert edge is not None
+        assert edge.properties["verified"] is False
+        assert edge.metadata.assertion.review.status == "approved"
 
     def test_content_identical_write_is_neither_refused_nor_marked(
         self,

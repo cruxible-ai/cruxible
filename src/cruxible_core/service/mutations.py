@@ -17,12 +17,14 @@ from cruxible_core.errors import (
     GroupApprovedContentWriteRefusedError,
 )
 from cruxible_core.governance.actors import GovernedActorContext, dump_actor_context
-from cruxible_core.graph.assertion_state import (
-    GroupApprovalDrift,
-    RelationshipLifecycleState,
-)
+from cruxible_core.graph.assertion_state import RelationshipLifecycleState
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import EvidenceRef, RelationshipEvidence
+from cruxible_core.graph.group_drift import (
+    GroupContentDrift,
+    content_change,
+    stamp_group_approval_drift,
+)
 from cruxible_core.graph.operations import (
     ValidatedEntity,
     ValidatedRelationship,
@@ -67,7 +69,7 @@ from cruxible_core.service.mutation_proposals import (
     relationship_instance_member,
 )
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
-from cruxible_core.service.property_diffs import property_delta, property_value_changes
+from cruxible_core.service.property_diffs import property_value_changes
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
@@ -127,20 +129,6 @@ class _PreparedBatchDirectWrite:
 
 
 @dataclass
-class _ContentDrift:
-    """One group-approved edge whose content this write changes.
-
-    Held keyed by relationship identity so the stamping pass after
-    ``apply_relationship`` can find it without re-diffing the (already
-    overwritten) edge.
-    """
-
-    group_id: str
-    changed_properties: list[str]
-    approved_values: dict[str, Any]
-
-
-@dataclass
 class _DirectWriteGroupInteractions:
     pending_conflicts: list[DirectWriteGroupInteraction]
     updated_group_backed_edges: list[DirectWriteGroupInteraction]
@@ -150,7 +138,9 @@ class _DirectWriteGroupInteractions:
     # ``runtime/api.py``, and a contract field the mapper never fills would read
     # as "no drift ever" over HTTP. The drift is recorded where the ruling
     # requires it — on the edge and on the receipt.
-    content_drift: dict[tuple[str, str, str, str, str], _ContentDrift] = field(default_factory=dict)
+    content_drift: dict[tuple[str, str, str, str, str], GroupContentDrift] = field(
+        default_factory=dict
+    )
 
 
 def _entity_property_change_detail(
@@ -234,23 +224,6 @@ def _group_interaction_from_relationship(
     )
 
 
-def _content_change(
-    incoming: RelationshipInstance,
-    existing: RelationshipInstance,
-) -> list[str]:
-    """Return the property names this write changes on ``existing``.
-
-    ``incoming`` must be the VALIDATED relationship, not the raw payload: the
-    update branch of ``apply_relationship`` replaces properties wholesale with
-    the validated (merged onto the existing edge, coerced, defaulted) values, so
-    that is what actually lands. Diffing the raw payload instead would report a
-    property-less touch as "removed everything" and a ``"5"``-for-``5`` restate
-    as a change — an over-eager marker, which is worse than no marker.
-    """
-    delta = property_delta(dict(incoming.properties), dict(existing.properties))
-    return sorted({*delta.changed, *delta.added, *delta.removed})
-
-
 def _detect_direct_write_group_interactions(
     instance: InstanceProtocol,
     graph: EntityGraph,
@@ -285,7 +258,7 @@ def _detect_direct_write_group_interactions(
 
         group_cache: dict[str, CandidateGroup | None] = {}
         updated_group_backed_edges: list[DirectWriteGroupInteraction] = []
-        content_drift: dict[tuple[str, str, str, str, str], _ContentDrift] = {}
+        content_drift: dict[tuple[str, str, str, str, str], GroupContentDrift] = {}
         for index, relationship in enumerate(relationships):
             # One conflict record per LIVE group claiming this tuple, not just
             # the newest. Every one of them is annotated and version-bumped
@@ -330,7 +303,7 @@ def _detect_direct_write_group_interactions(
             # CONTENT-BINDING RULING: a group approval accepted this edge's
             # CONTENT, not just its existence. A write that changes nothing is
             # not drift and must be left alone entirely.
-            changed = _content_change(relationship, existing)
+            changed = content_change(relationship, existing)
             if not changed:
                 continue
             policy = effective_relationship_write_policy(config, relationship.relationship_type)
@@ -352,7 +325,7 @@ def _detect_direct_write_group_interactions(
                         changed_properties=changed,
                     )
                 continue
-            content_drift[relationship.identity_tuple()] = _ContentDrift(
+            content_drift[relationship.identity_tuple()] = GroupContentDrift(
                 group_id=group_id,
                 changed_properties=changed,
                 approved_values={
@@ -435,7 +408,7 @@ def _relationship_group_interaction_detail(
     return detail
 
 
-def _content_drift_payload(drift: _ContentDrift) -> dict[str, Any]:
+def _content_drift_payload(drift: GroupContentDrift) -> dict[str, Any]:
     return {
         "group_id": drift.group_id,
         "changed_properties": list(drift.changed_properties),
@@ -644,66 +617,13 @@ def _stamp_group_approval_drift(
     receipt_id: str | None,
     actor_context: GovernedActorContext | None,
 ) -> None:
-    """Mark a group-approved edge whose content this write just changed.
-
-    Called AFTER ``apply_relationship`` so the marker lands on the edge as
-    written. The marker rides on the assertion axis (not review, not lifecycle):
-    the edge stays live and stays approved — the world legitimately changed —
-    but every ordinary read of it now carries the divergence from what the group
-    signed off on.
-    """
-    drift = interactions.content_drift.get(relationship.identity_tuple())
-    if drift is None:
-        return
-    persisted = graph.get_relationship(
-        relationship.from_type,
-        relationship.from_id,
-        relationship.to_type,
-        relationship.to_id,
-        relationship.relationship_type,
-    )
-    if persisted is None:
-        return
-
-    detected_at = utc_now()
-    previous = persisted.metadata.assertion.group_approval_drift
-    changed_properties = set(drift.changed_properties)
-    approved_values = dict(drift.approved_values)
-    first_detected_at = detected_at
-    if previous is not None and previous.group_id == drift.group_id:
-        # Successive drifts accumulate against the SAME approval: the earlier
-        # approved_values are the group's, this write's "before" values are only
-        # the previous drift's, so the earlier ones win on overlap.
-        changed_properties |= set(previous.changed_properties)
-        approved_values = {**approved_values, **previous.approved_values}
-        first_detected_at = previous.first_detected_at or previous.detected_at or detected_at
-
-    metadata = persisted.metadata.model_copy(
-        update={
-            "assertion": persisted.metadata.assertion.model_copy(
-                update={
-                    "group_approval_drift": GroupApprovalDrift(
-                        group_id=drift.group_id,
-                        changed_properties=sorted(changed_properties),
-                        approved_values=approved_values,
-                        first_detected_at=first_detected_at,
-                        detected_at=detected_at,
-                        receipt_id=receipt_id,
-                        actor_context=actor_context,
-                    )
-                }
-            )
-        }
-    )
-    graph.replace_relationship_state(
-        relationship.from_type,
-        relationship.from_id,
-        relationship.to_type,
-        relationship.to_id,
-        relationship.relationship_type,
-        properties=persisted.properties,
-        metadata=metadata,
-        edge_key=persisted.edge_key,
+    """Recompute the drift marker for one relationship this write just changed."""
+    stamp_group_approval_drift(
+        graph,
+        relationship,
+        interactions.content_drift.get(relationship.identity_tuple()),
+        receipt_id=receipt_id,
+        actor_context=actor_context,
     )
 
 
