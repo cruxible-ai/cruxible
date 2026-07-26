@@ -28383,6 +28383,48 @@
             "title": "Drift Observed Hash"
           }
         },
+        "first_drift_observed_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "first_drift_observed_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "When the first content drift was observed.",
+            "title": "First Drift Observed At"
+          }
+        },
+        "first_drift_observed_hash": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "first_drift_observed_hash",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Local content hash of the FIRST drift ever observed for this revision. Sticky: unlike the pair above it is never cleared, so restoring the original bytes does not erase that the source was altered.",
+            "title": "First Drift Observed Hash"
+          }
+        },
         "kind": {
           "has_default": false,
           "has_default_factory": false,
@@ -28662,6 +28704,32 @@
             "default": null,
             "description": "Last observed local content hash that did not match the manifest.",
             "title": "Drift Observed Hash"
+          },
+          "first_drift_observed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "When the first content drift was observed.",
+            "title": "First Drift Observed At"
+          },
+          "first_drift_observed_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Local content hash of the FIRST drift ever observed for this revision. Sticky: unlike the pair above it is never cleared, so restoring the original bytes does not erase that the source was altered.",
+            "title": "First Drift Observed Hash"
           },
           "kind": {
             "const": "markdown",

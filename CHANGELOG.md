@@ -220,6 +220,33 @@ the project's own state instance.
   letting a caller infer it from a matching hash. Exposed on the HTTP route, the
   MCP tool, the client, and `cruxible source dereference --revision`.
 
+- **Config mutations are undone if their receipt does not commit.**
+  `add_constraint` / `add_decision_policy` replaced the YAML immediately, while
+  the receipt only became durable when the mutation-receipt boundary committed on
+  exit — so a commit failure rolled back SQLite and left the ACTIVE rules changed
+  with nothing naming who changed them. The prior bytes (and config provenance)
+  are captured and restored on any failure inside the boundary.
+
+- **Source-artifact drift history is no longer erasable by restoring the file.**
+  `record_content_drift` cleared both stored fields on a clean read, so an
+  artifact that was altered and then put back read as pristine — invisible to
+  exactly the reader who needs it, someone auditing whether the evidence behind a
+  decision was tampered with. Current drift state still clears (a stale marker on
+  a restored file would misreport the evidence base), but a sticky
+  `first_drift_observed_hash` / `first_drift_observed_at` pair is written once on
+  the first drift and never cleared. Additive columns, migrated in place.
+
+### Documented
+
+- **Under auth-on, every credentialed actor derives to `agent`** (Robert,
+  2026-07-25). A runtime credential is a `service_account`, so there is no way to
+  be a human on an auth-on daemon today — and that is not an exemption: an actor
+  deriving to `agent` owes a `reason_code` wherever a feedback or outcome profile
+  requires one of non-human writers. Human-typed credentials (established at mint
+  time, not declared per request) are the future path; the retired self-declared
+  `human`/`agent` axis is not reopened. Recorded in
+  `docs/runtime-auth-and-agent-roles.md`.
+
 ### Deprecated
 
 Deprecate-then-remove applies to every shipped surface: these all still work,

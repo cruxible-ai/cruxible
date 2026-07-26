@@ -71,6 +71,11 @@ class SourceArtifactRecord(BaseModel):
     superseded_at: str | None = None
     drift_observed_hash: str | None = None
     drift_observed_at: str | None = None
+    # STICKY counterpart to the pair above: the FIRST drift ever observed for
+    # this revision. Current drift state is legitimately cleared when the file
+    # matches its manifest again; that a drift once happened is not.
+    first_drift_observed_hash: str | None = None
+    first_drift_observed_at: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -200,6 +205,8 @@ class SourceArtifactReadResult(SourceArtifactListItem):
     current_artifact_hash: str | None = None
     drift_observed_hash: str | None = None
     drift_observed_at: str | None = None
+    first_drift_observed_hash: str | None = None
+    first_drift_observed_at: str | None = None
     chunks: list[SourceArtifactReadChunk] = Field(default_factory=list)
 
 

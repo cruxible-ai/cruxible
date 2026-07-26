@@ -119,6 +119,8 @@ def service_get_source_artifact(
             current_artifact_hash=content.current_artifact_hash,
             drift_observed_hash=observed.drift_observed_hash,
             drift_observed_at=observed.drift_observed_at,
+            first_drift_observed_hash=observed.first_drift_observed_hash,
+            first_drift_observed_at=observed.first_drift_observed_at,
             chunks=[
                 _read_chunk(chunk, content.content if content_available else None)
                 for chunk in chunks

@@ -19,6 +19,7 @@ from cruxible_core.config.provenance import (
 from cruxible_core.errors import (
     ConfigError,
     EntityTypeNotFoundError,
+    MutationError,
     ReceiptNotFoundError,
     RelationshipAmbiguityError,
     RelationshipNotFoundError,
@@ -606,6 +607,70 @@ class TestConfigMutationServices:
         )
         assert added.rule == "fits.FROM.category == fits.TO.make"
         assert added.description == "test"
+
+    def test_a_failed_receipt_commit_leaves_the_config_untouched(
+        self,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An unreceipted rule change is exactly what the receipt exists to prevent.
+
+        ``save_config`` replaced the YAML immediately while the receipt only
+        became durable when the mutation-receipt context manager committed on
+        exit — so a commit failure rolled back SQLite and left the ACTIVE
+        constraint in force with nothing naming who added it.
+        """
+        config_path = populated_instance.get_config_path()
+        before = config_path.read_bytes()
+
+        def _fail_to_save(self, receipt):  # type: ignore[no-untyped-def]
+            raise RuntimeError("receipt store is unavailable")
+
+        monkeypatch.setattr(
+            "cruxible_core.receipt.store.SQLiteReceiptStore.save_receipt",
+            _fail_to_save,
+        )
+
+        with pytest.raises(MutationError, match="Failed to persist mutation receipt"):
+            service_add_constraint(
+                populated_instance,
+                name="unreceipted_constraint",
+                rule="fits.FROM.category == fits.TO.make",
+            )
+
+        assert config_path.read_bytes() == before
+        assert all(
+            constraint.name != "unreceipted_constraint"
+            for constraint in populated_instance.load_config().constraints
+        )
+
+    def test_a_failed_receipt_commit_leaves_decision_policies_untouched(
+        self,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = populated_instance.get_config_path()
+        before = config_path.read_bytes()
+
+        def _fail_to_save(self, receipt):  # type: ignore[no-untyped-def]
+            raise RuntimeError("receipt store is unavailable")
+
+        monkeypatch.setattr(
+            "cruxible_core.receipt.store.SQLiteReceiptStore.save_receipt",
+            _fail_to_save,
+        )
+
+        with pytest.raises(MutationError, match="Failed to persist mutation receipt"):
+            service_add_decision_policy(
+                populated_instance,
+                name="unreceipted_policy",
+                applies_to="query",
+                relationship_type="fits",
+                effect="suppress",
+                query_name="parts_for_vehicle",
+            )
+
+        assert config_path.read_bytes() == before
 
     def test_add_constraint_rejects_duplicate_names(
         self,

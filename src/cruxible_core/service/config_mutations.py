@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from typing import Any, Literal
 
 from cruxible_core.config.constraint_rules import parse_constraint_rule
@@ -25,6 +27,41 @@ from cruxible_core.workflow.compiler import compute_lock_config_digest
 ConstraintSeverity = Literal["warning", "error"]
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
+
+
+@contextmanager
+def _config_write_is_undone_if_the_receipt_does_not_commit(
+    instance: InstanceProtocol,
+) -> Iterator[None]:
+    """Restore the on-disk config if anything inside the receipt boundary fails.
+
+    ``save_config`` replaces the YAML immediately, but the receipt is not durable
+    until the mutation-receipt context manager commits its transaction on exit —
+    and a failure there rolls back SQLite while leaving the ACTIVE RULES changed
+    with no receipt naming who changed them. A constraint or decision policy
+    adjudicates every later query and workflow, so an unreceipted one is exactly
+    the state the receipt exists to make impossible.
+
+    The prior bytes (not a re-serialized ``CoreConfig``) are what gets restored:
+    a round trip through the model would silently normalize formatting and drop
+    anything the loader does not model. The config provenance is captured and
+    restored alongside them, since ``save_config`` re-records the materialized
+    digest and leaving that pointing at bytes no longer on disk would fail
+    ``verify_config_integrity``.
+    """
+    path = instance.get_config_path()
+    prior_bytes = path.read_bytes() if path.exists() else None
+    prior_provenance = instance.get_config_provenance()
+    try:
+        yield
+    except BaseException:
+        if prior_bytes is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(prior_bytes)
+        with suppress(NotImplementedError):
+            instance.set_config_provenance(prior_provenance)
+        raise
 
 
 def service_add_constraint(
@@ -68,17 +105,20 @@ def service_add_constraint(
     )
     warnings = validate_config(config)
 
-    with mutation_receipt(
-        instance,
-        "config_add_constraint",
-        {
-            "name": name,
-            "rule": rule,
-            "severity": validated_severity,
-            "description": description,
-        },
-        actor_context=actor_context,
-    ) as ctx:
+    with (
+        _config_write_is_undone_if_the_receipt_does_not_commit(instance),
+        mutation_receipt(
+            instance,
+            "config_add_constraint",
+            {
+                "name": name,
+                "rule": rule,
+                "severity": validated_severity,
+                "description": description,
+            },
+            actor_context=actor_context,
+        ) as ctx,
+    ):
         assert ctx.builder is not None
         ctx.builder.record_validation(
             passed=True,
@@ -89,6 +129,10 @@ def service_add_constraint(
                 "config_warnings": warnings,
             },
         )
+        # LAST act inside the boundary: everything that can still refuse this
+        # mutation has run, so the window between replacing the active rules and
+        # durably receipting them is as short as it can be made — and the
+        # wrapper above closes it entirely if the commit still fails.
         instance.save_config(config)
         ctx.set_result(
             AddConstraintServiceResult(
@@ -151,20 +195,23 @@ def service_add_decision_policy(
     )
     warnings = validate_config(config)
 
-    with mutation_receipt(
-        instance,
-        "config_add_decision_policy",
-        {
-            "name": name,
-            "applies_to": validated_applies_to,
-            "relationship_type": relationship_type,
-            "effect": validated_effect,
-            "query_name": query_name,
-            "workflow_name": workflow_name,
-            "expires_at": expires_at,
-        },
-        actor_context=actor_context,
-    ) as ctx:
+    with (
+        _config_write_is_undone_if_the_receipt_does_not_commit(instance),
+        mutation_receipt(
+            instance,
+            "config_add_decision_policy",
+            {
+                "name": name,
+                "applies_to": validated_applies_to,
+                "relationship_type": relationship_type,
+                "effect": validated_effect,
+                "query_name": query_name,
+                "workflow_name": workflow_name,
+                "expires_at": expires_at,
+            },
+            actor_context=actor_context,
+        ) as ctx,
+    ):
         assert ctx.builder is not None
         ctx.builder.record_validation(
             passed=True,
@@ -175,6 +222,7 @@ def service_add_decision_policy(
                 "config_warnings": warnings,
             },
         )
+        # LAST act inside the boundary; see service_add_constraint.
         instance.save_config(config)
         ctx.set_result(
             AddDecisionPolicyServiceResult(

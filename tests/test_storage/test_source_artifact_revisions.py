@@ -182,3 +182,121 @@ def test_pre_revision_state_db_migrates_to_revision_one(tmp_path: Path) -> None:
         assert [chunk.chunk_id for chunk in store.list_chunks("legacy_doc")] == ["mdchunk_legacy"]
     finally:
         store.close()
+
+
+def test_first_drift_is_sticky_when_the_original_bytes_come_back(
+    store: SQLiteSourceArtifactStore,
+) -> None:
+    """Restoring the file must not erase that it was ever altered.
+
+    ``record_content_drift`` cleared BOTH stored fields on a clean read, so an
+    artifact that was tampered with and then put back read as pristine — and the
+    one reader who most needs the finding (someone auditing whether the evidence
+    behind a decision was altered) saw nothing at all.
+    """
+    store.save_artifact(_record(1, "sha256:aaa"), [_chunk("sha256:chunk_a")])
+
+    store.record_content_drift(
+        "doc@1",
+        observed_hash="sha256:tampered",
+        observed_at="2026-07-25T10:00:00Z",
+    )
+    drifted = store.get_artifact_revision("doc@1")
+    assert drifted is not None
+    assert drifted.drift_observed_hash == "sha256:tampered"
+    assert drifted.first_drift_observed_hash == "sha256:tampered"
+    assert drifted.first_drift_observed_at == "2026-07-25T10:00:00Z"
+
+    store.record_content_drift("doc@1", observed_hash=None, observed_at=None)
+
+    restored = store.get_artifact_revision("doc@1")
+    assert restored is not None
+    # CURRENT drift state clears — the file matches its manifest again.
+    assert restored.drift_observed_hash is None
+    assert restored.drift_observed_at is None
+    # The first observation does not.
+    assert restored.first_drift_observed_hash == "sha256:tampered"
+    assert restored.first_drift_observed_at == "2026-07-25T10:00:00Z"
+
+
+def test_a_second_drift_does_not_overwrite_the_first_observation(
+    store: SQLiteSourceArtifactStore,
+) -> None:
+    store.save_artifact(_record(1, "sha256:aaa"), [_chunk("sha256:chunk_a")])
+    store.record_content_drift(
+        "doc@1", observed_hash="sha256:first", observed_at="2026-07-25T10:00:00Z"
+    )
+    store.record_content_drift("doc@1", observed_hash=None, observed_at=None)
+    store.record_content_drift(
+        "doc@1", observed_hash="sha256:second", observed_at="2026-07-25T12:00:00Z"
+    )
+
+    record = store.get_artifact_revision("doc@1")
+    assert record is not None
+    assert record.drift_observed_hash == "sha256:second"
+    assert record.first_drift_observed_hash == "sha256:first"
+    assert record.first_drift_observed_at == "2026-07-25T10:00:00Z"
+
+
+def test_a_clean_read_of_a_never_drifted_artifact_writes_nothing(
+    store: SQLiteSourceArtifactStore,
+) -> None:
+    """The read path must stay a read once there is nothing new to observe."""
+    store.save_artifact(_record(1, "sha256:aaa"), [_chunk("sha256:chunk_a")])
+
+    assert store.record_content_drift("doc@1", observed_hash=None, observed_at=None) is False
+
+
+def test_repeating_the_same_drift_observation_writes_once(
+    store: SQLiteSourceArtifactStore,
+) -> None:
+    store.save_artifact(_record(1, "sha256:aaa"), [_chunk("sha256:chunk_a")])
+
+    assert (
+        store.record_content_drift(
+            "doc@1", observed_hash="sha256:tampered", observed_at="2026-07-25T10:00:00Z"
+        )
+        is True
+    )
+    assert (
+        store.record_content_drift(
+            "doc@1", observed_hash="sha256:tampered", observed_at="2026-07-25T11:00:00Z"
+        )
+        is False
+    )
+
+
+def test_the_sticky_columns_are_added_to_a_pre_existing_state_db(tmp_path: Path) -> None:
+    """An instance upgraded in place gets the columns without losing its rows."""
+    db = tmp_path / "state.db"
+    first = SQLiteSourceArtifactStore(db)
+    try:
+        first.save_artifact(_record(1, "sha256:aaa"), [_chunk("sha256:chunk_a")])
+        first._conn.execute(
+            "UPDATE source_artifacts SET first_drift_observed_hash = NULL, "
+            "first_drift_observed_at = NULL"
+        )
+        first._conn.commit()
+    finally:
+        first.close()
+
+    dropped = sqlite3.connect(db)
+    try:
+        dropped.execute("ALTER TABLE source_artifacts DROP COLUMN first_drift_observed_hash")
+        dropped.execute("ALTER TABLE source_artifacts DROP COLUMN first_drift_observed_at")
+        dropped.commit()
+    finally:
+        dropped.close()
+
+    second = SQLiteSourceArtifactStore(db)
+    try:
+        columns = {
+            row["name"]
+            for row in second._conn.execute("PRAGMA table_info(source_artifacts)").fetchall()
+        }
+        assert {"first_drift_observed_hash", "first_drift_observed_at"} <= columns
+        record = second.get_artifact_revision("doc@1")
+        assert record is not None
+        assert record.first_drift_observed_hash is None
+    finally:
+        second.close()

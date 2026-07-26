@@ -520,6 +520,17 @@ class SourceArtifactReadResult(SourceArtifactListItem):
     drift_observed_at: str | None = Field(
         default=None, description="When the recorded content drift was last observed."
     )
+    first_drift_observed_hash: str | None = Field(
+        default=None,
+        description=(
+            "Local content hash of the FIRST drift ever observed for this revision. "
+            "Sticky: unlike the pair above it is never cleared, so restoring the "
+            "original bytes does not erase that the source was altered."
+        ),
+    )
+    first_drift_observed_at: str | None = Field(
+        default=None, description="When the first content drift was observed."
+    )
     chunks: list[SourceArtifactReadChunk] = Field(default_factory=list)
 
 

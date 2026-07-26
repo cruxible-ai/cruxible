@@ -55,8 +55,9 @@ may resolve.
 
 ### Auto-resolve: earned, per bucket, never on first contact
 
-A fresh group is stored as `auto_resolved` instead of `pending_review` only
-when **all** of the following hold:
+A fresh group is APPROVED immediately — through the real resolve rail, with
+real edges, a real resolution row, and a real receipt — instead of entering
+`pending_review`, only when **all** of the following hold:
 
 1. The bucket has a prior **confirmed approval** whose trust status satisfies
    `auto_resolve_requires_prior_trust` (`trusted_only` by default;
@@ -88,10 +89,20 @@ signature — you cannot re-trust a superseded precedent. Trust changes never
 touch existing edges; demoting a precedent and retracting a wrong edge are two
 separate acts.
 
-One honest limit: `auto_resolved` is a status, not an applied write. An
-auto-resolved group has skipped human triage, but its edges are written only
-when something calls `group resolve --action approve` (a `GRAPH_WRITE`
-operation). Nothing in core applies auto-resolved groups on a timer.
+Auto-resolution runs the same receipted approve transition a reviewer would:
+`propose_group` returns `status="resolved"` with a `resolution_id`, and the
+resolution records `resolution_source="auto_resolved"` so it says honestly how
+it came about. (`auto_resolved` was a group STATUS until 0.3. It was a dead-end
+label — no path transitioned out of it, no edges existed, and it escaped both
+`find_pending_group` and the pending unique index, so re-proposing the same
+signature minted a duplicate row. It survives only as `resolution_source`, plus
+a deprecated read-only `GroupStatus` member so 0.2.x rows still load.)
+
+One honest limit remains: applying edges is `GRAPH_WRITE` while proposing is
+`GOVERNED_WRITE`. A proposer below that tier does not escalate itself — the
+group stays in `pending_review` and the result carries
+`auto_resolve_deferred_reason`. The same happens if the approve itself is
+refused. Nothing in core applies pending groups on a timer.
 
 ### Re-proposing while a group is pending
 
@@ -101,8 +112,16 @@ place**: members replaced (default) or merged (`pending_refresh_mode:
 retain_missing`), metadata refreshed, priority re-derived, and
 `pending_version` incremented. A rewrite never auto-resolves — auto-resolve is
 evaluated only for fresh buckets. If the re-proposal has no surviving members,
-the default mode clears the now-empty pending group (with a `group_clear`
-receipt); `retain_missing` leaves it standing.
+the default mode WITHDRAWS the now-empty pending group (with a `group_withdraw`
+receipt) rather than deleting it: the group was proposed, it was reviewed
+against, and its members are evidence, so it is retired in place. `withdrawn`
+sits outside the pending unique index, so the signature is free for a later
+proposal — but a withdrawn group is terminal and `group resolve` refuses it.
+`retain_missing` leaves the group standing.
+
+A re-propose accepts an optional `expected_pending_version`, the same optimistic
+guard `group resolve` requires: pass the version you computed your delta against
+and a bucket that moved underneath you is refused instead of overwritten.
 
 `pending_version` is the reviewer's concurrency guard: resolve requires
 `--expected-pending-version`, and a mismatch fails with "Group changed during

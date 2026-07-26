@@ -141,6 +141,13 @@ CREATE TABLE IF NOT EXISTS source_artifacts (
     superseded_at TEXT,
     drift_observed_hash TEXT,
     drift_observed_at TEXT,
+    -- STICKY: set once, on the first drift ever observed for this revision, and
+    -- never cleared. The pair above is CURRENT state and is legitimately
+    -- cleared when the file matches the manifest again; without this pair,
+    -- restoring the original bytes also erased every trace that the evidence
+    -- base had been tampered with in between.
+    first_drift_observed_hash TEXT,
+    first_drift_observed_at TEXT,
     UNIQUE (source_artifact_id, revision)
 );
 CREATE INDEX IF NOT EXISTS idx_source_artifacts_kind
@@ -502,6 +509,7 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
             # indexes over columns a pre-revision table does not have.
             self._migrate_to_revisioned_artifacts()
             self._conn.executescript(_SOURCE_ARTIFACT_SCHEMA)
+            self._ensure_first_drift_columns()
 
     def _artifact_columns(self) -> set[str]:
         return {
@@ -514,6 +522,15 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
             self._conn.execute(
                 "ALTER TABLE source_artifacts ADD COLUMN registered_actor_context TEXT"
             )
+
+    def _ensure_first_drift_columns(self) -> None:
+        """Additive: the sticky first-drift pair on a DB that predates it."""
+        columns = self._artifact_columns()
+        if not columns:
+            return
+        for column in ("first_drift_observed_hash", "first_drift_observed_at"):
+            if column not in columns:
+                self._conn.execute(f"ALTER TABLE source_artifacts ADD COLUMN {column} TEXT")
 
     def _migrate_to_revisioned_artifacts(self) -> None:
         """Rebuild a pre-revision state DB onto the insert-only schema.
@@ -600,8 +617,9 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
                 "source_retention, original_uri, label, parser_version, content_hash, "
                 "byte_count, local_path, archived, archive_content_hash, created_at, "
                 "registered_actor_context, superseded_by, superseded_at, "
-                "drift_observed_hash, drift_observed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "drift_observed_hash, drift_observed_at, "
+                "first_drift_observed_hash, first_drift_observed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     record.artifact_revision_id,
                     record.source_artifact_id,
@@ -622,6 +640,8 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
                     record.superseded_at,
                     record.drift_observed_hash,
                     record.drift_observed_at,
+                    record.first_drift_observed_hash,
+                    record.first_drift_observed_at,
                 ),
             )
         except sqlite3.IntegrityError as exc:
@@ -710,15 +730,38 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
     ) -> bool:
         """Record (or clear) the last observed local-content drift for a revision.
 
+        Two pairs, deliberately. ``drift_observed_*`` is CURRENT state and is
+        cleared when the file matches its manifest again — leaving a stale marker
+        on a restored file would misreport the evidence base. ``first_drift_*``
+        is STICKY: written once, on the first drift ever seen for this revision,
+        and never cleared. Clearing both meant that restoring the original bytes
+        also erased every trace that the source had been altered, so the one
+        reader who most needs to know — someone auditing whether the evidence
+        behind a decision was tampered with — saw a pristine record.
+
         Idempotent by design: the UPDATE is a no-op once the stored observation
         already matches, so a read path that keeps seeing the same drifted file
         writes exactly once rather than once per read. Returns whether a row
         actually changed.
         """
         cursor = self._conn.execute(
-            "UPDATE source_artifacts SET drift_observed_hash = ?, drift_observed_at = ? "
-            "WHERE artifact_revision_id = ? AND drift_observed_hash IS NOT ?",
-            (observed_hash, observed_at, artifact_revision_id, observed_hash),
+            "UPDATE source_artifacts SET drift_observed_hash = ?, drift_observed_at = ?, "
+            # COALESCE keeps the FIRST value: only a NULL is filled in, and only
+            # when this call is reporting a drift rather than clearing one.
+            "first_drift_observed_hash = COALESCE(first_drift_observed_hash, ?), "
+            "first_drift_observed_at = COALESCE(first_drift_observed_at, ?) "
+            "WHERE artifact_revision_id = ? AND ("
+            "drift_observed_hash IS NOT ? "
+            "OR (? IS NOT NULL AND first_drift_observed_hash IS NULL))",
+            (
+                observed_hash,
+                observed_at,
+                observed_hash,
+                observed_at,
+                artifact_revision_id,
+                observed_hash,
+                observed_hash,
+            ),
         )
         changed = cursor.rowcount > 0
         if changed and self._owns_connection:
@@ -812,6 +855,8 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
             superseded_at=row["superseded_at"],
             drift_observed_hash=row["drift_observed_hash"],
             drift_observed_at=row["drift_observed_at"],
+            first_drift_observed_hash=row["first_drift_observed_hash"],
+            first_drift_observed_at=row["first_drift_observed_at"],
             source_kind=row["source_kind"],
             source_retention=row["source_retention"],
             original_uri=row["original_uri"],
