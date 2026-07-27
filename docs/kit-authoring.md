@@ -177,9 +177,13 @@ Rules:
 - `requires_extras` is metadata only. Cruxible does not install kit
   dependencies automatically.
 - `min_core_version` is optional and declares the oldest cruxible core the kit
-  supports. Kit resolution refuses before materialization when the running core
-  is older, naming both versions and the upgrade command. Cores that predate
-  the field simply ignore it, so adding it does not change `schema_version`.
+  supports. It must be a PEP 440 version and is compared with PEP 440 ordering,
+  so `0.3.0rc1` does *not* satisfy a `0.3.0` floor. An unparseable value is a
+  manifest error at load. The floor is enforced before any kit content is
+  materialized — on `cruxible init --kit`, on governed config upload, and on
+  overlay composition — naming both versions and the upgrade command. Cores
+  that predate the field ignore it, so adding it does not change
+  `schema_version`.
 
 Provider refs use `kit://`:
 

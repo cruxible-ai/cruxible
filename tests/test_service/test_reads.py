@@ -122,11 +122,13 @@ def _kit_provider_config_yaml() -> str:
     )
 
 
-def _write_minimal_standalone_kit(root: Path) -> None:
+def _write_minimal_standalone_kit(root: Path, *, min_core_version: str | None = None) -> None:
+    floor_line = f"min_core_version: '{min_core_version}'\n" if min_core_version else ""
     root.joinpath("cruxible-kit.yaml").write_text(
         "schema_version: cruxible.kit.v1\n"
         "kit_id: demo\n"
         "version: 0.2.0\n"
+        f"{floor_line}"
         "role: standalone\n"
         "entry_config: config.yaml\n"
         "provider_paths:\n"
@@ -466,6 +468,31 @@ class TestInit:
         assert (governed_root / ".cruxible" / "cruxible.lock.yaml").exists()
         assert (governed_root / "providers" / "main.py").exists()
         assert (governed_root / ".cruxible" / "kit.json").exists()
+
+    def test_governed_upload_init_refuses_kit_above_the_core_floor(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # Governed upload copies a caller-owned kit workspace without going
+        # through resolve_kit_ref; the core floor must still be enforced, and
+        # before any kit content lands in the governed root.
+        workspace = tmp_path / "workspace"
+        governed_root = tmp_path / "daemon" / "inst_123"
+        workspace.mkdir()
+        _write_minimal_standalone_kit(workspace, min_core_version="9.9.0")
+        providers = workspace / "providers"
+        providers.mkdir()
+        (providers / "main.py").write_text("def run(_input, _context):\n    return {}\n")
+
+        with pytest.raises(ConfigError, match="requires cruxible core >= 9.9.0"):
+            service_init_governed_upload(
+                governed_root,
+                workspace_root=workspace,
+                config_yaml=_kit_provider_config_yaml(),
+            )
+
+        assert not (governed_root / "cruxible-kit.yaml").exists()
+        assert not (governed_root / "providers").exists()
 
     def test_init_with_extends_compose_conflict_cleanup(self, tmp_path: Path) -> None:
         base = tmp_path / "base.yaml"

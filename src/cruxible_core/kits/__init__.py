@@ -18,6 +18,7 @@ from typing import Iterator
 from urllib.parse import unquote
 
 import yaml
+from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from cruxible_core.errors import ConfigError
@@ -50,7 +51,8 @@ class KitManifest(BaseModel):
     requires_base: str | None = None
     # Additive at cruxible.kit.v1: cores that predate this field ignore it
     # (pydantic's default `extra='ignore'`), so a kit declaring a floor still
-    # loads on an older core -- it just is not refused there.
+    # loads on an older core -- it just is not refused there. Compared as a
+    # PEP 440 version, so `0.3.0rc1` sorts below `0.3.0`.
     min_core_version: str | None = None
     entry_config: str = "config.yaml"
     provider_paths: list[str] = Field(default_factory=list)
@@ -71,8 +73,18 @@ class KitManifest(BaseModel):
             raise ValueError("role: base must not set requires_base")
         if self.requires_base is not None and not self.requires_base.strip():
             raise ValueError("requires_base must name a base kit")
-        if self.min_core_version is not None and not self.min_core_version.strip():
-            raise ValueError("min_core_version must name a version")
+        if self.min_core_version is not None:
+            # Fail closed at load: an unparseable floor must be a manifest error
+            # naming the kit and the value, never a crash at enforcement time.
+            if not self.min_core_version.strip():
+                raise ValueError("min_core_version must name a version")
+            try:
+                Version(self.min_core_version)
+            except InvalidVersion as exc:
+                raise ValueError(
+                    f"Kit '{self.kit_id}' declares an invalid min_core_version "
+                    f"'{self.min_core_version}': must be a PEP 440 version"
+                ) from exc
         _validate_relative_path(self.entry_config, field_name="entry_config")
         for field_name, values in (
             ("provider_paths", self.provider_paths),
@@ -131,39 +143,33 @@ def load_kit_manifest(root: Path) -> KitManifest:
         raise ConfigError(f"Invalid kit manifest at {path}: {exc}") from exc
 
 
-def _version_tuple(version: str) -> tuple[int, ...]:
-    """Return the leading numeric dot components of a version string.
+def enforce_min_core_version(manifest: KitManifest) -> None:
+    """Refuse a kit whose declared core floor is newer than the running core.
 
-    Minimal on purpose: ``packaging`` is not a declared dependency of this
-    package, so comparison uses the numeric prefix of each dot component
-    (``0.3.0rc1`` -> ``(0, 3, 0)``) and stops at the first non-numeric one.
+    Every path that consumes a kit manifest must call this -- not just
+    ``resolve_kit_ref``. Governed config upload copies a caller-owned kit
+    workspace, and overlay composition reads sibling kit directories; both
+    reach a manifest without going through the resolver.
+
+    ``min_core_version`` is validated as a PEP 440 version at manifest load, so
+    it parses here or the manifest never loaded.
     """
-    parts: list[int] = []
-    for component in version.strip().split("."):
-        digits = ""
-        for char in component:
-            if not char.isdigit():
-                break
-            digits += char
-        if not digits:
-            break
-        parts.append(int(digits))
-    return tuple(parts)
-
-
-def _enforce_min_core_version(bundle: KitBundle) -> KitBundle:
-    """Refuse a kit whose declared core floor is newer than the running core."""
-    floor = bundle.manifest.min_core_version
+    floor = manifest.min_core_version
     if floor is None:
-        return bundle
+        return
     from cruxible_core import __version__
 
-    if _version_tuple(__version__) < _version_tuple(floor):
+    if Version(__version__) < Version(floor):
         raise ConfigError(
-            f"Kit '{bundle.manifest.kit_id}' requires cruxible core >= {floor}, "
+            f"Kit '{manifest.kit_id}' requires cruxible core >= {floor}, "
             f"but this core is {__version__}. Upgrade with: "
             "pip install --upgrade cruxible"
         )
+
+
+def _enforce_min_core_version(bundle: KitBundle) -> KitBundle:
+    """Apply the core floor to a resolved bundle and pass it through."""
+    enforce_min_core_version(bundle.manifest)
     return bundle
 
 
@@ -250,6 +256,9 @@ def copy_kit_runtime_files(
 ) -> None:
     """Copy kit-local provider and artifact paths next to an uploaded config."""
     manifest = load_kit_manifest(source_root)
+    # Governed upload materializes a caller-owned kit workspace without going
+    # through resolve_kit_ref, so the core floor is enforced here too.
+    enforce_min_core_version(manifest)
     target_root.mkdir(parents=True, exist_ok=True)
     runtime_paths = [
         KIT_MANIFEST_FILE,

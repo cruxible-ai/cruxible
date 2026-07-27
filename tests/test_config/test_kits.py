@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from packaging.version import Version
 from pydantic import ValidationError
 
 from cruxible_core import __version__
@@ -16,10 +17,10 @@ from cruxible_core.kit_distribution import published_kit_ids
 from cruxible_core.kits import (
     _SHIPPED_KIT_CATALOG,
     KitManifest,
-    _version_tuple,
     compute_kit_provider_sha256,
     compute_kit_runtime_digest,
     config_yaml_has_kit_provider_refs,
+    enforce_min_core_version,
     get_kit_catalog,
     load_kit_manifest,
     load_kit_provider_module,
@@ -247,7 +248,60 @@ def test_min_core_version_floor_refuses_older_core(
     )
 
 
-@pytest.mark.parametrize("core_version", ["1.4.0", "1.4.1", "2.0.0", "1.4.0rc1"])
+def test_min_core_version_floor_refuses_via_local_alias(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    _write_minimal_kit(source, role="standalone", min_core_version="9.9.0")
+    monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(
+        "cruxible_core.kits._discover_local_kit_catalog",
+        lambda: {"demo": f"file://{source}"},
+    )
+
+    with pytest.raises(ConfigError, match="Kit 'demo' requires cruxible core >= 9.9.0"):
+        resolve_kit_ref("demo")
+
+
+def test_min_core_version_floor_refuses_via_published_alias(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    _write_minimal_kit(source, role="standalone", min_core_version="9.9.0")
+    monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr("cruxible_core.kits._discover_local_kit_catalog", lambda: {})
+    monkeypatch.setattr(
+        "cruxible_core.kit_distribution.published_kit_ids",
+        lambda: frozenset({"demo"}),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.kit_distribution.resolve_published_kit",
+        lambda kit_id: source,
+    )
+
+    with pytest.raises(ConfigError, match="Kit 'demo' requires cruxible core >= 9.9.0"):
+        resolve_kit_ref("demo")
+
+
+def test_min_core_version_floor_refuses_via_explicit_oci_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    _write_minimal_kit(source, role="standalone", min_core_version="9.9.0")
+    monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr("cruxible_core.kits._pull_oci_kit", lambda ref: source)
+
+    with pytest.raises(ConfigError, match="Kit 'demo' requires cruxible core >= 9.9.0"):
+        resolve_kit_ref("oci://example.com/kits/demo:1.0.0")
+
+
+@pytest.mark.parametrize("core_version", ["1.4.0", "1.4.1", "2.0.0", "1.4.0.post1"])
 def test_min_core_version_floor_allows_equal_or_newer_core(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -264,6 +318,54 @@ def test_min_core_version_floor_allows_equal_or_newer_core(
     assert bundle.manifest.min_core_version == "1.4.0"
 
 
+@pytest.mark.parametrize("core_version", ["1.4.0rc1", "1.4.0.dev1", "1.3.9"])
+def test_prerelease_core_does_not_satisfy_a_final_floor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    core_version: str,
+) -> None:
+    # PEP 440 ordering: 1.4.0rc1 and 1.4.0.dev1 both sort below 1.4.0, so a
+    # kit requiring 1.4.0 must refuse them.
+    source = tmp_path / "source"
+    source.mkdir()
+    _write_minimal_kit(source, role="standalone", min_core_version="1.4.0")
+    monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr("cruxible_core.__version__", core_version)
+
+    with pytest.raises(ConfigError, match="requires cruxible core >= 1.4.0"):
+        resolve_kit_ref(f"file://{source}")
+
+
+@pytest.mark.parametrize("bad_floor", ["garbage", "0..9", "²", "1.2.3.4.hello"])
+def test_unparseable_min_core_version_is_a_manifest_error(
+    tmp_path: Path,
+    bad_floor: str,
+) -> None:
+    # Fail closed at load, naming the kit and the value -- never a crash later
+    # at enforcement time. '²' is str.isdigit() but not int()-able.
+    _write_minimal_kit(tmp_path, role="standalone", min_core_version=bad_floor)
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_kit_manifest(tmp_path)
+
+    message = str(excinfo.value)
+    assert "Invalid kit manifest" in message
+    assert "demo" in message
+    assert bad_floor in message
+    assert "PEP 440" in message
+
+
+def test_pep440_normalized_floor_is_accepted(tmp_path: Path) -> None:
+    # A leading 'v' is valid PEP 440 and normalizes to 9.9.0.
+    _write_minimal_kit(tmp_path, role="standalone", min_core_version="v9.9.0")
+
+    manifest = load_kit_manifest(tmp_path)
+
+    assert manifest.min_core_version == "v9.9.0"
+    with pytest.raises(ConfigError, match="requires cruxible core >= v9.9.0"):
+        enforce_min_core_version(manifest)
+
+
 def test_every_bundled_kit_declares_a_satisfiable_core_floor() -> None:
     # First-party kits ship on the core's release train, so their floor must be
     # set and must never exceed the core they ship with -- otherwise this branch
@@ -274,7 +376,7 @@ def test_every_bundled_kit_declares_a_satisfiable_core_floor() -> None:
     for manifest_path in manifests:
         floor = load_kit_manifest(manifest_path.parent).min_core_version
         assert floor is not None, manifest_path
-        assert _version_tuple(floor) <= _version_tuple(__version__), manifest_path
+        assert Version(floor) <= Version(__version__), manifest_path
 
 
 def test_runtime_digest_ignores_unrelated_files_and_tracks_kit_files(tmp_path: Path) -> None:
