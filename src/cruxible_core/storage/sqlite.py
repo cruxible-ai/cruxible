@@ -247,6 +247,34 @@ _AUDIT_ONLY_TABLES = frozenset(
         "storage_migrations",
     }
 )
+"""Tables whose writes are audit records, never state, so they never bump ``read_revision``.
+
+Adding a table here is a real claim: that writing it cannot change what any read
+of the instance's state returns. Verify that against the READ consumers, not
+just the write path, before extending the set.
+
+DO NOT add the attestation or resolution-contract tables. It is tempting --
+attestations and dispositions cannot touch a claim's trust, review, or lifecycle
+status, so they look like a pure audit lane. They are not, because they change
+what ordinary reads RETURN:
+
+* corroboration summaries are computed from ``attestations`` and attached to
+  edge payloads on ordinary reads (``attach_corroboration_summaries``, called
+  from the edge-list, neighborhood, and single-relationship read paths), so
+  recording a contradiction changes the content of a plain edge read;
+* the attestation and contract queues derive their listings from these tables
+  and stamp ``read_revision`` on the envelope;
+* continuation tokens validate on ``read_revision`` ALONE
+  (``query/continuation.validate_continuation_token``), so an exemption would
+  let page 1 be read at revision N, a contradiction be recorded, and page 2's
+  token still validate -- a paginated read spanning two different states with
+  nothing to detect it;
+* working-set freshness keys off the same counter and would go stale.
+
+Attesting advancing the revision is CORRECT. What the protocol audit actually
+found was a DISCLOSURE gap -- the behavior was never documented -- and that is
+fixed in ``docs/state-resolution-and-maintenance.md``, not here.
+"""
 
 
 _WAL_SWITCH_TIMEOUT_SECONDS = 5.0

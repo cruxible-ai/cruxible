@@ -49,7 +49,7 @@ class TestInputSchema:
     def test_feedback_action_enum(self, server):
         schemas = _get_tool_schemas(server)
         action = schemas["cruxible_feedback"].inputSchema["properties"]["action"]
-        assert action["enum"] == ["approve", "reject", "correct", "flag"]
+        assert action["enum"] == ["approve", "reject", "correct"]
 
     def test_feedback_has_no_declared_source_input(self, server):
         """The caller does not get to declare whether it is a human.
@@ -73,7 +73,7 @@ class TestInputSchema:
         props = schemas["cruxible_feedback_from_query"].inputSchema["properties"]
         required = set(schemas["cruxible_feedback_from_query"].inputSchema["required"])
         assert {"instance_id", "receipt_id", "result_index", "action"} <= required
-        assert props["action"]["enum"] == ["approve", "reject", "correct", "flag"]
+        assert props["action"]["enum"] == ["approve", "reject", "correct"]
         assert "source" not in props
         assert "reason_code" in props
         assert "scope_hints" in props

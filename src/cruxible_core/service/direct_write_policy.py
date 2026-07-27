@@ -83,9 +83,9 @@ TOKEN_MINT_SOURCE = "token_mint"
 # channel, which made it a half-switch: an operator who flipped it to freeze
 # live writes could still have state promoted into accepted/live through
 # feedback approve, and a proposal_only type could be made live that way with no
-# direct write at all (wi-feedback-approval-rail). ``reject``/``flag`` are NOT
-# covered -- they move an edge OUT of live state, which is the direction the
-# kill-switch wants, and refusing them would strand pending edges.
+# direct write at all (wi-feedback-approval-rail). ``reject`` is NOT
+# covered -- it moves an edge OUT of live state, which is the direction the
+# kill-switch wants, and refusing it would strand pending edges.
 _ENV_REFUSE_DIRECT_WRITES = "CRUXIBLE_REFUSE_DIRECT_WRITES"
 
 # Feedback actions that transition an edge INTO accepted state. Both promote the

@@ -200,7 +200,7 @@ class RelationshipTargetInput:
 
 @dataclass
 class FeedbackItemInput:
-    action: Literal["approve", "reject", "correct", "flag"]
+    action: Literal["approve", "reject", "correct"]
     target: RelationshipTargetInput
     receipt_id: str | None = None
     reason: str = ""

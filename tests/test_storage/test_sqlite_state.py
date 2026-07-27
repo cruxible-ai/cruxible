@@ -667,35 +667,43 @@ def test_instance_store_getters_are_not_used_for_direct_writes() -> None:
     }
     offenders: list[str] = []
 
-    for root in (Path("src/cruxible_core"), Path("tests")):
-        for path in root.rglob("*.py"):
-            tree = ast.parse(path.read_text())
-            for function in (
-                node
-                for node in ast.walk(tree)
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            ):
-                store_names: set[str] = set()
-                for node in ast.walk(function):
-                    if (
-                        isinstance(node, ast.Assign)
-                        and isinstance(node.value, ast.Call)
-                        and isinstance(node.value.func, ast.Attribute)
-                        and node.value.func.attr in getter_names
-                    ):
-                        store_names.update(
-                            target.id for target in node.targets if isinstance(target, ast.Name)
-                        )
-                    if (
-                        isinstance(node, ast.Call)
-                        and isinstance(node.func, ast.Attribute)
-                        and node.func.attr in write_methods
-                        and isinstance(node.func.value, ast.Name)
-                        and node.func.value.id in store_names
-                    ):
-                        offenders.append(
-                            f"{path}:{node.lineno}:{node.func.value.id}.{node.func.attr}"
-                        )
+    # Anchor to the repo root, never to the CWD: relative roots made this scan
+    # vacuous off-root (rglob found nothing and the assert passed). The
+    # non-vacuity floor makes a wrong root fail loudly instead of silently
+    # certifying an empty scan.
+    scanned = sorted(
+        path
+        for root in (_REPO_ROOT / "src" / "cruxible_core", _REPO_ROOT / "tests")
+        for path in root.rglob("*.py")
+    )
+    assert len(scanned) > 200, f"scan found only {len(scanned)} files - glob root is wrong"
+
+    for path in scanned:
+        tree = ast.parse(path.read_text())
+        for function in (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ):
+            store_names: set[str] = set()
+            for node in ast.walk(function):
+                if (
+                    isinstance(node, ast.Assign)
+                    and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Attribute)
+                    and node.value.func.attr in getter_names
+                ):
+                    store_names.update(
+                        target.id for target in node.targets if isinstance(target, ast.Name)
+                    )
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in write_methods
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in store_names
+                ):
+                    offenders.append(f"{path}:{node.lineno}:{node.func.value.id}.{node.func.attr}")
 
     assert offenders == []
 

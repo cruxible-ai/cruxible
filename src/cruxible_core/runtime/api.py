@@ -413,7 +413,7 @@ def _require_review_transition_actor(
     ``cruxible_feedback`` is a GOVERNED_WRITE tool, but every feedback action
     transitions a relationship's review state: ``approve``/``correct`` promote it
     to ``approved``/live, which can satisfy a GRAPH_WRITE close-gate precondition
-    (audit F3), and ``reject``/``flag`` move an edge OUT of live review state — an
+    (audit F3), and ``reject`` moves an edge OUT of live review state — an
     anonymous retraction (wi-feedback-write-tier-bypass, mechanism 2). When server
     auth is enabled the transition must carry a resolved actor identity so a lower
     tier can neither rubber-stamp nor retract a review edge anonymously. When auth
@@ -543,7 +543,6 @@ def _load_or_initialize_instance(
     has_config: bool,
     existing_with_config_error: str,
     initialize: Callable[[], Any],
-    include_initialized_warnings: bool,
 ) -> contracts.InitResult:
     instance_json = instance_root / CruxibleInstance.INSTANCE_DIR / "instance.json"
 
@@ -557,7 +556,12 @@ def _load_or_initialize_instance(
     else:
         result = initialize()
         instance = result.instance
-        warnings = result.warnings if include_initialized_warnings else []
+        # Every initialization warning reaches the caller, local and governed
+        # alike. The local path used to drop them on the floor, which meant an
+        # embedding client got silence for config-validation warnings AND for
+        # the disclosure that a bundled kit lock had been regenerated -- the one
+        # signal that says the publisher's pinned digests were discarded.
+        warnings = result.warnings
         status = "initialized"
         base_kit_id = result.base_kit_id
 
@@ -603,7 +607,6 @@ def init_local(
             default_base_kit=None if bare else get_default_base_kit(),
             config_source_manifest=_core_source_manifest(config_source_manifest),
         ),
-        include_initialized_warnings=False,
     )
 
 
@@ -657,7 +660,6 @@ def init_governed(
                 "Edit the config locally, then use `config reload` in server mode to sync it."
             ),
             initialize=initialize_existing_governed,
-            include_initialized_warnings=True,
         )
 
     instance_id = registry.generate_governed_instance_id()

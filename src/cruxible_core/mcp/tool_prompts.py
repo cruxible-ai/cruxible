@@ -100,9 +100,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_feedback": (
         "Use when a person or reviewer agent adjudicated one explicit relationship "
-        "and you need to record support, rejection, flagging, or a correction. "
-        "Use edge_key only to disambiguate multiple stored edges with the same "
-        "relationship tuple; receipt_id is optional for explicit-coordinate feedback."
+        "and you need to record support, rejection, or a correction. To record a "
+        "DOUBT without adjudicating, use cruxible_attest with stance 'contradict' "
+        "instead. Use edge_key only to disambiguate multiple stored edges with the "
+        "same relationship tuple; receipt_id is optional for explicit-coordinate "
+        "feedback."
     ),
     "cruxible_feedback_batch": (
         "Use when you need to record several relationship feedback decisions from "

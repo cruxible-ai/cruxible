@@ -44,7 +44,7 @@ GateEvaluationVerdict = Literal["satisfied", "unsatisfied", "error"]
 # ── Constrained input types ───────────────────────────────────────────
 
 ConstraintSeverity = Literal["warning", "error"]
-FeedbackAction = Literal["approve", "reject", "correct", "flag"]
+FeedbackAction = Literal["approve", "reject", "correct"]
 OutcomeValue = Literal["correct", "incorrect", "partial", "unknown"]
 OutcomeAnchorType = Literal["resolution", "receipt"]
 ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
@@ -72,6 +72,16 @@ GovernedActorType = Literal["human_user", "service_account", "system"]
 
 # Per-kind lifecycle status vocabularies. Deliberately distinct: entities and
 # relationships do NOT share a status enum (only the surrounding structure).
+#
+# These enumerate the FULL vocabulary a status can hold once stored -- NOT the
+# subset a free-form add/update may write. The terminal statuses (entity
+# ``superseded``/``retired``, relationship ``superseded``/``retracted``) are
+# owned by the dedicated receipted lifecycle verbs and are refused on this
+# channel; see ``*LifecycleInput.status`` below. The Literals stay WIDE on
+# purpose: narrowing them would replace the teaching refusal
+# (``TerminalLifecycleWriteRefusedError``, which names the verb to use) with a
+# bare enum-validation error, and they are also the read-side shape for a stored
+# lifecycle that legitimately holds a terminal status.
 EntityLifecycleStatus = Literal["live", "superseded", "retired"]
 RelationshipLifecycleStatus = Literal["active", "inactive", "superseded", "retracted"]
 
@@ -90,7 +100,13 @@ class EntityLifecycleInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: EntityLifecycleStatus = Field(
-        description="Entity lifecycle status: live, superseded, or retired."
+        description=(
+            "Entity lifecycle status writable here: live. The terminal statuses "
+            "'superseded' and 'retired' are REFUSED on this channel -- they are "
+            "governed judgements owned by the receipted lifecycle verbs "
+            "('cruxible entity supersede' / 'cruxible entity retire'), which "
+            "carry a required reason, actor attribution, and a mutation receipt."
+        )
     )
     reason: str | None = Field(
         default=None, description="Optional human-readable reason for the lifecycle change."
@@ -110,7 +126,14 @@ class RelationshipLifecycleInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: RelationshipLifecycleStatus = Field(
-        description="Relationship lifecycle status: active, inactive, superseded, or retracted."
+        description=(
+            "Relationship lifecycle status writable here: active, inactive. The "
+            "terminal statuses 'superseded' and 'retracted' are REFUSED on this "
+            "channel -- they are governed judgements owned by the receipted "
+            "lifecycle verbs ('cruxible relationship supersede' / 'cruxible "
+            "relationship retract'), which carry a required reason, actor "
+            "attribution, and a mutation receipt."
+        )
     )
     reason: str | None = Field(
         default=None, description="Optional human-readable reason for the lifecycle change."
@@ -628,7 +651,12 @@ class PropertyPairInput(BaseModel):
 class FeedbackBatchItemInput(BaseModel):
     receipt_id: str = Field(description="Receipt id the feedback is anchored to.")
     action: FeedbackAction = Field(
-        description="Adjudication: approve, reject, correct, or flag the edge."
+        description=(
+            "Adjudication: approve, reject, or correct the edge. To record a "
+            "doubt WITHOUT adjudicating, use `cruxible attest --stance "
+            "contradict` -- it stores the observation, its evidence, and its "
+            "actor instead of silently un-approving the edge."
+        )
     )
     target: EdgeTargetInput = Field(description="Coordinates of the edge being adjudicated.")
     reason: str = Field(default="", description="Free-text reason for the feedback.")
@@ -653,7 +681,12 @@ class FeedbackFromQueryInput(BaseModel):
     receipt_id: str = Field(description="Query receipt id whose row is being adjudicated.")
     result_index: int = Field(description="Zero-based index of the result row in the receipt.")
     action: FeedbackAction = Field(
-        description="Adjudication: approve, reject, correct, or flag the edge."
+        description=(
+            "Adjudication: approve, reject, or correct the edge. To record a "
+            "doubt WITHOUT adjudicating, use `cruxible attest --stance "
+            "contradict` -- it stores the observation, its evidence, and its "
+            "actor instead of silently un-approving the edge."
+        )
     )
     reason: str = Field(default="", description="Free-text reason for the feedback.")
     reason_code: str | None = Field(

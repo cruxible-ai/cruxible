@@ -1,6 +1,10 @@
 """Tests for the feedback system: types, store, applier, and integration."""
 
+import json
+from typing import get_args
+
 import pytest
+from pydantic import ValidationError
 
 from cruxible_core.config.schema import (
     CoreConfig,
@@ -13,7 +17,7 @@ from cruxible_core.config.schema import (
 from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.store import FeedbackStore
-from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.feedback.types import FeedbackBatchItem, FeedbackRecord, OutcomeRecord
 from cruxible_core.governance.actors import GovernedActorContext, derived_actor_kind
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import RelationshipProvenance
@@ -264,17 +268,39 @@ class TestApplier:
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert_review_state(rel, status="rejected", source="human")
 
-    def test_flag(self, graph: EntityGraph, target: RelationshipInstance):
+    def test_a_historical_flag_record_still_applies_as_a_no_op(
+        self, graph: EntityGraph, target: RelationshipInstance
+    ):
+        """A legacy ``flag`` row is READABLE and inert, not a crash.
+
+        ``flag`` is gone from every write path, but 0.2.x instances persisted
+        rows with it and the feedback store is append-only history. The applier
+        has no ``flag`` branch, so such a record moves nothing and reports that
+        it applied nothing — it never resurrects the old un-approve behaviour.
+        """
+        apply_feedback(
+            graph,
+            FeedbackRecord(
+                receipt_id="RCP-seed",
+                action="approve",
+                target=target,
+                actor_context=human_actor(),
+            ),
+        )
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="flag",
             target=target,
             actor_context=human_actor(),
         )
-        assert apply_feedback(graph, fb) is True
+
+        assert apply_feedback(graph, fb) is False
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert_review_state(rel, status="pending", source="human")
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "approved", (
+            "a historical flag record must not un-approve the edge it names"
+        )
 
     def test_correct(self, graph: EntityGraph, target: RelationshipInstance):
         fb = FeedbackRecord(
@@ -1020,3 +1046,117 @@ INSERT INTO feedback (
     finally:
         store.close()
     assert row["target_claim_id"] == "CLM-carried00000001"
+
+
+# ---------------------------------------------------------------------------
+# Retired-action read compatibility
+# ---------------------------------------------------------------------------
+
+
+_HISTORICAL_TARGET_JSON = json.dumps(
+    {
+        "relationship_type": "fits",
+        "from_type": "Part",
+        "from_id": "P-1",
+        "to_type": "Vehicle",
+        "to_id": "V-1",
+        "properties": {},
+    }
+)
+
+
+def _seed_historical_flag_row(store: FeedbackStore) -> None:
+    """Insert a row exactly as a 0.2.x instance persisted a ``flag``.
+
+    Written as raw SQL on purpose: the point is a row that the CURRENT write
+    path can no longer produce. Going through ``save_feedback`` would prove
+    nothing, because the model it round-trips is the thing under test.
+    """
+    store._conn.execute(
+        "INSERT INTO feedback ("
+        "  feedback_id, receipt_id, action, target_json, target_relationship,"
+        "  target_from_type, target_from_id, target_to_type, target_to_id,"
+        "  reason, source, created_at"
+        ") VALUES ("
+        "  'FB-legacy-flag', 'RCP-legacy', 'flag', ?, 'fits',"
+        "  'Part', 'P-1', 'Vehicle', 'V-1',"
+        "  'looked wrong to me', 'human', '2026-01-02T00:00:00Z'"
+        ")",
+        (_HISTORICAL_TARGET_JSON,),
+    )
+    store._conn.commit()
+
+
+class TestHistoricalFlagRowsStayReadable:
+    """A retired WRITE action must not become an unreadable STORED action.
+
+    ``flag`` was removed from every write path, but the feedback store is
+    append-only history and 0.2.x instances already persisted rows with it.
+    Every read reconstructs through ``FeedbackRecord``, so narrowing the stored
+    vocabulary would have made an ordinary ``list`` raise ValidationError on any
+    historical instance — a silent data-compatibility break, not a cleanup.
+    """
+
+    def test_get_feedback_reconstructs_a_legacy_flag_row(self, store: FeedbackStore):
+        _seed_historical_flag_row(store)
+
+        record = store.get_feedback("FB-legacy-flag")
+
+        assert record is not None
+        assert record.action == "flag"
+        assert record.reason == "looked wrong to me"
+        assert record.target.relationship_type == "fits"
+
+    def test_list_feedback_includes_a_legacy_flag_row(self, store: FeedbackStore):
+        _seed_historical_flag_row(store)
+
+        records = store.list_feedback()
+
+        assert [record.action for record in records] == ["flag"]
+
+    def test_list_feedback_can_still_filter_to_the_retired_action(self, store: FeedbackStore):
+        """Analysis over history has to be able to ask about retired actions."""
+        _seed_historical_flag_row(store)
+
+        assert len(store.list_feedback(action="flag")) == 1
+        assert store.count_feedback(action="flag") == 1
+        assert store.list_feedback(action="approve") == []
+
+    def test_a_legacy_row_round_trips_through_serialization(self, store: FeedbackStore):
+        """CLI/HTTP rendering dumps the record; that must not raise either."""
+        _seed_historical_flag_row(store)
+
+        record = store.get_feedback("FB-legacy-flag")
+        assert record is not None
+
+        payload = record.model_dump(mode="json")
+
+        assert payload["action"] == "flag"
+        assert FeedbackRecord.model_validate(payload).action == "flag"
+
+    def test_the_retired_action_is_still_refused_on_every_write_path(
+        self, target: RelationshipInstance
+    ):
+        """Readable is not writable: the input types stay narrow.
+
+        This is the half that makes the widened read model safe — history can
+        be read back, but nothing can add to it.
+        """
+        from cruxible_core.feedback.types import (
+            RETIRED_FEEDBACK_ACTIONS,
+            FeedbackAction,
+            StoredFeedbackAction,
+        )
+        from cruxible_core.service.feedback import _VALID_ACTIONS
+
+        assert set(get_args(StoredFeedbackAction)) - set(get_args(FeedbackAction)) == (
+            RETIRED_FEEDBACK_ACTIONS
+        )
+        assert "flag" not in _VALID_ACTIONS
+
+        with pytest.raises(ValidationError):
+            FeedbackBatchItem(
+                receipt_id="RCP-1",
+                action="flag",  # type: ignore[arg-type]
+                target=target,
+            )

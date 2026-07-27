@@ -75,7 +75,7 @@ def outcome_group() -> None:
 @click.option(
     "--action",
     required=True,
-    type=click.Choice(["approve", "reject", "correct", "flag"]),
+    type=click.Choice(["approve", "reject", "correct"]),
     help="Feedback action.",
 )
 @click.option("--from-type", required=True, help="Source entity type.")
@@ -187,7 +187,7 @@ def feedback_cmd(
 @click.option(
     "--action",
     required=True,
-    type=click.Choice(["approve", "reject", "correct", "flag"]),
+    type=click.Choice(["approve", "reject", "correct"]),
     help="Feedback action.",
 )
 @click.option("--reason", default="", help="Reason for feedback.")

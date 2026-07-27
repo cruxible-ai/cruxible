@@ -331,13 +331,18 @@ def service_init(
         _cleanup_materialized_kits(root, materialized_kit_dirs)
         raise
 
+    lock_warnings: list[str] = []
     if materialized_kit_dirs:
-        _install_instance_lock_from_composed_kits(instance, materialized_kit_dirs)
+        lock_warnings = _install_instance_lock_from_composed_kits(instance, materialized_kit_dirs)
 
     loaded = instance.load_config()
     warnings = validate_config(loaded)
 
-    return InitResult(instance=instance, warnings=warnings, base_kit_id=base_kit_id)
+    return InitResult(
+        instance=instance,
+        warnings=[*warnings, *lock_warnings],
+        base_kit_id=base_kit_id,
+    )
 
 
 def _with_default_base_kit(
@@ -506,14 +511,30 @@ def service_init_governed_upload(
     )
     if copied_kit_runtime_files:
         write_materialized_kit_metadata(governed_root)
-        _install_instance_lock_from_materialized_kit(result.instance)
+        result.warnings.extend(_install_instance_lock_from_materialized_kit(result.instance))
     return result
+
+
+_KIT_LOCK_REGENERATED_WARNING = (
+    "Kit '{kit_id}': bundled lock {digest} digest mismatch, so the instance lock was "
+    "REGENERATED from the composed config and the publisher's pinned digests were not "
+    "carried through. Re-lock the kit against this config to restore publisher-pinned "
+    "artifacts and providers."
+)
+"""Structured warning for a discarded publisher lock pin.
+
+``docs/kit-authoring.md`` tells consumers they should not silently experience a
+regenerated bundled lock. Both mismatch kinds (``lock`` digest and ``config``
+digest) previously routed into the same silent ``build_lock`` fallback with
+nothing appended to ``InitResult.warnings``, so a consumer could not tell that
+the pin had been dropped, let alone which digest failed.
+"""
 
 
 def _install_instance_lock_from_composed_kits(
     instance: InstanceProtocol,
     kit_dirs: Sequence[tuple[str, Path]],
-) -> None:
+) -> list[str]:
     """Install the instance lock by merging the materialized kits' bundled locks.
 
     Workflows/providers/artifacts are append-only across layers, so entry name
@@ -524,15 +545,17 @@ def _install_instance_lock_from_composed_kits(
     exactly (stale or placeholder bundled locks), the instance lock is
     regenerated from the composed config instead, mirroring the single-kit
     regeneration fallback.
+
+    Returns the warnings the caller must surface on ``InitResult.warnings``.
     """
     config = instance.load_config()
     instance_lock_path = get_lock_path(instance)
     instance_lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    merged = _merge_kit_locks(config, kit_dirs)
+    merged, warnings = _merge_kit_locks(config, kit_dirs)
     if merged is not None:
         write_lock(merged, instance_lock_path)
-        return
+        return warnings
 
     try:
         regenerated_lock = build_lock(
@@ -545,15 +568,22 @@ def _install_instance_lock_from_composed_kits(
             "Bundled kit locks do not cover the composed instance config, and "
             f"regenerating the instance-local lock failed: {exc}"
         ) from exc
+    return warnings
 
 
 def _merge_kit_locks(
     config: CoreConfig,
     kit_dirs: Sequence[tuple[str, Path]],
-) -> WorkflowLock | None:
-    """Merge per-kit bundled locks; return None when the merge cannot stand as-is."""
+) -> tuple[WorkflowLock | None, list[str]]:
+    """Merge per-kit bundled locks; return ``(None, warnings)`` when the merge cannot stand.
+
+    The warnings name WHICH kit and WHICH digest made the merge unusable, so a
+    caller landing on the regeneration fallback learns the publisher's pin was
+    discarded and why.
+    """
     merged_artifacts: dict[str, LockedArtifact] = {}
     merged_providers: dict[str, LockedProvider] = {}
+    warnings: list[str] = []
     for kit_id, kit_dir in kit_dirs:
         bundled_lock_path = kit_dir / LOCK_FILE_NAME
         try:
@@ -563,10 +593,12 @@ def _merge_kit_locks(
         if bundled_lock.lock_digest is None or bundled_lock.lock_digest != compute_lock_digest(
             bundled_lock
         ):
-            return None
+            warnings.append(_KIT_LOCK_REGENERATED_WARNING.format(kit_id=kit_id, digest="lock"))
+            return None, warnings
         layer_config = load_config(kit_dir / load_kit_manifest(kit_dir).entry_config)
         if bundled_lock.config_digest != compute_lock_config_digest(layer_config):
-            return None
+            warnings.append(_KIT_LOCK_REGENERATED_WARNING.format(kit_id=kit_id, digest="config"))
+            return None, warnings
         for name, artifact in bundled_lock.artifacts.items():
             if name in merged_artifacts:
                 raise ConfigError(
@@ -589,16 +621,28 @@ def _merge_kit_locks(
             )
             merged_providers[name] = provider.model_copy(update={"ref": merged_ref})
 
+    # The third silent route: every bundled lock verified, but the merge does
+    # not cover the composed config. Same consequence for the consumer -- the
+    # publisher pins are dropped -- so it warns too.
+    coverage_warning = (
+        "Bundled kit locks did not cover the composed instance config exactly, so the "
+        "instance lock was REGENERATED from the composed config and the publishers' "
+        "pinned digests were not carried through. Re-lock the kits against this "
+        "composition to restore publisher-pinned artifacts and providers."
+    )
     if set(merged_providers) != set(config.providers) or set(merged_artifacts) != set(
         config.artifacts
     ):
-        return None
+        warnings.append(coverage_warning)
+        return None, warnings
     for name, provider_schema in config.providers.items():
         if merged_providers[name].ref != provider_schema.ref:
-            return None
+            warnings.append(coverage_warning)
+            return None, warnings
     for name, artifact_schema in config.artifacts.items():
         if merged_artifacts[name].uri != artifact_schema.uri:
-            return None
+            warnings.append(coverage_warning)
+            return None, warnings
 
     lock = WorkflowLock(
         config_digest=compute_lock_config_digest(config),
@@ -606,14 +650,14 @@ def _merge_kit_locks(
         providers=merged_providers,
     )
     lock.lock_digest = compute_lock_digest(lock)
-    return lock
+    return lock, warnings
 
 
-def _install_instance_lock_from_materialized_kit(instance: InstanceProtocol) -> None:
+def _install_instance_lock_from_materialized_kit(instance: InstanceProtocol) -> list[str]:
     root = instance.get_root_path()
     bundled_lock_path = root / LOCK_FILE_NAME
     if not bundled_lock_path.exists():
-        return
+        return []
 
     instance_lock_path = get_lock_path(instance)
     instance_lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -630,7 +674,17 @@ def _install_instance_lock_from_materialized_kit(instance: InstanceProtocol) -> 
         and bundled_lock.lock_digest == compute_lock_digest(bundled_lock)
     ):
         instance_lock_path.write_bytes(bundled_lock_path.read_bytes())
-        return
+        return []
+
+    # Name WHICH digest failed: both kinds routed into the same silent
+    # regeneration before, so a consumer could not tell a stale lock from a
+    # config that had moved underneath it.
+    mismatched = "config" if bundled_lock.config_digest != config_digest else "lock"
+    try:
+        kit_id = load_kit_manifest(root).kit_id
+    except Exception:  # pragma: no cover - manifest already validated upstream
+        kit_id = "<materialized kit>"
+    warnings = [_KIT_LOCK_REGENERATED_WARNING.format(kit_id=kit_id, digest=mismatched)]
 
     try:
         regenerated_lock = build_lock(
@@ -643,6 +697,7 @@ def _install_instance_lock_from_materialized_kit(instance: InstanceProtocol) -> 
             "Bundled kit lock does not match the active instance config or lock "
             "digest, and regenerating the instance-local lock failed"
         ) from exc
+    return warnings
 
 
 def _save_managed_config(

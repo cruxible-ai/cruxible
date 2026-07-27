@@ -936,11 +936,12 @@ class TestReviewTransitionActorGuard:
     """Unit coverage for the runtime feedback review-transition actor guard.
 
     Originally the approve/correct promotion guard (audit F3); extended by
-    wi-feedback-write-tier-bypass (mechanism 2) to ``reject``/``flag`` so an
-    edge cannot be moved out of live review state anonymously either.
+    wi-feedback-write-tier-bypass (mechanism 2) to ``reject`` so an edge cannot
+    be moved out of live review state anonymously either. (``flag`` was a fourth
+    case until it was removed in 2026-07.)
     """
 
-    @pytest.mark.parametrize("action", ["approve", "correct", "reject", "flag"])
+    @pytest.mark.parametrize("action", ["approve", "correct", "reject"])
     def test_auth_on_transition_without_actor_rejected(
         self, monkeypatch: pytest.MonkeyPatch, action: str
     ) -> None:
@@ -948,14 +949,14 @@ class TestReviewTransitionActorGuard:
         from cruxible_core.runtime.api import _require_review_transition_actor
 
         # ``approve``/``correct`` promote to approved/live (close-gate peers);
-        # ``reject``/``flag`` retract an edge from live review state. All four
+        # ``reject`` retracts an edge from live review state. All three
         # transitions require a resolved actor under a governed runtime —
         # anonymous retraction ended with wi-feedback-write-tier-bypass.
         monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
         with pytest.raises(AuthenticationError, match="requires a resolved actor identity"):
             _require_review_transition_actor(action, None)
 
-    @pytest.mark.parametrize("action", ["approve", "correct", "reject", "flag"])
+    @pytest.mark.parametrize("action", ["approve", "correct", "reject"])
     def test_auth_on_transition_with_actor_allowed(
         self, monkeypatch: pytest.MonkeyPatch, action: str
     ) -> None:
@@ -965,7 +966,7 @@ class TestReviewTransitionActorGuard:
         # Returns without raising when a resolved actor is present.
         _require_review_transition_actor(action, _review_actor_context())
 
-    @pytest.mark.parametrize("action", ["approve", "correct", "reject", "flag"])
+    @pytest.mark.parametrize("action", ["approve", "correct", "reject"])
     def test_auth_off_transition_without_actor_allowed(
         self, monkeypatch: pytest.MonkeyPatch, action: str
     ) -> None:

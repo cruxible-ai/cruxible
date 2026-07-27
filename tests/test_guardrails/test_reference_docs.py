@@ -10,6 +10,7 @@ import click
 import pytest
 
 from cruxible_core.cli.main import cli
+from cruxible_core.config.composer import _KEYED_MAP_KEYS
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.mcp.server import create_server
 from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
@@ -303,4 +304,44 @@ def test_config_reference_step_kinds_set_equal_executor_dispatch() -> None:
     assert docs_not_code == [], (
         "docs/config-reference.md documents step kinds the executor does not "
         f"dispatch (in docs, not code): {docs_not_code}"
+    )
+
+
+def _documented_keyed_map_keys(path: str | Path) -> set[str]:
+    """Extract the keyed-map field set from the composition-rules table.
+
+    The "Composition rules" table in ``docs/config-reference.md`` has one row
+    whose first cell is ``Keyed maps``; its second cell is a comma-separated
+    list of back-ticked field names. K7 of the protocol audit found that row
+    listing 9 fields where ``_KEYED_MAP_KEYS`` held 10 (``gates`` was missing),
+    so the doc silently under-declared which fields an overlay may not redefine.
+    """
+    text = Path(path).read_text()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("| Keyed maps "):
+            continue
+        cells = stripped.split("|")
+        return set(re.findall(r"`([a-z_]+)`", cells[2]))
+    raise AssertionError("config-reference.md is missing the 'Keyed maps' composition-rules row")
+
+
+def test_config_reference_keyed_map_fields_set_equal_composer() -> None:
+    """The documented keyed-map fields set-equal ``_KEYED_MAP_KEYS``.
+
+    Authoritative set is the composer's own constant: it is what actually
+    refuses an overlay redefinition. A field added there but not to the doc
+    (or a stale documented field) fails here naming the exact offender.
+    """
+    documented = _documented_keyed_map_keys("docs/config-reference.md")
+
+    code_not_docs = sorted(_KEYED_MAP_KEYS - documented)
+    docs_not_code = sorted(documented - _KEYED_MAP_KEYS)
+    assert code_not_docs == [], (
+        "Composer keyed-map fields missing from the docs/config-reference.md "
+        f"composition-rules table (in code, not docs): {code_not_docs}"
+    )
+    assert docs_not_code == [], (
+        "docs/config-reference.md documents keyed-map fields the composer does "
+        f"not treat as keyed maps (in docs, not code): {docs_not_code}"
     )

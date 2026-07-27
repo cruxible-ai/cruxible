@@ -100,13 +100,16 @@ _ACTION_PAST: dict[str, RelationshipReviewStatus] = {
 # and ``correct`` promote the status to ``approved`` (the ``correct`` branch in
 # ``apply_feedback`` below calls ``_review_metadata(..., status="approved")``),
 # making a previously non-live edge live and able to satisfy a review-mediated
-# close-gate precondition. ``reject`` (-> ``rejected``) and ``flag``
-# (-> ``pending``) move an edge OUT of live review state — an anonymous
-# retraction is as much a governance hole as an anonymous promotion
-# (wi-feedback-write-tier-bypass, mechanism 2). Every transition must therefore
-# carry a resolved actor identity under the governed (auth-on) runtime.
-# See ``runtime.api`` for the enforcement point.
-REVIEW_TRANSITION_ACTIONS: frozenset[str] = frozenset({"approve", "correct", "reject", "flag"})
+# close-gate precondition. ``reject`` (-> ``rejected``) moves an edge OUT of
+# live review state — an anonymous retraction is as much a governance hole as an
+# anonymous promotion (wi-feedback-write-tier-bypass, mechanism 2). Every
+# transition must therefore carry a resolved actor identity under the governed
+# (auth-on) runtime. See ``runtime.api`` for the enforcement point.
+#
+# ``flag`` was removed in 2026-07: it also moved an edge out of live state
+# (-> ``pending``) but stored no annotation, so it destroyed the reviewer's
+# signal. Use ``cruxible attest --stance contradict`` instead.
+REVIEW_TRANSITION_ACTIONS: frozenset[str] = frozenset({"approve", "correct", "reject"})
 
 
 def _review_metadata(
@@ -187,28 +190,13 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             edge_key=edge_key,
         )
 
-    if feedback.action == "flag":
-        prov = _read_provenance(graph, t, t.relationship_type, edge_key)
-        metadata = _review_metadata(
-            graph,
-            t,
-            t.relationship_type,
-            edge_key,
-            status="pending",
-            source=prefix,
-            actor=actor,
-            actor_context=feedback.actor_context,
-        )
-        metadata = _apply_feedback_provenance(metadata, prov, feedback)
-        return graph.update_relationship_state(
-            from_type=t.from_type,
-            from_id=t.from_id,
-            to_type=t.to_type,
-            to_id=t.to_id,
-            relationship_type=t.relationship_type,
-            metadata=metadata,
-            edge_key=edge_key,
-        )
+    # REMOVED (2026-07-26): the ``flag`` action. It un-approved an edge to
+    # ``pending`` while storing no annotation anywhere, so the reviewer's actual
+    # signal -- what they doubted and why -- was destroyed at the moment it was
+    # given, leaving only a status regression nobody could interpret. Recording
+    # a doubt is what ``cruxible attest --stance contradict`` is for: it stores
+    # the observation, its evidence refs, and its actor, and it changes no
+    # status. There is no deprecation window; the action never worked.
 
     if feedback.action == "correct":
         updates = dict(feedback.corrections)

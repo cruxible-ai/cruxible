@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -21,6 +21,12 @@ from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.graph.assertion_state import relationship_assertion_from_metadata
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import RelationshipInstance, mint_claim_id
+from cruxible_core.query.continuation import (
+    StaleContinuationError,
+    decode_continuation_token,
+    mint_continuation_token,
+    validate_continuation_token,
+)
 from cruxible_core.service import (
     service_attest,
     service_attestation_queue,
@@ -29,6 +35,7 @@ from cruxible_core.service import (
     service_list_attestations,
     service_resolve_attestation,
 )
+from cruxible_core.service.attestations import attach_corroboration_summaries
 from cruxible_core.storage.sqlite import SQLiteGraphRepository
 from tests.test_attestations.conftest import actor, add_live_claim, evidence
 
@@ -46,6 +53,8 @@ def _attest(
     claim_id: str | None = None,
     properties: dict[str, object] | None = None,
     idempotency_key: str | None = None,
+    note: str | None = None,
+    observed_at: datetime = OBSERVED_AT,
 ) -> AttestationRecordResult:
     return service_attest(
         instance,
@@ -60,13 +69,31 @@ def _attest(
             if evidence_refs is None and stance != "unsure"
             else evidence_refs or []
         ),
-        observed_at=OBSERVED_AT,
+        observed_at=observed_at,
         actor_context=actor(observer),
         edge_key=edge_key,
         claim_id=claim_id,
         properties=properties,
         idempotency_key=idempotency_key,
+        note=note,
     )
+
+
+def _config_digest(instance: CruxibleInstance) -> str:
+    from cruxible_core.workflow.compiler import compute_lock_config_digest
+
+    return compute_lock_config_digest(instance.load_config())
+
+
+def _edge_payload(instance: CruxibleInstance) -> dict[str, object]:
+    """One serialized edge payload with corroboration attached, as a read returns it."""
+    relationship = instance.load_graph().get_relationship(
+        "Service", "svc-1", "Control", "ctl-1", "protected_by"
+    )
+    assert relationship is not None
+    payload = relationship.model_dump(mode="json")
+    attach_corroboration_summaries(instance, [payload])
+    return payload
 
 
 def test_absent_support_creates_pending_with_required_properties(
@@ -437,6 +464,146 @@ def test_idempotent_replay_refuses_divergent_request(
     assert replay.attestation.attestation_id == original.attestation.attestation_id
 
 
+class TestReplayDivergenceCoversEveryPersistedField:
+    """The replay diff used to compare 2 of the record's fields, not all of them.
+
+    ``note``, ``observed_at`` and ``edge_key`` are persisted on
+    ``AttestationRecord`` and diverged SILENTLY: a reused key carrying a
+    different note or a different observation time returned the original record
+    as an "idempotent replay" and dropped the second, distinct observation. The
+    stronger shape existed in ``service/resolution_contracts`` and was
+    back-ported.
+    """
+
+    def test_divergent_note_refuses(self, attestation_instance: CruxibleInstance) -> None:
+        add_live_claim(attestation_instance)
+        _attest(attestation_instance, "support", idempotency_key="note-key", note="first")
+        with pytest.raises(ConfigError, match="diverges from the original.*note"):
+            _attest(
+                attestation_instance,
+                "support",
+                idempotency_key="note-key",
+                note="a materially different reading",
+            )
+
+    def test_note_appearing_where_there_was_none_refuses(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        """None -> a note is a divergence too; it is new content on a reused key."""
+        add_live_claim(attestation_instance)
+        _attest(attestation_instance, "support", idempotency_key="note-none-key")
+        with pytest.raises(ConfigError, match="note"):
+            _attest(
+                attestation_instance,
+                "support",
+                idempotency_key="note-none-key",
+                note="added after the fact",
+            )
+
+    def test_divergent_observed_at_refuses(self, attestation_instance: CruxibleInstance) -> None:
+        add_live_claim(attestation_instance)
+        _attest(attestation_instance, "support", idempotency_key="clock-key")
+        with pytest.raises(ConfigError, match="diverges from the original.*observed_at"):
+            _attest(
+                attestation_instance,
+                "support",
+                idempotency_key="clock-key",
+                observed_at=OBSERVED_AT - timedelta(days=30),
+            )
+
+    def test_divergent_edge_key_refuses(self, attestation_instance: CruxibleInstance) -> None:
+        add_live_claim(attestation_instance)
+        _attest(attestation_instance, "support", idempotency_key="edge-key-key")
+        with pytest.raises(ConfigError, match="diverges from the original.*edge_key"):
+            _attest(
+                attestation_instance,
+                "support",
+                idempotency_key="edge-key-key",
+                edge_key=4242,
+            )
+
+    def test_an_identical_replay_with_a_note_still_replays(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        """The widened diff must not turn honest replays into refusals."""
+        add_live_claim(attestation_instance)
+        original = _attest(
+            attestation_instance, "support", idempotency_key="same-key", note="same note"
+        )
+        replay = _attest(
+            attestation_instance, "support", idempotency_key="same-key", note="same note"
+        )
+        assert replay.idempotent_replay is True
+        assert replay.attestation.attestation_id == original.attestation.attestation_id
+
+    def test_a_pre_identity_record_replays_after_its_edge_key_was_repointed(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        """A repointed per-load key must NOT read as a divergence.
+
+        ``edge_key`` is a per-load counter, not a stable identity: pulls and any
+        other graph re-materialization can hand the same edge a different key.
+        A pre-identity record (``claim_id`` NULL, from before claim minting)
+        carries whatever key was current when it was recorded, so manufacturing
+        the replay's key from the CURRENT relationship and diffing the two
+        refused honest, unchanged, tuple-first replays on historical data.
+
+        Seeded through the store to produce a record the current write path can
+        no longer make -- which is the whole point.
+        """
+        relationship = add_live_claim(attestation_instance)
+        recorded = _attest(attestation_instance, "support", idempotency_key="legacy-key")
+
+        # Rewrite the stored row into its pre-identity shape: no claim_id, and a
+        # stale edge_key from a load that no longer exists.
+        stale_edge_key = (relationship.edge_key or 0) + 77
+        store = attestation_instance.get_attestation_store()
+        try:
+            store._conn.execute(
+                "UPDATE attestations SET claim_id = NULL, edge_key = ? WHERE attestation_id = ?",
+                (stale_edge_key, recorded.attestation.attestation_id),
+            )
+            store._conn.commit()
+        finally:
+            store.close()
+
+        replay = _attest(attestation_instance, "support", idempotency_key="legacy-key")
+
+        assert replay.idempotent_replay is True
+        assert replay.attestation.attestation_id == recorded.attestation.attestation_id
+
+    def test_an_explicit_edge_key_still_diverges_on_a_pre_identity_record(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        """Relaxing the manufactured comparison must not lose the real one.
+
+        When the caller NAMES an edge_key, that is a deliberate reference and a
+        mismatch is a genuine divergence — independent of whether the original
+        row has a stable identity.
+        """
+        relationship = add_live_claim(attestation_instance)
+        recorded = _attest(attestation_instance, "support", idempotency_key="legacy-explicit")
+
+        stale_edge_key = (relationship.edge_key or 0) + 77
+        store = attestation_instance.get_attestation_store()
+        try:
+            store._conn.execute(
+                "UPDATE attestations SET claim_id = NULL, edge_key = ? WHERE attestation_id = ?",
+                (stale_edge_key, recorded.attestation.attestation_id),
+            )
+            store._conn.commit()
+        finally:
+            store.close()
+
+        with pytest.raises(ConfigError, match="diverges from the original.*edge_key"):
+            _attest(
+                attestation_instance,
+                "support",
+                idempotency_key="legacy-explicit",
+                edge_key=stale_edge_key + 1,
+            )
+
+
 def test_a_stale_claim_id_refuses_instead_of_silently_retargeting_the_tuple(
     attestation_instance: CruxibleInstance,
 ) -> None:
@@ -518,3 +685,107 @@ def test_corrected_disposition_refuses_fabricated_follow_up_receipt(
             actor_context=actor("reviewer"),
             follow_up_receipt_id="RCP-fabricated",
         )
+
+
+class TestAttestingAdvancesReadRevision:
+    """Attesting DOES advance ``read_revision``, and that is correct.
+
+    An earlier pass at this batch exempted the attestation and
+    resolution-contract tables from ``_AUDIT_ONLY_TABLES`` on the theory that
+    they are a pure audit lane, since neither an attestation nor a disposition
+    can touch a claim's trust, review, or lifecycle status. That reasoning
+    covered only the WRITE side and was wrong: these tables change what ordinary
+    reads RETURN. Corroboration summaries are computed from ``attestations`` and
+    attached to edge payloads on plain edge reads, the queues stamp
+    ``read_revision`` from them, and continuation tokens validate on
+    ``read_revision`` alone — so exempting them produced paginated reads that
+    silently spanned two different states.
+
+    The protocol audit's row was a DISCLOSURE gap, not a behavior bug. These
+    tests pin the behavior; ``docs/state-resolution-and-maintenance.md``
+    discloses it.
+    """
+
+    def test_attest_against_a_live_claim_advances_the_revision(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        add_live_claim(attestation_instance)
+        before = attestation_instance.get_read_revision()
+
+        result = _attest(attestation_instance, "support")
+
+        assert result.created_claim is False, "no graph write — the attest alone must move it"
+        assert attestation_instance.get_read_revision() > before
+
+    def test_a_disposition_advances_the_revision(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        add_live_claim(attestation_instance)
+        recorded = _attest(attestation_instance, "contradict")
+        before = attestation_instance.get_read_revision()
+
+        service_resolve_attestation(
+            attestation_instance,
+            recorded.attestation.attestation_id,
+            verdict="upheld",
+            actor_context=actor("reviewer"),
+        )
+
+        assert attestation_instance.get_read_revision() > before
+
+    def test_an_attest_changes_what_a_plain_edge_read_returns(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        """The reason the revision must move: corroboration rides on edge reads.
+
+        This is the fact that falsified the exemption. Nothing about the edge
+        itself changed, but the payload a reader gets back did.
+        """
+        add_live_claim(attestation_instance)
+        payload_before = _edge_payload(attestation_instance)
+        assert payload_before.get("corroboration", {}).get("contradict_count", 0) == 0
+
+        _attest(attestation_instance, "contradict")
+
+        payload_after = _edge_payload(attestation_instance)
+        assert payload_after["corroboration"]["contradict_count"] == 1
+
+    def test_an_attest_invalidates_an_outstanding_edge_list_continuation_token(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        """Tokens bind to ``read_revision`` alone, so the bump is what protects paging.
+
+        Without it, page 1 could be read at revision N, a contradiction
+        recorded, and page 2's token still validate — returning rows whose
+        corroboration reflects a different moment than page 1's, with nothing in
+        the response able to detect it.
+        """
+        add_live_claim(attestation_instance)
+        token = mint_continuation_token(
+            surface="list",
+            instance_key=str(attestation_instance.get_root_path()),
+            config_digest=_config_digest(attestation_instance),
+            read_revision=attestation_instance.get_read_revision(),
+            filter_hash="test-filters",
+            cursor={"offset": 1},
+        )
+
+        _attest(attestation_instance, "contradict")
+
+        with pytest.raises(StaleContinuationError):
+            validate_continuation_token(
+                decode_continuation_token(token),
+                surface="list",
+                instance_key=str(attestation_instance.get_root_path()),
+                config_digest=_config_digest(attestation_instance),
+                read_revision=attestation_instance.get_read_revision(),
+                filter_hash="test-filters",
+            )
+
+    def test_an_attest_that_mints_a_pending_claim_also_advances_the_revision(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        before = attestation_instance.get_read_revision()
+        result = _attest(attestation_instance, "support", properties={"severity": "high"})
+        assert result.created_claim is True
+        assert attestation_instance.get_read_revision() > before

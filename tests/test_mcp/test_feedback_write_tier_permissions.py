@@ -4,7 +4,7 @@ Companion to ``test_write_tier_permissions.py`` (direct-write channels).
 Covered channels:
 
 * direct relationship writes (baseline, unchanged),
-* ``feedback`` correct / approve / reject / flag,
+* ``feedback`` correct / approve / reject,
 * ``feedback_batch`` (all-or-nothing, gated at its strictest action),
 * ``feedback_from_query`` (target selected from a query receipt).
 
@@ -13,10 +13,12 @@ The rail these exercise is wi-feedback-approval-rail: the adjudication actions
 attributing WHO promoted an edge never established that they were entitled to.
 That floor is a property of the ACTION, so it wins over the per-type
 ``write_tier`` opt-out this fixture declares: a type owner may lower who can
-direct-write their type, but not who can adjudicate claims on it. ``flag`` is
-the one action left at the governed floor (it ASKS for review). The
-resolved-actor identity requirement is unchanged and additive, and is tested at
-the end.
+direct-write their type, but not who can adjudicate claims on it. ``flag`` was
+the one action left at the governed floor; it was REMOVED in 2026-07 (it
+un-approved an edge while storing no annotation), so every remaining action is
+an adjudication and nothing sits at the governed floor but the recording half.
+The resolved-actor identity requirement is unchanged and additive, and is tested
+at the end.
 
 It supersedes wi-feedback-write-tier-bypass, whose facade pre-gate
 (``_feedback_correction_tier_gate``) checked corrections against the corrected
@@ -35,7 +37,7 @@ from textwrap import dedent
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import AuthenticationError, PermissionDeniedError
+from cruxible_core.errors import AuthenticationError, ConfigError, PermissionDeniedError
 from cruxible_core.mcp import contracts
 from cruxible_core.mcp.permissions import (
     PermissionMode,
@@ -299,12 +301,20 @@ class TestFeedbackCorrectTierGate:
             )
         assert result.applied is True
 
-    def test_correct_without_corrections_still_needs_graph_write(self, feedback_tier_instance_id):
-        """Empty-corrections ``correct`` mutates no schema property, but it is
-        the approve-equivalent review transition — so the adjudication floor,
-        not the property-tier gate, is what governs it."""
+    def test_correct_without_corrections_is_refused_before_the_tier_is_consulted(
+        self, feedback_tier_instance_id
+    ):
+        """Empty-corrections ``correct`` no longer HAS a tier question to answer.
+
+        It used to be the approve-equivalent review transition governed by the
+        adjudication floor. It is now refused outright at the service validation
+        seam: an approval wearing a correction's name is not a thing to
+        authorize, it is a thing to reject. Payload shape is checked before
+        authorization, so this surfaces as the teaching ConfigError even from a
+        tier that could not have performed it.
+        """
         with request_permission_scope(PermissionMode.GOVERNED_WRITE):
-            with pytest.raises(PermissionDeniedError, match="GRAPH_WRITE"):
+            with pytest.raises(ConfigError, match="requires a non-empty 'corrections' object"):
                 _feedback(feedback_tier_instance_id, "correct")
         assert _blocks_edge_severity(feedback_tier_instance_id) == "high"
 
@@ -322,12 +332,14 @@ class TestFeedbackCorrectTierGate:
             result = _feedback(feedback_tier_instance_id, action)
         assert result.applied is True
 
-    def test_governed_flag_still_allowed(self, feedback_tier_instance_id):
-        """``flag`` moves an edge to pending — it ASKS for review rather than
-        granting it, so it stays at the governed-operator floor."""
-        with request_permission_scope(PermissionMode.GOVERNED_WRITE):
-            result = _feedback(feedback_tier_instance_id, "flag")
-        assert result.applied is True
+    def test_removed_flag_action_refuses_and_names_the_replacement(self, feedback_tier_instance_id):
+        """``flag`` is gone; the refusal has to route the caller somewhere real."""
+        with request_permission_scope(PermissionMode.GRAPH_WRITE):
+            with pytest.raises(ConfigError, match="'flag' feedback action was removed"):
+                _feedback(feedback_tier_instance_id, "flag")
+        with request_permission_scope(PermissionMode.GRAPH_WRITE):
+            with pytest.raises(ConfigError, match="attest --stance contradict"):
+                _feedback(feedback_tier_instance_id, "flag")
 
     def test_graph_write_correct_unaffected(self, feedback_tier_instance_id):
         with request_permission_scope(PermissionMode.GRAPH_WRITE):
@@ -478,9 +490,9 @@ class TestFeedbackFromQueryTierGate:
 
 class TestAnonymousReviewTransitionRefused:
     """Under server auth every feedback action needs a resolved actor identity
-    — anonymous retraction (reject/flag) ends with this work item."""
+    — anonymous retraction (reject) ends with this work item."""
 
-    @pytest.mark.parametrize("action", ["approve", "correct", "reject", "flag"])
+    @pytest.mark.parametrize("action", ["approve", "correct", "reject"])
     def test_auth_on_anonymous_action_refused(
         self,
         feedback_tier_instance_id,
@@ -492,16 +504,20 @@ class TestAnonymousReviewTransitionRefused:
             with pytest.raises(AuthenticationError, match="resolved actor identity"):
                 _feedback(feedback_tier_instance_id, action)
 
-    def test_auth_off_governed_flag_still_usable(
+    def test_auth_off_adjudication_needs_no_actor(
         self,
         feedback_tier_instance_id,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """``flag`` is the action a governed operator keeps at every auth
-        setting. ``reject`` moved to the adjudication floor
-        (wi-feedback-approval-rail), so it is covered by the tier tests above,
-        not here — the actor-identity rail and the tier rail are independent."""
+        """The actor-identity rail is independent of the tier rail.
+
+        With auth off there is no governed identity to resolve, so an
+        adjudication at the right TIER goes through without a request-supplied
+        actor. (This used to be pinned on ``flag``, the one action a governed
+        operator kept at every auth setting; ``flag`` was removed, so the pin
+        moves to ``approve`` at its own GRAPH_WRITE floor.)
+        """
         monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
-        with request_permission_scope(PermissionMode.GOVERNED_WRITE):
-            result = _feedback(feedback_tier_instance_id, "flag")
+        with request_permission_scope(PermissionMode.GRAPH_WRITE):
+            result = _feedback(feedback_tier_instance_id, "approve")
         assert result.applied is True

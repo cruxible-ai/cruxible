@@ -255,13 +255,18 @@ PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
 #
 # So the adjudication verbs are gated at GRAPH_WRITE, the same tier that
 # ``cruxible_resolve_group`` and the direct-write verbs require, matching the
-# procedure-resolve/disposition precedent. ``flag`` stays at GOVERNED_WRITE: it
-# moves an edge to ``pending``, i.e. it ASKS for review rather than granting it
-# (``flag`` retires later under dd-flag-superseded-by-attestation). The
-# ``action`` field is a closed Literal with no action-less variant, so ``flag``
-# is the ONLY feedback action left at the governed floor; what else stays there
-# is the RECORDING half of every action — persisting the FeedbackRecord — which
-# is what an adjudication refusal rolls back along with the transition.
+# procedure-resolve/disposition precedent.
+#
+# ``flag`` was REMOVED in 2026-07 (dd-flag-superseded-by-attestation, brought
+# forward from "retires later"): it moved an edge to ``pending`` while storing
+# no annotation, so it destroyed the reviewer's signal. It was also the only
+# feedback action sitting at GOVERNED_WRITE, so EVERY remaining feedback action
+# is now an adjudication requiring GRAPH_WRITE. What still sits at the tool's
+# GOVERNED_WRITE floor is the RECORDING half of an action — persisting the
+# FeedbackRecord — which is what an adjudication refusal rolls back along with
+# the transition. A GOVERNED_WRITE actor who wants to register a doubt uses
+# ``cruxible_attest`` with stance ``contradict``, which records the observation,
+# its evidence, and its actor and changes no status.
 #
 # Enforced in ``service/feedback.py`` (the single service chokepoint every
 # surface funnels through), not here, because the requirement is a property of
@@ -270,7 +275,6 @@ FEEDBACK_ACTION_PERMISSIONS: dict[str, PermissionMode] = {
     "approve": PermissionMode.GRAPH_WRITE,
     "reject": PermissionMode.GRAPH_WRITE,
     "correct": PermissionMode.GRAPH_WRITE,
-    "flag": PermissionMode.GOVERNED_WRITE,
 }
 
 # Audited operation name the adjudication check reports under. It is a runtime
