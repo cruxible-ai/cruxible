@@ -279,6 +279,18 @@ until then, record a contradiction with `cruxible attest record --stance
 contradict` or move the claim through the review machinery
 (`cruxible feedback`).
 
+**Attesting advances the instance read revision.** An attestation or a
+disposition never changes a claim's trust, review, or lifecycle status — but it
+does change what reads *return*, because corroboration summaries (stance counts,
+`distinct_actor_count`, `last_*_at`, open-contradiction indicator) are computed
+from the attestation store and attached to edge payloads on ordinary edge,
+neighborhood, and single-relationship reads. So recording an observation bumps
+`read_revision` exactly like a graph write does, and it invalidates any
+outstanding continuation token: tokens are revision-bound, and resuming a page
+after a new attestation raises a `409` `StaleContinuationError` so a paginated
+read can never silently span two different states. Repeat the read from the
+first page to pick up the new corroboration.
+
 Hand-authored `metadata={"lifecycle": ...}` is inert free-form data — it can
 never become the typed state. The lifecycle write is a direct-write verb, so a
 `proposal_only` type refuses it too. Reserve deletion for bad imports and test

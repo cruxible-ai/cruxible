@@ -22,6 +22,31 @@ from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.primitives import new_id
 from cruxible_core.temporal import utc_now
 
+# The WRITE vocabulary: what a caller may ask for today.
+FeedbackAction = Literal["approve", "reject", "correct"]
+
+# The READ vocabulary: what a stored row may legally contain.
+#
+# These are deliberately DIFFERENT. ``flag`` was removed as a write in 2026-07
+# (it un-approved an edge to ``pending`` while storing no annotation, so it
+# destroyed the reviewer's signal), but 0.2.x instances have already persisted
+# rows with ``action='flag'`` and those rows are permanent -- the feedback store
+# is append-only history, not a mutable projection. Every read path
+# (``FeedbackStore._row_to_feedback``, and therefore get/list/analysis/CLI
+# rendering) reconstructs through :class:`FeedbackRecord`, so narrowing the
+# STORED vocabulary would make historical instances raise ValidationError on an
+# ordinary list.
+#
+# So the record model tolerates ``flag`` on read while every INPUT type
+# (``FeedbackBatchItem``, ``FeedbackItemInput``, the client contracts, and the
+# service validation seam) stays narrowed to the three live actions. The
+# applier has no ``flag`` branch, so such a row renders and can be counted but
+# can never be written again and can never move an edge.
+StoredFeedbackAction = Literal["approve", "reject", "correct", "flag"]
+
+RETIRED_FEEDBACK_ACTIONS: frozenset[str] = frozenset({"flag"})
+"""Actions readable from history but refused on every write path."""
+
 
 class FeedbackRecord(BaseModel):
     """Feedback on a query result or specific relationship.
@@ -37,7 +62,14 @@ class FeedbackRecord(BaseModel):
 
     feedback_id: str = Field(default_factory=lambda: new_id("FB"))
     receipt_id: str | None = None
-    action: Literal["approve", "reject", "correct"]
+    action: StoredFeedbackAction
+    """READ vocabulary -- see :data:`StoredFeedbackAction`.
+
+    Wider than what any caller may write: this model is what the store
+    reconstructs historical rows into, and 0.2.x history contains ``flag``.
+    Write paths are narrowed at the input types and at the service seam.
+    """
+
     target: RelationshipInstance
     reason: str = ""
     reason_code: str | None = None
@@ -74,7 +106,9 @@ class FeedbackBatchItem(BaseModel):
     """Input payload for one batch feedback item."""
 
     receipt_id: str
-    action: Literal["approve", "reject", "correct"]
+    action: FeedbackAction
+    """WRITE vocabulary -- an input, so it stays narrow (no ``flag``)."""
+
     target: RelationshipInstance
     reason: str = ""
     reason_code: str | None = None

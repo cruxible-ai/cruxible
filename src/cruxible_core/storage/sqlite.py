@@ -245,30 +245,35 @@ _AUDIT_ONLY_TABLES = frozenset(
         "decision_events",
         "instance_state",
         "storage_migrations",
-        # The observation lanes. Attesting and outcome-contract bookkeeping are
-        # structurally incapable of changing a claim's trust, review, or
-        # lifecycle status (attestations and dispositions never touch the edge),
-        # so they are audit records about state, not state. Leaving them out
-        # meant an attest advanced read_revision and every reader was told the
-        # graph had moved when it had not -- an undisclosed divergence from the
-        # documented meaning of the counter.
-        #
-        # NOT a hole in freshness: the one thing an attest CAN do to state --
-        # create a pending claim for a support stance -- writes
-        # graph_relationships, which is not exempt and still advances the
-        # revision.
-        "attestations",
-        "attestation_dispositions",
-        "resolution_contracts",
-        "resolution_contract_activations",
-        "resolution_contract_dispositions",
-        "resolution_contract_resolutions",
     }
 )
 """Tables whose writes are audit records, never state, so they never bump ``read_revision``.
 
 Adding a table here is a real claim: that writing it cannot change what any read
-of the instance's state returns. Verify that before extending the set.
+of the instance's state returns. Verify that against the READ consumers, not
+just the write path, before extending the set.
+
+DO NOT add the attestation or resolution-contract tables. It is tempting --
+attestations and dispositions cannot touch a claim's trust, review, or lifecycle
+status, so they look like a pure audit lane. They are not, because they change
+what ordinary reads RETURN:
+
+* corroboration summaries are computed from ``attestations`` and attached to
+  edge payloads on ordinary reads (``attach_corroboration_summaries``, called
+  from the edge-list, neighborhood, and single-relationship read paths), so
+  recording a contradiction changes the content of a plain edge read;
+* the attestation and contract queues derive their listings from these tables
+  and stamp ``read_revision`` on the envelope;
+* continuation tokens validate on ``read_revision`` ALONE
+  (``query/continuation.validate_continuation_token``), so an exemption would
+  let page 1 be read at revision N, a contradiction be recorded, and page 2's
+  token still validate -- a paginated read spanning two different states with
+  nothing to detect it;
+* working-set freshness keys off the same counter and would go stale.
+
+Attesting advancing the revision is CORRECT. What the protocol audit actually
+found was a DISCLOSURE gap -- the behavior was never documented -- and that is
+fixed in ``docs/state-resolution-and-maintenance.md``, not here.
 """
 
 

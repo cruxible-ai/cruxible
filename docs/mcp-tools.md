@@ -7,17 +7,18 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | Mode | Env value | Meaning |
 | --- | --- | --- |
 | READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, snapshots listing. |
-| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow and procedure runs, procedure/group proposals, claim attestations, feedback recording, outcomes, decision records, snapshot creation, and source artifact registration. |
+| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow and procedure runs, procedure/group proposals, claim attestations, outcomes, decision records, snapshot creation, and source artifact registration. Reaching the feedback tools is permitted at this tier, but every feedback ACTION now requires GRAPH_WRITE — see below. |
 | GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, group resolution/trust updates, procedure resolution/retirement, attestation dispositions, and feedback **adjudication** (`approve` / `reject` / `correct`). |
 | ADMIN | `admin` | Full lifecycle, config reload, locks, snapshots, clone, state publication/pull, ingest, constraints, and policies. |
 
 `tools/list` advertises only tools allowed by the active `CRUXIBLE_MODE`; call-time permission checks still enforce the same tiers as a backstop.
 
-The **Permission** line on each tool below is the tier needed to *call* it. Two
-surfaces additionally gate on the payload: the feedback tools require
-`GRAPH_WRITE` for the adjudication actions `approve` / `reject` / `correct`
-(plain recording stays at `GOVERNED_WRITE`), and the direct-write
-tools honor a type's config-declared `write_tier`.
+The **Permission** line on each tool below is the tier needed to *call* it, which
+is not always enough to succeed. Two surfaces additionally gate on the payload:
+the feedback tools require `GRAPH_WRITE` for the adjudication actions `approve` /
+`reject` / `correct` — which is all of them, so their `GOVERNED_WRITE` call floor
+admits no completable action — and the direct-write tools honor a type's
+config-declared `write_tier`.
 
 ## Tool Catalog Curation
 
@@ -521,7 +522,7 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when a person or reviewer agent adjudicated one explicit relationship and you need to record support, rejection, or a correction. To record a DOUBT without adjudicating, use cruxible_attest with stance 'contradict' instead. Use edge_key only to disambiguate multiple stored edges with the same relationship tuple; receipt_id is optional for explicit-coordinate feedback.
 
-**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; plain recording stays at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict` (the removed `flag` action's replacement).
+**Action tier:** every action this tool accepts — `approve` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict` (the removed `flag` action's replacement).
 
 **Arguments:**
 
@@ -558,7 +559,7 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when a query receipt and result index identify the relationship that needs feedback. This path requires receipt_id because the receipt/result selection is the target selector.
 
-**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; plain recording stays at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict` (the removed `flag` action's replacement).
+**Action tier:** every action this tool accepts — `approve` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict` (the removed `flag` action's replacement).
 
 **Arguments:**
 
@@ -592,7 +593,7 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when you need to record several relationship feedback decisions from the same review session.
 
-**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; plain recording stays at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict` (the removed `flag` action's replacement).
+**Action tier:** every action this tool accepts — `approve` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict` (the removed `flag` action's replacement).
 
 **Arguments:**
 

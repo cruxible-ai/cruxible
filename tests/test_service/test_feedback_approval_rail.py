@@ -1,24 +1,30 @@
 """Governance rails on the feedback ADJUDICATION actions (wi-feedback-approval-rail).
 
-``cruxible_feedback`` sits wholly at GOVERNED_WRITE in the per-tool permission
-map, but the tool multiplexes two different governance acts: RECORDING an
-observation, and ADJUDICATING a claim. Two rails, both keyed on the payload's
-``action`` and both enforced at the service chokepoint every surface funnels
-through:
+``cruxible_feedback`` sits at GOVERNED_WRITE in the per-tool permission map, but
+that is only the floor for REACHING the tool. Two rails, both keyed on the
+payload's ``action`` and both enforced at the service chokepoint every surface
+funnels through:
 
   1. **Tier.** ``approve`` / ``reject`` / ``correct`` require GRAPH_WRITE. Without
      it one GOVERNED_WRITE actor could attest an edge into ``pending`` and then
      approve their own proposal, arriving at a live approved claim on a
-     ``proposal_only`` type with no reviewer above them. ``flag`` stays at
-     GOVERNED_WRITE — it moves an edge TO pending, i.e. it asks for review
-     rather than granting it.
+     ``proposal_only`` type with no reviewer above them. Since ``flag`` was
+     removed in 2026-07, those three are ALL the actions — so no feedback action
+     is completable at GOVERNED_WRITE, and what that floor still buys is the
+     rollback of the ``FeedbackRecord`` a refused adjudication would have
+     written. A governed-tier caller registers a doubt with ``cruxible_attest``
+     (stance ``contradict``) instead.
   2. **Kill-switch.** ``CRUXIBLE_REFUSE_DIRECT_WRITES`` now also refuses the
      feedback actions that transition an edge INTO accepted state
      (``approve``/``correct``). It previously disclaimed the feedback channel
      entirely, which made it a half-switch: an operator who froze live writes
      could still have state promoted to live through feedback approve.
-     ``reject``/``flag`` are deliberately NOT covered — they move an edge OUT of
-     live state, the direction the kill-switch wants.
+     ``reject`` is deliberately NOT covered — it moves an edge OUT of live
+     state, the direction the kill-switch wants.
+
+Note the ORDER these tests rely on: payload-shape validation (including
+``correct``'s non-empty ``corrections`` requirement) runs BEFORE either rail, so
+a malformed payload reports its shape error regardless of the caller's tier.
 
 The tier rail's facade coverage (per-type ``write_tier`` interaction, batch,
 from_query) lives in ``tests/test_mcp/test_feedback_write_tier_permissions.py``;

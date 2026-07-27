@@ -228,21 +228,33 @@ Semantics:
   `reject`, and `correct` decide a claim's fate — they make a non-live edge
   live, or retract one — so they require `graph_write` *whatever* the touched
   type declares, across `feedback`, `feedback_batch` (one adjudication item
-  lifts the whole batch), and `feedback_from_query`. This holds for a `correct`
-  with property corrections and for one without: the floor is a property of the
-  ACTION, not of the properties it happens to touch. `write_tier` therefore
+  lifts the whole batch), and `feedback_from_query`. The floor is a property of
+  the ACTION, not of the properties it happens to touch. `write_tier` therefore
   does **not** open `correct` — declaring `write_tier: governed_write` lowers
   who may *direct-write* the type, never who may *adjudicate* claims on it.
-- **`flag` was removed; plain recording stays governed.** The `flag` action
-  moved an edge to `pending` while storing no annotation, so the reviewer's
-  actual signal — what they doubted and why — was destroyed at the moment it was
-  given. It is gone, with no deprecation window, because it never worked. To
-  record a doubt without adjudicating, use `cruxible attest --stance contradict`
-  (MCP: `cruxible_attest`): it stores the observation, its evidence refs, and
-  its actor, and it changes no review status. What still sits at the feedback
-  tools' `governed_write` floor is persisting the `FeedbackRecord` itself. Under
-  server auth every feedback action must additionally carry a resolved actor
-  identity — review state cannot be promoted *or* retracted anonymously.
+- **`correct` requires a non-empty `corrections` object.** An empty `correct`
+  used to promote the edge to `approved` while recording nothing corrected — an
+  approval wearing a correction's name. It is now refused. The refusal happens
+  at the service **validation** seam, which runs *before* the tier and
+  kill-switch checks, so an empty `correct` returns the shape error even from a
+  tier that could not have performed the adjudication anyway. Use `approve` to
+  accept a claim as it stands.
+- **`flag` was removed.** The `flag` action moved an edge to `pending` while
+  storing no annotation, so the reviewer's actual signal — what they doubted and
+  why — was destroyed at the moment it was given. It is gone, with no
+  deprecation window, because it never worked. To record a doubt without
+  adjudicating, use `cruxible attest --stance contradict` (MCP:
+  `cruxible_attest`): it stores the observation, its evidence refs, and its
+  actor, and it changes no review status.
+- **Nothing a feedback call can *do* sits at `governed_write` any more.** `flag`
+  was the last such action, so every permitted action now requires
+  `graph_write`. The feedback tools keep a `governed_write` floor because
+  reaching them is the first gate and because a refused adjudication still
+  rolls back the `FeedbackRecord` it would have written — but a `governed_write`
+  caller cannot successfully complete any feedback action. Its route is
+  `cruxible_attest`. Under server auth every feedback action must additionally
+  carry a resolved actor identity — review state cannot be promoted *or*
+  retracted anonymously.
 - **Everything downstream is unchanged.** Mutation guards, `write_policy`
   refusals, and validation all run after the tier check. Declaring
   `write_tier` together with an explicit `proposal_only`/`mint_only`

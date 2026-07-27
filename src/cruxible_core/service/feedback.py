@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import ValidationError
 
@@ -28,6 +28,7 @@ from cruxible_core.errors import (
 )
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.types import (
+    FeedbackAction,
     FeedbackBatchItem,
     FeedbackRecord,
     OutcomeRecord,
@@ -60,7 +61,12 @@ from cruxible_core.service.types import (
     RelationshipTargetInput,
 )
 
-_VALID_ACTIONS = ("approve", "reject", "correct")
+_VALID_ACTIONS = get_args(FeedbackAction)
+"""The WRITE vocabulary, derived from the type so the two cannot drift.
+
+Deliberately NOT ``StoredFeedbackAction``: history may contain ``flag`` rows
+that read fine but can never be written again.
+"""
 _VALID_OUTCOMES = ("correct", "incorrect", "partial", "unknown")
 
 
@@ -117,7 +123,7 @@ def _normalize_feedback_record(
     graph: EntityGraph,
     receipt: Receipt | None,
     receipt_id: str | None,
-    action: Literal["approve", "reject", "correct"],
+    action: FeedbackAction,
     target: RelationshipInstance,
     reason: str,
     reason_code: str | None,
@@ -1085,7 +1091,7 @@ def service_feedback_from_query_result(
     *,
     receipt_id: str,
     result_index: int,
-    action: Literal["approve", "reject", "correct"],
+    action: FeedbackAction,
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
@@ -1149,7 +1155,7 @@ def service_feedback_from_query_result(
 def service_feedback(
     instance: InstanceProtocol,
     receipt_id: str | None,
-    action: Literal["approve", "reject", "correct"],
+    action: FeedbackAction,
     target: RelationshipInstance,
     reason: str = "",
     reason_code: str | None = None,
