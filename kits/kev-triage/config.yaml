@@ -88,6 +88,21 @@ enums:
     - reference_changed
     - not_affected
     description: Closure mechanism for an asset-vulnerability pair.
+  triage_decision_status:
+    values:
+    - proposed
+    - accepted
+    - rejected
+    description: Review state of a recorded triage decision.
+  outcome_tracking_mode:
+    values:
+    - required
+    - not_applicable
+    description: >
+      Whether accepting a decision must first commit to a measurable outcome.
+      not_applicable is a reviewable choice, not an absence: some triage calls
+      (scope rulings, ownership routing) have no honest observable result, and
+      forcing a fake measurement would poison the outcome corpus.
 
 # ─── Local: internal entity types ─────────────────────────────────────
 
@@ -142,6 +157,20 @@ entity_types:
       reason: string
       review_due_at: date
       status: enum exception_status
+
+  TriageDecision:
+    description: |
+      A recorded remediation call on a vulnerability: patch now, mitigate, accept the risk, or rule the fleet not affected. Decisions are PROPOSED first and accepted by a reviewer; acceptance is guarded, so a decision that claims a measurable result cannot settle until someone has said in advance what result would count. Superseding a decision (lifecycle supersede) is how a call gets revised — the record is never edited into a different call.
+    id: decision_id
+    properties:
+      title: string indexed
+      status: enum triage_decision_status
+      outcome_tracking: enum outcome_tracking_mode
+      cve_id: string indexed
+      service_id: string
+      remediation_type: enum remediation_type
+      rationale: string
+      decided_by: string
 
   PatchWindow:
     description: "Operational patching schedule or change window."
@@ -778,6 +807,88 @@ named_queries:
         direction: desc
         enum_ref: criticality
 
+  exposed_services:
+    explicit: true
+    mode: traversal
+    description: >
+      Starting from one CVE, return the business services standing behind it:
+      the vulnerability affects a reference product, assets run that product,
+      and services depend on those assets. Exposure is a PATH, not a label —
+      every result carries the product, host, and posture edge it came from,
+      so the answer to "what does this CVE actually put at risk" is auditable
+      rather than asserted. Accepted posture is the strong signal; pending and
+      unreviewed rows stay visible so triage can start before review finishes.
+    entry_point: Vulnerability
+    returns: BusinessService
+    result_shape: path
+    dedupe: path
+    relationship_state: reviewable
+    max_paths: 2000
+    max_paths_per_result: 20
+    traversal:
+      - as: affected_product
+        relationship: vulnerability_affects_product
+        direction: outgoing
+      - as: installed_product
+        relationship: asset_runs_product
+        direction: incoming
+      - as: service_dependency
+        relationship: service_depends_on_asset
+        direction: incoming
+    include:
+      owners:
+        from: $path.installed_product.source
+        relationship: asset_owned_by
+        direction: outgoing
+        many: true
+        limit: 5
+      exposure:
+        from: $path.installed_product.source
+        relationship: asset_vulnerability_posture
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $entry.entity_id
+        order_by:
+          - by: $edge.properties.priority
+            direction: desc
+            enum_ref: criticality
+      controls:
+        from: $path.installed_product.source
+        relationship: asset_has_control
+        direction: outgoing
+        many: true
+        limit: 10
+    order_by:
+      - by: $result.properties.criticality
+        direction: desc
+        enum_ref: criticality
+      - by: $result.properties.name
+        direction: asc
+
+  open_triage_queue:
+    explicit: true
+    mode: collection
+    description: >
+      Triage decisions still awaiting a reviewer. A decision listed here with
+      outcome_tracking required cannot be accepted until a resolution contract
+      has been opened against it, so this queue pairs with the contract queues
+      (cruxible outcome list/due) — this side says what is undecided, that side
+      says what has been promised and not yet checked.
+    returns: TriageDecision
+    result_shape: entity
+    dedupe: entity
+    where:
+      result.properties.status:
+        eq: proposed
+    order_by:
+      - by: $result.properties.cve_id
+        direction: asc
+      - by: $result.entity_id
+        direction: asc
+
   vulnerability_class_context:
     explicit: true
     mode: traversal
@@ -805,6 +916,34 @@ named_queries:
     order_by:
       - by: $result.entity_id
         direction: asc
+
+# ─── Mutation guards (outcome forcing) ───────────────────────────────
+#
+# Accepting a triage decision that declares outcome_tracking: required
+# REFUSES unless an eligible resolution contract was opened against that
+# decision first. The contract states, in advance, what observable result
+# counts as success, how it will be measured, when to check, and when the
+# commitment expires. Without this the kit accumulates audit records rather
+# than experience: nothing ever demands that the outcome arrive.
+#
+# The flow is deliberately two-step — propose, open the contract, then
+# accept. A decision cannot be created already-accepted, because no contract
+# can pre-exist the record it is opened against.
+
+mutation_guards:
+  - triage_decision_acceptance_requires_contract:
+      when: TriageDecision.status -> accepted
+      where:
+        candidate.properties.outcome_tracking:
+          eq: required
+      require:
+        resolution_contract: true
+      message: >
+        This triage decision tracks its outcome, so it cannot be accepted
+        until a resolution contract commits to what would count as success.
+        Open one against this decision (cruxible outcome open), then accept.
+        If the call has no honest measurable result, set outcome_tracking to
+        not_applicable and say why in the rationale.
 
 # ─── Constraints ──────────────────────────────────────────────────────
 

@@ -68,6 +68,7 @@ flowchart LR
 **Provider source**
 - Normalize Public Kev Reference (Python Function, v1.0.0); source: `kit://providers/reference.py::normalize_public_kev_reference`
 - Parse Public Kev Bundle (Python Function, v1.0.0); source: `src/cruxible_core/providers/common/tabular.py::load_tabular_artifact_bundle`; artifact: Public Kev Bundle
+- Render Kev Feed Manifest (Python Function, v1.0.0); source: `kit://providers/reference.py::render_kev_feed_manifest`
 <!-- CRUXIBLE:END workflow-summary -->
 
 <!-- CRUXIBLE:BEGIN provider-contracts -->
@@ -81,6 +82,7 @@ Called by workflow `build_public_kev_reference`, step `rows`:
 - Input `kev_rows` <- provider step `raw_tables` (`tables.known_exploited_vulnerabilities.rows`)
 - Input `epss_rows` <- provider step `raw_tables` (`tables.epss_kev_nvd.rows`)
 - Input `nvd_cpe_rows` <- provider step `raw_tables` (`tables.nvd_kev_cves.rows`)
+- Input `feed_revisions` <- register_source_artifacts step `pin_feed` (`revisions`)
 - Output rows -> `make_entities` step `vendors` (`Vendor`): required row keys: `vendor_id` (entity id), `vendor_name` -> `name`.
 - Output rows -> `make_entities` step `products` (`Product`): required row keys: `product_id` (entity id), `vendor_id`, `vendor_name`, `product_name`, `cpe_vendor`, `cpe_product`, `cpe_part`.
 - Output rows -> `make_entities` step `vulnerabilities` (`Vulnerability`): required row keys: `cve_id` (entity id), `vulnerability_name`, `description`, `date_added_to_kev`, `kev_due_date`, `required_action`, `known_ransomware_use`, `cvss_score`, `cvss_severity`, `epss_score`, `epss_percentile`, `cwes`.
@@ -96,6 +98,15 @@ Called by workflow `build_public_kev_reference`, step `rows`:
 Called by workflow `build_public_kev_reference`, step `raw_tables`:
 
 - Input `expected_tables` <- config literal (inline in the workflow step)
+
+### `render_kev_feed_manifest` (deterministic)
+
+- Ref: `kit://providers/reference.py::render_kev_feed_manifest`
+- Purpose: Render the parsed KEV catalog rows as one Markdown snapshot document, one addressable section per CVE, for registration as a revisioned source artifact that reference claims can cite by pinned revision.
+
+Called by workflow `build_public_kev_reference`, step `feed_manifest`:
+
+- Input `kev_rows` <- provider step `raw_tables` (`tables.known_exploited_vulnerabilities.rows`)
 <!-- CRUXIBLE:END provider-contracts -->
 
 <!-- CRUXIBLE:BEGIN governance-table -->

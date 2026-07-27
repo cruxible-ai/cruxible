@@ -56,9 +56,10 @@ flowchart LR
   entity_Owner["Owner"]
   entity_PatchWindow["Patch Window"]
   entity_Product["Product"]
+  entity_TriageDecision["Triage Decision"]
   entity_Vulnerability["Vulnerability"]
   entity_VulnerabilityClass["Vulnerability Class"]
-  class entity_Asset,entity_BusinessService,entity_CompensatingControl,entity_Exception,entity_Owner,entity_PatchWindow,entity_VulnerabilityClass canonicalEntity
+  class entity_Asset,entity_BusinessService,entity_CompensatingControl,entity_Exception,entity_Owner,entity_PatchWindow,entity_TriageDecision,entity_VulnerabilityClass canonicalEntity
   class entity_Product,entity_Vulnerability baseEntity
 
   %% Deterministic canonical relationships
@@ -93,6 +94,7 @@ flowchart LR
 | `Exception` | `exception_id: string (pk)`, `reason: string?`, `review_due_at: date?`, `status: exception_status?` | Approved patch or remediation exception. |
 | `Owner` | `owner_id: string (pk)`, `name: string?`, `team: string?`, `email: string?` | Team or person responsible for an asset or service. |
 | `PatchWindow` | `patch_window_id: string (pk)`, `cadence: patch_cadence?`, `next_window_at: datetime?`, `freeze_status: patch_freeze_status?`, `emergency_patch_allowed: bool?`, `outage_allowed: bool?`, `testing_required: bool?`, `rollback_required: bool?`, `owner_id: string?` | Operational patching schedule or change window. |
+| `TriageDecision` | `decision_id: string (pk)`, `title: string?`, `status: triage_decision_status?`, `outcome_tracking: outcome_tracking_mode?`, `cve_id: string?`, `service_id: string?`, `remediation_type: remediation_type?`, `rationale: string?`, `decided_by: string?` | A recorded remediation call on a vulnerability: patch now, mitigate, accept the risk, or rule the fleet not affected. Decisions are PROPOSED first and accepted by a reviewer; acceptance is guarded, so a decision that claims a measurable result cannot settle until someone has said in advance what result would count. Superseding a decision (lifecycle supersede) is how a call gets revised — the record is never edited into a different call. |
 | `VulnerabilityClass` | `class_id: string (pk)`, `name: string?`, `description: string?`, `attack_vector: attack_vector?` | Operational vulnerability category used by local controls, policy, and scenario analysis. This is local-layer classification rather than reference-layer public data. |
 
 ### Enums
@@ -106,8 +108,11 @@ flowchart LR
 | `control_type` | waf, endpoint_detection, network_acl |
 | `criticality` | low, medium, high, critical |
 | `exception_status` | approved, expired, revoked |
+| `outcome_tracking_mode` | required, not_applicable |
 | `patch_cadence` | weekly, biweekly, monthly |
 | `patch_freeze_status` | none, partial_freeze |
+| `remediation_type` | patch, mitigation, exception, product_mapping_changed, reference_changed, not_affected |
+| `triage_decision_status` | proposed, accepted, rejected |
 <!-- CRUXIBLE:END schema-catalog -->
 
 **Legend:** Blue = canonical/deterministic state, including the inherited KEV
@@ -312,7 +317,9 @@ signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 <!-- CRUXIBLE:END governance-table -->
 
 <!-- CRUXIBLE:BEGIN mutation-guards -->
-No mutation guards declared.
+| Guard | Fires On | Refused Unless | Message |
+| --- | --- | --- | --- |
+| `triage_decision_acceptance_requires_contract` | `TriageDecision.status` -> `accepted` | requires_resolution_contract | This triage decision tracks its outcome, so it cannot be accepted until a resolution contract commits to what would count as success. Open one against this decision (cruxible outcome open), then accept. If the call has no honest measurable result, set outcome_tracking to not_applicable and say why in the rationale.<br> |
 <!-- CRUXIBLE:END mutation-guards -->
 
 ### Signal Policy Notes
@@ -345,6 +352,7 @@ relationship.
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Asset Vulnerability Postures Requiring Action | collection | Asset Vulnerability Posture | reviewable |  | Return existing asset-vulnerability posture relationships that represent exposed work needing attention. This is a work-queue read surface for current posture facts, not candidate discovery. |
+| Open Triage Queue | collection | Triage Decision | live |  | Triage decisions still awaiting a reviewer. A decision listed here with outcome_tracking required cannot be accepted until a resolution contract has been opened against it, so this queue pairs with the contract queues (cruxible outcome list/due) — this side says what is undecided, that side says what has been promised and not yet checked. |
 
 ### Compensating Control
 
@@ -374,6 +382,7 @@ relationship.
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
+| Exposed Services | traversal | Business Service | reviewable | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) -> Service Depends On Asset (Incoming) | Starting from one CVE, return the business services standing behind it: the vulnerability affects a reference product, assets run that product, and services depend on those assets. Exposure is a PATH, not a label — every result carries the product, host, and posture edge it came from, so the answer to "what does this CVE actually put at risk" is auditable rather than asserted. Accepted posture is the strong signal; pending and unreviewed rows stay visible so triage can start before review finishes. |
 | Vulnerability Asset Context | traversal | Asset | reviewable | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) | Starting from a vulnerability, return internal assets that run affected products, with the relationship evidence needed to tell whether each asset is only a candidate, has pending or accepted exposure state, has remediation state, or is covered by operational context such as owners, services, exceptions, controls, and patch windows. |
 
 ### Vulnerability Class

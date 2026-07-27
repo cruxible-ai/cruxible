@@ -178,6 +178,31 @@ the project's own state instance.
 
 ### Added
 
+- **The KEV kits adopt the 0.3 mechanics.** `kev-triage` gains a
+  `TriageDecision` type carrying the `outcome_tracking` convention and the
+  first shipped `requires_resolution_contract` mutation guard: accepting a
+  decision that tracks its outcome refuses until a resolution contract has
+  committed, in advance, to what result would count. `not_applicable`
+  remains an explicit, reviewable opt-out. Two named queries land with it —
+  `exposed_services` (from one CVE, traverse product → host → service so
+  exposure is an auditable PATH rather than a label) and
+  `open_triage_queue` (decisions still awaiting a reviewer, the read that
+  pairs with the contract queues). `kev-reference` now registers the CISA
+  KEV feed snapshot as the revisioned source artifact `cisa_kev_catalog`
+  and pins every reference claim's evidence to `cisa_kev_catalog@{revision}`
+  with a heading-path locator, so "which settled decisions cite evidence
+  that has since changed" is a lookup rather than an investigation.
+
+- **`register_source_artifacts` reports the revisions it wrote.** The step
+  output gains `revisions` (`{artifact_id: artifact_revision_id}`), which is
+  what lets a later step in the same workflow stamp `{id}@{ordinal}` onto
+  the evidence refs it mints. Without it a workflow could only cite the
+  LOGICAL artifact id, and an unpinned ref dereferences against whatever
+  revision happens to be current — the exact silent staleness the revision
+  pin exists to prevent. `source_artifact_evidence_ref` gains matching
+  `artifact_revision_id` and `heading_path` arguments so kits spell the pin
+  and the revision-stable locator the same way.
+
 - **Opening a resolution contract requires an outcome guard on the
   subject's type**: `outcome open` (and its MCP/HTTP equivalents) refuses
   unless the config declares a mutation guard whose condition is
@@ -438,6 +463,17 @@ removal in the release after 0.3.
   zero: no path can grow that bucket any more. Read `withdrawn_count`.
 
 ### Fixed
+
+- **Two KEV goldens were permanently unstable.** The golden
+  cross-section's generated-id normalizer matched a 12-hex-character
+  suffix, but claim ids mint 16, so raw `CLM-<uuid4>` values passed
+  straight through into byte-compared golden files
+  (`asset_exposure_workflow.json`,
+  `exposure_reconciliation_workflow.json`). Those two files could not
+  match on any re-run, and the resulting churn read as real drift on
+  every regeneration. The pattern now accepts a 12-16 character suffix
+  and claim ids tokenize as `<CLAIM_N>`. Test-support only; no runtime
+  behaviour changes.
 
 - **The MCP tool listing no longer depends on the daemon.** A missing or
   invalid transport (`CRUXIBLE_REQUIRE_SERVER` set with neither

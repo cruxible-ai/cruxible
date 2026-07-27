@@ -789,6 +789,20 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2002-0367"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2002-0367",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2002-0367"
+                  ]
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2002-0367"
               }
             ],
             "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_2000.",
@@ -853,6 +867,20 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2002-0367"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2002-0367",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2002-0367"
+                  ]
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2002-0367"
               }
             ],
             "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_nt.",
@@ -915,6 +943,20 @@
                   "match_criteria_id": "D191C828-2312-4579-9910-511BB35FD4E9"
                 },
                 "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2004-0210"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2004-0210",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2004-0210"
+                  ]
+                },
+                "source": "source_artifact",
                 "source_record_id": "CVE-2004-0210"
               }
             ],
@@ -992,6 +1034,20 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2004-0210"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2004-0210",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2004-0210"
+                  ]
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2004-0210"
               }
             ],
             "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_2000.",
@@ -1064,6 +1120,20 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2004-0210"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2004-0210",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2004-0210"
+                  ]
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2004-0210"
               }
             ],
             "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_nt.",
@@ -1130,6 +1200,20 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2004-1464"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2004-1464",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2004-1464"
+                  ]
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2004-1464"
               }
             ],
             "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to cisco/ios.",
@@ -1189,6 +1273,20 @@
                   "match_criteria_id": "15973175-E70A-41C5-AFF2-4F22CB4520E0"
                 },
                 "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2005-2773"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2005-2773",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2005-2773"
+                  ]
+                },
+                "source": "source_artifact",
                 "source_record_id": "CVE-2005-2773"
               }
             ],
@@ -1250,6 +1348,20 @@
                   "match_criteria_id": "B108ED90-C4AA-496F-B3C7-4AA392564C1F"
                 },
                 "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2006-1547"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2006-1547",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2006-1547"
+                  ]
+                },
+                "source": "source_artifact",
                 "source_record_id": "CVE-2006-1547"
               }
             ],
@@ -1336,6 +1448,20 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2006-2492"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2006-2492",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2006-2492"
+                  ]
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2006-2492"
               }
             ],
             "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/office.",
@@ -1404,6 +1530,20 @@
                   "match_criteria_id": "CB6B64C0-E58E-4606-A6DD-AEF2C6F5D33F"
                 },
                 "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2006-2492"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2006-2492",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2006-2492"
+                  ]
+                },
+                "source": "source_artifact",
                 "source_record_id": "CVE-2006-2492"
               }
             ],
@@ -1481,6 +1621,20 @@
                   "match_criteria_id": "EC4AE5AF-C83E-4802-B75C-0058742A4997"
                 },
                 "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2007-0671",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2007-0671"
+                  ]
+                },
+                "source": "source_artifact",
                 "source_record_id": "CVE-2007-0671"
               }
             ],
@@ -1572,6 +1726,20 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2007-0671"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2007-0671",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2007-0671"
+                  ]
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2007-0671"
               }
             ],
             "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/excel.",
@@ -1640,6 +1808,20 @@
                   "match_criteria_id": "FDB0020C-A804-4003-B411-1AC7A6E7193E"
                 },
                 "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2007-0671",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2007-0671"
+                  ]
+                },
+                "source": "source_artifact",
                 "source_record_id": "CVE-2007-0671"
               }
             ],
@@ -1716,6 +1898,20 @@
                   "match_criteria_id": "3C79FEE1-70A3-4A48-BE7B-0D18F0A5FA7F"
                 },
                 "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2007-0671",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2007-0671"
+                  ]
+                },
+                "source": "source_artifact",
                 "source_record_id": "CVE-2007-0671"
               }
             ],
@@ -3964,6 +4160,20 @@
     {
       "created_at": "<TIMESTAMP>",
       "duration_ms": "<DURATION>",
+      "operation_type": "source_artifact_register",
+      "parameters": {
+        "_cruxible_payload_omitted": {
+          "byte_count": 184,
+          "payload_digest": "<DIGEST>",
+          "retention": "metadata"
+        }
+      },
+      "query_name": "",
+      "receipt_id": "<RECEIPT_2>"
+    },
+    {
+      "created_at": "<TIMESTAMP>",
+      "duration_ms": "<DURATION>",
       "operation_type": "workflow",
       "parameters": {},
       "query_name": "build_public_kev_reference",
@@ -3975,7 +4185,7 @@
       "operation_type": "workflow",
       "parameters": {},
       "query_name": "build_public_kev_reference",
-      "receipt_id": "<RECEIPT_2>"
+      "receipt_id": "<RECEIPT_3>"
     }
   ],
   "state": {
