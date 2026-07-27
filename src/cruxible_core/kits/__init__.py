@@ -30,13 +30,13 @@ LOCK_FILE_NAME = "cruxible.lock.yaml"
 _IGNORED_DIRS = {"__pycache__", ".cruxible", ".ruff_cache", ".pytest_cache"}
 _IGNORED_FILES = {".DS_Store"}
 _IGNORED_SUFFIXES = {".pyc"}
-_SHIPPED_KIT_CATALOG: dict[str, str] = {
-    "agent-operation": "oci://ghcr.io/cruxible-ai/kits/agent-operation:0.2.0",
-    "case-law-monitoring": "oci://ghcr.io/cruxible-ai/kits/case-law-monitoring:0.2.0",
-    "kev-reference": "oci://ghcr.io/cruxible-ai/kits/kev-reference:0.2.0",
-    "kev-triage": "oci://ghcr.io/cruxible-ai/kits/kev-triage:0.2.0",
-    "supply-chain-blast-radius": ("oci://ghcr.io/cruxible-ai/kits/supply-chain-blast-radius:0.2.0"),
-}
+# Shipped alias -> transport ref overrides. Empty: first-party kit aliases
+# resolve from the local source checkout (development) or from the packaged
+# kit distribution manifest (installed distributions). The former `oci://`
+# entries named ghcr packages that were never published, so they only ever
+# produced a misleading "oras binary not found" error; explicit user-typed
+# `oci://` refs still resolve through `_pull_oci_kit`.
+_SHIPPED_KIT_CATALOG: dict[str, str] = {}
 
 
 class KitManifest(BaseModel):
@@ -48,6 +48,10 @@ class KitManifest(BaseModel):
     role: str
     target_state: str | None = None
     requires_base: str | None = None
+    # Additive at cruxible.kit.v1: cores that predate this field ignore it
+    # (pydantic's default `extra='ignore'`), so a kit declaring a floor still
+    # loads on an older core -- it just is not refused there.
+    min_core_version: str | None = None
     entry_config: str = "config.yaml"
     provider_paths: list[str] = Field(default_factory=list)
     copy_paths: list[str] = Field(default_factory=list)
@@ -67,6 +71,8 @@ class KitManifest(BaseModel):
             raise ValueError("role: base must not set requires_base")
         if self.requires_base is not None and not self.requires_base.strip():
             raise ValueError("requires_base must name a base kit")
+        if self.min_core_version is not None and not self.min_core_version.strip():
+            raise ValueError("min_core_version must name a version")
         _validate_relative_path(self.entry_config, field_name="entry_config")
         for field_name, values in (
             ("provider_paths", self.provider_paths),
@@ -125,6 +131,42 @@ def load_kit_manifest(root: Path) -> KitManifest:
         raise ConfigError(f"Invalid kit manifest at {path}: {exc}") from exc
 
 
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """Return the leading numeric dot components of a version string.
+
+    Minimal on purpose: ``packaging`` is not a declared dependency of this
+    package, so comparison uses the numeric prefix of each dot component
+    (``0.3.0rc1`` -> ``(0, 3, 0)``) and stops at the first non-numeric one.
+    """
+    parts: list[int] = []
+    for component in version.strip().split("."):
+        digits = ""
+        for char in component:
+            if not char.isdigit():
+                break
+            digits += char
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def _enforce_min_core_version(bundle: KitBundle) -> KitBundle:
+    """Refuse a kit whose declared core floor is newer than the running core."""
+    floor = bundle.manifest.min_core_version
+    if floor is None:
+        return bundle
+    from cruxible_core import __version__
+
+    if _version_tuple(__version__) < _version_tuple(floor):
+        raise ConfigError(
+            f"Kit '{bundle.manifest.kit_id}' requires cruxible core >= {floor}, "
+            f"but this core is {__version__}. Upgrade with: "
+            "pip install --upgrade cruxible"
+        )
+    return bundle
+
+
 def resolve_kit_ref(kit: str) -> KitBundle:
     """Resolve a kit alias or transport ref into the local content-addressed cache."""
     normalized = kit.strip()
@@ -139,7 +181,9 @@ def resolve_kit_ref(kit: str) -> KitBundle:
             from cruxible_core.kit_distribution import published_kit_ids, resolve_published_kit
 
             if normalized in published_kit_ids():
-                return _install_kit_cache(resolve_published_kit(normalized))
+                return _enforce_min_core_version(
+                    _install_kit_cache(resolve_published_kit(normalized))
+                )
             if resolved is None:
                 known = ", ".join(sorted(set(catalog) | published_kit_ids()))
                 raise ConfigError(f"Unknown kit '{kit}'. Known kits: {known or '(none)'}")
@@ -149,10 +193,10 @@ def resolve_kit_ref(kit: str) -> KitBundle:
         source = Path(unquote(normalized.removeprefix("file://"))).expanduser().resolve()
         if not source.exists():
             raise ConfigError(f"Kit file ref does not exist: {source}")
-        return _install_kit_cache(source)
+        return _enforce_min_core_version(_install_kit_cache(source))
     if normalized.startswith("oci://"):
         pulled = _pull_oci_kit(normalized.removeprefix("oci://"))
-        return _install_kit_cache(pulled)
+        return _enforce_min_core_version(_install_kit_cache(pulled))
     raise ConfigError("Kit refs must be aliases, file:// refs, or oci:// refs")
 
 

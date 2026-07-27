@@ -8,15 +8,20 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cruxible_core import __version__
 from cruxible_core.config.schema import ProviderSchema
 from cruxible_core.errors import ConfigError
 from cruxible_core.kit_defaults import DEFAULT_BASE_KIT, get_default_base_kit
+from cruxible_core.kit_distribution import published_kit_ids
 from cruxible_core.kits import (
+    _SHIPPED_KIT_CATALOG,
     KitManifest,
+    _version_tuple,
     compute_kit_provider_sha256,
     compute_kit_runtime_digest,
     config_yaml_has_kit_provider_refs,
     get_kit_catalog,
+    load_kit_manifest,
     load_kit_provider_module,
     materialize_kit,
     namespace_kit_provider_ref,
@@ -122,10 +127,12 @@ def test_materialize_rejects_overlay_kit_for_standalone_init(tmp_path: Path) -> 
         )
 
 
-def test_shipped_catalog_is_overridden_by_local_kits(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_kit_catalog_comes_from_local_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    # There is no hard-coded shipped alias table any more: aliases come from the
+    # source checkout (development) or, for installed distributions, from the
+    # packaged kit distribution manifest.
     monkeypatch.setattr("cruxible_core.kits._discover_local_kit_catalog", lambda: {})
-    shipped = get_kit_catalog()
-    assert shipped["kev-reference"] == "oci://ghcr.io/cruxible-ai/kits/kev-reference:0.2.0"
+    assert get_kit_catalog() == {}
 
     monkeypatch.setattr(
         "cruxible_core.kits._discover_local_kit_catalog",
@@ -134,13 +141,15 @@ def test_shipped_catalog_is_overridden_by_local_kits(monkeypatch: pytest.MonkeyP
     assert get_kit_catalog()["kev-reference"] == "file:///tmp/local-kev-reference"
 
 
-def test_shipped_catalog_resolves_every_featured_kit(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Every kit advertised in the public READMEs must resolve from the shipped
-    # alias catalog so `cruxible init --kit <name>` works without a source
-    # checkout (local discovery disabled). Guards against advertising a kit that
-    # only exists in the dev tree.
+def test_every_featured_kit_is_resolvable_without_a_source_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every kit advertised in the public READMEs must resolve for an installed
+    # distribution, i.e. from the packaged kit distribution manifest (local
+    # discovery disabled). Guards against advertising a kit that only exists in
+    # the dev tree.
     monkeypatch.setattr("cruxible_core.kits._discover_local_kit_catalog", lambda: {})
-    catalog = get_kit_catalog()
+    available = set(get_kit_catalog()) | published_kit_ids()
     for kit in (
         "agent-operation",
         "kev-reference",
@@ -148,21 +157,43 @@ def test_shipped_catalog_resolves_every_featured_kit(monkeypatch: pytest.MonkeyP
         "supply-chain-blast-radius",
         "case-law-monitoring",
     ):
-        assert kit in catalog, f"{kit} is featured in the README but not in the shipped catalog"
+        assert kit in available, f"{kit} is featured in the README but is not resolvable"
 
 
-def test_alias_oci_resolution_uses_shipped_ref(
+def test_unknown_kit_message_enumerates_available_kits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cruxible_core.kits._discover_local_kit_catalog",
+        lambda: {"kev-reference": "file:///tmp/local-kev-reference"},
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        resolve_kit_ref("no-such-kit")
+
+    message = str(excinfo.value)
+    assert "Unknown kit 'no-such-kit'" in message
+    assert "kev-reference" in message
+    for kit_id in published_kit_ids():
+        assert kit_id in message
+
+
+def test_oci_alias_refs_are_gone_from_the_shipped_catalog() -> None:
+    # The ghcr packages these named were never published; an alias must never
+    # route to a dead oci ref again.
+    assert _SHIPPED_KIT_CATALOG == {}
+    assert all("oci://" not in ref for ref in get_kit_catalog().values())
+
+
+def test_explicit_oci_ref_still_pulls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Aliases never route to oci any more, but an explicit third-party
+    # `oci://` ref still resolves through the pull path.
     source = tmp_path / "source"
     source.mkdir()
     _write_minimal_kit(source, role="standalone")
     pulled: list[str] = []
-    monkeypatch.setattr("cruxible_core.kits._discover_local_kit_catalog", lambda: {})
-    # Published release bundles outrank shipped oci refs for aliases; pin the
-    # oci path by resolving as if no distribution manifest were packaged.
-    monkeypatch.setattr("cruxible_core.kit_distribution.load_published_manifest", lambda: None)
     monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "cache"))
 
     def fake_pull(ref: str) -> Path:
@@ -171,10 +202,79 @@ def test_alias_oci_resolution_uses_shipped_ref(
 
     monkeypatch.setattr("cruxible_core.kits._pull_oci_kit", fake_pull)
 
-    bundle = resolve_kit_ref("kev-reference")
+    bundle = resolve_kit_ref("oci://example.com/kits/demo:1.0.0")
 
-    assert pulled == ["ghcr.io/cruxible-ai/kits/kev-reference:0.2.0"]
+    assert pulled == ["example.com/kits/demo:1.0.0"]
     assert bundle.manifest.kit_id == "demo"
+
+
+def test_manifest_without_min_core_version_still_loads(tmp_path: Path) -> None:
+    # Backward compat: cruxible.kit.v1 manifests authored before the field.
+    _write_minimal_kit(tmp_path, role="standalone")
+    assert "min_core_version" not in tmp_path.joinpath("cruxible-kit.yaml").read_text()
+
+    manifest = load_kit_manifest(tmp_path)
+
+    assert manifest.min_core_version is None
+
+
+def test_unknown_manifest_fields_are_ignored(tmp_path: Path) -> None:
+    # The additive-at-v1 claim: an older core ignores fields it does not know,
+    # which is why min_core_version does not need a schema_version bump.
+    _write_minimal_kit(tmp_path, role="standalone")
+    path = tmp_path / "cruxible-kit.yaml"
+    path.write_text(path.read_text() + "some_future_field: 1\n")
+
+    assert load_kit_manifest(tmp_path).kit_id == "demo"
+
+
+def test_min_core_version_floor_refuses_older_core(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    _write_minimal_kit(source, role="standalone", min_core_version="9.9.0")
+    monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr("cruxible_core.__version__", "0.2.8")
+
+    with pytest.raises(ConfigError) as excinfo:
+        resolve_kit_ref(f"file://{source}")
+
+    assert str(excinfo.value) == (
+        "Kit 'demo' requires cruxible core >= 9.9.0, but this core is 0.2.8. "
+        "Upgrade with: pip install --upgrade cruxible"
+    )
+
+
+@pytest.mark.parametrize("core_version", ["1.4.0", "1.4.1", "2.0.0", "1.4.0rc1"])
+def test_min_core_version_floor_allows_equal_or_newer_core(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    core_version: str,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    _write_minimal_kit(source, role="standalone", min_core_version="1.4.0")
+    monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr("cruxible_core.__version__", core_version)
+
+    bundle = resolve_kit_ref(f"file://{source}")
+
+    assert bundle.manifest.min_core_version == "1.4.0"
+
+
+def test_every_bundled_kit_declares_a_satisfiable_core_floor() -> None:
+    # First-party kits ship on the core's release train, so their floor must be
+    # set and must never exceed the core they ship with -- otherwise this branch
+    # cannot resolve its own kits.
+    repo_kits = Path(__file__).resolve().parents[2] / "kits"
+    manifests = sorted(repo_kits.glob("*/cruxible-kit.yaml"))
+    assert manifests
+    for manifest_path in manifests:
+        floor = load_kit_manifest(manifest_path.parent).min_core_version
+        assert floor is not None, manifest_path
+        assert _version_tuple(floor) <= _version_tuple(__version__), manifest_path
 
 
 def test_runtime_digest_ignores_unrelated_files_and_tracks_kit_files(tmp_path: Path) -> None:
@@ -375,14 +475,17 @@ def _write_minimal_kit(
     *,
     role: str,
     target_state: str | None = None,
+    min_core_version: str | None = None,
 ) -> None:
     target_line = f"target_state: {target_state}\n" if target_state else ""
+    floor_line = f"min_core_version: '{min_core_version}'\n" if min_core_version else ""
     root.joinpath("cruxible-kit.yaml").write_text(
         "schema_version: cruxible.kit.v1\n"
         "kit_id: demo\n"
         "version: 0.2.0\n"
         f"role: {role}\n"
         f"{target_line}"
+        f"{floor_line}"
         "entry_config: config.yaml\n"
         "provider_paths:\n"
         "  - providers\n"
