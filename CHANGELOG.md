@@ -9,6 +9,20 @@ the project's own state instance.
 
 ### Changed (BREAKING)
 
+- **The `flag` feedback action is removed** — from the write vocabulary on
+  every surface (service, CLI `feedback --action`, MCP tool schema, HTTP
+  request models, client contracts). As shipped it un-approved an edge to
+  `pending` while storing no annotation, destroying the reviewer's actual
+  signal at the moment it was given. Historical `flag` rows written by 0.2.x
+  instances remain fully readable (the stored-record vocabulary still admits
+  them; they render and move nothing). Submitting `flag` now refuses with a
+  teaching message. **Migration:** record a doubt with
+  `cruxible attest --stance contradict` (MCP: `cruxible_attest`) — it stores
+  the observation, its evidence refs, and its actor without touching review
+  status; adjudicate with `approve`/`reject`/`correct`. Note the tier
+  consequence: every remaining feedback action requires `GRAPH_WRITE`, so no
+  feedback action completes at the `GOVERNED_WRITE` floor any more.
+
 - **The self-declared `human`/`agent` axis is retired**: `FeedbackRecord.source`,
   `OutcomeRecord.source`, `GroupResolution.resolved_by`,
   `CandidateGroup.proposed_by`, `DecisionRecord.opened_by`, and
