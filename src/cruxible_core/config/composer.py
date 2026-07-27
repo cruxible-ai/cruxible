@@ -220,7 +220,12 @@ def resolve_overlay_kit_base_layer(
     content known to be the kit's own layer, never for already-composed configs
     that merely sit next to a copied kit manifest.
     """
-    from cruxible_core.kits import KIT_MANIFEST_FILE, load_kit_manifest, resolve_kit_ref
+    from cruxible_core.kits import (
+        KIT_MANIFEST_FILE,
+        enforce_min_core_version,
+        load_kit_manifest,
+        resolve_kit_ref,
+    )
 
     kit_dir = config_path.parent if config_path is not None else config_dir
     if kit_dir is None or not (kit_dir / KIT_MANIFEST_FILE).exists():
@@ -228,6 +233,9 @@ def resolve_overlay_kit_base_layer(
     manifest = load_kit_manifest(kit_dir)
     if manifest.role != "overlay":
         return None
+    # Both manifests are read straight off disk here; only the no-sibling
+    # fallback below reaches the resolver, so enforce the core floor directly.
+    enforce_min_core_version(manifest)
     if (
         config_path is not None
         and (kit_dir / manifest.entry_config).resolve() != config_path.resolve()
@@ -244,6 +252,7 @@ def resolve_overlay_kit_base_layer(
                 f"Kit directory {sibling_root} declares kit_id "
                 f"'{sibling_manifest.kit_id}', not '{target_state}'"
             )
+        enforce_min_core_version(sibling_manifest)
         base_path = (sibling_root / sibling_manifest.entry_config).resolve()
     else:
         bundle = resolve_kit_ref(target_state)

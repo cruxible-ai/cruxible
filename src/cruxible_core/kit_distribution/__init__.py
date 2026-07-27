@@ -12,8 +12,9 @@ skips the network entirely.
 
 Alias resolution order (see ``cruxible_core.kits.resolve_kit_ref``): local
 source-checkout ``kits/`` directories always win; published bundles from this
-module are the fetch fallback for installed distributions; shipped ``oci://``
-refs cover kits absent from the packaged manifest.
+module are the fetch fallback for installed distributions. There is no shipped
+``oci://`` alias table -- explicit user-typed ``oci://`` refs still resolve
+through ``cruxible_core.kits._pull_oci_kit``.
 
 Set ``CRUXIBLE_KIT_MANIFEST_URL_BASE`` to override ``base_url`` — used by the
 test suite and the pre-publish smoke run against a local file server. Asset

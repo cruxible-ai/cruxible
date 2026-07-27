@@ -623,3 +623,69 @@ def test_overlay_base_layer_resolution_reaches_fetch(
     assert (tmp_path / "kit-cache") in base_layer.config_path.parents
     assert "Actor" in base_layer.config.entity_types
     assert fetch_env.requests == [f"agent-operation-{__version__}.tar.gz"]
+
+
+def _write_overlay_pair(
+    root: Path,
+    *,
+    overlay_floor: str | None = None,
+    base_floor: str | None = None,
+) -> Path:
+    """Write a sibling overlay/base kit pair and return the overlay config path."""
+
+    def _floor(value: str | None) -> str:
+        return f"min_core_version: '{value}'\n" if value else ""
+
+    base_dir = root / "demo-base"
+    base_dir.mkdir(parents=True)
+    base_dir.joinpath("cruxible-kit.yaml").write_text(
+        "schema_version: cruxible.kit.v1\n"
+        "kit_id: demo-base\n"
+        "version: 0.2.0\n"
+        f"{_floor(base_floor)}"
+        "role: base\n"
+        "entry_config: config.yaml\n"
+    )
+    base_dir.joinpath("config.yaml").write_text(
+        "version: '1.0'\n"
+        "name: demo-base\n"
+        "entity_types:\n"
+        "  Thing:\n"
+        "    properties:\n"
+        "      thing_id: {type: string, primary_key: true}\n"
+        "relationships: []\n"
+    )
+    overlay_dir = root / "demo-overlay"
+    overlay_dir.mkdir(parents=True)
+    overlay_dir.joinpath("cruxible-kit.yaml").write_text(
+        "schema_version: cruxible.kit.v1\n"
+        "kit_id: demo-overlay\n"
+        "version: 0.2.0\n"
+        f"{_floor(overlay_floor)}"
+        "role: overlay\n"
+        "target_state: demo-base\n"
+        "entry_config: config.yaml\n"
+    )
+    overlay_dir.joinpath("config.yaml").write_text(
+        "version: '1.0'\nname: demo-overlay\nentity_types: {}\nrelationships: []\n"
+    )
+    return overlay_dir / "config.yaml"
+
+
+def test_sibling_base_layer_resolution_enforces_the_core_floor(tmp_path: Path) -> None:
+    # The sibling branch never reaches resolve_kit_ref, so both manifests are
+    # floor-checked directly. Base kit over the floor:
+    config_path = _write_overlay_pair(tmp_path / "a", base_floor="9.9.0")
+    with pytest.raises(ConfigError, match="Kit 'demo-base' requires cruxible core >= 9.9.0"):
+        resolve_overlay_kit_base_layer(config_path=config_path)
+
+    # Overlay kit itself over the floor:
+    config_path = _write_overlay_pair(tmp_path / "b", overlay_floor="9.9.0")
+    with pytest.raises(ConfigError, match="Kit 'demo-overlay' requires cruxible core >= 9.9.0"):
+        resolve_overlay_kit_base_layer(config_path=config_path)
+
+    # Satisfiable floors compose normally.
+    config_path = _write_overlay_pair(tmp_path / "c", overlay_floor="0.0.1", base_floor="0.0.1")
+    base_layer = resolve_overlay_kit_base_layer(config_path=config_path)
+    assert base_layer is not None
+    assert base_layer.config.name == "demo-base"

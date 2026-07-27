@@ -176,6 +176,14 @@ Rules:
 - 0.2 supports one `entry_config` per kit.
 - `requires_extras` is metadata only. Cruxible does not install kit
   dependencies automatically.
+- `min_core_version` is optional and declares the oldest cruxible core the kit
+  supports. It must be a PEP 440 version and is compared with PEP 440 ordering,
+  so `0.3.0rc1` does *not* satisfy a `0.3.0` floor. An unparseable value is a
+  manifest error at load. The floor is enforced before any kit content is
+  materialized — on `cruxible init --kit`, on governed config upload, and on
+  overlay composition — naming both versions and the upgrade command. Cores
+  that predate the field ignore it, so adding it does not change
+  `schema_version`.
 
 Provider refs use `kit://`:
 
@@ -311,7 +319,9 @@ Alias resolution order:
    must match the pinned directory digest, and the verified kit is installed
    atomically into the kit cache keyed by that digest. Any mismatch deletes
    the artifacts and refuses; a cache hit skips the network entirely.
-3. Shipped `oci://` refs cover aliases absent from the packaged manifest.
+
+There is no shipped alias-to-`oci://` table; an explicit `oci://` ref (a
+third-party kit) still resolves through `oras`.
 
 An overlay kit's `target_state` base resolves through the same order, so a
 fetched overlay composes over its fetched base with no local kits present.
