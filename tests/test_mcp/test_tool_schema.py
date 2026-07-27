@@ -583,15 +583,18 @@ class TestOutputSchema:
         assert output["type"] == "object"
         assert output.get("additionalProperties") is True
 
-    # The four tools below return plain dicts at runtime (FastMCP would wrap
-    # a union-annotated return in a {"result": ...} envelope and break the
-    # legacy top-level shape) but ADVERTISE the real union of their contract
-    # models as an anyOf outputSchema.
+    # The four tools below return a union of contract models. MCP output
+    # schemas must be object-ROOTED, so the union is advertised (and returned)
+    # under the {"result": <union>} envelope FastMCP itself generates for
+    # union-annotated returns.
 
     def _union_variants(self, output):
-        """Resolve the anyOf $refs of a published union schema into $defs."""
+        """Resolve the anyOf $refs of a published union envelope into $defs."""
+        assert output["type"] == "object"
+        assert output["required"] == ["result"]
         defs = output["$defs"]
-        return [defs[variant["$ref"].rsplit("/", 1)[-1]] for variant in output["anyOf"]]
+        union = output["properties"]["result"]
+        return [defs[variant["$ref"].rsplit("/", 1)[-1]] for variant in union["anyOf"]]
 
     @pytest.mark.parametrize("tool_name", ["cruxible_query", "cruxible_query_inline"])
     def test_query_output_schema_documents_both_layouts(self, server, tool_name):

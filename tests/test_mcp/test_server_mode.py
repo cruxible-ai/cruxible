@@ -14,10 +14,45 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
 
 
-def test_create_server_fails_when_server_required_without_endpoint(monkeypatch: pytest.MonkeyPatch):
+def test_tool_listing_is_static_when_server_required_without_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A missing transport must not take the tool LISTING down with it.
+
+    ``create_server()`` used to raise here, so the MCP process died before it
+    could answer ``tools/list`` and agent hosts saw an empty surface. The
+    listing is static; the transport failure is taught at call time.
+    """
     monkeypatch.setenv("CRUXIBLE_REQUIRE_SERVER", "true")
-    with pytest.raises(ConfigError):
-        create_server()
+    monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    handlers.reset_client_cache()
+
+    server = create_server()
+    tools = asyncio.run(server.list_tools())
+
+    assert tools
+    assert "cruxible_query" in {tool.name for tool in tools}
+    assert "Set CRUXIBLE_SERVER_SOCKET or CRUXIBLE_SERVER_URL" in (
+        server._mcp_server.instructions or ""
+    )
+
+
+def test_call_without_transport_teaches_instead_of_hanging(monkeypatch: pytest.MonkeyPatch):
+    """The refusal names the tool and says the static listing proves nothing."""
+    monkeypatch.setenv("CRUXIBLE_REQUIRE_SERVER", "true")
+    monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    handlers.reset_client_cache()
+
+    server = create_server()
+    with pytest.raises(ToolError) as exc_info:
+        asyncio.run(server.call_tool("cruxible_server_info", {}))
+
+    message = str(exc_info.value)
+    assert "Set CRUXIBLE_SERVER_SOCKET or CRUXIBLE_SERVER_URL" in message
+    assert "cruxible_server_info" in message
+    assert "listing is static" in message
 
 
 def test_unreachable_daemon_does_not_block_tool_listing(monkeypatch: pytest.MonkeyPatch):

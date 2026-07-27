@@ -28,6 +28,7 @@ from cruxible_core.graph.types import (
 from cruxible_core.mcp.server import create_server
 from cruxible_core.runtime import api
 from cruxible_core.runtime.instance import CruxibleInstance
+from tests.test_mcp.conftest import unwrap_union_result
 
 ACTOR_CONTEXT = {
     "actor_type": "human_user",
@@ -43,6 +44,11 @@ def call_tool(server, name: str, args: dict[str, Any]) -> dict[str, Any]:
     if isinstance(result, tuple):
         return result[1]
     return json.loads(result[0].text)
+
+
+def call_union_tool(server, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Call a union-returning tool and unwrap its object-rooted result envelope."""
+    return unwrap_union_result(call_tool(server, name, args))
 
 
 @pytest.fixture
@@ -201,7 +207,7 @@ class TestMcpDefaultsCompact:
         assert "actor_context" not in json.dumps(result)
 
     def test_inspect_entity_defaults_compact(self, server, governed_read_instance_id: str) -> None:
-        result = call_tool(
+        result = call_union_tool(
             server,
             "cruxible_inspect_entity",
             {
@@ -224,7 +230,7 @@ class TestMcpDefaultsCompact:
     ) -> None:
         """The expanded dict output follows the inspection contract: every
         stored edge by default, and edges_hidden_by_state under explicit state."""
-        default = call_tool(
+        default = call_union_tool(
             server,
             "cruxible_inspect_entity",
             {
@@ -239,7 +245,7 @@ class TestMcpDefaultsCompact:
         assert {edge["to_id"] for edge in default["edges"]} == {"V-1", "V-2", "V-3"}
         pending = next(edge for edge in default["edges"] if edge["to_id"] == "V-1")
         assert pending["metadata"]["assertion"]["review"]["status"] == "pending"
-        live = call_tool(
+        live = call_union_tool(
             server,
             "cruxible_inspect_entity",
             {
@@ -309,7 +315,7 @@ class TestMcpProfileOverrides:
         assert mcp_result == http_standard
         assert mcp_result["metadata"]["actor_context"]["actor_id"] == "operator"
 
-        mcp_query = call_tool(
+        mcp_query = call_union_tool(
             server,
             "cruxible_query",
             {
@@ -330,7 +336,7 @@ class TestMcpProfileOverrides:
     def test_explicit_compact_query_drops_blobs_keeps_envelope(
         self, server, governed_read_instance_id: str
     ) -> None:
-        result = call_tool(
+        result = call_union_tool(
             server,
             "cruxible_query",
             {
@@ -371,7 +377,7 @@ class TestNonDefaultGovernanceIntegration:
     def test_inspect_compact_keeps_non_default_markers_on_edge_and_entity(
         self, server, governed_read_instance_id: str
     ) -> None:
-        result = call_tool(
+        result = call_union_tool(
             server,
             "cruxible_inspect_entity",
             {
@@ -390,7 +396,7 @@ class TestNonDefaultGovernanceIntegration:
     def test_query_inline_compact_keeps_non_default_markers_on_path(
         self, server, governed_read_instance_id: str
     ) -> None:
-        result = call_tool(
+        result = call_union_tool(
             server,
             "cruxible_query_inline",
             {

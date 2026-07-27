@@ -16,6 +16,18 @@ from cruxible_core.server.registry import reset_registry
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
+def unwrap_union_result(payload: dict) -> dict:
+    """Unwrap the object-rooted ``{"result": ...}`` envelope of a union tool.
+
+    MCP output schemas must be object-rooted, so the union-returning tools
+    (``cruxible_query``, ``cruxible_query_inline``, ``cruxible_list_queries``,
+    ``cruxible_inspect_entity``) nest their payload under ``result``. Asserting
+    the envelope here keeps every call site honest about the wire shape.
+    """
+    assert set(payload) == {"result"}, f"expected a result envelope, got keys {sorted(payload)}"
+    return payload["result"]
+
+
 @pytest.fixture(autouse=True)
 def clear_instances():
     """Clear the instance manager between tests."""

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import sys
+from typing import Any
 
 import structlog
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import Tool as MCPTool
 
 from cruxible_core import __version__
+from cruxible_core.errors import ConfigError
 from cruxible_core.mcp.curation import (
     ToolCuration,
     advertised_tool_names,
@@ -21,7 +24,7 @@ from cruxible_core.mcp.permissions import (
     validate_tool_permissions,
 )
 from cruxible_core.mcp.tools import register_tools
-from cruxible_core.server.config import resolve_server_settings
+from cruxible_core.server.config import ServerSettings, resolve_server_settings
 
 BASE_INSTRUCTIONS = """\
 # cruxible-core
@@ -147,6 +150,7 @@ def _build_instructions(
     *,
     curation: ToolCuration,
     advertised: set[str],
+    transport_error: str | None = None,
 ) -> str:
     """Build server instructions with a dynamic permission mode section."""
     denied = sorted(name for name, tier in TOOL_PERMISSIONS.items() if mode < tier)
@@ -162,8 +166,46 @@ def _build_instructions(
         section += f"\nHidden by MCP curation: {', '.join(hidden)}"
     if denied:
         section += f"\nDenied tools (insufficient mode): {', '.join(denied)}"
+    if transport_error is not None:
+        section += (
+            "\n\n## Daemon Transport Not Configured\n\n"
+            "The tool listing above is static and always answers. The daemon "
+            f"transport is NOT usable: {transport_error}\n"
+            "Tool CALLS will refuse until the transport is configured; the "
+            "listing is not evidence that the daemon is reachable."
+        )
 
     return BASE_INSTRUCTIONS + section
+
+
+def _uncurated_tool_message(
+    name: str,
+    *,
+    mode: PermissionMode,
+    curation: ToolCuration,
+    advertised: set[str],
+) -> str:
+    """Teaching refusal for a registered tool that this server does not advertise."""
+    required = TOOL_PERMISSIONS.get(name)
+    if required is not None and mode < required:
+        return (
+            f"Tool '{name}' is not available: it requires permission mode "
+            f"{required.name}, and this server runs in {mode.name}. Restart the "
+            "server with CRUXIBLE_MODE set to a mode at or above "
+            f"{required.name}, or use one of the advertised tools: "
+            f"{', '.join(sorted(advertised))}."
+        )
+    reason = f"the active MCP tool profile '{curation.profile}'"
+    fix = "Restart the server with CRUXIBLE_MCP_PROFILE=full to widen the surface"
+    if curation.allowlist is not None and name not in curation.allowlist:
+        reason = "the explicit CRUXIBLE_MCP_TOOLS allowlist"
+        fix = "Restart the server with '{name}' added to CRUXIBLE_MCP_TOOLS, or unset it".format(
+            name=name
+        )
+    return (
+        f"Tool '{name}' is not available: it is excluded by {reason}. "
+        f"{fix}. Advertised tools: {', '.join(sorted(advertised))}."
+    )
 
 
 def _registered_tool_names(server: FastMCP) -> set[str]:
@@ -171,8 +213,24 @@ def _registered_tool_names(server: FastMCP) -> set[str]:
     return {tool.name for tool in manager.list_tools()}
 
 
-def _install_list_tools_filter(server: FastMCP, advertised: set[str]) -> None:
-    """Filter MCP tools/list without removing registered tool handlers."""
+def _install_tool_curation(
+    server: FastMCP,
+    advertised: set[str],
+    *,
+    mode: PermissionMode,
+    curation: ToolCuration,
+) -> None:
+    """Enforce curation at BOTH MCP protocol seams: tools/list and tools/call.
+
+    Filtering only the listing left the surface curated in name only: a client
+    that already knew a tool name could still call it over the real stdio
+    protocol, because the low-level ``tools/call`` handler dispatches straight
+    into the FastMCP tool manager. In-process tests missed this precisely
+    because they exercised ``server.list_tools()`` and never the wire path.
+    Both seams are closed here, and the call seam is closed inside the tool
+    manager so ``server.call_tool()`` and the protocol handler (which delegates
+    to it) share one gate rather than two that can drift.
+    """
     manager = getattr(server, "_tool_manager")
     # Materialize the immutable advertised catalog during server creation so
     # tools/list only returns local metadata and never initializes call paths.
@@ -201,10 +259,50 @@ def _install_list_tools_filter(server: FastMCP, advertised: set[str]) -> None:
     lowlevel_server = getattr(server, "_mcp_server")
     lowlevel_server.list_tools()(list_curated_tools)
 
+    # FastMCP.call_tool() -> ToolManager.call_tool(), and the low-level
+    # ListToolsRequest/CallToolRequest handlers were bound to FastMCP's methods
+    # during __init__. Gating the manager therefore covers the protocol path and
+    # the in-process path with one check.
+    inner_call_tool = manager.call_tool
+
+    async def curated_call_tool(
+        name: str,
+        arguments: dict[str, Any],
+        context: Any | None = None,
+        convert_result: bool = False,
+    ) -> Any:
+        if name not in advertised and manager.get_tool(name) is not None:
+            raise ToolError(
+                _uncurated_tool_message(
+                    name,
+                    mode=mode,
+                    curation=curation,
+                    advertised=advertised,
+                )
+            )
+        return await inner_call_tool(
+            name,
+            arguments,
+            context=context,
+            convert_result=convert_result,
+        )
+
+    manager.call_tool = curated_call_tool
+
 
 def create_server() -> FastMCP:
     """Create and configure the cruxible-core MCP server."""
-    settings = resolve_server_settings()
+    # Tool LISTING must never depend on daemon transport. A misconfigured or
+    # absent transport used to abort create_server(), so the process died before
+    # it could answer tools/list and agent hosts saw an empty (or hung) surface.
+    # The failure is carried to tools/call instead, where the caller actually
+    # needs the daemon and can be taught what to fix.
+    try:
+        settings = resolve_server_settings()
+        transport_error: str | None = None
+    except ConfigError as exc:
+        settings = ServerSettings()
+        transport_error = str(exc)
     mode = init_permissions()
     server = FastMCP(
         name=f"cruxible v{__version__}",
@@ -222,8 +320,9 @@ def create_server() -> FastMCP:
         mode,
         curation=curation,
         advertised=advertised,
+        transport_error=transport_error,
     )
-    _install_list_tools_filter(server, advertised)
+    _install_tool_curation(server, advertised, mode=mode, curation=curation)
     # NOTE: Runtime FastMCP parity check is in main(), not here.
     # create_server() must remain safe for async embedders.
     return server

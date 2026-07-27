@@ -24,6 +24,7 @@ from cruxible_core.mcp.handlers import (
 from cruxible_core.mcp.server import create_server
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.runtime.instance import CruxibleInstance
+from tests.test_mcp.conftest import unwrap_union_result
 
 
 def call_tool(server, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -32,6 +33,11 @@ def call_tool(server, name: str, args: dict[str, Any]) -> dict[str, Any]:
     if isinstance(result, tuple):
         return result[1]
     return json.loads(result[0].text)
+
+
+def call_union_tool(server, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Call a union-returning tool and unwrap its object-rooted result envelope."""
+    return unwrap_union_result(call_tool(server, name, args))
 
 
 def call_tool_expect_error(server, name: str, args: dict[str, Any]) -> str:
@@ -461,7 +467,7 @@ def test_query_and_receipt_work_locally_for_seeded_dev_instance(
     server,
     dev_graph_instance_id: str,
 ) -> None:
-    query = call_tool(
+    query = call_union_tool(
         server,
         "cruxible_query",
         {
@@ -496,8 +502,8 @@ def test_query_graph_layout_returns_normalized_sections(
         "query_name": "parts_for_vehicle",
         "params": {"vehicle_id": "V-2024-CIVIC-EX"},
     }
-    rows = call_tool(server, "cruxible_query", args)
-    graph = call_tool(server, "cruxible_query", {**args, "layout": "graph"})
+    rows = call_union_tool(server, "cruxible_query", args)
+    graph = call_union_tool(server, "cruxible_query", {**args, "layout": "graph"})
 
     # Rows layout stays the legacy top-level shape with no graph keys.
     assert "items" in rows
@@ -517,7 +523,7 @@ def test_query_inline_graph_layout_dedupes_entry_node(
     server,
     dev_graph_instance_id: str,
 ) -> None:
-    graph = call_tool(
+    graph = call_union_tool(
         server,
         "cruxible_query_inline",
         {
@@ -759,7 +765,7 @@ def test_list_queries_tool_defaults_to_bounded_summaries(
     server,
     dev_graph_instance_id: str,
 ) -> None:
-    listed = call_tool(
+    listed = call_union_tool(
         server,
         "cruxible_list_queries",
         {"instance_id": dev_graph_instance_id},
@@ -778,7 +784,7 @@ def test_list_queries_tool_defaults_to_bounded_summaries(
     }
     assert item["required_params"] == ["vehicle_id"]
 
-    full = call_tool(
+    full = call_union_tool(
         server,
         "cruxible_list_queries",
         {"instance_id": dev_graph_instance_id, "detail": "full"},
@@ -826,7 +832,7 @@ def test_query_tool_pages_with_offset(
     server,
     dev_graph_instance_id: str,
 ) -> None:
-    full = call_tool(
+    full = call_union_tool(
         server,
         "cruxible_query",
         {
@@ -835,7 +841,7 @@ def test_query_tool_pages_with_offset(
             "params": {"vehicle_id": "V-2024-CIVIC-EX"},
         },
     )
-    page1 = call_tool(
+    page1 = call_union_tool(
         server,
         "cruxible_query",
         {
@@ -846,7 +852,7 @@ def test_query_tool_pages_with_offset(
             "offset": 0,
         },
     )
-    page2 = call_tool(
+    page2 = call_union_tool(
         server,
         "cruxible_query",
         {

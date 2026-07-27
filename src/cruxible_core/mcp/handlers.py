@@ -15,6 +15,7 @@ from typing import Any, TypeVar, cast
 import yaml
 
 from cruxible_client import CruxibleClient, contracts
+from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.provenance import compose_file_with_source_manifest
@@ -82,10 +83,30 @@ def _dispatch_remote_or_local(
     allow_local: bool = True,
     operation_name: str | None = None,
 ) -> ResultT:
-    """Route a handler to the configured HTTP client when server mode is enabled."""
-    client = _get_client()
+    """Route a handler to the configured HTTP client when server mode is enabled.
+
+    Transport problems are reported HERE, at call time, and never at listing
+    time: ``tools/list`` is a static catalog that must answer even when no
+    daemon is configured or running, so the teaching message about the missing
+    or unreachable daemon belongs on the call that actually needs it.
+    """
+    try:
+        client = _get_client()
+    except ConfigError as exc:
+        raise ConfigError(
+            f"{exc} Required by {operation_name or 'this tool'}. The tool listing is "
+            "static and does not prove the daemon is reachable."
+        ) from exc
     if client is not None:
-        return remote_call(client)
+        try:
+            return remote_call(client)
+        except ServerUnreachableError as exc:
+            raise ServerUnreachableError(
+                exc.target,
+                f"{exc.reason} (needed by {operation_name or 'this tool'}; "
+                "start the daemon with `cruxible serve` or point "
+                "CRUXIBLE_SERVER_URL/CRUXIBLE_SERVER_SOCKET at a running one)",
+            ) from exc
     if not allow_local:
         raise ConfigError(
             f"Local mutation disabled for {operation_name or 'this operation'}; configure a server."
