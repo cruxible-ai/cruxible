@@ -18,13 +18,13 @@
     },
     "kev-reference": {
       "asset": "kev-reference-0.2.8.tar.gz",
-      "dir_digest": "sha256:d092d8c5a2d9d96eb5da4f37c85e0cbbee4e9958903264f60f7ac32f9081d960",
-      "tarball_sha256": "50bd4eb6625b75a6274618ea37b654856e2e9deefb3f4baf1bc0cdad80ed099a"
+      "dir_digest": "sha256:8807a0eb79d26c1e15c35a923e6136907f0b2aab7708f5c28cc52def5d6dc0d1",
+      "tarball_sha256": "18330c518e76d6762b72c0b69cb0c6da08a7a400adb84c7fbbb6f0bc9320ee2a"
     },
     "kev-triage": {
       "asset": "kev-triage-0.2.8.tar.gz",
-      "dir_digest": "sha256:4aa8021df2163c97103fa57fee00bb6fc8484f79e18f548e04f066c02274f208",
-      "tarball_sha256": "0498d7c9f0d8f4c59f01f65bfb3fc068c5f6e3a78605595a5a3945f3b57e4b6d"
+      "dir_digest": "sha256:c616bcbe9319bd4fbdabc0f5fa2d889cd4f6bf41e2fc231bc8dbff8407fdc8c5",
+      "tarball_sha256": "6de553785c47b5e2f954bb54fb712f23db43468b03d884286f01c720111a528e"
     },
     "project-domain": {
       "asset": "project-domain-0.2.8.tar.gz",

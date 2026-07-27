@@ -1,7 +1,7 @@
 version: '1'
 config_digest: sha256:d98534cb3a50b9a06530021eb5d340d4065292daac71fba1e9e5e08dfabd9d6c
-lock_digest: sha256:0faca5c22f63d1dc96bb3ebc52fce57624b01db39d119a41caa5a262b594d778
-generated_at: 2026-07-27 14:53:14.437140+00:00
+lock_digest: sha256:84521e380a41b2104534d99fc8de040d4a6bd9b92898d90e77eef97197bd7a1e
+generated_at: 2026-07-27 15:35:56.492054+00:00
 artifacts:
   local_seed_bundle:
     kind: directory
@@ -23,7 +23,7 @@ providers:
   match_software_to_products:
     version: 1.0.0
     ref: kit://providers/matching.py::match_software_to_products
-    provider_entrypoint_digest: sha256:7d4cc7146f0cf64059b0d9c24ea139844f7ca11c29951b6a64f384d7a72cb0eb
+    provider_entrypoint_digest: sha256:5316c4aff70cc5048707bd9e588606c977b4224b7356bf3db299fd4ca119cede
     runtime: python
     deterministic: true
     side_effects: false
@@ -31,7 +31,7 @@ providers:
   assess_asset_affected:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_affected
-    provider_entrypoint_digest: sha256:7d4cc7146f0cf64059b0d9c24ea139844f7ca11c29951b6a64f384d7a72cb0eb
+    provider_entrypoint_digest: sha256:5316c4aff70cc5048707bd9e588606c977b4224b7356bf3db299fd4ca119cede
     runtime: python
     deterministic: true
     side_effects: false
@@ -39,7 +39,7 @@ providers:
   assess_asset_exposure:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_exposure
-    provider_entrypoint_digest: sha256:7d4cc7146f0cf64059b0d9c24ea139844f7ca11c29951b6a64f384d7a72cb0eb
+    provider_entrypoint_digest: sha256:5316c4aff70cc5048707bd9e588606c977b4224b7356bf3db299fd4ca119cede
     runtime: python
     deterministic: true
     side_effects: false
@@ -47,7 +47,7 @@ providers:
   assess_exposure_reconciliation:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_exposure_reconciliation
-    provider_entrypoint_digest: sha256:7d4cc7146f0cf64059b0d9c24ea139844f7ca11c29951b6a64f384d7a72cb0eb
+    provider_entrypoint_digest: sha256:5316c4aff70cc5048707bd9e588606c977b4224b7356bf3db299fd4ca119cede
     runtime: python
     deterministic: true
     side_effects: false
