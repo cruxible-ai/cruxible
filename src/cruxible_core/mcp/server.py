@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import inspect
 import sys
+from importlib import metadata
 from typing import Any
 
 import structlog
+from mcp import types as mcp_types
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.fastmcp.tools.tool_manager import ToolManager
 from mcp.types import Tool as MCPTool
 
 from cruxible_core import __version__
@@ -168,7 +172,7 @@ def _build_instructions(
         section += f"\nDenied tools (insufficient mode): {', '.join(denied)}"
     if transport_error is not None:
         section += (
-            "\n\n## Daemon Transport Not Configured\n\n"
+            "\n\n## Daemon Transport Unusable\n\n"
             "The tool listing above is static and always answers. The daemon "
             f"transport is NOT usable: {transport_error}\n"
             "Tool CALLS will refuse until the transport is configured; the "
@@ -176,6 +180,17 @@ def _build_instructions(
         )
 
     return BASE_INSTRUCTIONS + section
+
+
+_MAX_ADVERTISED_NAMES_IN_REFUSAL = 12
+
+
+def _advertised_summary(advertised: set[str]) -> str:
+    """Name the advertised tools, or point at tools/list once the list is long."""
+    names = sorted(advertised)
+    if len(names) > _MAX_ADVERTISED_NAMES_IN_REFUSAL:
+        return f"{len(names)} tools are advertised; call tools/list for the catalog"
+    return f"Advertised tools: {', '.join(names)}"
 
 
 def _uncurated_tool_message(
@@ -192,8 +207,7 @@ def _uncurated_tool_message(
             f"Tool '{name}' is not available: it requires permission mode "
             f"{required.name}, and this server runs in {mode.name}. Restart the "
             "server with CRUXIBLE_MODE set to a mode at or above "
-            f"{required.name}, or use one of the advertised tools: "
-            f"{', '.join(sorted(advertised))}."
+            f"{required.name}. {_advertised_summary(advertised)}."
         )
     reason = f"the active MCP tool profile '{curation.profile}'"
     fix = "Restart the server with CRUXIBLE_MCP_PROFILE=full to widen the surface"
@@ -204,7 +218,7 @@ def _uncurated_tool_message(
         )
     return (
         f"Tool '{name}' is not available: it is excluded by {reason}. "
-        f"{fix}. Advertised tools: {', '.join(sorted(advertised))}."
+        f"{fix}. {_advertised_summary(advertised)}."
     )
 
 
@@ -227,6 +241,23 @@ def _install_tool_curation(
     protocol, because the low-level ``tools/call`` handler dispatches straight
     into the FastMCP tool manager. In-process tests missed this precisely
     because they exercised ``server.list_tools()`` and never the wire path.
+
+    What that bypass actually reached, precisely. It skipped BOTH the profile /
+    allowlist filter AND the permission-mode filter, because
+    :func:`advertised_tool_names` is the only place either is applied to the
+    tool surface. LOCAL execution was still refused in depth:
+    ``runtime.api`` calls ``check_permission`` inside every gated operation, so
+    a local-mode call landed on that floor. The REMOTE path had no such floor —
+    ``handlers._dispatch_remote_or_local`` forwards to the HTTP client without
+    any local permission check (there is not a single ``check_permission`` call
+    anywhere in ``mcp/handlers.py`` or ``mcp/tools.py``; the mode is enforced
+    only by ``runtime.api``, which the remote branch never enters). So an MCP
+    server started at ``CRUXIBLE_MODE=read_only`` but pointed at a
+    ``graph_write``/``admin`` daemon could execute writes over the wire: the
+    daemon authorizes what its own credential permits, and the client-side mode
+    that was supposed to hold the line was never consulted. That is the
+    escalation this gate closes.
+
     Both seams are closed here, and the call seam is closed inside the tool
     manager so ``server.call_tool()`` and the protocol handler (which delegates
     to it) share one gate rather than two that can drift.
@@ -252,6 +283,7 @@ def _install_tool_curation(
     async def list_curated_tools() -> list[MCPTool]:
         return list(catalog)
 
+    list_curated_tools._cruxible_curated = True  # type: ignore[attr-defined]
     server.list_tools = list_curated_tools  # type: ignore[method-assign]
     # FastMCP registers the low-level ListToolsRequest handler during __init__.
     # Re-register it so protocol clients see the same curated catalog as
@@ -287,6 +319,7 @@ def _install_tool_curation(
             convert_result=convert_result,
         )
 
+    curated_call_tool._cruxible_curated = True  # type: ignore[attr-defined]
     manager.call_tool = curated_call_tool
 
 
@@ -328,13 +361,82 @@ def create_server() -> FastMCP:
     return server
 
 
+# The exact parameter lists this server's curation gate is written against.
+# Both are PRIVATE FastMCP surfaces, so an ``mcp`` package bump can change them
+# without any deprecation. If that happens the gate must fail loudly at startup
+# rather than silently forwarding uncurated calls or breaking every tool call.
+_CALL_TOOL_SEAM_PARAMS = ("self", "name", "arguments", "context", "convert_result")
+_LIST_TOOLS_SEAM_PARAMS = ("self",)
+
+
+def _mcp_package_version() -> str:
+    try:
+        return metadata.version("mcp")
+    except metadata.PackageNotFoundError:  # pragma: no cover - env without metadata
+        return "unknown"
+
+
+def _validate_curation_seams(server: FastMCP) -> None:
+    """Fail at STARTUP if the FastMCP seams the curation gate wraps have moved.
+
+    The gate wraps two private FastMCP internals: ``ToolManager.call_tool`` (the
+    single chokepoint both the protocol handler and ``FastMCP.call_tool`` reach)
+    and the ``tools/list`` handler registration. A signature or wiring change in
+    a new ``mcp`` release would otherwise surface as a total outage on the first
+    tool call — or, worse for a security gate, as a silently un-wrapped seam.
+    Checked here so ``main()`` refuses to start with a named reason.
+    """
+    mcp_version = _mcp_package_version()
+
+    for owner, attr, expected in (
+        (ToolManager, "call_tool", _CALL_TOOL_SEAM_PARAMS),
+        (FastMCP, "list_tools", _LIST_TOOLS_SEAM_PARAMS),
+    ):
+        actual = tuple(inspect.signature(getattr(owner, attr)).parameters)
+        if actual != expected:
+            raise ConfigError(
+                f"MCP tool curation cannot be enforced: {owner.__name__}.{attr}() "
+                f"has parameters {actual}, but the curation gate is written "
+                f"against {expected} (mcp package {mcp_version}). Update "
+                "cruxible_core.mcp.server._install_tool_curation to match the "
+                "new FastMCP seam before serving."
+            )
+
+    manager = getattr(server, "_tool_manager")
+    if not getattr(manager.call_tool, "_cruxible_curated", False):
+        raise ConfigError(
+            "MCP tools/call is not curated: the tool manager's call_tool was not "
+            f"replaced by the curation gate (mcp package {mcp_version}). Refusing "
+            "to serve an uncurated tool surface."
+        )
+    if not getattr(server.list_tools, "_cruxible_curated", False):
+        raise ConfigError(
+            "MCP tools/list is not curated: FastMCP.list_tools was not replaced "
+            f"by the curation gate (mcp package {mcp_version}). Refusing to serve "
+            "an uncurated tool surface."
+        )
+
+    lowlevel_server = getattr(server, "_mcp_server")
+    for request_type in (mcp_types.ListToolsRequest, mcp_types.CallToolRequest):
+        if request_type not in lowlevel_server.request_handlers:
+            raise ConfigError(
+                f"MCP protocol handler for {request_type.__name__} is not "
+                f"registered (mcp package {mcp_version}); the curated surface "
+                "would not be served."
+            )
+
+
 def validate_runtime_tools(server: FastMCP) -> None:
     """Compare FastMCP's actual tool list against TOOL_PERMISSIONS.
+
+    Also verifies the curation seams are intact — see
+    :func:`_validate_curation_seams`.
 
     Must be called from a sync context (no running event loop).
     """
     actual_tools = _registered_tool_names(server)
     validate_tool_permissions(list(actual_tools))
+    _validate_curation_seams(server)
 
 
 def configure_structlog() -> None:

@@ -39,7 +39,12 @@ def test_tool_listing_is_static_when_server_required_without_endpoint(
 
 
 def test_call_without_transport_teaches_instead_of_hanging(monkeypatch: pytest.MonkeyPatch):
-    """The refusal names the tool and says the static listing proves nothing."""
+    """The refusal teaches: what to set, how to start a daemon, and what the listing proves.
+
+    Asserted against the TEACHING text specifically. A bare tool-name assertion
+    would pass on FastMCP's own ``Error executing tool <name>:`` prefix and
+    would therefore still pass if every teaching sentence were deleted.
+    """
     monkeypatch.setenv("CRUXIBLE_REQUIRE_SERVER", "true")
     monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
@@ -51,8 +56,10 @@ def test_call_without_transport_teaches_instead_of_hanging(monkeypatch: pytest.M
 
     message = str(exc_info.value)
     assert "Set CRUXIBLE_SERVER_SOCKET or CRUXIBLE_SERVER_URL" in message
-    assert "cruxible_server_info" in message
-    assert "listing is static" in message
+    # The tool name inside OUR sentence, not FastMCP's "Error executing tool" prefix.
+    assert "Required by cruxible_server_info" in message
+    assert "Start the daemon with `cruxible serve`" in message
+    assert "listing is static and does not prove the daemon is reachable" in message
 
 
 def test_unreachable_daemon_does_not_block_tool_listing(monkeypatch: pytest.MonkeyPatch):

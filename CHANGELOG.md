@@ -143,6 +143,25 @@ the project's own state instance.
   feedback. `reject` / `flag` stay available — they move edges *out* of
   live state.
 
+- **Four MCP tools now return an object-rooted `{"result": ...}` envelope**:
+  `cruxible_query`, `cruxible_query_inline`, `cruxible_list_queries`, and
+  `cruxible_inspect_entity` each return a UNION of contract models, which
+  derives to an `anyOf` at the schema ROOT. The MCP specification requires a
+  tool's `outputSchema` to be object-rooted, and strict clients reject an
+  `anyOf` root outright. The previous schema papered over this by pinning
+  `"type": "object"` beside the `anyOf` root — a lie about a schema that had no
+  `properties` and validated as an alternation. The union now sits under a
+  required `result` property, which is both the correct shape and the shape
+  FastMCP already generated for `cruxible_state_diff`, so all five union tools
+  share one convention.
+
+  The envelope applies to **both** halves of the tool response: the
+  `structuredContent` object and the JSON in the text content block. Payloads
+  inside `result` are byte-identical to what the handler produced before — only
+  the nesting changed.
+
+  **Migration:** read `payload["result"]` where you previously read `payload`.
+
 ### Added
 
 - **Opening a resolution contract requires an outcome guard on the
@@ -207,6 +226,42 @@ the project's own state instance.
   `cruxible state pull-preview --repair` then
   `cruxible state pull-apply --repair --apply-digest ...`. Repair preserves
   claim ids.
+
+### Security
+
+- **MCP `tools/call` bypassed tool curation AND permission mode at the protocol
+  seam.** The advertised surface was filtered only where in-process callers
+  looked: `tools/list` returned the curated catalog, but the low-level
+  `tools/call` handler dispatched straight into the FastMCP tool manager. Any
+  client that knew a tool name — the names are public — could invoke a tool the
+  server had excluded, regardless of `CRUXIBLE_MCP_PROFILE`,
+  `CRUXIBLE_MCP_TOOLS`, or `CRUXIBLE_MODE`, because
+  `advertised_tool_names()` is the only place either filter is applied to the
+  tool surface.
+
+  **Precise escalation.** LOCAL execution was still refused in depth:
+  `runtime.api` calls `check_permission` inside every gated operation, so a
+  local-mode call landed on that floor and a read-only server stayed read-only.
+  The REMOTE dispatch path had no equivalent floor. All 92
+  `_dispatch_remote_or_local` call sites forward to the HTTP client without any
+  local permission check — there is not a single `check_permission` call in
+  `mcp/handlers.py` or `mcp/tools.py`, and the remote branch never enters
+  `runtime.api`, which is where the mode is enforced. The daemon authorizes
+  what its own credential permits. So an MCP server started at
+  `CRUXIBLE_MODE=read_only` and pointed at a `graph_write` or `admin` daemon
+  could execute writes over the wire; the client-side mode that was supposed to
+  hold that line was never consulted.
+
+  The gate now sits on `ToolManager.call_tool`, the single chokepoint both the
+  protocol handler and `FastMCP.call_tool()` reach, so the two seams cannot
+  drift apart. Refusals name the tool, the reason (profile / allowlist /
+  permission mode), and the environment variable that widens the surface.
+  Regression coverage drives a real `ClientSession` over the wire rather than
+  calling `list_tools()` in process, which is precisely why the original bug
+  went unseen. Because the gate wraps private FastMCP internals,
+  `validate_runtime_tools()` now pins those seams' signatures and asserts the
+  wrappers are installed, so an `mcp` package bump fails at startup with a
+  named reason instead of silently un-wrapping a security gate.
 
 ### Fixed (governance)
 
@@ -369,6 +424,16 @@ removal in the release after 0.3.
   zero: no path can grow that bucket any more. Read `withdrawn_count`.
 
 ### Fixed
+
+- **The MCP tool listing no longer depends on the daemon.** A missing or
+  invalid transport (`CRUXIBLE_REQUIRE_SERVER` set with neither
+  `CRUXIBLE_SERVER_URL` nor `CRUXIBLE_SERVER_SOCKET`, or both set at once)
+  aborted `create_server()`, so the MCP process died before it could answer
+  `tools/list` and agent hosts saw an empty surface or hung waiting for one.
+  The listing is now static — built from local metadata at construction, never
+  touching a call path — and the transport failure is carried to the call that
+  actually needs the daemon. Those refusals teach: what to set, how to start a
+  daemon, and that a static listing is not evidence the daemon is reachable.
 
 - **Acceptance binds content**: a group approval accepts an edge's PROPERTIES,
   not merely its existence. A later direct write that changes a group-approved

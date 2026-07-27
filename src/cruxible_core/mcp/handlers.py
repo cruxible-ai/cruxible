@@ -94,8 +94,10 @@ def _dispatch_remote_or_local(
         client = _get_client()
     except ConfigError as exc:
         raise ConfigError(
-            f"{exc} Required by {operation_name or 'this tool'}. The tool listing is "
-            "static and does not prove the daemon is reachable."
+            f"{exc} Required by {operation_name or 'this tool'}. Start the daemon "
+            "with `cruxible serve` and point CRUXIBLE_SERVER_URL or "
+            "CRUXIBLE_SERVER_SOCKET at it. The tool listing is static and does "
+            "not prove the daemon is reachable."
         ) from exc
     if client is not None:
         try:
@@ -261,6 +263,7 @@ def handle_server_info() -> contracts.ServerInfoResult:
     return _dispatch_remote_or_local(
         lambda client: client.server_info(),
         api.server_info,
+        operation_name="cruxible_server_info",
     )
 
 

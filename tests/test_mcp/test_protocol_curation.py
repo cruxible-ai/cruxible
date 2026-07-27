@@ -14,10 +14,13 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.tools.tool_manager import ToolManager
 from mcp.shared.memory import create_connected_server_and_client_session
 
+from cruxible_core.errors import ConfigError
 from cruxible_core.mcp.permissions import reset_permissions
-from cruxible_core.mcp.server import create_server
+from cruxible_core.mcp.server import create_server, validate_runtime_tools
 
 
 def _protocol_session(server):
@@ -169,3 +172,73 @@ def test_protocol_listing_answers_without_a_daemon(monkeypatch: pytest.MonkeyPat
     assert "cruxible_query" in names
     assert is_error
     assert "CRUXIBLE_SERVER_URL" in text
+
+
+class TestCurationSeamPinning:
+    """The gate wraps PRIVATE FastMCP internals, so it must fail loudly on drift.
+
+    An ``mcp`` package bump can move these seams with no deprecation. Without
+    this check the failure mode is either a total outage on the first tool call
+    or — far worse for a security gate — a seam that silently stops being
+    wrapped. ``validate_runtime_tools()`` runs in ``main()``, so drift is a
+    startup refusal with a named reason.
+    """
+
+    def test_call_tool_signature_drift_refuses_at_startup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reset_permissions()
+        server = create_server()
+
+        async def renamed_call_tool(self, tool_name, args, ctx=None):  # noqa: ANN001
+            raise AssertionError("not called")
+
+        monkeypatch.setattr(ToolManager, "call_tool", renamed_call_tool)
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_runtime_tools(server)
+
+        message = str(exc_info.value)
+        assert "ToolManager.call_tool()" in message
+        assert "curation gate is written against" in message
+        assert "mcp package" in message
+
+    def test_list_tools_signature_drift_refuses_at_startup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reset_permissions()
+        server = create_server()
+
+        async def paginated_list_tools(self, cursor=None):  # noqa: ANN001
+            raise AssertionError("not called")
+
+        monkeypatch.setattr(FastMCP, "list_tools", paginated_list_tools)
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_runtime_tools(server)
+
+        message = str(exc_info.value)
+        assert "FastMCP.list_tools()" in message
+        assert "curation gate is written against" in message
+
+    def test_unwrapped_call_seam_refuses_at_startup(self) -> None:
+        """A gate that failed to install must not be served as if it had."""
+        reset_permissions()
+        server = create_server()
+        # Simulate FastMCP restoring its own dispatcher after our install.
+        server._tool_manager.call_tool = ToolManager.call_tool.__get__(server._tool_manager)
+
+        with pytest.raises(ConfigError, match="tools/call is not curated"):
+            validate_runtime_tools(server)
+
+    def test_unwrapped_list_seam_refuses_at_startup(self) -> None:
+        reset_permissions()
+        server = create_server()
+        del server.list_tools
+
+        with pytest.raises(ConfigError, match="tools/list is not curated"):
+            validate_runtime_tools(server)
+
+    def test_intact_seams_pass(self) -> None:
+        reset_permissions()
+        validate_runtime_tools(create_server())
