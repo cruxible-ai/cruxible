@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -46,6 +46,8 @@ def _attest(
     claim_id: str | None = None,
     properties: dict[str, object] | None = None,
     idempotency_key: str | None = None,
+    note: str | None = None,
+    observed_at: datetime = OBSERVED_AT,
 ) -> AttestationRecordResult:
     return service_attest(
         instance,
@@ -60,12 +62,13 @@ def _attest(
             if evidence_refs is None and stance != "unsure"
             else evidence_refs or []
         ),
-        observed_at=OBSERVED_AT,
+        observed_at=observed_at,
         actor_context=actor(observer),
         edge_key=edge_key,
         claim_id=claim_id,
         properties=properties,
         idempotency_key=idempotency_key,
+        note=note,
     )
 
 
@@ -437,6 +440,79 @@ def test_idempotent_replay_refuses_divergent_request(
     assert replay.attestation.attestation_id == original.attestation.attestation_id
 
 
+class TestReplayDivergenceCoversEveryPersistedField:
+    """The replay diff used to compare 2 of the record's fields, not all of them.
+
+    ``note``, ``observed_at`` and ``edge_key`` are persisted on
+    ``AttestationRecord`` and diverged SILENTLY: a reused key carrying a
+    different note or a different observation time returned the original record
+    as an "idempotent replay" and dropped the second, distinct observation. The
+    stronger shape existed in ``service/resolution_contracts`` and was
+    back-ported.
+    """
+
+    def test_divergent_note_refuses(self, attestation_instance: CruxibleInstance) -> None:
+        add_live_claim(attestation_instance)
+        _attest(attestation_instance, "support", idempotency_key="note-key", note="first")
+        with pytest.raises(ConfigError, match="diverges from the original.*note"):
+            _attest(
+                attestation_instance,
+                "support",
+                idempotency_key="note-key",
+                note="a materially different reading",
+            )
+
+    def test_note_appearing_where_there_was_none_refuses(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        """None -> a note is a divergence too; it is new content on a reused key."""
+        add_live_claim(attestation_instance)
+        _attest(attestation_instance, "support", idempotency_key="note-none-key")
+        with pytest.raises(ConfigError, match="note"):
+            _attest(
+                attestation_instance,
+                "support",
+                idempotency_key="note-none-key",
+                note="added after the fact",
+            )
+
+    def test_divergent_observed_at_refuses(self, attestation_instance: CruxibleInstance) -> None:
+        add_live_claim(attestation_instance)
+        _attest(attestation_instance, "support", idempotency_key="clock-key")
+        with pytest.raises(ConfigError, match="diverges from the original.*observed_at"):
+            _attest(
+                attestation_instance,
+                "support",
+                idempotency_key="clock-key",
+                observed_at=OBSERVED_AT - timedelta(days=30),
+            )
+
+    def test_divergent_edge_key_refuses(self, attestation_instance: CruxibleInstance) -> None:
+        add_live_claim(attestation_instance)
+        _attest(attestation_instance, "support", idempotency_key="edge-key-key")
+        with pytest.raises(ConfigError, match="diverges from the original.*edge_key"):
+            _attest(
+                attestation_instance,
+                "support",
+                idempotency_key="edge-key-key",
+                edge_key=4242,
+            )
+
+    def test_an_identical_replay_with_a_note_still_replays(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        """The widened diff must not turn honest replays into refusals."""
+        add_live_claim(attestation_instance)
+        original = _attest(
+            attestation_instance, "support", idempotency_key="same-key", note="same note"
+        )
+        replay = _attest(
+            attestation_instance, "support", idempotency_key="same-key", note="same note"
+        )
+        assert replay.idempotent_replay is True
+        assert replay.attestation.attestation_id == original.attestation.attestation_id
+
+
 def test_a_stale_claim_id_refuses_instead_of_silently_retargeting_the_tuple(
     attestation_instance: CruxibleInstance,
 ) -> None:
@@ -518,3 +594,65 @@ def test_corrected_disposition_refuses_fabricated_follow_up_receipt(
             actor_context=actor("reviewer"),
             follow_up_receipt_id="RCP-fabricated",
         )
+
+
+class TestAttestingDoesNotAdvanceReadRevision:
+    """Attesting is an observation ABOUT state, not a change TO it.
+
+    Attestations and dispositions are structurally incapable of touching a
+    claim's trust, review, or lifecycle status. Advancing ``read_revision`` on
+    an attest therefore told every reader the graph had moved when it had not —
+    an undisclosed divergence from what the counter documents itself to mean
+    (``storage/sqlite.py`` ``_AUDIT_ONLY_TABLES``).
+
+    Verified as safe before the exemption was applied: the outcome-contract
+    evidence binding requires only that a cited receipt CARRY a read_revision
+    stamp (``resolution_contracts._bind_resolution_evidence``), never that the
+    value advance, and its ordering checks are all on ``created_at``. Nothing
+    else in the tree keys off an attest bumping the counter, and continuation
+    tokens are issued for query reads only, which attestations do not use.
+    """
+
+    def test_attest_against_a_live_claim_does_not_advance_the_revision(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        add_live_claim(attestation_instance)
+        before = attestation_instance.get_read_revision()
+        result = _attest(attestation_instance, "support")
+        assert result.created_claim is False
+        assert attestation_instance.get_read_revision() == before
+
+    def test_a_disposition_does_not_advance_the_revision(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        add_live_claim(attestation_instance)
+        recorded = _attest(attestation_instance, "contradict")
+        before = attestation_instance.get_read_revision()
+        service_resolve_attestation(
+            attestation_instance,
+            recorded.attestation.attestation_id,
+            verdict="upheld",
+            actor_context=actor("reviewer"),
+        )
+        assert attestation_instance.get_read_revision() == before
+
+    def test_a_graph_write_still_advances_the_revision(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        """The exemption is scoped to the audit lane, not a blanket freeze."""
+        before = attestation_instance.get_read_revision()
+        add_live_claim(attestation_instance)
+        assert attestation_instance.get_read_revision() > before
+
+    def test_an_attest_that_mints_a_pending_claim_does_advance_the_revision(
+        self, attestation_instance: CruxibleInstance
+    ) -> None:
+        """The one thing an attest CAN do to state still moves the counter.
+
+        Creating the pending claim writes ``graph_relationships``, which is not
+        exempt — so freshness is not silently lost for the case that changes it.
+        """
+        before = attestation_instance.get_read_revision()
+        result = _attest(attestation_instance, "support", properties={"severity": "high"})
+        assert result.created_claim is True
+        assert attestation_instance.get_read_revision() > before

@@ -208,3 +208,87 @@ def test_mutation_cli_points_at_the_verbs_that_replace_terminal_writes() -> None
         assert "wi-lifecycle-verbs" not in doc, command_name
         for verb in verbs:
             assert verb in doc, (command_name, verb)
+
+
+# ---------------------------------------------------------------------------
+# Postures pinned AS THEY ARE, honestly labelled. No behavior change here: these
+# record what the code does today so a later change is a visible diff rather
+# than an unremarked drift. Two of them are gaps, not designs, and say so.
+# ---------------------------------------------------------------------------
+
+
+def test_cruxible_init_sits_at_read_only_while_creating_a_state_db() -> None:
+    """PINNED AS A KNOWN POSTURE GAP — not a documented intent.
+
+    ``cruxible_init`` is filed under the READ_ONLY block of ``TOOL_PERMISSIONS``,
+    whose own comment says "READ_ONLY tools do not mutate graph/state". Init does
+    mutate the filesystem: it creates an instance root, writes a managed config,
+    and creates ``state.db``. Nothing in the module explains the exemption, so it
+    reads as an oversight rather than a decision.
+
+    Deliberately NOT changed here: raising the tier is a breaking change to every
+    caller that inits at read-only today, and it belongs to a permission-posture
+    work item with its own migration note. This test pins the CURRENT tier so the
+    gap is visible in code review and any future change is intentional. If the
+    tier is raised, update this test and delete the gap note.
+    """
+    assert (
+        permissions_module.TOOL_PERMISSIONS["cruxible_init"]
+        is permissions_module.PermissionMode.READ_ONLY
+    ), (
+        "cruxible_init's tier changed. That is fine — but it was pinned as a KNOWN "
+        "POSTURE GAP (a READ_ONLY tool that creates state.db), so update this test "
+        "and remove the gap note rather than loosening the assertion."
+    )
+
+
+def test_bootstrap_secret_is_repeatable_for_server_operations() -> None:
+    """PINNED AS DOCUMENTED INTENT — the one-time claim gates hosted init only.
+
+    Two different uses of the same bootstrap secret live side by side in
+    ``server/auth.py``:
+
+    * hosted instance init additionally requires
+      ``not bootstrap_secret_claimed(...)`` — genuinely one-time;
+    * the daemon-wide server operations (``GET /server/info``,
+      ``POST /server/restart``, ``POST /instances/restore``) do NOT consult the
+      claim, so the secret authenticates them repeatedly.
+
+    The in-code comment states this is deliberate ("these are repeatable operator
+    actions, so they are NOT gated on the one-time bootstrap claim"). This test
+    pins both halves so the asymmetry cannot be "fixed" in either direction by
+    accident: dropping the claim check from init would silently make init
+    repeatable, and adding one to restart would brick a running daemon's second
+    restart.
+    """
+    from cruxible_core.server import auth as auth_module
+
+    source = (REPO_ROOT / "src" / "cruxible_core" / "server" / "auth.py").read_text()
+
+    routed = {path for _method, path in auth_module._SERVER_OPERATION_ROUTES}
+    for expected in ("/server/info", "/server/restart", "/instances/restore"):
+        assert any(expected in path for path in routed), (expected, sorted(routed))
+
+    hosted_init_branch = re.search(
+        r"_is_hosted_instance_init_request\(request\)(?P<body>.*?)elif",
+        source,
+        flags=re.DOTALL,
+    )
+    assert hosted_init_branch is not None
+    assert "bootstrap_secret_claimed" in hosted_init_branch.group("body"), (
+        "hosted instance init no longer checks bootstrap_secret_claimed — the "
+        "bootstrap secret would become repeatable for init, which is exactly the "
+        "one case it is meant to be single-use for."
+    )
+
+    server_op_branch = re.search(
+        r"_is_server_operation_request\(request\)(?P<body>.*?)\):",
+        source,
+        flags=re.DOTALL,
+    )
+    assert server_op_branch is not None
+    assert "bootstrap_secret_claimed" not in server_op_branch.group("body"), (
+        "The server-operation branch now consults the one-time bootstrap claim. If "
+        "that is intended, update this pin — but note a claimed secret would then "
+        "fail every subsequent /server/restart and /instances/restore."
+    )

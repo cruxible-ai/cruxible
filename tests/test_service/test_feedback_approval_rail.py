@@ -37,7 +37,11 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import DirectWriteRefusedError, PermissionDeniedError
 from cruxible_core.feedback.types import FeedbackBatchItem
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
+from cruxible_core.runtime.permissions import (
+    FEEDBACK_ACTION_PERMISSIONS,
+    PermissionMode,
+    request_permission_scope,
+)
 from cruxible_core.server.errors import error_to_response
 from cruxible_core.service.direct_write_policy import env_refuses_feedback_acceptance
 from cruxible_core.service.feedback import service_feedback, service_feedback_batch
@@ -145,6 +149,11 @@ def _feedback(rail: Rail, action: str, **overrides: Any) -> Any:
         "target": _target(),
         "reason": "rail test",
     }
+    # ``correct`` refuses an empty corrections payload at the service seam, so
+    # these tier/kill-switch tests supply a real one; the rails they exercise are
+    # about the ACTION, not about which properties it happens to touch.
+    if action == "correct":
+        kwargs["corrections"] = {"verified": True}
     kwargs.update(overrides)
     return service_feedback(rail.instance, **kwargs)
 
@@ -155,6 +164,7 @@ def _batch_item(rail: Rail, action: str) -> FeedbackBatchItem:
         action=action,
         target=_target(),
         reason="rail test",
+        corrections={"verified": True} if action == "correct" else {},
     )
 
 
@@ -190,18 +200,20 @@ def test_graph_write_approve_allowed(rail: Rail) -> None:
     assert _review_status(rail) == "approved"
 
 
-def test_governed_write_flag_allowed(rail: Rail) -> None:
-    """``flag`` asks for review; it does not grant it, so it stays governed."""
-    with request_permission_scope(PermissionMode.GOVERNED_WRITE):
-        result = _feedback(rail, "flag")
-    assert result.applied is True
-    assert _review_status(rail) == "pending"
+def test_no_feedback_action_sits_at_the_governed_floor_anymore() -> None:
+    """``flag`` was the last GOVERNED_WRITE action; removing it emptied that tier.
+
+    Kept as an explicit pin because the docs and the permissions module both used
+    to describe a governed-tier feedback action. If one is ever re-introduced,
+    this fails and the prose has to be revisited with it.
+    """
+    assert set(FEEDBACK_ACTION_PERMISSIONS) == {"approve", "reject", "correct"}
+    assert set(FEEDBACK_ACTION_PERMISSIONS.values()) == {PermissionMode.GRAPH_WRITE}
 
 
 def test_batch_is_gated_at_its_strictest_action(rail: Rail) -> None:
-    """One adjudication item lifts the whole batch's requirement, and the batch
-    is all-or-nothing: the governed-tier ``flag`` beside it is not applied."""
-    items = [_batch_item(rail, "flag"), _batch_item(rail, "approve")]
+    """Every action is an adjudication now, so the whole batch needs GRAPH_WRITE."""
+    items = [_batch_item(rail, "reject"), _batch_item(rail, "approve")]
     with request_permission_scope(PermissionMode.GOVERNED_WRITE):
         with pytest.raises(PermissionDeniedError, match="GRAPH_WRITE"):
             service_feedback_batch(rail.instance, items)
@@ -211,12 +223,6 @@ def test_batch_is_gated_at_its_strictest_action(rail: Rail) -> None:
         result = service_feedback_batch(rail.instance, items)
     assert result.applied_count == 2
     assert _review_status(rail) == "approved"
-
-
-def test_batch_of_flags_stays_governed(rail: Rail) -> None:
-    with request_permission_scope(PermissionMode.GOVERNED_WRITE):
-        result = service_feedback_batch(rail.instance, [_batch_item(rail, "flag")])
-    assert result.applied_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -241,16 +247,14 @@ def test_kill_switch_refuses_acceptance_actions(
     assert _review_status(rail) == "pending"
 
 
-@pytest.mark.parametrize("action", ["reject", "flag"])
 def test_kill_switch_does_not_refuse_retraction_actions(
     rail: Rail,
     monkeypatch: pytest.MonkeyPatch,
-    action: str,
 ) -> None:
-    """``reject``/``flag`` move an edge OUT of live state — the direction the
-    kill-switch wants. Refusing them would strand pending edges."""
+    """``reject`` moves an edge OUT of live state — the direction the kill-switch
+    wants. Refusing it would strand pending edges."""
     monkeypatch.setenv("CRUXIBLE_REFUSE_DIRECT_WRITES", "1")
-    result = _feedback(rail, action)
+    result = _feedback(rail, "reject")
     assert result.applied is True
 
 
@@ -259,7 +263,7 @@ def test_kill_switch_refuses_a_batch_containing_acceptance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CRUXIBLE_REFUSE_DIRECT_WRITES", "true")
-    items = [_batch_item(rail, "flag"), _batch_item(rail, "approve")]
+    items = [_batch_item(rail, "reject"), _batch_item(rail, "approve")]
     with pytest.raises(DirectWriteRefusedError):
         service_feedback_batch(rail.instance, items)
     assert _review_status(rail) == "pending"
@@ -290,7 +294,6 @@ def test_kill_switch_scope_is_the_acceptance_actions_only() -> None:
     assert env_refuses_feedback_acceptance("approve", env)
     assert env_refuses_feedback_acceptance("correct", env)
     assert not env_refuses_feedback_acceptance("reject", env)
-    assert not env_refuses_feedback_acceptance("flag", env)
 
 
 def test_feedback_kill_switch_refusal_maps_to_403() -> None:

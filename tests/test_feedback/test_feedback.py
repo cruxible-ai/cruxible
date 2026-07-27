@@ -1,6 +1,7 @@
 """Tests for the feedback system: types, store, applier, and integration."""
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_core.config.schema import (
     CoreConfig,
@@ -264,17 +265,22 @@ class TestApplier:
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert_review_state(rel, status="rejected", source="human")
 
-    def test_flag(self, graph: EntityGraph, target: RelationshipInstance):
-        fb = FeedbackRecord(
-            receipt_id="RCP-test",
-            action="flag",
-            target=target,
-            actor_context=human_actor(),
-        )
-        assert apply_feedback(graph, fb) is True
+    def test_flag_is_not_a_constructible_action(self, target: RelationshipInstance):
+        """``flag`` was removed at the type, not just at the service seam.
 
-        rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert_review_state(rel, status="pending", source="human")
+        It un-approved an edge to ``pending`` while storing no annotation, so
+        the reviewer's signal was destroyed rather than recorded. A record
+        cannot even be built for it now, so no stored row and no replay can
+        resurrect the behaviour. ``cruxible attest --stance contradict`` is the
+        replacement.
+        """
+        with pytest.raises(ValidationError):
+            FeedbackRecord(
+                receipt_id="RCP-test",
+                action="flag",  # type: ignore[arg-type]
+                target=target,
+                actor_context=human_actor(),
+            )
 
     def test_correct(self, graph: EntityGraph, target: RelationshipInstance):
         fb = FeedbackRecord(

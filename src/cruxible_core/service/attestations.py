@@ -44,7 +44,78 @@ from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.service.types import ListResult, list_truncated
-from cruxible_core.temporal import ensure_utc, utc_now
+from cruxible_core.temporal import ensure_utc, format_datetime, utc_now
+
+
+def _replay_divergences(
+    original: AttestationRecord,
+    *,
+    stance: AttestationStance,
+    evidence_refs: Sequence[EvidenceRef],
+    observed_at: datetime,
+    note: str | None,
+    edge_key: int | None,
+    relationship: RelationshipInstance | None,
+) -> list[str]:
+    """Diff a replayed request against the record its idempotency key already minted.
+
+    An idempotency key promises "this is the SAME observation". Anything the
+    record persists is therefore in scope: a reused key carrying a different
+    payload is a second, distinct observation wearing the first one's key, and
+    returning the original as an idempotent replay would silently drop it.
+
+    Shape back-ported from ``resolution_contracts._declaration_divergences``:
+    identity fields, clock fields, and content fields are all compared, not just
+    the two that used to be. ``note``, ``observed_at`` and ``edge_key`` used to
+    diverge silently.
+
+    NOT compared: ``properties``. It is a create-branch-only payload that is
+    never persisted on ``AttestationRecord``, so there is no stored value to
+    diff against — and a replay by definition finds the claim already present,
+    where ``properties`` is ignored with a warning anyway. Adding it here would
+    require persisting it purely to enable the comparison.
+    """
+    divergences: list[str] = []
+    if original.stance != stance:
+        divergences.append(f"stance (original '{original.stance}', request '{stance}')")
+
+    original_evidence = [ref.model_dump(mode="json") for ref in original.evidence_refs]
+    request_evidence = [ref.model_dump(mode="json") for ref in evidence_refs]
+    if original_evidence != request_evidence:
+        divergences.append("evidence_refs")
+
+    if original.observed_at != ensure_utc(observed_at):
+        divergences.append(
+            f"observed_at (original '{format_datetime(original.observed_at)}', "
+            f"request '{format_datetime(ensure_utc(observed_at))}')"
+        )
+
+    if original.note != note:
+        divergences.append("note")
+
+    resolved_claim_id = relationship.claim_id if relationship is not None else None
+    if (
+        original.claim_id is not None
+        and resolved_claim_id is not None
+        and original.claim_id != resolved_claim_id
+    ):
+        divergences.append(
+            f"claim target (original '{original.claim_id}', request '{resolved_claim_id}')"
+        )
+
+    # Reconstruct the edge_key the replayed request WOULD have stamped, exactly
+    # as the record construction below does, so a request that omits the
+    # disambiguator does not read as a divergence from one that resolved to the
+    # same edge.
+    effective_edge_key = edge_key
+    if effective_edge_key is None and relationship is not None:
+        effective_edge_key = relationship.edge_key
+    if original.edge_key != effective_edge_key:
+        divergences.append(
+            f"edge_key (original '{original.edge_key}', request '{effective_edge_key}')"
+        )
+
+    return divergences
 
 
 def service_attest(
@@ -133,23 +204,15 @@ def service_attest(
                 actor_id=actor.actor_id,
             )
             if original is not None:
-                divergences: list[str] = []
-                if original.stance != stance:
-                    divergences.append(f"stance (original '{original.stance}', request '{stance}')")
-                original_evidence = [ref.model_dump(mode="json") for ref in original.evidence_refs]
-                request_evidence = [ref.model_dump(mode="json") for ref in normalized_evidence]
-                if original_evidence != request_evidence:
-                    divergences.append("evidence_refs")
-                resolved_claim_id = relationship.claim_id if relationship is not None else None
-                if (
-                    original.claim_id is not None
-                    and resolved_claim_id is not None
-                    and original.claim_id != resolved_claim_id
-                ):
-                    divergences.append(
-                        f"claim target (original '{original.claim_id}', "
-                        f"request '{resolved_claim_id}')"
-                    )
+                divergences = _replay_divergences(
+                    original,
+                    stance=stance,
+                    evidence_refs=normalized_evidence,
+                    observed_at=observed,
+                    note=note,
+                    edge_key=edge_key,
+                    relationship=relationship,
+                )
                 if divergences:
                     _refuse(
                         ctx.builder,

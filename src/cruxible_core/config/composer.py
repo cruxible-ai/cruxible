@@ -32,6 +32,14 @@ _KEYED_MAP_KEYS = {
     "outcome_profiles",
 }
 
+_MAX_EXTENDS_CHAIN_DEPTH = 32
+"""Maximum ``extends`` chain length before composition refuses.
+
+Well above any legitimate composition (base -> kit -> overlay is 3) and far
+below CPython's recursion limit, so a pathological chain gets a ConfigError
+with coordinates rather than a RecursionError from inside the resolver.
+"""
+
 _INLINE_RELATIVE_EXTENDS_ERROR = (
     "Inline config_yaml with a relative extends path cannot be composed — use an "
     "absolute path or validate from a file"
@@ -105,7 +113,19 @@ def resolve_config_layer_sequence(
             )
         explicit_roots[path] = root
 
-    def visit(layer: ResolvedConfigLayer) -> None:
+    def visit(layer: ResolvedConfigLayer, depth: int = 1) -> None:
+        # Explicit depth floor. Cycles are caught above, but an ACYCLIC chain
+        # that is merely very long recursed until CPython's own limit and
+        # surfaced as a bare RecursionError -- an internal error shape with no
+        # config coordinates, from a config the author wrote. Refuse it as a
+        # ConfigError naming the length and the limit instead.
+        if depth > _MAX_EXTENDS_CHAIN_DEPTH:
+            chain = " -> ".join(str(item) for item in visiting_paths)
+            raise ConfigError(
+                f"Config extends chain is too deep: {depth} layers exceeds the limit of "
+                f"{_MAX_EXTENDS_CHAIN_DEPTH}. Flatten the chain or compose fewer layers. "
+                f"Chain so far: {chain}"
+            )
         path = layer.config_path.resolve() if layer.config_path is not None else None
         if path is not None:
             if path in visiting_paths:
@@ -128,7 +148,7 @@ def resolve_config_layer_sequence(
         for parent in _resolve_parent_layers(layer):
             if parent.config_path is not None:
                 parent = explicit_roots.get(parent.config_path.resolve(), parent)
-            visit(parent)
+            visit(parent, depth + 1)
 
         if path is not None:
             visiting_paths.pop()

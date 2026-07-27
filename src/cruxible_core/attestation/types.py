@@ -190,6 +190,15 @@ class CorroborationSummary(BaseModel):
     last_supported_at: datetime | None = None
     last_contradicted_at: datetime | None = None
     distinct_actor_count: int = 0
+    """Plain count of distinct attesting actors.
+
+    A COUNT, not a score. Nothing weights, discounts, or otherwise adjusts
+    corroboration by actor diversity — the design vocabulary once said
+    "actor-diversity-discounted", but no such mechanism exists or is planned
+    in this release. Readers derive whatever judgement they want from the
+    raw count.
+    """
+
     open_contradiction: bool = False
     stale_content: StaleContentSummary = Field(default_factory=StaleContentSummary)
 

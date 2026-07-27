@@ -1854,9 +1854,10 @@ def _seed_bulk_feedback(
     base = utc_now()
     records = [
         FeedbackRecord(
-            # 'flag' keeps these out of the reject-only grouping path, so the
+            # 'approve' keeps these out of the reject-only grouping path, so the
             # rows are pure sampling fixtures with no suggestion side effects.
-            action="flag",
+            # (This used to be 'flag', which was removed in 2026-07.)
+            action="approve",
             target=_feedback_target("BP-1001"),
             reason="bulk sampling fixture",
             reason_code=f"{code_prefix}_{index:04d}",

@@ -7,7 +7,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | Mode | Env value | Meaning |
 | --- | --- | --- |
 | READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, snapshots listing. |
-| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow and procedure runs, procedure/group proposals, claim attestations, feedback recording and `flag`, outcomes, decision records, snapshot creation, and source artifact registration. |
+| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow and procedure runs, procedure/group proposals, claim attestations, feedback recording, outcomes, decision records, snapshot creation, and source artifact registration. |
 | GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, group resolution/trust updates, procedure resolution/retirement, attestation dispositions, and feedback **adjudication** (`approve` / `reject` / `correct`). |
 | ADMIN | `admin` | Full lifecycle, config reload, locks, snapshots, clone, state publication/pull, ingest, constraints, and policies. |
 
@@ -16,7 +16,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 The **Permission** line on each tool below is the tier needed to *call* it. Two
 surfaces additionally gate on the payload: the feedback tools require
 `GRAPH_WRITE` for the adjudication actions `approve` / `reject` / `correct`
-(`flag` and plain recording stay at `GOVERNED_WRITE`), and the direct-write
+(plain recording stays at `GOVERNED_WRITE`), and the direct-write
 tools honor a type's config-declared `write_tier`.
 
 ## Tool Catalog Curation
@@ -519,9 +519,9 @@ happened; they never prove its inputs are still current.
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Use when a person or reviewer agent adjudicated one explicit relationship and you need to record support, rejection, flagging, or a correction. Use edge_key only to disambiguate multiple stored edges with the same relationship tuple; receipt_id is optional for explicit-coordinate feedback.
+**Purpose:** Use when a person or reviewer agent adjudicated one explicit relationship and you need to record support, rejection, or a correction. To record a DOUBT without adjudicating, use cruxible_attest with stance 'contradict' instead. Use edge_key only to disambiguate multiple stored edges with the same relationship tuple; receipt_id is optional for explicit-coordinate feedback.
 
-**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; `flag` and plain recording stay at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too.
+**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; plain recording stays at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict` (the removed `flag` action's replacement).
 
 **Arguments:**
 
@@ -529,7 +529,7 @@ happened; they never prove its inputs are still current.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `receipt_id` | no | string |  |
-| `action` | yes | enum: approve, reject, correct, flag |  |
+| `action` | yes | enum: approve, reject, correct |  |
 | `from_type` | yes | string |  |
 | `from_id` | yes | string |  |
 | `relationship_type` | yes | string |  |
@@ -558,7 +558,7 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when a query receipt and result index identify the relationship that needs feedback. This path requires receipt_id because the receipt/result selection is the target selector.
 
-**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; `flag` and plain recording stay at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too.
+**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; plain recording stays at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict` (the removed `flag` action's replacement).
 
 **Arguments:**
 
@@ -567,7 +567,7 @@ happened; they never prove its inputs are still current.
 | `instance_id` | yes | string | Governed instance ID or local instance root. |
 | `receipt_id` | yes | string | Query receipt ID. |
 | `result_index` | yes | integer | Zero-based query result row index. |
-| `action` | yes | enum: approve, reject, correct, flag | Feedback action. |
+| `action` | yes | enum: approve, reject, correct | Feedback action. |
 | `reason` | no | string | Reason for feedback. |
 | `reason_code` | no | string | Structured feedback reason code. |
 | `scope_hints` | no | object | Structured feedback scope hints. |
@@ -592,7 +592,7 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when you need to record several relationship feedback decisions from the same review session.
 
-**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; `flag` and plain recording stay at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too.
+**Action tier:** `approve` / `reject` / `correct` adjudicate a claim and require `GRAPH_WRITE`; plain recording stays at `GOVERNED_WRITE`. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict` (the removed `flag` action's replacement).
 
 **Arguments:**
 
@@ -1592,7 +1592,7 @@ without it, only the active materialized digest is checked.
 | `limit` | no | integer | Maximum per-claim entries. |
 | `offset` | no | integer | Entries to skip. |
 
-**Returns:** Standard list envelope with per-claim contradiction counts, actor diversity, and latest observation time.
+**Returns:** Standard list envelope with per-claim contradiction counts, a `distinct_actor_count` (the plain number of distinct attesting actors — it is *not* weighted, discounted, or otherwise scored), and latest observation time.
 
 **Side Effects:** Read-only.
 

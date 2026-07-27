@@ -288,8 +288,12 @@ Feedback is edge-level review tied to a receipt:
 | --- | --- |
 | `approve` | Mark the edge trusted by the reviewer source |
 | `reject` | Exclude the edge from future query results |
-| `correct` | Apply declared property corrections and approve |
-| `flag` | Mark for review without changing behavior |
+| `correct` | Apply declared property corrections and approve (requires a non-empty `corrections` object) |
+
+To record a doubt about a claim *without* adjudicating it, use an attestation
+(`cruxible attest --stance contradict`) rather than feedback. The former `flag`
+action was removed: it un-approved the edge to `pending` while storing no
+annotation, so it destroyed the reviewer's signal instead of recording it.
 
 Outcomes record whether a result, proposal, or resolution was correct,
 incorrect, partial, or unknown. Feedback and outcomes let Cruxible accumulate

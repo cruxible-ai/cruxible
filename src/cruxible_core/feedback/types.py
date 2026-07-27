@@ -37,7 +37,7 @@ class FeedbackRecord(BaseModel):
 
     feedback_id: str = Field(default_factory=lambda: new_id("FB"))
     receipt_id: str | None = None
-    action: Literal["approve", "reject", "correct", "flag"]
+    action: Literal["approve", "reject", "correct"]
     target: RelationshipInstance
     reason: str = ""
     reason_code: str | None = None
@@ -74,7 +74,7 @@ class FeedbackBatchItem(BaseModel):
     """Input payload for one batch feedback item."""
 
     receipt_id: str
-    action: Literal["approve", "reject", "correct", "flag"]
+    action: Literal["approve", "reject", "correct"]
     target: RelationshipInstance
     reason: str = ""
     reason_code: str | None = None

@@ -413,7 +413,7 @@ def _require_review_transition_actor(
     ``cruxible_feedback`` is a GOVERNED_WRITE tool, but every feedback action
     transitions a relationship's review state: ``approve``/``correct`` promote it
     to ``approved``/live, which can satisfy a GRAPH_WRITE close-gate precondition
-    (audit F3), and ``reject``/``flag`` move an edge OUT of live review state — an
+    (audit F3), and ``reject`` moves an edge OUT of live review state — an
     anonymous retraction (wi-feedback-write-tier-bypass, mechanism 2). When server
     auth is enabled the transition must carry a resolved actor identity so a lower
     tier can neither rubber-stamp nor retract a review edge anonymously. When auth

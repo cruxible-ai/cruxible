@@ -60,8 +60,19 @@ from cruxible_core.service.types import (
     RelationshipTargetInput,
 )
 
-_VALID_ACTIONS = ("approve", "reject", "correct", "flag")
+_VALID_ACTIONS = ("approve", "reject", "correct")
 _VALID_OUTCOMES = ("correct", "incorrect", "partial", "unknown")
+
+
+_REMOVED_FLAG_ACTION_MESSAGE = (
+    "The 'flag' feedback action was removed. It un-approved an edge to 'pending' "
+    "while storing no annotation, so the reviewer's actual signal -- what they "
+    "doubted and why -- was destroyed at the moment it was given. To record a "
+    "doubt about a claim, use 'cruxible attest --stance contradict' (MCP: "
+    "cruxible_attest): it stores the observation, its evidence refs, and its "
+    "actor, and it changes no review status. To adjudicate, use approve, "
+    "reject, or correct."
+)
 
 
 def _validate_feedback_request_values(
@@ -69,12 +80,35 @@ def _validate_feedback_request_values(
     action: str,
     corrections: Any,
 ) -> None:
-    """Validate the basic feedback payload before loading external state."""
+    """Validate the basic feedback payload before loading external state.
+
+    THE service seam for payload-shape refusals: every entry point
+    (``service_feedback``, ``service_feedback_from_query_result``,
+    ``service_feedback_batch`` per item, and ``_normalize_feedback_record``)
+    routes through here, so the CLI, MCP, and HTTP surfaces all inherit these
+    refusals without each restating them.
+    """
+    if action == "flag":
+        raise ConfigError(_REMOVED_FLAG_ACTION_MESSAGE)
+
     if action not in _VALID_ACTIONS:
         raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_ACTIONS)}")
 
     if corrections is not None and not isinstance(corrections, dict):
         raise ConfigError("corrections must be an object")
+
+    # ``correct`` with nothing to correct promoted the edge to ``approved``
+    # anyway -- an approval wearing a correction's name, at the correction's
+    # tier, with no record of what was corrected. If the intent is approval,
+    # say approve; if it is a doubt, attest a contradiction.
+    if action == "correct" and not corrections:
+        raise ConfigError(
+            "Feedback action 'correct' requires a non-empty 'corrections' object naming "
+            "the properties to change. An empty correction still promoted the edge to "
+            "'approved' while recording nothing that was corrected. Use action 'approve' "
+            "to accept the claim as it stands, or 'cruxible attest --stance contradict' "
+            "to record a doubt without adjudicating."
+        )
 
 
 def _normalize_feedback_record(
@@ -83,7 +117,7 @@ def _normalize_feedback_record(
     graph: EntityGraph,
     receipt: Receipt | None,
     receipt_id: str | None,
-    action: Literal["approve", "reject", "correct", "flag"],
+    action: Literal["approve", "reject", "correct"],
     target: RelationshipInstance,
     reason: str,
     reason_code: str | None,
@@ -939,9 +973,11 @@ def _enforce_feedback_governance(records: Iterable[FeedbackRecord]) -> None:
        one GOVERNED_WRITE actor could attest an edge into ``pending`` and then
        approve their own proposal — a live approved claim on a proposal_only
        type with no reviewer above them. ``action`` is a closed Literal with no
-       action-less variant, so ``flag`` is the ONLY action left at the tools'
-       GOVERNED_WRITE floor (which the facades already checked); recording is
-       the half of an action that a refusal here rolls back with it.
+       action-less variant, and since ``flag`` was removed EVERY action is an
+       adjudication, so nothing is left at the tools' GOVERNED_WRITE floor but
+       the RECORDING half of an action — which is what a refusal here rolls back
+       along with the transition. A governed-tier actor registers a doubt with
+       ``cruxible_attest`` (stance ``contradict``) instead.
     2. **Kill-switch.** ``CRUXIBLE_REFUSE_DIRECT_WRITES`` refuses the actions
        that transition an edge INTO accepted state, so freezing live writes
        daemon-wide cannot be walked around through feedback approve.
@@ -1049,7 +1085,7 @@ def service_feedback_from_query_result(
     *,
     receipt_id: str,
     result_index: int,
-    action: Literal["approve", "reject", "correct", "flag"],
+    action: Literal["approve", "reject", "correct"],
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
@@ -1113,7 +1149,7 @@ def service_feedback_from_query_result(
 def service_feedback(
     instance: InstanceProtocol,
     receipt_id: str | None,
-    action: Literal["approve", "reject", "correct", "flag"],
+    action: Literal["approve", "reject", "correct"],
     target: RelationshipInstance,
     reason: str = "",
     reason_code: str | None = None,

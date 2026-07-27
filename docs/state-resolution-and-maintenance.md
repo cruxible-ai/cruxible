@@ -202,8 +202,9 @@ Two further rails are hard constraints at the same chokepoints:
 
 - **Adjudication tier.** `feedback approve` / `reject` / `correct` require
   `graph_write` even though the feedback tools sit at `governed_write`:
-  promoting a claim to live is the same authority as a direct write. `flag`
-  stays `governed_write`.
+  promoting a claim to live is the same authority as a direct write. These are
+  the only feedback actions: `flag` was removed. Register a doubt with
+  `cruxible attest --stance contradict`, which stays at `governed_write`.
 - **Pending proposals are immutable while staged.** A non-pending write onto a
   tuple whose edge is `pending` is refused with `pending_edge_write_refused`
   (HTTP **409**) rather than silently replacing the proposal's content under a

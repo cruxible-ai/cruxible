@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_core.config.composer import (
+    _MAX_EXTENDS_CHAIN_DEPTH,
     ResolvedConfigLayer,
     compose_config_files,
     compose_config_sequence,
@@ -409,6 +410,51 @@ class TestRecursiveLayerResolution:
             "Config extends cycle detected: "
             f"{first.resolve()} -> {second.resolve()} -> {first.resolve()}"
         )
+
+    def test_deep_acyclic_chain_refuses_with_a_config_error_not_a_recursion_error(
+        self, tmp_path: Path
+    ) -> None:
+        """A long-but-legal chain used to surface CPython's RecursionError.
+
+        Nothing was wrong with the CONFIG's structure — it had no cycle — so the
+        author got an internal error shape with no coordinates in it for a file
+        they wrote. It now refuses as a ``ConfigError`` naming the observed depth
+        and the limit.
+        """
+        depth = _MAX_EXTENDS_CHAIN_DEPTH + 8
+        paths = [tmp_path / f"layer_{index}.yaml" for index in range(depth)]
+        for index, path in enumerate(paths):
+            self._write_layer(
+                path,
+                name=f"layer-{index}",
+                entity_type=f"Type{index}",
+                # The LAST file is the base: it extends nothing.
+                extends=(paths[index + 1].name if index + 1 < depth else None),
+            )
+
+        with pytest.raises(ConfigError) as exc_info:
+            resolve_config_layers(load_config(paths[0]), config_path=paths[0])
+
+        message = str(exc_info.value)
+        assert "extends chain is too deep" in message
+        assert str(_MAX_EXTENDS_CHAIN_DEPTH) in message
+        assert "cycle" not in message
+
+    def test_a_chain_at_the_limit_still_composes(self, tmp_path: Path) -> None:
+        """The limit refuses ABOVE it, not at it — an off-by-one here is a false refusal."""
+        depth = _MAX_EXTENDS_CHAIN_DEPTH
+        paths = [tmp_path / f"ok_{index}.yaml" for index in range(depth)]
+        for index, path in enumerate(paths):
+            self._write_layer(
+                path,
+                name=f"ok-{index}",
+                entity_type=f"Ok{index}",
+                extends=(paths[index + 1].name if index + 1 < depth else None),
+            )
+
+        layers = resolve_config_layers(load_config(paths[0]), config_path=paths[0])
+
+        assert len(layers) == depth
 
     def test_two_layer_resolution_matches_explicit_pair(self, tmp_path: Path) -> None:
         base_path = tmp_path / "base.yaml"

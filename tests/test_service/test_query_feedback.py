@@ -21,6 +21,7 @@ from cruxible_core.errors import (
     QueryNotFoundError,
     ReceiptNotFoundError,
 )
+from cruxible_core.feedback.types import FeedbackBatchItem
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.query.types import ProjectedQueryRow, QueryPathRow, QueryRelationshipRow
@@ -690,6 +691,89 @@ class TestFeedback:
                 target=_edge_target(),
                 corrections="not a dict",  # type: ignore[arg-type]
             )
+
+    def test_correct_with_empty_corrections_refuses(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        """An empty ``correct`` was an approval wearing a correction's name.
+
+        It promoted the edge to ``approved`` unconditionally while recording
+        nothing that had been corrected — the same state change as ``approve``,
+        at the same tier, but with a reason code and an audit trail that both
+        claimed a correction had happened.
+        """
+        with pytest.raises(ConfigError, match="requires a non-empty 'corrections' object"):
+            service_feedback(
+                populated_instance,
+                receipt_id="any",
+                action="correct",
+                target=_edge_target(),
+                corrections={},
+            )
+
+    def test_correct_with_omitted_corrections_refuses(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        with pytest.raises(ConfigError, match="requires a non-empty 'corrections' object"):
+            service_feedback(
+                populated_instance,
+                receipt_id="any",
+                action="correct",
+                target=_edge_target(),
+            )
+
+    def test_the_empty_correct_refusal_routes_the_caller_somewhere(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        """Both real intents behind an empty correct are named in the message."""
+        with pytest.raises(ConfigError) as exc_info:
+            service_feedback(
+                populated_instance,
+                receipt_id="any",
+                action="correct",
+                target=_edge_target(),
+                corrections={},
+            )
+        message = str(exc_info.value)
+        assert "'approve'" in message
+        assert "attest --stance contradict" in message
+
+    def test_batch_correct_with_empty_corrections_refuses(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        """The batch entry point routes through the same validation seam."""
+        from cruxible_core.service.feedback import service_feedback_batch
+
+        with pytest.raises(ConfigError, match="requires a non-empty 'corrections' object"):
+            service_feedback_batch(
+                populated_instance,
+                [
+                    FeedbackBatchItem(
+                        receipt_id="any",
+                        action="correct",
+                        target=_edge_target(),
+                    )
+                ],
+            )
+
+    def test_removed_flag_action_refuses_and_names_the_attestation_replacement(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        """``flag`` un-approved an edge while storing no annotation; it is gone.
+
+        The refusal has to say where the signal goes now, otherwise removing the
+        action just loses the reviewer's intent at a different seam.
+        """
+        with pytest.raises(ConfigError) as exc_info:
+            service_feedback(
+                populated_instance,
+                receipt_id="any",
+                action="flag",  # type: ignore[arg-type]
+                target=_edge_target(),
+            )
+        message = str(exc_info.value)
+        assert "'flag' feedback action was removed" in message
+        assert "attest --stance contradict" in message
 
     def test_profile_requires_reason_code_for_system(
         self, populated_instance: CruxibleInstance

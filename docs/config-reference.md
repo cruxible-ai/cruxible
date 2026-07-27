@@ -139,8 +139,9 @@ review channel, which carries its own two rails:
 - **Tier.** `feedback approve` / `reject` / `correct` are adjudication acts and
   require **`graph_write`** — the same tier as a direct write or a group
   resolution — even though the `cruxible_feedback` tool itself sits at
-  `governed_write`. `flag` (which moves an edge *to* `pending`) stays at
-  `governed_write`.
+  `governed_write`. Since `flag` was removed (see below), *every* feedback
+  action is an adjudication; what remains at `governed_write` is persisting the
+  `FeedbackRecord` itself.
 - **Reviewer identity.** The transition must carry a resolved actor
   (credential-backed when server auth is on; attributed to the declared local
   `operator` when auth is off).
@@ -148,7 +149,7 @@ review channel, which carries its own two rails:
 The `CRUXIBLE_REFUSE_DIRECT_WRITES` kill-switch spans both: while it is set, the
 feedback actions that move an edge *into* accepted state (`approve` / `correct`)
 are refused too, so freezing live writes cannot be walked around through
-feedback. `reject` / `flag` stay available — they move edges *out* of live state.
+feedback. `reject` stays available — it moves edges *out* of live state.
 
 Three knobs control it:
 
@@ -156,7 +157,7 @@ Three knobs control it:
 |------|-------|--------|--------|
 | `write_policy` (per type) | `entity_types.<T>` / `relationships[]` | `direct` \| `proposal_only` \| `mint_only` (entity types only) \| unset | Per-type policy. Unset inherits the instance default. An explicit `direct` opts out of the instance default (but **not** the env kill-switch). `mint_only` (entity types only) is stricter than `proposal_only`: the type is writable **only** by the internal `token_mint` source and refuses all other sources, including the governed verbs `workflow_apply` / `group_resolve`. A config whose workflow `make_entities` step targets a `mint_only` entity type is rejected at load (fail-closed). |
 | `default_write_policy` | `runtime` | `direct` (default) \| `proposal_only` | Instance-wide default for types whose own `write_policy` is unset. |
-| `CRUXIBLE_REFUSE_DIRECT_WRITES` | process env (daemon) | truthy (`1`/`true`/`yes`/`on`) | Daemon-wide **kill-switch**: forces `proposal_only` for every type *at the write chokepoint*, overriding every per-type opt-out and the default, **and** refuses the acceptance-transitioning feedback actions (`approve` / `correct`). `reject` / `flag` stay available; see Scope above. |
+| `CRUXIBLE_REFUSE_DIRECT_WRITES` | process env (daemon) | truthy (`1`/`true`/`yes`/`on`) | Daemon-wide **kill-switch**: forces `proposal_only` for every type *at the write chokepoint*, overriding every per-type opt-out and the default, **and** refuses the acceptance-transitioning feedback actions (`approve` / `correct`). `reject` stays available; see Scope above. |
 
 **Effective policy (union — any path to `proposal_only` wins):** a write is
 refused when the env kill-switch is set **OR** the type's explicit `write_policy`
@@ -232,12 +233,16 @@ Semantics:
   ACTION, not of the properties it happens to touch. `write_tier` therefore
   does **not** open `correct` — declaring `write_tier: governed_write` lowers
   who may *direct-write* the type, never who may *adjudicate* claims on it.
-- **`flag` and plain recording stay governed.** `flag` moves an edge to
-  `pending` — it asks for review rather than granting it — so it stays at the
-  feedback tools' `governed_write` floor, as does persisting a
-  `FeedbackRecord` itself. Under server auth every feedback action must
-  additionally carry a resolved actor identity — review state cannot be
-  promoted *or* retracted anonymously.
+- **`flag` was removed; plain recording stays governed.** The `flag` action
+  moved an edge to `pending` while storing no annotation, so the reviewer's
+  actual signal — what they doubted and why — was destroyed at the moment it was
+  given. It is gone, with no deprecation window, because it never worked. To
+  record a doubt without adjudicating, use `cruxible attest --stance contradict`
+  (MCP: `cruxible_attest`): it stores the observation, its evidence refs, and
+  its actor, and it changes no review status. What still sits at the feedback
+  tools' `governed_write` floor is persisting the `FeedbackRecord` itself. Under
+  server auth every feedback action must additionally carry a resolved actor
+  identity — review state cannot be promoted *or* retracted anonymously.
 - **Everything downstream is unchanged.** Mutation guards, `write_policy`
   refusals, and validation all run after the tier check. Declaring
   `write_tier` together with an explicit `proposal_only`/`mint_only`
@@ -257,8 +262,11 @@ The `extends` field enables an **overlay pattern** for release-backed state publ
 the chain base-first, deduplicates shared file layers by resolved path, composes
 in memory, and validates the result. Cycles are rejected with the full path
 chain. The raw `load_config()` function still parses one file; composition
-happens in the service/CLI layer. For inline `config_yaml` (no file path),
-`extends` must use an absolute path or validation will error.
+happens in the service/CLI layer. For inline `config_yaml` (no file path), a
+relative `extends` needs a directory to resolve against: pass one (the daemon
+does this for an uploaded overlay kit workspace) and the relative path resolves
+against it; with no file path *and* no directory, a relative `extends` is
+refused and an absolute path is required.
 
 At runtime, reload materializes the composed config to the instance-owned active
 file. The file is stamped `MATERIALIZED - DO NOT EDIT`. Instance metadata records
@@ -302,11 +310,11 @@ relationships:
 
 | Field category | Fields | Behavior |
 |----------------|--------|----------|
-| Metadata | `name`, `description` | Overlay overrides base |
+| Metadata | `name`, `description`, `version` | Overlay overrides base (the composed config carries the *overlay's* `version`, not the base's) |
 | Runtime options | `runtime` | Overlay runtime options override base runtime options |
 | Safe lists | `constraints`, `quality_checks`, `mutation_guards`, `tests`, `decision_policies` | Overlay appends to base |
 | Relationships | `relationships` | Overlay can only add new names; redefining an upstream relationship raises `ConfigError` |
-| Keyed maps | `entity_types`, `named_queries`, `enums`, `feedback_profiles`, `outcome_profiles`, `contracts`, `artifacts`, `providers`, `workflows` | Overlay can only add new keys; redefining an upstream key raises `ConfigError` |
+| Keyed maps | `entity_types`, `named_queries`, `enums`, `gates`, `contracts`, `artifacts`, `providers`, `workflows`, `feedback_profiles`, `outcome_profiles` | Overlay can only add new keys; redefining an upstream key raises `ConfigError` |
 | Other fields | everything else | Overlay can only set if not in base, or if equal to base value |
 
 When `extends` is set, `entity_types` may be empty — the base provides them.
