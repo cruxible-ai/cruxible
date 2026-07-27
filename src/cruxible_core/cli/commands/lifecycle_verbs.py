@@ -11,13 +11,21 @@ from pydantic import ValidationError
 from cruxible_client import contracts
 from cruxible_core.cli.commands._common import _dispatch_cli_instance, _emit_json, json_option
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.server.auth_managed_entities import local_operator_actor_context
 from cruxible_core.service import (
     service_retire_entity,
     service_retract_claim,
     service_supersede_claim,
     service_supersede_entity,
 )
+
+
+def _local_operator_context():
+    """Lazy import: pulling server.auth_managed_entities at CLI import time
+    closes a circular import chain (the module observes itself partially
+    initialized) on some command import orders."""
+    from cruxible_core.server.auth_managed_entities import local_operator_actor_context
+
+    return local_operator_actor_context()
 
 
 def _evidence_ref(raw: str | None) -> contracts.EvidenceRef | None:
@@ -101,7 +109,7 @@ def relationship_supersede_cmd(
             claim_id,
             successor_claim_id,
             reason=reason,
-            actor_context=local_operator_actor_context(),
+            actor_context=_local_operator_context(),
             evidence_ref=(evidence.model_dump(mode="python") if evidence else None),
         ),
         command_name="relationship supersede",
@@ -134,7 +142,7 @@ def relationship_retract_cmd(
             instance,
             claim_id,
             reason=reason,
-            actor_context=local_operator_actor_context(),
+            actor_context=_local_operator_context(),
             evidence_ref=(evidence.model_dump(mode="python") if evidence else None),
         ),
         command_name="relationship retract",
@@ -179,7 +187,7 @@ def entity_supersede_cmd(
             successor_entity_type,
             successor_entity_id,
             reason=reason,
-            actor_context=local_operator_actor_context(),
+            actor_context=_local_operator_context(),
             evidence_ref=(evidence.model_dump(mode="python") if evidence else None),
         ),
         command_name="entity supersede",
@@ -216,7 +224,7 @@ def entity_retire_cmd(
             entity_type,
             entity_id,
             reason=reason,
-            actor_context=local_operator_actor_context(),
+            actor_context=_local_operator_context(),
             evidence_ref=(evidence.model_dump(mode="python") if evidence else None),
         ),
         command_name="entity retire",
