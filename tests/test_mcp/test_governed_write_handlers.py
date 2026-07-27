@@ -10,6 +10,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from cruxible_core.mcp.server import create_server
+from tests.test_mcp.conftest import unwrap_union_result
 
 CONFIG_YAML = """\
 version: "1.0"
@@ -57,6 +58,11 @@ def call_tool(server, name: str, args: dict[str, Any]) -> dict[str, Any]:
     if isinstance(result, tuple):
         return result[1]
     return json.loads(result[0].text)
+
+
+def call_union_tool(server, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Call a union-returning tool and unwrap its object-rooted result envelope."""
+    return unwrap_union_result(call_tool(server, name, args))
 
 
 def call_tool_expect_error(server, name: str, args: dict[str, Any]) -> str:
@@ -138,7 +144,7 @@ def instance_id(server, tmp_path):
 
 
 def test_feedback_batch_tool(server, instance_id):
-    query = call_tool(
+    query = call_union_tool(
         server,
         "cruxible_query",
         {

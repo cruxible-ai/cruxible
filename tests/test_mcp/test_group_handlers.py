@@ -11,6 +11,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.mcp.server import create_server
+from tests.test_mcp.conftest import unwrap_union_result
 
 GROUP_CONFIG_YAML = """\
 version: "1.0"
@@ -82,6 +83,11 @@ def call_tool(server, name: str, args: dict[str, Any]) -> dict[str, Any]:
         return result[1]
     text = result[0].text
     return json.loads(text)
+
+
+def call_union_tool(server, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Call a union-returning tool and unwrap its object-rooted result envelope."""
+    return unwrap_union_result(call_tool(server, name, args))
 
 
 def call_tool_expect_error(server, name: str, args: dict[str, Any]) -> str:
@@ -781,7 +787,7 @@ class TestFeedbackGroupOverride:
             },
         )
         # Query to get receipt
-        query_result = call_tool(
+        query_result = call_union_tool(
             server,
             "cruxible_query",
             {

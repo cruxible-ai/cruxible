@@ -118,6 +118,17 @@ def _receipt_count(instance: CruxibleInstance) -> int:
         store.close()
 
 
+def _graph_state(instance: CruxibleInstance) -> dict[str, object]:
+    """Order-independent snapshot of graph state, for before/after comparison."""
+    state = instance.load_graph().to_dict()
+    for key in ("nodes", "edges"):
+        state[key] = sorted(
+            state[key],
+            key=lambda item: json.dumps(item, sort_keys=True, default=str),
+        )
+    return state
+
+
 def _assert_batch_validation_error_parity(
     instance: CruxibleInstance,
     payload: BatchDirectWriteInput,
@@ -125,13 +136,7 @@ def _assert_batch_validation_error_parity(
     expected_error: str,
 ) -> None:
     def graph_state() -> dict[str, object]:
-        state = instance.load_graph().to_dict()
-        for key in ("nodes", "edges"):
-            state[key] = sorted(
-                state[key],
-                key=lambda item: json.dumps(item, sort_keys=True, default=str),
-            )
-        return state
+        return _graph_state(instance)
 
     before = graph_state()
     receipt_count = _receipt_count(instance)
@@ -146,6 +151,37 @@ def _assert_batch_validation_error_parity(
     assert graph_state() == before
 
     assert type(dry_run_exc.value) is type(apply_exc.value) is DataValidationError
+    assert dry_run_exc.value.summary == apply_exc.value.summary
+    assert dry_run_exc.value.errors == apply_exc.value.errors
+    assert expected_error in str(dry_run_exc.value)
+
+
+def _assert_dry_run_error_parity(
+    instance: CruxibleInstance,
+    call,
+    *,
+    expected_error: str,
+) -> None:
+    """A dry-run preview must fail exactly as the apply does, and persist nothing.
+
+    ``call(dry_run)`` runs the write under test. The preview is the contract an
+    agent plans against: if it accepts a payload the apply then rejects, the
+    preview is worse than useless. Pinned for the ``service_add_entities`` /
+    ``service_add_relationships`` paths, whose dry-run branches return early —
+    exactly where a validation step can be skipped without anyone noticing.
+    """
+    before = _graph_state(instance)
+    receipt_count = _receipt_count(instance)
+
+    with pytest.raises(DataValidationError) as dry_run_exc:
+        call(True)
+    assert _graph_state(instance) == before
+    assert _receipt_count(instance) == receipt_count
+
+    with pytest.raises(DataValidationError) as apply_exc:
+        call(False)
+    assert _graph_state(instance) == before
+
     assert dry_run_exc.value.summary == apply_exc.value.summary
     assert dry_run_exc.value.errors == apply_exc.value.errors
     assert expected_error in str(dry_run_exc.value)
@@ -753,6 +789,129 @@ def _seed_approved_review(instance: CruxibleInstance) -> None:
 # ---------------------------------------------------------------------------
 # service_add_entities
 # ---------------------------------------------------------------------------
+
+
+class TestAddEntityDryRunValidationParity:
+    """The dry-run preview runs the SAME validation as the apply."""
+
+    def test_unexpected_property_fails_dry_run_identically(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        entity = EntityInstance(
+            entity_type="Vehicle",
+            entity_id="V-DRY",
+            properties={
+                "vehicle_id": "V-DRY",
+                "year": 2026,
+                "make": "Honda",
+                "model": "Pilot",
+                "context": "unexpected",
+                "decision": "unexpected",
+            },
+        )
+
+        _assert_dry_run_error_parity(
+            initialized_instance,
+            lambda dry_run: service_add_entities(
+                initialized_instance,
+                [entity],
+                dry_run=dry_run,
+            ),
+            expected_error="unexpected property 'context'; unexpected property 'decision'",
+        )
+
+    def test_unexpected_property_on_update_fails_dry_run_identically(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        entity = EntityInstance(
+            entity_type="Vehicle",
+            entity_id="V-2024-CIVIC-EX",
+            properties={"context": "unexpected"},
+        )
+
+        _assert_dry_run_error_parity(
+            populated_instance,
+            lambda dry_run: service_add_entities(
+                populated_instance,
+                [entity],
+                dry_run=dry_run,
+            ),
+            expected_error="unexpected property 'context'",
+        )
+
+    def test_unexpected_relationship_property_fails_dry_run_identically(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        edge = RelationshipInstance(
+            from_type="Part",
+            from_id="BP-1002",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-2024-ACCORD-SPORT",
+            properties={"context": "unexpected"},
+        )
+
+        _assert_dry_run_error_parity(
+            populated_instance,
+            lambda dry_run: service_add_relationships(
+                populated_instance,
+                [edge],
+                "manual",
+                "ref-dry-run",
+                dry_run=dry_run,
+            ),
+            expected_error="unexpected property 'context'",
+        )
+
+    def test_legitimate_entity_dry_run_still_passes_and_persists_nothing(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        before = _graph_state(initialized_instance)
+        receipt_count = _receipt_count(initialized_instance)
+
+        result = service_add_entities(
+            initialized_instance,
+            [_vehicle("V-DRY-OK")],
+            dry_run=True,
+        )
+
+        assert result.added == 1
+        assert result.updated == 0
+        assert result.receipt_id is None
+        assert _graph_state(initialized_instance) == before
+        assert _receipt_count(initialized_instance) == receipt_count
+
+    def test_legitimate_relationship_dry_run_still_passes_and_persists_nothing(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        before = _graph_state(populated_instance)
+        receipt_count = _receipt_count(populated_instance)
+
+        result = service_add_relationships(
+            populated_instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-ACCORD-SPORT",
+                    properties={"verified": True},
+                )
+            ],
+            "manual",
+            "ref-dry-run",
+            dry_run=True,
+        )
+
+        assert result.added == 1
+        assert _graph_state(populated_instance) == before
+        assert _receipt_count(populated_instance) == receipt_count
 
 
 class TestAddEntities:
@@ -2365,7 +2524,7 @@ class TestBatchDirectWrite:
                 )
             ],
         )
-        before = populated_instance.load_graph().to_dict()
+        before = _graph_state(populated_instance)
         receipt_count = _receipt_count(populated_instance)
 
         dry_run = service_batch_direct_write(populated_instance, payload, dry_run=True)
@@ -2374,7 +2533,7 @@ class TestBatchDirectWrite:
         assert dry_run.entities_updated == 1
         assert dry_run.relationships_updated == 1
         assert dry_run.receipt_id is None
-        assert populated_instance.load_graph().to_dict() == before
+        assert _graph_state(populated_instance) == before
         assert _receipt_count(populated_instance) == receipt_count
 
         applied = service_batch_direct_write(populated_instance, payload)
