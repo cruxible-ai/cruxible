@@ -8,8 +8,43 @@ from ast import literal_eval
 from collections import defaultdict
 from typing import Any, cast
 
-from cruxible_core.provider.payloads import JsonItems, evidence_ref
+from cruxible_core.provider.payloads import (
+    JsonItems,
+    evidence_ref,
+    source_artifact_evidence_ref,
+)
 from cruxible_core.provider.types import ProviderContext
+
+KEV_CATALOG_ARTIFACT_ID = "cisa_kev_catalog"
+"""Logical id of the registered KEV feed snapshot.
+
+One logical artifact per feed, not per run: a changed feed writes a NEW REVISION
+under this id, which is what lets a settled decision's pinned
+``cisa_kev_catalog@1`` ref be told apart from today's ``@2``.
+"""
+
+KEV_CATALOG_TITLE = "CISA Known Exploited Vulnerabilities catalog snapshot"
+KEV_CATALOG_URI = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+
+# The tabular loader lowercases headers, so every camelCase feed column has to be
+# spelled three ways here exactly as the normalizer already spells them.
+_KEV_CATALOG_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Vendor", ("vendorProject", "vendor_project", "vendorproject")),
+    ("Product", ("product",)),
+    ("Name", ("vulnerabilityName", "vulnerability_name", "vulnerabilityname")),
+    ("Date added", ("dateAdded", "date_added", "dateadded")),
+    ("Due date", ("dueDate", "due_date", "duedate")),
+    (
+        "Known ransomware use",
+        (
+            "knownRansomwareCampaignUse",
+            "known_ransomware_campaign_use",
+            "knownransomwarecampaignuse",
+        ),
+    ),
+    ("Required action", ("requiredAction", "required_action", "requiredaction")),
+    ("Description", ("shortDescription", "short_description", "shortdescription")),
+)
 
 
 def normalize_public_kev_reference(
@@ -26,13 +61,92 @@ def normalize_public_kev_reference(
     nvd_cpe_by_cve = _parse_nvd_cpe_rows(
         _strip_provider_rows(_semantic_rows(input_payload, "nvd_cpe_rows"))
     )
-    return _build_public_kev_rows(kev_rows, enriched_by_cve, nvd_cpe_by_cve)
+    return _build_public_kev_rows(
+        kev_rows,
+        enriched_by_cve,
+        nvd_cpe_by_cve,
+        feed_revision_id=_feed_revision_id(input_payload),
+    )
+
+
+def render_kev_feed_manifest(
+    input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    """Render the KEV feed snapshot as one registrable Markdown source artifact.
+
+    The graph stores DERIVED facts; the artifact stores what the feed actually
+    said, addressably, so a claim can cite the feed entry it was built from
+    rather than a bare row index into a CSV nobody keeps. One ``## <CVE-ID>``
+    section per catalog entry gives every claim a stable
+    ``heading_path``/``section`` locator that survives re-rendering — chunk ids
+    are derived from the heading path, not the body, so an entry whose text
+    changed keeps its locator and reports the change as drift.
+    """
+    kev_rows = _strip_provider_rows(_semantic_rows(input_payload, "kev_rows"))
+    return JsonItems(
+        items=[
+            {
+                "artifact_id": KEV_CATALOG_ARTIFACT_ID,
+                "label": KEV_CATALOG_TITLE,
+                "original_uri": KEV_CATALOG_URI,
+                "content": _render_kev_catalog_markdown(kev_rows),
+            }
+        ]
+    ).to_payload()
+
+
+def _render_kev_catalog_markdown(kev_rows: list[dict[str, Any]]) -> str:
+    entries: dict[str, dict[str, Any]] = {}
+    for row in kev_rows:
+        cve_id = _first_non_empty(
+            row.get("cveID"),
+            row.get("cve_id"),
+            row.get("cveid"),
+        )
+        if cve_id and cve_id not in entries:
+            entries[cve_id] = row
+
+    lines = [f"# {KEV_CATALOG_TITLE}", ""]
+    for cve_id in sorted(entries):
+        row = entries[cve_id]
+        lines.append(f"## {cve_id}")
+        lines.append("")
+        for label, keys in _KEV_CATALOG_FIELDS:
+            value = _first_non_empty(*(row.get(key) for key in keys))
+            lines.append(f"- {label}: {value if value else 'not stated'}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _feed_revision_id(input_payload: dict[str, Any]) -> str | None:
+    """Read the pinned catalog revision minted by the register step, if wired."""
+    revisions = input_payload.get("feed_revisions")
+    if not isinstance(revisions, dict):
+        return None
+    revision_id = revisions.get(KEV_CATALOG_ARTIFACT_ID)
+    if not isinstance(revision_id, str) or not revision_id.strip():
+        return None
+    return revision_id
+
+
+def _kev_catalog_evidence_ref(cve_id: str, feed_revision_id: str) -> dict[str, Any]:
+    return source_artifact_evidence_ref(
+        KEV_CATALOG_ARTIFACT_ID,
+        cve_id,
+        artifact_revision_id=feed_revision_id,
+        heading_path=[KEV_CATALOG_TITLE, cve_id],
+        block_selector="section",
+        label=f"CISA KEV catalog entry {cve_id}",
+    )
 
 
 def _build_public_kev_rows(
     kev_rows: list[dict[str, Any]],
     enriched_by_cve: dict[str, dict[str, Any]],
     nvd_cpe_by_cve: dict[str, list[dict[str, Any]]],
+    *,
+    feed_revision_id: str | None = None,
 ) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for kev_row in kev_rows:
@@ -116,12 +230,21 @@ def _build_public_kev_rows(
             ),
         }
 
+        catalog_refs = (
+            [_kev_catalog_evidence_ref(cve_id, feed_revision_id)] if feed_revision_id else []
+        )
+
         if cpe_products:
             for product in cpe_products:
                 merged = {**vuln_base, **product}
                 for key, value in vuln_base.items():
                     if merged.get(key) in (None, "", []) and value not in (None, "", []):
                         merged[key] = value
+                existing_refs = merged.get("evidence_refs")
+                merged["evidence_refs"] = [
+                    *(existing_refs if isinstance(existing_refs, list) else []),
+                    *catalog_refs,
+                ]
                 items.append(merged)
             continue
 
@@ -138,31 +261,33 @@ def _build_public_kev_rows(
             enriched.get("product"),
         )
         vendor_id = _slugify(vendor_name or "unknown-vendor")
-        items.append({
-            **vuln_base,
-            "vendor_id": vendor_id,
-            "vendor_name": vendor_name or "Unknown Vendor",
-            "product_id": _slugify(
-                f"{vendor_id}__{product_name or 'unknown-product'}",
-            ),
-            "product_name": product_name or "Unknown Product",
-            "cpe_vendor": None,
-            "cpe_product": None,
-            "cpe_part": None,
-            "affected_versions": [],
-            "fixed_version": None,
-            "source": "cisa_kev",
-            "source_record_id": cve_id,
-            "default_status": None,
-            "vulnerable": True,
-            "version_logic": "fallback_product_match_from_cisa_kev",
-            "source_last_modified_at": None,
-            "evidence_refs": [evidence_ref("cisa_kev", cve_id)],
-            "rationale": (
-                "CISA KEV catalog lists this vendor/product; "
-                "no NVD CPE match data was available."
-            ),
-        })
+        items.append(
+            {
+                **vuln_base,
+                "vendor_id": vendor_id,
+                "vendor_name": vendor_name or "Unknown Vendor",
+                "product_id": _slugify(
+                    f"{vendor_id}__{product_name or 'unknown-product'}",
+                ),
+                "product_name": product_name or "Unknown Product",
+                "cpe_vendor": None,
+                "cpe_product": None,
+                "cpe_part": None,
+                "affected_versions": [],
+                "fixed_version": None,
+                "source": "cisa_kev",
+                "source_record_id": cve_id,
+                "default_status": None,
+                "vulnerable": True,
+                "version_logic": "fallback_product_match_from_cisa_kev",
+                "source_last_modified_at": None,
+                "evidence_refs": [evidence_ref("cisa_kev", cve_id), *catalog_refs],
+                "rationale": (
+                    "CISA KEV catalog lists this vendor/product; "
+                    "no NVD CPE match data was available."
+                ),
+            }
+        )
 
     return JsonItems(items=items).to_payload()
 
@@ -177,10 +302,7 @@ def _semantic_rows(input_payload: dict[str, Any], key: str) -> list[dict[str, An
 
 
 def _strip_provider_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {key: value for key, value in row.items() if not key.startswith("_")}
-        for row in rows
-    ]
+    return [{key: value for key, value in row.items() if not key.startswith("_")} for row in rows]
 
 
 def _first_non_empty(*values: Any) -> str | None:
@@ -260,29 +382,31 @@ def _parse_nvd_cpe_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, 
         for (cpe_part, cpe_vendor, cpe_product), versions in product_versions.items():
             vendor_id = _slugify(cpe_vendor)
             product_id = _slugify(f"{cpe_vendor}__{cpe_product}")
-            products.append({
-                "vendor_id": vendor_id,
-                "vendor_name": _humanize(cpe_vendor),
-                "product_id": product_id,
-                "product_name": _humanize(cpe_product),
-                "cpe_vendor": cpe_vendor,
-                "cpe_product": cpe_product,
-                "cpe_part": cpe_part,
-                "affected_versions": versions,
-                "fixed_version": _pick_latest_fixed_version(versions),
-                "source": "nvd",
-                "source_record_id": cve_id,
-                "default_status": cve.get("vulnStatus"),
-                "vulnerable": True,
-                "version_logic": _version_logic_summary(versions),
-                "source_last_modified_at": cve.get("lastModified"),
-                "evidence_refs": product_evidence.get((cpe_part, cpe_vendor, cpe_product), []),
-                "rationale": (
-                    "NVD vulnerable CPE match data maps this KEV vulnerability "
-                    f"to {cpe_vendor}/{cpe_product}."
-                ),
-                **vulnerability_metadata,
-            })
+            products.append(
+                {
+                    "vendor_id": vendor_id,
+                    "vendor_name": _humanize(cpe_vendor),
+                    "product_id": product_id,
+                    "product_name": _humanize(cpe_product),
+                    "cpe_vendor": cpe_vendor,
+                    "cpe_product": cpe_product,
+                    "cpe_part": cpe_part,
+                    "affected_versions": versions,
+                    "fixed_version": _pick_latest_fixed_version(versions),
+                    "source": "nvd",
+                    "source_record_id": cve_id,
+                    "default_status": cve.get("vulnStatus"),
+                    "vulnerable": True,
+                    "version_logic": _version_logic_summary(versions),
+                    "source_last_modified_at": cve.get("lastModified"),
+                    "evidence_refs": product_evidence.get((cpe_part, cpe_vendor, cpe_product), []),
+                    "rationale": (
+                        "NVD vulnerable CPE match data maps this KEV vulnerability "
+                        f"to {cpe_vendor}/{cpe_product}."
+                    ),
+                    **vulnerability_metadata,
+                }
+            )
 
         result[cve_id] = products
 
@@ -329,8 +453,7 @@ def _best_cvss_metric(metrics: Any) -> dict[str, Any]:
                 if isinstance(cvss_data, dict):
                     return {
                         "baseScore": cvss_data.get("baseScore"),
-                        "baseSeverity": first.get("baseSeverity")
-                        or cvss_data.get("baseSeverity"),
+                        "baseSeverity": first.get("baseSeverity") or cvss_data.get("baseSeverity"),
                     }
     return {}
 
@@ -365,11 +488,7 @@ def _extract_cwes(weaknesses: Any) -> list[str]:
 
 def _parse_cwes(raw: str | None, fallback: Any) -> list[str]:
     if raw:
-        values = [
-            value.strip()
-            for value in re.split(r"[,;|]", raw)
-            if value.strip()
-        ]
+        values = [value.strip() for value in re.split(r"[,;|]", raw) if value.strip()]
         if values:
             return sorted(dict.fromkeys(values))
     if isinstance(fallback, list):

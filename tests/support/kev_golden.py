@@ -55,6 +55,7 @@ TRIAGE_QUERY_NAMES = (
     "vendor_service_impact",
     "control_coverage_gap",
     "vulnerability_class_context",
+    "exposed_services",
 )
 KEV_NAMED_QUERY_GOLDENS = (*TRIAGE_QUERY_NAMES, *REFERENCE_QUERY_NAMES)
 KEV_WORKFLOW_COVERAGE: dict[str, str] = {
@@ -68,6 +69,9 @@ KEV_WORKFLOW_COVERAGE: dict[str, str] = {
 KEV_NAMED_QUERY_COVERAGE: dict[str, str] = {
     **{name: "golden" for name in KEV_NAMED_QUERY_GOLDENS},
     "asset_vulnerability_postures_requiring_action": "integration",
+    # The golden instances seed no TriageDecision (decisions are recorded live,
+    # not built by a workflow), so a golden here would pin an empty page.
+    "open_triage_queue": "integration",
 }
 
 ASSET_PRODUCTS_STEPS = (
@@ -480,6 +484,10 @@ def triage_query_specs(instance: CruxibleInstance) -> dict[str, dict[str, Any]]:
         },
         "vulnerability_class_context": {
             "params": {"class_id": ids["class_id"]},
+            "limit": 5,
+        },
+        "exposed_services": {
+            "params": {"cve_id": ids["cve_id"]},
             "limit": 5,
         },
         **_reference_query_specs(

@@ -327,7 +327,7 @@
         "result_shape": "relationship",
         "results": [
           {
-            "claim_id": "CLM-db48bdd521c34230",
+            "claim_id": "<CLAIM_1>",
             "edge_key": 13757,
             "entry": {
               "entity_id": "ASSET-1",
@@ -451,7 +451,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-7299f136c7484c9b",
+            "claim_id": "<CLAIM_2>",
             "edge_key": 13758,
             "entry": {
               "entity_id": "ASSET-10",
@@ -575,7 +575,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-00b6534ef04d4fdf",
+            "claim_id": "<CLAIM_3>",
             "edge_key": 13759,
             "entry": {
               "entity_id": "ASSET-11",
@@ -699,7 +699,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-f97f3040e2fc42b6",
+            "claim_id": "<CLAIM_4>",
             "edge_key": 13760,
             "entry": {
               "entity_id": "ASSET-12",
@@ -823,7 +823,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-df2556fb70984bb2",
+            "claim_id": "<CLAIM_5>",
             "edge_key": 13761,
             "entry": {
               "entity_id": "ASSET-12",
@@ -947,7 +947,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-b508b38c98094917",
+            "claim_id": "<CLAIM_6>",
             "edge_key": 13762,
             "entry": {
               "entity_id": "ASSET-13",
@@ -1071,7 +1071,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-ea6bca38fba94570",
+            "claim_id": "<CLAIM_7>",
             "edge_key": 13763,
             "entry": {
               "entity_id": "ASSET-14",
@@ -1195,7 +1195,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-78030c691a4942c2",
+            "claim_id": "<CLAIM_8>",
             "edge_key": 13764,
             "entry": {
               "entity_id": "ASSET-15",
@@ -1346,7 +1346,7 @@
         "result_shape": "relationship",
         "results": [
           {
-            "claim_id": "CLM-cf3c502c94df4668",
+            "claim_id": "<CLAIM_9>",
             "edge_key": 10031,
             "entry": {
               "entity_id": "CVE-2002-0367",
@@ -1428,9 +1428,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2002-0367"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2002-0367",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2002-0367"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2002-0367"
                   }
                 ],
-                "evidence_refs_count": 1,
+                "evidence_refs_count": 2,
                 "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_2000.",
                 "source_group_id": null,
                 "source_receipt_ids": [],
@@ -1490,7 +1505,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-82bbb1e96cf94435",
+            "claim_id": "<CLAIM_10>",
             "edge_key": 10032,
             "entry": {
               "entity_id": "CVE-2002-0367",
@@ -1580,9 +1595,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2002-0367"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2002-0367",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2002-0367"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2002-0367"
                   }
                 ],
-                "evidence_refs_count": 2,
+                "evidence_refs_count": 3,
                 "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_nt.",
                 "source_group_id": null,
                 "source_receipt_ids": [],
@@ -1649,7 +1679,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-78f3771a443241f0",
+            "claim_id": "<CLAIM_11>",
             "edge_key": 10028,
             "entry": {
               "entity_id": "CVE-2004-0210",
@@ -1729,9 +1759,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2004-0210"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2004-0210",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2004-0210"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2004-0210"
                   }
                 ],
-                "evidence_refs_count": 1,
+                "evidence_refs_count": 2,
                 "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/interix.",
                 "source_group_id": null,
                 "source_receipt_ids": [],
@@ -1795,7 +1840,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-be73d9bd227a4f0d",
+            "claim_id": "<CLAIM_12>",
             "edge_key": 10029,
             "entry": {
               "entity_id": "CVE-2004-0210",
@@ -1891,9 +1936,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2004-0210"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2004-0210",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2004-0210"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2004-0210"
                   }
                 ],
-                "evidence_refs_count": 3,
+                "evidence_refs_count": 4,
                 "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_2000.",
                 "source_group_id": null,
                 "source_receipt_ids": [],
@@ -1953,7 +2013,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-fa9e5b0e11f24c54",
+            "claim_id": "<CLAIM_13>",
             "edge_key": 10030,
             "entry": {
               "entity_id": "CVE-2004-0210",
@@ -2049,9 +2109,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2004-0210"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2004-0210",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2004-0210"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2004-0210"
                   }
                 ],
-                "evidence_refs_count": 3,
+                "evidence_refs_count": 4,
                 "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_nt.",
                 "source_group_id": null,
                 "source_receipt_ids": [],
@@ -2121,7 +2196,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-ee46b5f99faf48d9",
+            "claim_id": "<CLAIM_14>",
             "edge_key": 7206,
             "entry": {
               "entity_id": "CVE-2004-1464",
@@ -2203,9 +2278,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2004-1464"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2004-1464",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2004-1464"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2004-1464"
                   }
                 ],
-                "evidence_refs_count": 1,
+                "evidence_refs_count": 2,
                 "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to cisco/ios.",
                 "source_group_id": null,
                 "source_receipt_ids": [],
@@ -2269,7 +2359,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-f61086cd70414e38",
+            "claim_id": "<CLAIM_15>",
             "edge_key": 9439,
             "entry": {
               "entity_id": "CVE-2005-2773",
@@ -2351,9 +2441,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2005-2773"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2005-2773",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2005-2773"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2005-2773"
                   }
                 ],
-                "evidence_refs_count": 1,
+                "evidence_refs_count": 2,
                 "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to hp/openview_network_node_manager.",
                 "source_group_id": null,
                 "source_receipt_ids": [],
@@ -2418,7 +2523,7 @@
             "to_type": "Product"
           },
           {
-            "claim_id": "CLM-9803cbe8d98e4918",
+            "claim_id": "<CLAIM_16>",
             "edge_key": 10371,
             "entry": {
               "entity_id": "CVE-2006-1547",
@@ -2500,9 +2605,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2006-1547"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2006-1547",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2006-1547"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2006-1547"
                   }
                 ],
-                "evidence_refs_count": 1,
+                "evidence_refs_count": 2,
                 "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to apache/struts.",
                 "source_group_id": null,
                 "source_receipt_ids": [],
@@ -2585,7 +2705,7 @@
         "items": [
           {
             "asset_product_edge": {
-              "claim_id": "CLM-db48bdd521c34230",
+              "claim_id": "<CLAIM_1>",
               "edge_key": 13757,
               "entry": {
                 "entity_id": "ASSET-1",
@@ -2710,7 +2830,7 @@
             },
             "product_id": "apache-http-server",
             "vulnerability_product_edge": {
-              "claim_id": "CLM-63a87f51eaf74771",
+              "claim_id": "<CLAIM_17>",
               "edge_key": 11548,
               "entry": {
                 "entity_id": "CVE-2019-0211",
@@ -2790,9 +2910,24 @@
                       },
                       "source": "nvd_cpe_match",
                       "source_record_id": "CVE-2019-0211"
+                    },
+                    {
+                      "artifact_id": "cisa_kev_catalog",
+                      "artifact_revision_id": "cisa_kev_catalog@1",
+                      "label": "CISA KEV catalog entry CVE-2019-0211",
+                      "metadata": {
+                        "block_selector": "section",
+                        "heading_path": [
+                          "CISA Known Exploited Vulnerabilities catalog snapshot",
+                          "CVE-2019-0211"
+                        ],
+                        "heading_path_count": 2
+                      },
+                      "source": "source_artifact",
+                      "source_record_id": "CVE-2019-0211"
                     }
                   ],
-                  "evidence_refs_count": 1,
+                  "evidence_refs_count": 2,
                   "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to apache/http_server.",
                   "source_group_id": null,
                   "source_receipt_ids": [],
@@ -2859,7 +2994,7 @@
           },
           {
             "asset_product_edge": {
-              "claim_id": "CLM-db48bdd521c34230",
+              "claim_id": "<CLAIM_1>",
               "edge_key": 13757,
               "entry": {
                 "entity_id": "ASSET-1",
@@ -2984,7 +3119,7 @@
             },
             "product_id": "apache-http-server",
             "vulnerability_product_edge": {
-              "claim_id": "CLM-44ccdc47c7864e1c",
+              "claim_id": "<CLAIM_18>",
               "edge_key": 11340,
               "entry": {
                 "entity_id": "CVE-2021-40438",
@@ -3064,9 +3199,24 @@
                       },
                       "source": "nvd_cpe_match",
                       "source_record_id": "CVE-2021-40438"
+                    },
+                    {
+                      "artifact_id": "cisa_kev_catalog",
+                      "artifact_revision_id": "cisa_kev_catalog@1",
+                      "label": "CISA KEV catalog entry CVE-2021-40438",
+                      "metadata": {
+                        "block_selector": "section",
+                        "heading_path": [
+                          "CISA Known Exploited Vulnerabilities catalog snapshot",
+                          "CVE-2021-40438"
+                        ],
+                        "heading_path_count": 2
+                      },
+                      "source": "source_artifact",
+                      "source_record_id": "CVE-2021-40438"
                     }
                   ],
-                  "evidence_refs_count": 1,
+                  "evidence_refs_count": 2,
                   "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to apache/http_server.",
                   "source_group_id": null,
                   "source_receipt_ids": [],
@@ -3132,7 +3282,7 @@
           },
           {
             "asset_product_edge": {
-              "claim_id": "CLM-db48bdd521c34230",
+              "claim_id": "<CLAIM_1>",
               "edge_key": 13757,
               "entry": {
                 "entity_id": "ASSET-1",
@@ -3257,7 +3407,7 @@
             },
             "product_id": "apache-http-server",
             "vulnerability_product_edge": {
-              "claim_id": "CLM-d6a3b63ca49848d5",
+              "claim_id": "<CLAIM_19>",
               "edge_key": 11544,
               "entry": {
                 "entity_id": "CVE-2021-41773",
@@ -3337,9 +3487,24 @@
                       },
                       "source": "nvd_cpe_match",
                       "source_record_id": "CVE-2021-41773"
+                    },
+                    {
+                      "artifact_id": "cisa_kev_catalog",
+                      "artifact_revision_id": "cisa_kev_catalog@1",
+                      "label": "CISA KEV catalog entry CVE-2021-41773",
+                      "metadata": {
+                        "block_selector": "section",
+                        "heading_path": [
+                          "CISA Known Exploited Vulnerabilities catalog snapshot",
+                          "CVE-2021-41773"
+                        ],
+                        "heading_path_count": 2
+                      },
+                      "source": "source_artifact",
+                      "source_record_id": "CVE-2021-41773"
                     }
                   ],
-                  "evidence_refs_count": 1,
+                  "evidence_refs_count": 2,
                   "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to apache/http_server.",
                   "source_group_id": null,
                   "source_receipt_ids": [],
@@ -3405,7 +3570,7 @@
           },
           {
             "asset_product_edge": {
-              "claim_id": "CLM-db48bdd521c34230",
+              "claim_id": "<CLAIM_1>",
               "edge_key": 13757,
               "entry": {
                 "entity_id": "ASSET-1",
@@ -3530,7 +3695,7 @@
             },
             "product_id": "apache-http-server",
             "vulnerability_product_edge": {
-              "claim_id": "CLM-01d820f8b6dd4d9b",
+              "claim_id": "<CLAIM_20>",
               "edge_key": 11538,
               "entry": {
                 "entity_id": "CVE-2021-42013",
@@ -3620,9 +3785,24 @@
                       },
                       "source": "nvd_cpe_match",
                       "source_record_id": "CVE-2021-42013"
+                    },
+                    {
+                      "artifact_id": "cisa_kev_catalog",
+                      "artifact_revision_id": "cisa_kev_catalog@1",
+                      "label": "CISA KEV catalog entry CVE-2021-42013",
+                      "metadata": {
+                        "block_selector": "section",
+                        "heading_path": [
+                          "CISA Known Exploited Vulnerabilities catalog snapshot",
+                          "CVE-2021-42013"
+                        ],
+                        "heading_path_count": 2
+                      },
+                      "source": "source_artifact",
+                      "source_record_id": "CVE-2021-42013"
                     }
                   ],
-                  "evidence_refs_count": 2,
+                  "evidence_refs_count": 3,
                   "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to apache/http_server.",
                   "source_group_id": null,
                   "source_receipt_ids": [],
@@ -3691,7 +3871,7 @@
           },
           {
             "asset_product_edge": {
-              "claim_id": "CLM-db48bdd521c34230",
+              "claim_id": "<CLAIM_1>",
               "edge_key": 13757,
               "entry": {
                 "entity_id": "ASSET-1",
@@ -3816,7 +3996,7 @@
             },
             "product_id": "apache-http-server",
             "vulnerability_product_edge": {
-              "claim_id": "CLM-a568f347071a481c",
+              "claim_id": "<CLAIM_21>",
               "edge_key": 4471,
               "entry": {
                 "entity_id": "CVE-2024-38475",
@@ -3896,9 +4076,24 @@
                       },
                       "source": "nvd_cpe_match",
                       "source_record_id": "CVE-2024-38475"
+                    },
+                    {
+                      "artifact_id": "cisa_kev_catalog",
+                      "artifact_revision_id": "cisa_kev_catalog@1",
+                      "label": "CISA KEV catalog entry CVE-2024-38475",
+                      "metadata": {
+                        "block_selector": "section",
+                        "heading_path": [
+                          "CISA Known Exploited Vulnerabilities catalog snapshot",
+                          "CVE-2024-38475"
+                        ],
+                        "heading_path_count": 2
+                      },
+                      "source": "source_artifact",
+                      "source_record_id": "CVE-2024-38475"
                     }
                   ],
-                  "evidence_refs_count": 1,
+                  "evidence_refs_count": 2,
                   "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to apache/http_server.",
                   "source_group_id": null,
                   "source_receipt_ids": [],
@@ -3966,7 +4161,7 @@
           },
           {
             "asset_product_edge": {
-              "claim_id": "CLM-7299f136c7484c9b",
+              "claim_id": "<CLAIM_2>",
               "edge_key": 13758,
               "entry": {
                 "entity_id": "ASSET-10",
@@ -4091,7 +4286,7 @@
             },
             "product_id": "oracle-weblogic-server",
             "vulnerability_product_edge": {
-              "claim_id": "CLM-4a873b72a1e54a76",
+              "claim_id": "<CLAIM_22>",
               "edge_key": 12655,
               "entry": {
                 "entity_id": "CVE-2015-4852",
@@ -4195,9 +4390,24 @@
                       },
                       "source": "nvd_cpe_match",
                       "source_record_id": "CVE-2015-4852"
+                    },
+                    {
+                      "artifact_id": "cisa_kev_catalog",
+                      "artifact_revision_id": "cisa_kev_catalog@1",
+                      "label": "CISA KEV catalog entry CVE-2015-4852",
+                      "metadata": {
+                        "block_selector": "section",
+                        "heading_path": [
+                          "CISA Known Exploited Vulnerabilities catalog snapshot",
+                          "CVE-2015-4852"
+                        ],
+                        "heading_path_count": 2
+                      },
+                      "source": "source_artifact",
+                      "source_record_id": "CVE-2015-4852"
                     }
                   ],
-                  "evidence_refs_count": 4,
+                  "evidence_refs_count": 5,
                   "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to oracle/weblogic_server.",
                   "source_group_id": null,
                   "source_receipt_ids": [],
@@ -4272,7 +4482,7 @@
           },
           {
             "asset_product_edge": {
-              "claim_id": "CLM-7299f136c7484c9b",
+              "claim_id": "<CLAIM_2>",
               "edge_key": 13758,
               "entry": {
                 "entity_id": "ASSET-10",
@@ -4397,7 +4607,7 @@
             },
             "product_id": "oracle-weblogic-server",
             "vulnerability_product_edge": {
-              "claim_id": "CLM-77db7ff716e44ffb",
+              "claim_id": "<CLAIM_23>",
               "edge_key": 10110,
               "entry": {
                 "entity_id": "CVE-2017-10271",
@@ -4503,9 +4713,24 @@
                       },
                       "source": "nvd_cpe_match",
                       "source_record_id": "CVE-2017-10271"
+                    },
+                    {
+                      "artifact_id": "cisa_kev_catalog",
+                      "artifact_revision_id": "cisa_kev_catalog@1",
+                      "label": "CISA KEV catalog entry CVE-2017-10271",
+                      "metadata": {
+                        "block_selector": "section",
+                        "heading_path": [
+                          "CISA Known Exploited Vulnerabilities catalog snapshot",
+                          "CVE-2017-10271"
+                        ],
+                        "heading_path_count": 2
+                      },
+                      "source": "source_artifact",
+                      "source_record_id": "CVE-2017-10271"
                     }
                   ],
-                  "evidence_refs_count": 4,
+                  "evidence_refs_count": 5,
                   "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to oracle/weblogic_server.",
                   "source_group_id": null,
                   "source_receipt_ids": [],
@@ -4580,7 +4805,7 @@
           },
           {
             "asset_product_edge": {
-              "claim_id": "CLM-7299f136c7484c9b",
+              "claim_id": "<CLAIM_2>",
               "edge_key": 13758,
               "entry": {
                 "entity_id": "ASSET-10",
@@ -4705,7 +4930,7 @@
             },
             "product_id": "oracle-weblogic-server",
             "vulnerability_product_edge": {
-              "claim_id": "CLM-43837a53c8fa4048",
+              "claim_id": "<CLAIM_24>",
               "edge_key": 5449,
               "entry": {
                 "entity_id": "CVE-2017-3506",
@@ -4819,9 +5044,24 @@
                       },
                       "source": "nvd_cpe_match",
                       "source_record_id": "CVE-2017-3506"
+                    },
+                    {
+                      "artifact_id": "cisa_kev_catalog",
+                      "artifact_revision_id": "cisa_kev_catalog@1",
+                      "label": "CISA KEV catalog entry CVE-2017-3506",
+                      "metadata": {
+                        "block_selector": "section",
+                        "heading_path": [
+                          "CISA Known Exploited Vulnerabilities catalog snapshot",
+                          "CVE-2017-3506"
+                        ],
+                        "heading_path_count": 2
+                      },
+                      "source": "source_artifact",
+                      "source_record_id": "CVE-2017-3506"
                     }
                   ],
-                  "evidence_refs_count": 5,
+                  "evidence_refs_count": 6,
                   "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to oracle/weblogic_server.",
                   "source_group_id": null,
                   "source_receipt_ids": [],
@@ -4985,9 +5225,24 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2021-41773"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2021-41773",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2021-41773"
+                  ],
+                  "heading_path_count": 2
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2021-41773"
               }
             ],
-            "evidence_refs_count": 2,
+            "evidence_refs_count": 3,
             "installed_version": "2.4.49",
             "product_id": "apache-http-server",
             "rationale": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
@@ -5021,9 +5276,24 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2021-42013"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2021-42013",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2021-42013"
+                  ],
+                  "heading_path_count": 2
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2021-42013"
               }
             ],
-            "evidence_refs_count": 3,
+            "evidence_refs_count": 4,
             "installed_version": "2.4.49",
             "product_id": "apache-http-server",
             "rationale": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
@@ -5049,9 +5319,24 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2024-38475"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2024-38475",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2024-38475"
+                  ],
+                  "heading_path_count": 2
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2024-38475"
               }
             ],
-            "evidence_refs_count": 2,
+            "evidence_refs_count": 3,
             "installed_version": "2.4.49",
             "product_id": "apache-http-server",
             "rationale": "Installed version 2.4.49 fits the affected range; version_start_including=2.4.0; version_end_excluding=2.4.60; fixed_version=2.4.60",
@@ -5101,9 +5386,24 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2020-11023"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2020-11023",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2020-11023"
+                  ],
+                  "heading_path_count": 2
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2020-11023"
               }
             ],
-            "evidence_refs_count": 5,
+            "evidence_refs_count": 6,
             "installed_version": "14.1.1.0.0",
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -5145,9 +5445,24 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2020-14644"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2020-14644",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2020-14644"
+                  ],
+                  "heading_path_count": 2
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2020-14644"
               }
             ],
-            "evidence_refs_count": 4,
+            "evidence_refs_count": 5,
             "installed_version": "14.1.1.0.0",
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -5205,9 +5520,24 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2020-14750"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2020-14750",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2020-14750"
+                  ],
+                  "heading_path_count": 2
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2020-14750"
               }
             ],
-            "evidence_refs_count": 6,
+            "evidence_refs_count": 7,
             "installed_version": "14.1.1.0.0",
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -5265,9 +5595,24 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2020-14882"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2020-14882",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2020-14882"
+                  ],
+                  "heading_path_count": 2
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2020-14882"
               }
             ],
-            "evidence_refs_count": 6,
+            "evidence_refs_count": 7,
             "installed_version": "14.1.1.0.0",
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -5325,9 +5670,24 @@
                 },
                 "source": "nvd_cpe_match",
                 "source_record_id": "CVE-2020-14883"
+              },
+              {
+                "artifact_id": "cisa_kev_catalog",
+                "artifact_revision_id": "cisa_kev_catalog@1",
+                "label": "CISA KEV catalog entry CVE-2020-14883",
+                "metadata": {
+                  "block_selector": "section",
+                  "heading_path": [
+                    "CISA Known Exploited Vulnerabilities catalog snapshot",
+                    "CVE-2020-14883"
+                  ],
+                  "heading_path_count": 2
+                },
+                "source": "source_artifact",
+                "source_record_id": "CVE-2020-14883"
               }
             ],
-            "evidence_refs_count": 6,
+            "evidence_refs_count": 7,
             "installed_version": "14.1.1.0.0",
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -5367,7 +5727,7 @@
         "result_shape": "relationship",
         "results": [
           {
-            "claim_id": "CLM-c50b9ed677fe4787",
+            "claim_id": "<CLAIM_25>",
             "edge_key": 13868,
             "entry": {
               "entity_id": "ASSET-1",
@@ -5477,7 +5837,7 @@
             "to_type": "Vulnerability"
           },
           {
-            "claim_id": "CLM-d9d9f5fa9a104bec",
+            "claim_id": "<CLAIM_26>",
             "edge_key": 13808,
             "entry": {
               "entity_id": "ASSET-1",
@@ -5548,6 +5908,21 @@
                     "source_record_id": "CVE-2021-41773"
                   },
                   {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2021-41773",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2021-41773"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2021-41773"
+                  },
+                  {
                     "metadata": {
                       "observed_at": "2026-04-01"
                     },
@@ -5555,7 +5930,7 @@
                     "source_record_id": "CTRL-1:path_traversal"
                   }
                 ],
-                "evidence_refs_count": 3,
+                "evidence_refs_count": 4,
                 "rationale": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
                 "source_group_id": "<GROUP_2>",
                 "source_receipt_ids": [
@@ -5633,7 +6008,7 @@
             "to_type": "Vulnerability"
           },
           {
-            "claim_id": "CLM-14009df10f7545ae",
+            "claim_id": "<CLAIM_27>",
             "edge_key": 13809,
             "entry": {
               "entity_id": "ASSET-1",
@@ -5710,9 +6085,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2021-42013"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2021-42013",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2021-42013"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2021-42013"
                   }
                 ],
-                "evidence_refs_count": 3,
+                "evidence_refs_count": 4,
                 "rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
                 "source_group_id": "<GROUP_2>",
                 "source_receipt_ids": [
@@ -5791,7 +6181,7 @@
             "to_type": "Vulnerability"
           },
           {
-            "claim_id": "CLM-d661bd84a9a34691",
+            "claim_id": "<CLAIM_28>",
             "edge_key": 13810,
             "entry": {
               "entity_id": "ASSET-1",
@@ -5860,9 +6250,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2024-38475"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2024-38475",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2024-38475"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2024-38475"
                   }
                 ],
-                "evidence_refs_count": 2,
+                "evidence_refs_count": 3,
                 "rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
                 "source_group_id": "<GROUP_2>",
                 "source_receipt_ids": [
@@ -5940,7 +6345,7 @@
             "to_type": "Vulnerability"
           },
           {
-            "claim_id": "CLM-b21c9d904bb84a78",
+            "claim_id": "<CLAIM_29>",
             "edge_key": 13811,
             "entry": {
               "entity_id": "ASSET-10",
@@ -6033,9 +6438,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2020-11023"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2020-11023",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2020-11023"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2020-11023"
                   }
                 ],
-                "evidence_refs_count": 5,
+                "evidence_refs_count": 6,
                 "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
                 "source_group_id": "<GROUP_2>",
                 "source_receipt_ids": [
@@ -6113,7 +6533,7 @@
             "to_type": "Vulnerability"
           },
           {
-            "claim_id": "CLM-64ef4881dd004f3e",
+            "claim_id": "<CLAIM_30>",
             "edge_key": 13812,
             "entry": {
               "entity_id": "ASSET-10",
@@ -6198,9 +6618,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2020-14644"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2020-14644",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2020-14644"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2020-14644"
                   }
                 ],
-                "evidence_refs_count": 4,
+                "evidence_refs_count": 5,
                 "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
                 "source_group_id": "<GROUP_2>",
                 "source_receipt_ids": [
@@ -6278,7 +6713,7 @@
             "to_type": "Vulnerability"
           },
           {
-            "claim_id": "CLM-5559c22482034748",
+            "claim_id": "<CLAIM_31>",
             "edge_key": 13813,
             "entry": {
               "entity_id": "ASSET-10",
@@ -6379,9 +6814,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2020-14750"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2020-14750",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2020-14750"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2020-14750"
                   }
                 ],
-                "evidence_refs_count": 6,
+                "evidence_refs_count": 7,
                 "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
                 "source_group_id": "<GROUP_2>",
                 "source_receipt_ids": [
@@ -6459,7 +6909,7 @@
             "to_type": "Vulnerability"
           },
           {
-            "claim_id": "CLM-9a44c9a2a914493e",
+            "claim_id": "<CLAIM_32>",
             "edge_key": 13814,
             "entry": {
               "entity_id": "ASSET-10",
@@ -6560,9 +7010,24 @@
                     },
                     "source": "nvd_cpe_match",
                     "source_record_id": "CVE-2020-14882"
+                  },
+                  {
+                    "artifact_id": "cisa_kev_catalog",
+                    "artifact_revision_id": "cisa_kev_catalog@1",
+                    "label": "CISA KEV catalog entry CVE-2020-14882",
+                    "metadata": {
+                      "block_selector": "section",
+                      "heading_path": [
+                        "CISA Known Exploited Vulnerabilities catalog snapshot",
+                        "CVE-2020-14882"
+                      ],
+                      "heading_path_count": 2
+                    },
+                    "source": "source_artifact",
+                    "source_record_id": "CVE-2020-14882"
                   }
                 ],
-                "evidence_refs_count": 6,
+                "evidence_refs_count": 7,
                 "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
                 "source_group_id": "<GROUP_2>",
                 "source_receipt_ids": [

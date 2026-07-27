@@ -127,6 +127,8 @@ def source_artifact_evidence_ref(
     char_end: int | None = None,
     content_hash: str | None = None,
     label: str | None = None,
+    artifact_revision_id: str | None = None,
+    heading_path: list[str] | None = None,
     **metadata: Any,
 ) -> dict[str, Any]:
     """Evidence ref into a registered source artifact, with the blessed locator shape.
@@ -137,12 +139,19 @@ def source_artifact_evidence_ref(
     vocabulary — evidence rendering and drift verification can only generalize
     across kits if every kit spells them the same way. Use this instead of
     hand-building the dict so the keys stay converged.
+
+    ``artifact_revision_id`` (``{artifact_id}@{ordinal}``) PINS the citation to
+    the revision it was made against; without it dereference silently resolves
+    whatever revision is current. ``heading_path`` is the revision-stable
+    fallback locator for kits whose chunk ids are content-derived and therefore
+    change with every re-render.
     """
     locator = {
         "quote": quote,
         "char_start": char_start,
         "char_end": char_end,
         "expected_content_hash": content_hash,
+        "heading_path": heading_path,
     }
     payload: dict[str, Any] = {
         "source": "source_artifact",
@@ -153,6 +162,8 @@ def source_artifact_evidence_ref(
             **metadata,
         },
     }
+    if artifact_revision_id is not None:
+        payload["artifact_revision_id"] = artifact_revision_id
     if label is not None:
         payload["label"] = label
     return evidence_ref_payload(payload)

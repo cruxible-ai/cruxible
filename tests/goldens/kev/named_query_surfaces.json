@@ -1864,6 +1864,1800 @@
     {
       "limit": 5,
       "limit_truncated": true,
+      "name": "exposed_services",
+      "params": {
+        "cve_id": "CVE-2021-41773"
+      },
+      "path_truncated": false,
+      "receipt": {
+        "dedupe": "path",
+        "operation_type": "query",
+        "present": true,
+        "query_name": "exposed_services",
+        "receipt_id": "<RECEIPT_2>",
+        "relationship_state": "reviewable",
+        "relationship_state_source": "query_config",
+        "result_shape": "path"
+      },
+      "relationship_state": "reviewable",
+      "result_shape": "path",
+      "results": [
+        {
+          "entities": [
+            {
+              "entity_id": "CVE-2021-41773",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94433,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            },
+            {
+              "entity_id": "apache-http-server",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "product_id": "apache-http-server",
+                "product_name": "Http Server",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            },
+            {
+              "entity_id": "ASSET-1",
+              "entity_type": "Asset",
+              "properties": {
+                "asset_id": "ASSET-1",
+                "asset_type": "server",
+                "criticality": "critical",
+                "environment": "production",
+                "hostname": "prod-web-01",
+                "internet_exposed": true
+              }
+            },
+            {
+              "entity_id": "SVC-1",
+              "entity_type": "BusinessService",
+              "properties": {
+                "criticality": "critical",
+                "name": "Billing",
+                "service_id": "SVC-1"
+              }
+            }
+          ],
+          "entry": {
+            "entity_id": "CVE-2021-41773",
+            "entity_type": "Vulnerability",
+            "properties": {
+              "cve_id": "CVE-2021-41773",
+              "cvss_score": 9.8,
+              "cvss_severity": "CRITICAL",
+              "cwes": [
+                "CWE-22"
+              ],
+              "date_added_to_kev": "2021-11-03",
+              "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+              "epss_percentile": 0.99985,
+              "epss_score": 0.94433,
+              "kev_due_date": "2021-11-17",
+              "known_ransomware_use": "Known",
+              "required_action": "Apply updates per vendor instructions.",
+              "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+            }
+          },
+          "includes": {
+            "controls": {
+              "alias": "controls",
+              "count": 1,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "controls",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "system",
+                        "status": "unreviewed"
+                      }
+                    },
+                    "from_id": "ASSET-1",
+                    "from_type": "Asset",
+                    "properties": {},
+                    "relationship_type": "asset_has_control",
+                    "review_status": "unreviewed",
+                    "to_id": "CTRL-1",
+                    "to_type": "CompensatingControl"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-1",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-1",
+                      "asset_type": "server",
+                      "criticality": "critical",
+                      "environment": "production",
+                      "hostname": "prod-web-01",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "CTRL-1",
+                    "entity_type": "CompensatingControl",
+                    "properties": {
+                      "control_id": "CTRL-1",
+                      "control_type": "waf",
+                      "name": "Edge WAF",
+                      "status": "active"
+                    }
+                  }
+                }
+              ],
+              "limit": 10,
+              "many": true,
+              "truncated": false
+            },
+            "exposure": {
+              "alias": "exposure",
+              "count": 2,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "exposure",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "agent",
+                        "status": "pending"
+                      }
+                    },
+                    "from_id": "ASSET-1",
+                    "from_type": "Asset",
+                    "properties": {
+                      "affected_basis": "Golden fixture pending reviewable posture proof.",
+                      "control_basis": "Golden fixture pending reviewable posture proof.",
+                      "exposure_basis": "Golden fixture pending reviewable posture proof.",
+                      "installed_version": "2.4.49",
+                      "priority": "high",
+                      "product_id": "apache-http-server",
+                      "review_due_at": "2026-06-20",
+                      "status": "exposed"
+                    },
+                    "relationship_type": "asset_vulnerability_posture",
+                    "review_status": "pending",
+                    "to_id": "CVE-2021-41773",
+                    "to_type": "Vulnerability"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-1",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-1",
+                      "asset_type": "server",
+                      "criticality": "critical",
+                      "environment": "production",
+                      "hostname": "prod-web-01",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "CVE-2021-41773",
+                    "entity_type": "Vulnerability",
+                    "properties": {
+                      "cve_id": "CVE-2021-41773",
+                      "cvss_score": 9.8,
+                      "cvss_severity": "CRITICAL",
+                      "cwes": [
+                        "CWE-22"
+                      ],
+                      "date_added_to_kev": "2021-11-03",
+                      "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                      "epss_percentile": 0.99985,
+                      "epss_score": 0.94433,
+                      "kev_due_date": "2021-11-17",
+                      "known_ransomware_use": "Known",
+                      "required_action": "Apply updates per vendor instructions.",
+                      "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                    }
+                  }
+                },
+                {
+                  "edge": {
+                    "alias": "exposure",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "group",
+                        "status": "approved"
+                      }
+                    },
+                    "from_id": "ASSET-1",
+                    "from_type": "Asset",
+                    "properties": {
+                      "affected_basis": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
+                      "control_basis": "Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
+                      "exposure_basis": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
+                      "installed_version": "2.4.49",
+                      "priority": "medium",
+                      "product_id": "apache-http-server",
+                      "status": "mitigated"
+                    },
+                    "relationship_type": "asset_vulnerability_posture",
+                    "review_status": "approved",
+                    "to_id": "CVE-2021-41773",
+                    "to_type": "Vulnerability"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-1",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-1",
+                      "asset_type": "server",
+                      "criticality": "critical",
+                      "environment": "production",
+                      "hostname": "prod-web-01",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "CVE-2021-41773",
+                    "entity_type": "Vulnerability",
+                    "properties": {
+                      "cve_id": "CVE-2021-41773",
+                      "cvss_score": 9.8,
+                      "cvss_severity": "CRITICAL",
+                      "cwes": [
+                        "CWE-22"
+                      ],
+                      "date_added_to_kev": "2021-11-03",
+                      "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                      "epss_percentile": 0.99985,
+                      "epss_score": 0.94433,
+                      "kev_due_date": "2021-11-17",
+                      "known_ransomware_use": "Known",
+                      "required_action": "Apply updates per vendor instructions.",
+                      "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                    }
+                  }
+                }
+              ],
+              "limit": 5,
+              "many": true,
+              "truncated": false
+            },
+            "owners": {
+              "alias": "owners",
+              "count": 1,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "owners",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "system",
+                        "status": "unreviewed"
+                      }
+                    },
+                    "from_id": "ASSET-1",
+                    "from_type": "Asset",
+                    "properties": {},
+                    "relationship_type": "asset_owned_by",
+                    "review_status": "unreviewed",
+                    "to_id": "OWNER-2",
+                    "to_type": "Owner"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-1",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-1",
+                      "asset_type": "server",
+                      "criticality": "critical",
+                      "environment": "production",
+                      "hostname": "prod-web-01",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "OWNER-2",
+                    "entity_type": "Owner",
+                    "properties": {
+                      "email": "web-platform@example.com",
+                      "name": "Web Platform",
+                      "owner_id": "OWNER-2",
+                      "team": "Platform Engineering"
+                    }
+                  }
+                }
+              ],
+              "limit": 5,
+              "many": true,
+              "truncated": false
+            }
+          },
+          "path": [
+            {
+              "alias": "affected_product",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "system",
+                  "status": "unreviewed"
+                }
+              },
+              "from_id": "CVE-2021-41773",
+              "from_type": "Vulnerability",
+              "properties": {
+                "affected_versions": [
+                  {
+                    "version_exact": "2.4.49"
+                  }
+                ],
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "default_status": "Analyzed",
+                "fixed_version": null,
+                "source": "nvd",
+                "source_last_modified_at": "2026-02-17T19:49:26.367000+00:00",
+                "source_record_id": "CVE-2021-41773",
+                "version_logic": "NVD CPE match version ranges aggregated by product.",
+                "vulnerable": true
+              },
+              "relationship_type": "vulnerability_affects_product",
+              "review_status": "unreviewed",
+              "to_id": "apache-http-server",
+              "to_type": "Product"
+            },
+            {
+              "alias": "installed_product",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "group",
+                  "status": "approved"
+                }
+              },
+              "from_id": "ASSET-1",
+              "from_type": "Asset",
+              "properties": {
+                "installed_version": "2.4.49",
+                "inventory_source": "qualys",
+                "last_seen_at": "2026-03-20",
+                "match_basis": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+                "observed_software_name": "Apache HTTP Server",
+                "observed_vendor": "Apache"
+              },
+              "relationship_type": "asset_runs_product",
+              "review_status": "approved",
+              "to_id": "apache-http-server",
+              "to_type": "Product"
+            },
+            {
+              "alias": "service_dependency",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "system",
+                  "status": "unreviewed"
+                }
+              },
+              "from_id": "SVC-1",
+              "from_type": "BusinessService",
+              "properties": {},
+              "relationship_type": "service_depends_on_asset",
+              "review_status": "unreviewed",
+              "to_id": "ASSET-1",
+              "to_type": "Asset"
+            }
+          ],
+          "result": {
+            "entity_id": "SVC-1",
+            "entity_type": "BusinessService",
+            "properties": {
+              "criticality": "critical",
+              "name": "Billing",
+              "service_id": "SVC-1"
+            }
+          }
+        },
+        {
+          "entities": [
+            {
+              "entity_id": "CVE-2021-41773",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94433,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            },
+            {
+              "entity_id": "apache-http-server",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "product_id": "apache-http-server",
+                "product_name": "Http Server",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            },
+            {
+              "entity_id": "ASSET-1",
+              "entity_type": "Asset",
+              "properties": {
+                "asset_id": "ASSET-1",
+                "asset_type": "server",
+                "criticality": "critical",
+                "environment": "production",
+                "hostname": "prod-web-01",
+                "internet_exposed": true
+              }
+            },
+            {
+              "entity_id": "SVC-2",
+              "entity_type": "BusinessService",
+              "properties": {
+                "criticality": "critical",
+                "name": "Customer Portal",
+                "service_id": "SVC-2"
+              }
+            }
+          ],
+          "entry": {
+            "entity_id": "CVE-2021-41773",
+            "entity_type": "Vulnerability",
+            "properties": {
+              "cve_id": "CVE-2021-41773",
+              "cvss_score": 9.8,
+              "cvss_severity": "CRITICAL",
+              "cwes": [
+                "CWE-22"
+              ],
+              "date_added_to_kev": "2021-11-03",
+              "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+              "epss_percentile": 0.99985,
+              "epss_score": 0.94433,
+              "kev_due_date": "2021-11-17",
+              "known_ransomware_use": "Known",
+              "required_action": "Apply updates per vendor instructions.",
+              "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+            }
+          },
+          "includes": {
+            "controls": {
+              "alias": "controls",
+              "count": 1,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "controls",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "system",
+                        "status": "unreviewed"
+                      }
+                    },
+                    "from_id": "ASSET-1",
+                    "from_type": "Asset",
+                    "properties": {},
+                    "relationship_type": "asset_has_control",
+                    "review_status": "unreviewed",
+                    "to_id": "CTRL-1",
+                    "to_type": "CompensatingControl"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-1",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-1",
+                      "asset_type": "server",
+                      "criticality": "critical",
+                      "environment": "production",
+                      "hostname": "prod-web-01",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "CTRL-1",
+                    "entity_type": "CompensatingControl",
+                    "properties": {
+                      "control_id": "CTRL-1",
+                      "control_type": "waf",
+                      "name": "Edge WAF",
+                      "status": "active"
+                    }
+                  }
+                }
+              ],
+              "limit": 10,
+              "many": true,
+              "truncated": false
+            },
+            "exposure": {
+              "alias": "exposure",
+              "count": 2,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "exposure",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "agent",
+                        "status": "pending"
+                      }
+                    },
+                    "from_id": "ASSET-1",
+                    "from_type": "Asset",
+                    "properties": {
+                      "affected_basis": "Golden fixture pending reviewable posture proof.",
+                      "control_basis": "Golden fixture pending reviewable posture proof.",
+                      "exposure_basis": "Golden fixture pending reviewable posture proof.",
+                      "installed_version": "2.4.49",
+                      "priority": "high",
+                      "product_id": "apache-http-server",
+                      "review_due_at": "2026-06-20",
+                      "status": "exposed"
+                    },
+                    "relationship_type": "asset_vulnerability_posture",
+                    "review_status": "pending",
+                    "to_id": "CVE-2021-41773",
+                    "to_type": "Vulnerability"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-1",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-1",
+                      "asset_type": "server",
+                      "criticality": "critical",
+                      "environment": "production",
+                      "hostname": "prod-web-01",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "CVE-2021-41773",
+                    "entity_type": "Vulnerability",
+                    "properties": {
+                      "cve_id": "CVE-2021-41773",
+                      "cvss_score": 9.8,
+                      "cvss_severity": "CRITICAL",
+                      "cwes": [
+                        "CWE-22"
+                      ],
+                      "date_added_to_kev": "2021-11-03",
+                      "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                      "epss_percentile": 0.99985,
+                      "epss_score": 0.94433,
+                      "kev_due_date": "2021-11-17",
+                      "known_ransomware_use": "Known",
+                      "required_action": "Apply updates per vendor instructions.",
+                      "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                    }
+                  }
+                },
+                {
+                  "edge": {
+                    "alias": "exposure",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "group",
+                        "status": "approved"
+                      }
+                    },
+                    "from_id": "ASSET-1",
+                    "from_type": "Asset",
+                    "properties": {
+                      "affected_basis": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
+                      "control_basis": "Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
+                      "exposure_basis": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
+                      "installed_version": "2.4.49",
+                      "priority": "medium",
+                      "product_id": "apache-http-server",
+                      "status": "mitigated"
+                    },
+                    "relationship_type": "asset_vulnerability_posture",
+                    "review_status": "approved",
+                    "to_id": "CVE-2021-41773",
+                    "to_type": "Vulnerability"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-1",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-1",
+                      "asset_type": "server",
+                      "criticality": "critical",
+                      "environment": "production",
+                      "hostname": "prod-web-01",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "CVE-2021-41773",
+                    "entity_type": "Vulnerability",
+                    "properties": {
+                      "cve_id": "CVE-2021-41773",
+                      "cvss_score": 9.8,
+                      "cvss_severity": "CRITICAL",
+                      "cwes": [
+                        "CWE-22"
+                      ],
+                      "date_added_to_kev": "2021-11-03",
+                      "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                      "epss_percentile": 0.99985,
+                      "epss_score": 0.94433,
+                      "kev_due_date": "2021-11-17",
+                      "known_ransomware_use": "Known",
+                      "required_action": "Apply updates per vendor instructions.",
+                      "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                    }
+                  }
+                }
+              ],
+              "limit": 5,
+              "many": true,
+              "truncated": false
+            },
+            "owners": {
+              "alias": "owners",
+              "count": 1,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "owners",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "system",
+                        "status": "unreviewed"
+                      }
+                    },
+                    "from_id": "ASSET-1",
+                    "from_type": "Asset",
+                    "properties": {},
+                    "relationship_type": "asset_owned_by",
+                    "review_status": "unreviewed",
+                    "to_id": "OWNER-2",
+                    "to_type": "Owner"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-1",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-1",
+                      "asset_type": "server",
+                      "criticality": "critical",
+                      "environment": "production",
+                      "hostname": "prod-web-01",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "OWNER-2",
+                    "entity_type": "Owner",
+                    "properties": {
+                      "email": "web-platform@example.com",
+                      "name": "Web Platform",
+                      "owner_id": "OWNER-2",
+                      "team": "Platform Engineering"
+                    }
+                  }
+                }
+              ],
+              "limit": 5,
+              "many": true,
+              "truncated": false
+            }
+          },
+          "path": [
+            {
+              "alias": "affected_product",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "system",
+                  "status": "unreviewed"
+                }
+              },
+              "from_id": "CVE-2021-41773",
+              "from_type": "Vulnerability",
+              "properties": {
+                "affected_versions": [
+                  {
+                    "version_exact": "2.4.49"
+                  }
+                ],
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "default_status": "Analyzed",
+                "fixed_version": null,
+                "source": "nvd",
+                "source_last_modified_at": "2026-02-17T19:49:26.367000+00:00",
+                "source_record_id": "CVE-2021-41773",
+                "version_logic": "NVD CPE match version ranges aggregated by product.",
+                "vulnerable": true
+              },
+              "relationship_type": "vulnerability_affects_product",
+              "review_status": "unreviewed",
+              "to_id": "apache-http-server",
+              "to_type": "Product"
+            },
+            {
+              "alias": "installed_product",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "group",
+                  "status": "approved"
+                }
+              },
+              "from_id": "ASSET-1",
+              "from_type": "Asset",
+              "properties": {
+                "installed_version": "2.4.49",
+                "inventory_source": "qualys",
+                "last_seen_at": "2026-03-20",
+                "match_basis": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+                "observed_software_name": "Apache HTTP Server",
+                "observed_vendor": "Apache"
+              },
+              "relationship_type": "asset_runs_product",
+              "review_status": "approved",
+              "to_id": "apache-http-server",
+              "to_type": "Product"
+            },
+            {
+              "alias": "service_dependency",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "system",
+                  "status": "unreviewed"
+                }
+              },
+              "from_id": "SVC-2",
+              "from_type": "BusinessService",
+              "properties": {},
+              "relationship_type": "service_depends_on_asset",
+              "review_status": "unreviewed",
+              "to_id": "ASSET-1",
+              "to_type": "Asset"
+            }
+          ],
+          "result": {
+            "entity_id": "SVC-2",
+            "entity_type": "BusinessService",
+            "properties": {
+              "criticality": "critical",
+              "name": "Customer Portal",
+              "service_id": "SVC-2"
+            }
+          }
+        },
+        {
+          "entities": [
+            {
+              "entity_id": "CVE-2021-41773",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94433,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            },
+            {
+              "entity_id": "apache-http-server",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "product_id": "apache-http-server",
+                "product_name": "Http Server",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            },
+            {
+              "entity_id": "ASSET-6",
+              "entity_type": "Asset",
+              "properties": {
+                "asset_id": "ASSET-6",
+                "asset_type": "server",
+                "criticality": "high",
+                "environment": "production",
+                "hostname": "prod-web-02",
+                "internet_exposed": true
+              }
+            },
+            {
+              "entity_id": "SVC-2",
+              "entity_type": "BusinessService",
+              "properties": {
+                "criticality": "critical",
+                "name": "Customer Portal",
+                "service_id": "SVC-2"
+              }
+            }
+          ],
+          "entry": {
+            "entity_id": "CVE-2021-41773",
+            "entity_type": "Vulnerability",
+            "properties": {
+              "cve_id": "CVE-2021-41773",
+              "cvss_score": 9.8,
+              "cvss_severity": "CRITICAL",
+              "cwes": [
+                "CWE-22"
+              ],
+              "date_added_to_kev": "2021-11-03",
+              "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+              "epss_percentile": 0.99985,
+              "epss_score": 0.94433,
+              "kev_due_date": "2021-11-17",
+              "known_ransomware_use": "Known",
+              "required_action": "Apply updates per vendor instructions.",
+              "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+            }
+          },
+          "includes": {
+            "controls": {
+              "alias": "controls",
+              "count": 1,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "controls",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "system",
+                        "status": "unreviewed"
+                      }
+                    },
+                    "from_id": "ASSET-6",
+                    "from_type": "Asset",
+                    "properties": {},
+                    "relationship_type": "asset_has_control",
+                    "review_status": "unreviewed",
+                    "to_id": "CTRL-1",
+                    "to_type": "CompensatingControl"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-6",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-6",
+                      "asset_type": "server",
+                      "criticality": "high",
+                      "environment": "production",
+                      "hostname": "prod-web-02",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "CTRL-1",
+                    "entity_type": "CompensatingControl",
+                    "properties": {
+                      "control_id": "CTRL-1",
+                      "control_type": "waf",
+                      "name": "Edge WAF",
+                      "status": "active"
+                    }
+                  }
+                }
+              ],
+              "limit": 10,
+              "many": true,
+              "truncated": false
+            },
+            "exposure": {
+              "alias": "exposure",
+              "count": 0,
+              "exists": false,
+              "items": [],
+              "limit": 5,
+              "many": true,
+              "truncated": false
+            },
+            "owners": {
+              "alias": "owners",
+              "count": 1,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "owners",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "system",
+                        "status": "unreviewed"
+                      }
+                    },
+                    "from_id": "ASSET-6",
+                    "from_type": "Asset",
+                    "properties": {},
+                    "relationship_type": "asset_owned_by",
+                    "review_status": "unreviewed",
+                    "to_id": "OWNER-2",
+                    "to_type": "Owner"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-6",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-6",
+                      "asset_type": "server",
+                      "criticality": "high",
+                      "environment": "production",
+                      "hostname": "prod-web-02",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "OWNER-2",
+                    "entity_type": "Owner",
+                    "properties": {
+                      "email": "web-platform@example.com",
+                      "name": "Web Platform",
+                      "owner_id": "OWNER-2",
+                      "team": "Platform Engineering"
+                    }
+                  }
+                }
+              ],
+              "limit": 5,
+              "many": true,
+              "truncated": false
+            }
+          },
+          "path": [
+            {
+              "alias": "affected_product",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "system",
+                  "status": "unreviewed"
+                }
+              },
+              "from_id": "CVE-2021-41773",
+              "from_type": "Vulnerability",
+              "properties": {
+                "affected_versions": [
+                  {
+                    "version_exact": "2.4.49"
+                  }
+                ],
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "default_status": "Analyzed",
+                "fixed_version": null,
+                "source": "nvd",
+                "source_last_modified_at": "2026-02-17T19:49:26.367000+00:00",
+                "source_record_id": "CVE-2021-41773",
+                "version_logic": "NVD CPE match version ranges aggregated by product.",
+                "vulnerable": true
+              },
+              "relationship_type": "vulnerability_affects_product",
+              "review_status": "unreviewed",
+              "to_id": "apache-http-server",
+              "to_type": "Product"
+            },
+            {
+              "alias": "installed_product",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "group",
+                  "status": "approved"
+                }
+              },
+              "from_id": "ASSET-6",
+              "from_type": "Asset",
+              "properties": {
+                "installed_version": "2.4.58",
+                "inventory_source": "qualys",
+                "last_seen_at": "2026-03-20",
+                "match_basis": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+                "observed_software_name": "Apache HTTP Server",
+                "observed_vendor": "Apache"
+              },
+              "relationship_type": "asset_runs_product",
+              "review_status": "approved",
+              "to_id": "apache-http-server",
+              "to_type": "Product"
+            },
+            {
+              "alias": "service_dependency",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "system",
+                  "status": "unreviewed"
+                }
+              },
+              "from_id": "SVC-2",
+              "from_type": "BusinessService",
+              "properties": {},
+              "relationship_type": "service_depends_on_asset",
+              "review_status": "unreviewed",
+              "to_id": "ASSET-6",
+              "to_type": "Asset"
+            }
+          ],
+          "result": {
+            "entity_id": "SVC-2",
+            "entity_type": "BusinessService",
+            "properties": {
+              "criticality": "critical",
+              "name": "Customer Portal",
+              "service_id": "SVC-2"
+            }
+          }
+        },
+        {
+          "entities": [
+            {
+              "entity_id": "CVE-2021-41773",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94433,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            },
+            {
+              "entity_id": "apache-http-server",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "product_id": "apache-http-server",
+                "product_name": "Http Server",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            },
+            {
+              "entity_id": "ASSET-9",
+              "entity_type": "Asset",
+              "properties": {
+                "asset_id": "ASSET-9",
+                "asset_type": "server",
+                "criticality": "critical",
+                "environment": "production",
+                "hostname": "prod-web-03",
+                "internet_exposed": true
+              }
+            },
+            {
+              "entity_id": "SVC-2",
+              "entity_type": "BusinessService",
+              "properties": {
+                "criticality": "critical",
+                "name": "Customer Portal",
+                "service_id": "SVC-2"
+              }
+            }
+          ],
+          "entry": {
+            "entity_id": "CVE-2021-41773",
+            "entity_type": "Vulnerability",
+            "properties": {
+              "cve_id": "CVE-2021-41773",
+              "cvss_score": 9.8,
+              "cvss_severity": "CRITICAL",
+              "cwes": [
+                "CWE-22"
+              ],
+              "date_added_to_kev": "2021-11-03",
+              "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+              "epss_percentile": 0.99985,
+              "epss_score": 0.94433,
+              "kev_due_date": "2021-11-17",
+              "known_ransomware_use": "Known",
+              "required_action": "Apply updates per vendor instructions.",
+              "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+            }
+          },
+          "includes": {
+            "controls": {
+              "alias": "controls",
+              "count": 1,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "controls",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "system",
+                        "status": "unreviewed"
+                      }
+                    },
+                    "from_id": "ASSET-9",
+                    "from_type": "Asset",
+                    "properties": {},
+                    "relationship_type": "asset_has_control",
+                    "review_status": "unreviewed",
+                    "to_id": "CTRL-1",
+                    "to_type": "CompensatingControl"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-9",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-9",
+                      "asset_type": "server",
+                      "criticality": "critical",
+                      "environment": "production",
+                      "hostname": "prod-web-03",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "CTRL-1",
+                    "entity_type": "CompensatingControl",
+                    "properties": {
+                      "control_id": "CTRL-1",
+                      "control_type": "waf",
+                      "name": "Edge WAF",
+                      "status": "active"
+                    }
+                  }
+                }
+              ],
+              "limit": 10,
+              "many": true,
+              "truncated": false
+            },
+            "exposure": {
+              "alias": "exposure",
+              "count": 0,
+              "exists": false,
+              "items": [],
+              "limit": 5,
+              "many": true,
+              "truncated": false
+            },
+            "owners": {
+              "alias": "owners",
+              "count": 1,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "owners",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "system",
+                        "status": "unreviewed"
+                      }
+                    },
+                    "from_id": "ASSET-9",
+                    "from_type": "Asset",
+                    "properties": {},
+                    "relationship_type": "asset_owned_by",
+                    "review_status": "unreviewed",
+                    "to_id": "OWNER-2",
+                    "to_type": "Owner"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-9",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-9",
+                      "asset_type": "server",
+                      "criticality": "critical",
+                      "environment": "production",
+                      "hostname": "prod-web-03",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "OWNER-2",
+                    "entity_type": "Owner",
+                    "properties": {
+                      "email": "web-platform@example.com",
+                      "name": "Web Platform",
+                      "owner_id": "OWNER-2",
+                      "team": "Platform Engineering"
+                    }
+                  }
+                }
+              ],
+              "limit": 5,
+              "many": true,
+              "truncated": false
+            }
+          },
+          "path": [
+            {
+              "alias": "affected_product",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "system",
+                  "status": "unreviewed"
+                }
+              },
+              "from_id": "CVE-2021-41773",
+              "from_type": "Vulnerability",
+              "properties": {
+                "affected_versions": [
+                  {
+                    "version_exact": "2.4.49"
+                  }
+                ],
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "default_status": "Analyzed",
+                "fixed_version": null,
+                "source": "nvd",
+                "source_last_modified_at": "2026-02-17T19:49:26.367000+00:00",
+                "source_record_id": "CVE-2021-41773",
+                "version_logic": "NVD CPE match version ranges aggregated by product.",
+                "vulnerable": true
+              },
+              "relationship_type": "vulnerability_affects_product",
+              "review_status": "unreviewed",
+              "to_id": "apache-http-server",
+              "to_type": "Product"
+            },
+            {
+              "alias": "installed_product",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "group",
+                  "status": "approved"
+                }
+              },
+              "from_id": "ASSET-9",
+              "from_type": "Asset",
+              "properties": {
+                "installed_version": "2.4.59",
+                "inventory_source": "qualys",
+                "last_seen_at": "2026-03-20",
+                "match_basis": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+                "observed_software_name": "Apache HTTP Server",
+                "observed_vendor": "Apache"
+              },
+              "relationship_type": "asset_runs_product",
+              "review_status": "approved",
+              "to_id": "apache-http-server",
+              "to_type": "Product"
+            },
+            {
+              "alias": "service_dependency",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "system",
+                  "status": "unreviewed"
+                }
+              },
+              "from_id": "SVC-2",
+              "from_type": "BusinessService",
+              "properties": {},
+              "relationship_type": "service_depends_on_asset",
+              "review_status": "unreviewed",
+              "to_id": "ASSET-9",
+              "to_type": "Asset"
+            }
+          ],
+          "result": {
+            "entity_id": "SVC-2",
+            "entity_type": "BusinessService",
+            "properties": {
+              "criticality": "critical",
+              "name": "Customer Portal",
+              "service_id": "SVC-2"
+            }
+          }
+        },
+        {
+          "entities": [
+            {
+              "entity_id": "CVE-2021-41773",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94433,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            },
+            {
+              "entity_id": "apache-http-server",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "product_id": "apache-http-server",
+                "product_name": "Http Server",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            },
+            {
+              "entity_id": "ASSET-21",
+              "entity_type": "Asset",
+              "properties": {
+                "asset_id": "ASSET-21",
+                "asset_type": "server",
+                "criticality": "high",
+                "environment": "production",
+                "hostname": "partner-bastion-01",
+                "internet_exposed": true
+              }
+            },
+            {
+              "entity_id": "SVC-3",
+              "entity_type": "BusinessService",
+              "properties": {
+                "criticality": "high",
+                "name": "Partner API",
+                "service_id": "SVC-3"
+              }
+            }
+          ],
+          "entry": {
+            "entity_id": "CVE-2021-41773",
+            "entity_type": "Vulnerability",
+            "properties": {
+              "cve_id": "CVE-2021-41773",
+              "cvss_score": 9.8,
+              "cvss_severity": "CRITICAL",
+              "cwes": [
+                "CWE-22"
+              ],
+              "date_added_to_kev": "2021-11-03",
+              "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+              "epss_percentile": 0.99985,
+              "epss_score": 0.94433,
+              "kev_due_date": "2021-11-17",
+              "known_ransomware_use": "Known",
+              "required_action": "Apply updates per vendor instructions.",
+              "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+            }
+          },
+          "includes": {
+            "controls": {
+              "alias": "controls",
+              "count": 1,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "controls",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "system",
+                        "status": "unreviewed"
+                      }
+                    },
+                    "from_id": "ASSET-21",
+                    "from_type": "Asset",
+                    "properties": {},
+                    "relationship_type": "asset_has_control",
+                    "review_status": "unreviewed",
+                    "to_id": "CTRL-3",
+                    "to_type": "CompensatingControl"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-21",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-21",
+                      "asset_type": "server",
+                      "criticality": "high",
+                      "environment": "production",
+                      "hostname": "partner-bastion-01",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "CTRL-3",
+                    "entity_type": "CompensatingControl",
+                    "properties": {
+                      "control_id": "CTRL-3",
+                      "control_type": "network_acl",
+                      "name": "Reverse Proxy Allowlist",
+                      "status": "active"
+                    }
+                  }
+                }
+              ],
+              "limit": 10,
+              "many": true,
+              "truncated": false
+            },
+            "exposure": {
+              "alias": "exposure",
+              "count": 0,
+              "exists": false,
+              "items": [],
+              "limit": 5,
+              "many": true,
+              "truncated": false
+            },
+            "owners": {
+              "alias": "owners",
+              "count": 1,
+              "exists": true,
+              "items": [
+                {
+                  "edge": {
+                    "alias": "owners",
+                    "assertion": {
+                      "group_override": false,
+                      "lifecycle": {
+                        "status": "active",
+                        "superseded_by": null,
+                        "supersedes": null
+                      },
+                      "review": {
+                        "source": "system",
+                        "status": "unreviewed"
+                      }
+                    },
+                    "from_id": "ASSET-21",
+                    "from_type": "Asset",
+                    "properties": {},
+                    "relationship_type": "asset_owned_by",
+                    "review_status": "unreviewed",
+                    "to_id": "OWNER-3",
+                    "to_type": "Owner"
+                  },
+                  "source": {
+                    "entity_id": "ASSET-21",
+                    "entity_type": "Asset",
+                    "properties": {
+                      "asset_id": "ASSET-21",
+                      "asset_type": "server",
+                      "criticality": "high",
+                      "environment": "production",
+                      "hostname": "partner-bastion-01",
+                      "internet_exposed": true
+                    }
+                  },
+                  "target": {
+                    "entity_id": "OWNER-3",
+                    "entity_type": "Owner",
+                    "properties": {
+                      "email": "api-platform@example.com",
+                      "name": "API Platform",
+                      "owner_id": "OWNER-3",
+                      "team": "Application Engineering"
+                    }
+                  }
+                }
+              ],
+              "limit": 5,
+              "many": true,
+              "truncated": false
+            }
+          },
+          "path": [
+            {
+              "alias": "affected_product",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "system",
+                  "status": "unreviewed"
+                }
+              },
+              "from_id": "CVE-2021-41773",
+              "from_type": "Vulnerability",
+              "properties": {
+                "affected_versions": [
+                  {
+                    "version_exact": "2.4.49"
+                  }
+                ],
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "default_status": "Analyzed",
+                "fixed_version": null,
+                "source": "nvd",
+                "source_last_modified_at": "2026-02-17T19:49:26.367000+00:00",
+                "source_record_id": "CVE-2021-41773",
+                "version_logic": "NVD CPE match version ranges aggregated by product.",
+                "vulnerable": true
+              },
+              "relationship_type": "vulnerability_affects_product",
+              "review_status": "unreviewed",
+              "to_id": "apache-http-server",
+              "to_type": "Product"
+            },
+            {
+              "alias": "installed_product",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "group",
+                  "status": "approved"
+                }
+              },
+              "from_id": "ASSET-21",
+              "from_type": "Asset",
+              "properties": {
+                "installed_version": "2.4.57",
+                "inventory_source": "qualys",
+                "last_seen_at": "2026-03-21",
+                "match_basis": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+                "observed_software_name": "Apache HTTP Server",
+                "observed_vendor": "Apache"
+              },
+              "relationship_type": "asset_runs_product",
+              "review_status": "approved",
+              "to_id": "apache-http-server",
+              "to_type": "Product"
+            },
+            {
+              "alias": "service_dependency",
+              "assertion": {
+                "group_override": false,
+                "lifecycle": {
+                  "status": "active",
+                  "superseded_by": null,
+                  "supersedes": null
+                },
+                "review": {
+                  "source": "system",
+                  "status": "unreviewed"
+                }
+              },
+              "from_id": "SVC-3",
+              "from_type": "BusinessService",
+              "properties": {},
+              "relationship_type": "service_depends_on_asset",
+              "review_status": "unreviewed",
+              "to_id": "ASSET-21",
+              "to_type": "Asset"
+            }
+          ],
+          "result": {
+            "entity_id": "SVC-3",
+            "entity_type": "BusinessService",
+            "properties": {
+              "criticality": "high",
+              "name": "Partner API",
+              "service_id": "SVC-3"
+            }
+          }
+        }
+      ],
+      "returned_results": 5,
+      "total_results": 7,
+      "truncated": true,
+      "truncation_reasons": [
+        "response_limit"
+      ]
+    },
+    {
+      "limit": 5,
+      "limit_truncated": true,
       "name": "owner_patch_queue",
       "params": {
         "owner_id": "OWNER-2"
@@ -1874,7 +3668,7 @@
         "operation_type": "query",
         "present": true,
         "query_name": "owner_patch_queue",
-        "receipt_id": "<RECEIPT_2>",
+        "receipt_id": "<RECEIPT_3>",
         "relationship_state": "live",
         "relationship_state_source": "query_config",
         "result_shape": "path"
@@ -3707,7 +5501,7 @@
         "operation_type": "query",
         "present": true,
         "query_name": "product_asset_context",
-        "receipt_id": "<RECEIPT_3>",
+        "receipt_id": "<RECEIPT_4>",
         "relationship_state": "reviewable",
         "relationship_state_source": "query_config",
         "result_shape": "path"
@@ -7782,7 +9576,7 @@
         "operation_type": "query",
         "present": true,
         "query_name": "product_vulnerabilities",
-        "receipt_id": "<RECEIPT_4>",
+        "receipt_id": "<RECEIPT_5>",
         "relationship_state": "live",
         "relationship_state_source": "query_config",
         "result_shape": "path"
@@ -8372,7 +10166,7 @@
         "operation_type": "query",
         "present": true,
         "query_name": "vendor_products",
-        "receipt_id": "<RECEIPT_5>",
+        "receipt_id": "<RECEIPT_6>",
         "relationship_state": "live",
         "relationship_state_source": "query_config",
         "result_shape": "path"
@@ -8756,7 +10550,7 @@
         "operation_type": "query",
         "present": true,
         "query_name": "vendor_service_impact",
-        "receipt_id": "<RECEIPT_6>",
+        "receipt_id": "<RECEIPT_7>",
         "relationship_state": "reviewable",
         "relationship_state_source": "query_config",
         "result_shape": "path"
@@ -10790,7 +12584,7 @@
         "operation_type": "query",
         "present": true,
         "query_name": "vendor_vulnerabilities",
-        "receipt_id": "<RECEIPT_7>",
+        "receipt_id": "<RECEIPT_8>",
         "relationship_state": "live",
         "relationship_state_source": "query_config",
         "result_shape": "path"
@@ -11534,7 +13328,7 @@
         "operation_type": "query",
         "present": true,
         "query_name": "vulnerability_asset_context",
-        "receipt_id": "<RECEIPT_8>",
+        "receipt_id": "<RECEIPT_9>",
         "relationship_state": "reviewable",
         "relationship_state_source": "query_config",
         "result_shape": "path"
@@ -13923,7 +15717,7 @@
         "operation_type": "query",
         "present": true,
         "query_name": "vulnerability_class_context",
-        "receipt_id": "<RECEIPT_9>",
+        "receipt_id": "<RECEIPT_10>",
         "relationship_state": "reviewable",
         "relationship_state_source": "query_config",
         "result_shape": "path"
@@ -14151,7 +15945,7 @@
         "operation_type": "query",
         "present": true,
         "query_name": "vulnerability_products",
-        "receipt_id": "<RECEIPT_10>",
+        "receipt_id": "<RECEIPT_11>",
         "relationship_state": "live",
         "relationship_state_source": "query_config",
         "result_shape": "path"

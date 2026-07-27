@@ -1,7 +1,7 @@
 version: '1'
-config_digest: sha256:cfc64d4bda27df95b550f747d70c4cbef9d09c356e86efe05079534acf5b3bef
-lock_digest: sha256:c5441aa899e77c56ffbfc7190fbb7125f5984f25fe4006a89a6f426a4a633b82
-generated_at: 2026-07-26 14:21:11.685004+00:00
+config_digest: sha256:d98534cb3a50b9a06530021eb5d340d4065292daac71fba1e9e5e08dfabd9d6c
+lock_digest: sha256:0faca5c22f63d1dc96bb3ebc52fce57624b01db39d119a41caa5a262b594d778
+generated_at: 2026-07-27 14:53:14.437140+00:00
 artifacts:
   local_seed_bundle:
     kind: directory
@@ -23,7 +23,7 @@ providers:
   match_software_to_products:
     version: 1.0.0
     ref: kit://providers/matching.py::match_software_to_products
-    provider_entrypoint_digest: sha256:f218003a623ba6247a0f8550e14521f5ec0d8684e496d422fba3f8c4b9105792
+    provider_entrypoint_digest: sha256:7d4cc7146f0cf64059b0d9c24ea139844f7ca11c29951b6a64f384d7a72cb0eb
     runtime: python
     deterministic: true
     side_effects: false
@@ -31,7 +31,7 @@ providers:
   assess_asset_affected:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_affected
-    provider_entrypoint_digest: sha256:f218003a623ba6247a0f8550e14521f5ec0d8684e496d422fba3f8c4b9105792
+    provider_entrypoint_digest: sha256:7d4cc7146f0cf64059b0d9c24ea139844f7ca11c29951b6a64f384d7a72cb0eb
     runtime: python
     deterministic: true
     side_effects: false
@@ -39,7 +39,7 @@ providers:
   assess_asset_exposure:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_exposure
-    provider_entrypoint_digest: sha256:f218003a623ba6247a0f8550e14521f5ec0d8684e496d422fba3f8c4b9105792
+    provider_entrypoint_digest: sha256:7d4cc7146f0cf64059b0d9c24ea139844f7ca11c29951b6a64f384d7a72cb0eb
     runtime: python
     deterministic: true
     side_effects: false
@@ -47,7 +47,7 @@ providers:
   assess_exposure_reconciliation:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_exposure_reconciliation
-    provider_entrypoint_digest: sha256:f218003a623ba6247a0f8550e14521f5ec0d8684e496d422fba3f8c4b9105792
+    provider_entrypoint_digest: sha256:7d4cc7146f0cf64059b0d9c24ea139844f7ca11c29951b6a64f384d7a72cb0eb
     runtime: python
     deterministic: true
     side_effects: false

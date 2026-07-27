@@ -129,8 +129,12 @@ _DIGEST_KEYS = {
 }
 _PATH_KEY_RE = re.compile(r"(^path$|_path$|_dir$|^root$|^root_dir$)")
 _VOLATILE_PATH_MARKERS = ("/tmp/", "/private/tmp/", "/private/var/", "/var/folders/")
+# The suffix length is a RANGE, not 12: claim ids mint 16 hex chars, and a
+# too-narrow pattern does not merely miss them, it lets a random uuid4 value
+# through into a byte-compared golden — a permanently unstable file that reads
+# as real drift on every run.
 _GENERATED_ID_RE = re.compile(
-    r"^(?:[A-Z]{2,6}-[0-9a-f]{12}|snap_[0-9a-f]{16}|"
+    r"^(?:[A-Z]{2,6}-[0-9a-f]{12,16}|snap_[0-9a-f]{16}|"
     r"[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
     r"[0-9a-f]{4}-[0-9a-f]{12})$"
 )
@@ -143,6 +147,7 @@ _GENERATED_PREFIX_KIND = {
     "OUT": "OUTCOME",
     "DR": "DECISION_RECORD",
     "DE": "DECISION_EVENT",
+    "CLM": "CLAIM",
 }
 _SEMANTIC_VALUE_KEYS = {
     "group_signature",

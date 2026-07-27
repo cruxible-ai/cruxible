@@ -147,6 +147,10 @@ def test_register_source_artifacts_service_preview_reports_plan_without_persisti
         "registered": 2,
         "noops": 0,
         "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
+        "revisions": {
+            "opinion_text_op_alpha": "opinion_text_op_alpha@1",
+            "opinion_text_op_zeta": "opinion_text_op_zeta@1",
+        },
     }
     assert preview.apply_previews["pin_texts"] == preview.output
     assert _list_source_artifacts(instance) == []
@@ -174,8 +178,12 @@ def test_register_source_artifacts_service_apply_with_preview_digest_registers_a
         "registered": 2,
         "noops": 0,
         "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
+        "revisions": {
+            "opinion_text_op_alpha": "opinion_text_op_alpha@1",
+            "opinion_text_op_zeta": "opinion_text_op_zeta@1",
+        },
     }
-    assert set(applied.output) == {"registered", "noops", "artifact_ids"}
+    assert set(applied.output) == {"registered", "noops", "artifact_ids", "revisions"}
     assert applied.apply_previews["pin_texts"] == applied.output
 
     artifacts = sorted(
@@ -240,9 +248,13 @@ def test_register_source_artifacts_happy_path_outputs_and_chunks(
         "registered": 2,
         "noops": 0,
         "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
+        "revisions": {
+            "opinion_text_op_alpha": "opinion_text_op_alpha@1",
+            "opinion_text_op_zeta": "opinion_text_op_zeta@1",
+        },
     }
     assert result.apply_previews["pin_texts"] == result.output
-    assert set(result.output) == {"registered", "noops", "artifact_ids"}
+    assert set(result.output) == {"registered", "noops", "artifact_ids", "revisions"}
 
     store = instance.get_source_artifact_store()
     try:
@@ -271,6 +283,10 @@ def test_register_source_artifacts_rerun_is_idempotent(
         "registered": 0,
         "noops": 2,
         "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
+        "revisions": {
+            "opinion_text_op_alpha": "opinion_text_op_alpha@1",
+            "opinion_text_op_zeta": "opinion_text_op_zeta@1",
+        },
     }
 
     store = instance.get_source_artifact_store()
@@ -313,6 +329,10 @@ def test_register_source_artifacts_metadata_drift_noop_preserves_original_metada
         "registered": 0,
         "noops": 2,
         "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
+        "revisions": {
+            "opinion_text_op_alpha": "opinion_text_op_alpha@1",
+            "opinion_text_op_zeta": "opinion_text_op_zeta@1",
+        },
     }
     after = _get_source_artifact(instance, "opinion_text_op_alpha")
     assert after is not None

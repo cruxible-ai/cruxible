@@ -532,6 +532,12 @@ def execute_register_source_artifacts_handler(
     artifact already exists with identical content, registration is a noop;
     differing label/original_uri/retention are NOT applied. Re-register under a
     new id to change retention.
+
+    The step output carries a ``revisions`` map ``{artifact_id:
+    artifact_revision_id}`` so a later step can stamp ``{id}@{ordinal}`` onto the
+    evidence refs it mints. Citing only the logical artifact id would leave the
+    ref dereferencing against whatever revision is current, which is exactly the
+    silent staleness the revision pin exists to prevent.
     """
     from cruxible_core.service.source_artifacts import service_register_source_artifact
 
@@ -556,6 +562,10 @@ def execute_register_source_artifacts_handler(
     noops = 0
     artifact_ids: set[str] = set()
     planned_digests: dict[str, str] = {}
+    # {source_artifact_id: artifact_revision_id}. Without this a later step can
+    # only cite the LOGICAL artifact id, and an evidence ref that names no
+    # revision dereferences against whatever revision happens to be current.
+    revisions: dict[str, str] = {}
     store = context.instance.get_source_artifact_store()
 
     try:
@@ -586,6 +596,7 @@ def execute_register_source_artifacts_handler(
                         f"{index} artifact_id '{artifact_id}' already exists with "
                         "different content digest"
                     )
+                revisions[artifact_id] = existing.artifact_revision_id
                 noops += 1
                 continue
 
@@ -636,6 +647,7 @@ def execute_register_source_artifacts_handler(
                     f"'{artifact_id}' failed: {exc}"
                 ) from exc
             planned_digests[artifact_id] = result.content_hash
+            revisions[artifact_id] = result.artifact_revision_id
             registered += 1
     finally:
         store.close()
@@ -644,6 +656,7 @@ def execute_register_source_artifacts_handler(
         "registered": registered,
         "noops": noops,
         "artifact_ids": sorted(artifact_ids),
+        "revisions": dict(sorted(revisions.items())),
     }
     context.set_step_output(compiled_step, output)
     context.apply_previews[compiled_step.step_id] = output
