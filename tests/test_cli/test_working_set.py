@@ -674,6 +674,38 @@ class TestCatalog:
                     "runtime": {"default_write_policy": "direct"},
                 }
 
+            def list_procedures(
+                self, instance_id: str, *, limit: int = 100, offset: int = 0
+            ) -> SimpleNamespace:
+                assert instance_id == "inst_catalog"
+                items = (
+                    [
+                        {
+                            "procedure_id": "PRC-cat0001",
+                            "definition": {
+                                "name": "triage_lookup",
+                                "description": "Look up triage state for one item.",
+                                "steps": [
+                                    {"id": "eligible", "assert_exists": {"ref": "$input.value"}}
+                                ],
+                                "returns": "eligible",
+                                "precondition": {
+                                    "entity_type": "Task",
+                                    "condition": {"status": "ready"},
+                                },
+                                "budget": {"wall_clock_s": 60, "max_provider_calls": 0},
+                            },
+                            "definition_digest": "sha256:stub",
+                            "status": "live",
+                            "version": 1,
+                            "proposed_actor_context": None,
+                        }
+                    ]
+                    if offset == 0
+                    else []
+                )
+                return SimpleNamespace(items=items, total=1, limit=limit, offset=offset)
+
             def config_status(self, instance_id: str) -> SimpleNamespace:
                 assert instance_id == "inst_catalog"
                 return SimpleNamespace(
@@ -696,9 +728,21 @@ class TestCatalog:
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert payload["config_digest"] == "server-digest"
-        assert payload["kind_counts"] == {"entity_type": 1}
+        assert payload["kind_counts"] == {"entity_type": 1, "procedure": 1}
         path = catalog_path("inst_catalog")
-        assert "server-digest" in path.read_text().splitlines()[0]
+        lines = path.read_text().splitlines()
+        assert "server-digest" in lines[0]
+        procedure_entry = next(
+            json.loads(line) for line in lines[1:] if '"kind":"procedure"' in line
+        )
+        assert procedure_entry == {
+            "kind": "procedure",
+            "procedure_id": "PRC-cat0001",
+            "name": "triage_lookup",
+            "status": "live",
+            "version": 1,
+            "summary": "Look up triage state for one item.",
+        }
 
 
 class TestCredentialScope:

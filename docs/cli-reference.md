@@ -3879,12 +3879,17 @@ File hygiene and tamper honesty:
 - Rewrites `catalog.jsonl` (sibling of `records.jsonl`) atomically: a
   complete, bounded, deterministic index of the instance's control plane —
   entity types with property names, relationship types with endpoints and
-  write policy, named queries with params/returns, and procedures — one JSON
-  object per line under a `#` header stamped with the active config digest.
+  write policy, named queries with params/returns, and governed procedures
+  (id, name, status, version, summary) — one JSON object per line under a
+  `#` header stamped with the active config digest.
 - Unlike `records.jsonl` (partial, interest-driven), the catalog is total for
   the control plane and is never appended to during capture; `ws refresh`
-  also regenerates it. Local mode builds it from the loaded instance config;
-  server mode reads the same schema surface `cruxible schema` uses.
+  also regenerates it. Config-declared elements come from the loaded instance
+  config (local) or the same schema surface `cruxible schema` uses (server);
+  procedures are state-held records and are paged from the same list surface
+  `cruxible procedure list` uses. If the procedure listing fails (e.g. an
+  older daemon), the catalog regenerates its config-derived entries with a
+  stderr warning and zero procedure lines.
 - Prints entry counts by kind and the file path.
 
 **Common Errors:**

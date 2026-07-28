@@ -29,7 +29,12 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.cli.working_set import working_set_activation
 from cruxible_core.config.schema import schema_wire_payload
-from cruxible_core.service import service_get_entity, service_inspect_entity
+from cruxible_core.procedure.types import ProcedureRecord
+from cruxible_core.service import (
+    service_get_entity,
+    service_inspect_entity,
+    service_list_procedures,
+)
 from cruxible_core.service.types import InspectNeighborhoodResult
 from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import compute_lock_config_digest
@@ -138,6 +143,49 @@ def _catalog_schema(context: _WsContext) -> dict[str, Any]:
     return schema_wire_payload(context.instance.load_config())
 
 
+def _catalog_procedures(context: _WsContext) -> list[dict[str, Any]]:
+    """List every governed procedure as a normalized catalog card.
+
+    Procedures are state-held records (never config schema fields), so the
+    catalog pages through the same list surface ``cruxible procedure list``
+    uses until the reported total is exhausted. A transport/endpoint failure
+    degrades to zero cards with a stderr warning rather than failing the
+    whole catalog — an older daemon without the procedures routes can still
+    regenerate its config-derived entries.
+    """
+    cards: list[dict[str, Any]] = []
+    limit = 100
+    offset = 0
+    try:
+        while True:
+            if context.client is not None and context.instance_id is not None:
+                result: Any = context.client.list_procedures(
+                    context.instance_id, limit=limit, offset=offset
+                )
+            else:
+                assert context.instance is not None
+                result = service_list_procedures(context.instance, limit=limit, offset=offset)
+            items = list(result.items)
+            for item in items:
+                record = ProcedureRecord.model_validate(item)
+                cards.append(
+                    {
+                        "procedure_id": record.procedure_id,
+                        "name": record.definition.name,
+                        "status": record.status,
+                        "version": record.version,
+                        "summary": record.definition.description or "",
+                    }
+                )
+            offset += len(items)
+            total = getattr(result, "total", None)
+            if not items or (isinstance(total, int) and offset >= total):
+                return cards
+    except Exception as exc:  # degrade: config-derived catalog stays usable
+        click.echo(f"warning: catalog lists no procedures ({exc})", err=True)
+        return []
+
+
 def _regenerate_catalog(
     context: _WsContext,
     *,
@@ -146,7 +194,10 @@ def _regenerate_catalog(
     """Rebuild the complete catalog atomically and return its summary shape."""
     try:
         path = secure_catalog_path(context.instance_key)
-        records = build_catalog_records(_catalog_schema(context))
+        records = build_catalog_records(
+            _catalog_schema(context),
+            procedures=_catalog_procedures(context),
+        )
         write_catalog(path, records, config_digest=config_digest)
     except (ValueError, WorkingSetPathError) as exc:
         raise click.UsageError(str(exc)) from exc

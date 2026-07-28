@@ -63,9 +63,12 @@ Record shape (one JSON object per line)
 Dedupe
     Appends dedupe by identity key: the record with the newest
     ``read_revision`` wins; a missing revision loses to any concrete one;
-    ties are broken by the latest ``as_of``. A winning record overlays its
-    ``props`` onto the superseded record so a later compact read cannot erase
-    fields from an earlier explicit projection. Superseding an existing line
+    ties are broken by the latest ``as_of``. When winner and loser carry the
+    SAME concrete revision and config digest, the winner overlays its
+    ``props`` onto the superseded record so a same-coordinate compact read
+    cannot erase fields from an explicit projection; across revisions or
+    configs the winner replaces the record wholesale (folding older-revision
+    fields in would stamp stale values fresh). Superseding an existing line
     (or exceeding ``COMPACT_THRESHOLD_BYTES``) triggers a dedupe-compaction:
     the whole file is rewritten atomically (temp file + rename).
 
@@ -401,8 +404,19 @@ def _catalog_query_params(
     return sorted(params)
 
 
-def build_catalog_records(schema: dict[str, Any]) -> list[dict[str, Any]]:
-    """Build the complete deterministic control-plane catalog from schema JSON."""
+def build_catalog_records(
+    schema: dict[str, Any],
+    *,
+    procedures: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Build the complete deterministic control-plane catalog.
+
+    ``schema`` supplies the config-declared elements (entity types,
+    relationships, named queries). Governed procedures are STATE-held records,
+    not config fields — the config schema payload never carries them — so the
+    caller lists them from the instance and passes normalized cards via
+    ``procedures`` (procedure_id, name, status, version, summary).
+    """
     records: list[dict[str, Any]] = []
     raw_entity_types = schema.get("entity_types")
     entity_types = raw_entity_types if isinstance(raw_entity_types, dict) else {}
@@ -462,14 +476,20 @@ def build_catalog_records(schema: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
 
-    raw_procedures = schema.get("procedures")
-    if isinstance(raw_procedures, dict):
-        for name in sorted(raw_procedures):
-            procedure = raw_procedures[name]
-            summary = ""
-            if isinstance(procedure, dict):
-                summary = str(procedure.get("summary") or procedure.get("description") or "")
-            records.append({"kind": "procedure", "name": name, "summary": summary})
+    for card in sorted(
+        (item for item in procedures or [] if isinstance(item, dict)),
+        key=lambda item: (str(item.get("name") or ""), str(item.get("procedure_id") or "")),
+    ):
+        records.append(
+            {
+                "kind": "procedure",
+                "procedure_id": card.get("procedure_id"),
+                "name": card.get("name"),
+                "status": card.get("status"),
+                "version": card.get("version"),
+                "summary": str(card.get("summary") or ""),
+            }
+        )
     return records
 
 
@@ -638,12 +658,28 @@ def _merge_winning_record(
     old: dict[str, Any],
     new: dict[str, Any],
 ) -> dict[str, Any]:
-    """Keep old-only properties while otherwise superseding with the winner."""
+    """Keep old-only properties while otherwise superseding with the winner.
+
+    Props merge ONLY when both records carry the same concrete
+    ``read_revision`` AND the same concrete ``config_digest``: the merged
+    record is stamped with the winner's coordinates, so folding fields read
+    at an older revision (or under another config) would label stale values
+    fresh. Across revisions or configs the winner replaces the record
+    wholesale — projection retention is same-coordinate only; ``ws refresh``
+    is the cross-revision path.
+    """
     merged = dict(new)
-    old_props = old.get("props")
-    new_props = new.get("props")
-    if isinstance(old_props, dict) and isinstance(new_props, dict):
-        merged["props"] = {**old_props, **new_props}
+    same_coordinates = (
+        new.get("read_revision") is not None
+        and new.get("read_revision") == old.get("read_revision")
+        and new.get("config_digest") is not None
+        and new.get("config_digest") == old.get("config_digest")
+    )
+    if same_coordinates:
+        old_props = old.get("props")
+        new_props = new.get("props")
+        if isinstance(old_props, dict) and isinstance(new_props, dict):
+            merged["props"] = {**old_props, **new_props}
     return merged
 
 
