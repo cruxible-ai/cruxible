@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 from pydantic import ValidationError
@@ -18,8 +18,11 @@ from cruxible_core.service import (
     service_supersede_entity,
 )
 
+if TYPE_CHECKING:
+    from cruxible_core.governance.actors import GovernedActorContext
 
-def _local_operator_context():
+
+def _local_operator_context() -> GovernedActorContext:
     """Lazy import: pulling server.auth_managed_entities at CLI import time
     closes a circular import chain (the module observes itself partially
     initialized) on some command import orders."""
