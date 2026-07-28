@@ -76,7 +76,8 @@ decision_record_option = click.option(
 
 # Opt-in agent-local working-set capture for JSON read commands. Capture is a
 # pure side effect after the payload is printed (stdout is never changed); it
-# can also be enabled globally with CRUXIBLE_WORKING_SET=1. See
+# can also be enabled with CRUXIBLE_WORKING_SET=1 or the persisted preference
+# managed by ``cruxible ws enable|disable``. See
 # ``cruxible_core.cli.working_set`` and the ``cruxible ws`` group.
 ws_option = click.option(
     "--ws",
@@ -442,6 +443,7 @@ def _current_cli_context() -> CliContextState:
         server_url=obj.get("server_url"),
         server_socket=obj.get("server_socket"),
         instance_id=obj.get("instance_id"),
+        working_set=obj.get("working_set"),
     )
 
 
@@ -455,6 +457,7 @@ def _activate_server_instance(instance_id: str) -> ActiveInstanceChange | None:
             server_url=state.server_url,
             server_socket=state.server_socket,
             instance_id=instance_id,
+            working_set=state.working_set,
         )
     )
     _root_ctx_obj()["instance_id"] = instance_id
@@ -485,11 +488,13 @@ def _persist_cli_context(
     server_socket: str | None,
     instance_id: str | None,
 ) -> None:
+    existing = load_cli_context()
     save_cli_context(
         CliContextState(
             server_url=server_url,
             server_socket=server_socket,
             instance_id=instance_id,
+            working_set=existing.working_set,
         )
     )
 

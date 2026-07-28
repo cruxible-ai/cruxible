@@ -19,15 +19,18 @@ class CliContextState:
     server_url: str | None = None
     server_socket: str | None = None
     instance_id: str | None = None
+    working_set: bool | None = None
 
-    def as_json(self) -> dict[str, str]:
-        payload: dict[str, str] = {}
+    def as_json(self) -> dict[str, str | bool]:
+        payload: dict[str, str | bool] = {}
         if self.server_url:
             payload["server_url"] = self.server_url
         if self.server_socket:
             payload["server_socket"] = self.server_socket
         if self.instance_id:
             payload["instance_id"] = self.instance_id
+        if self.working_set is not None:
+            payload["working_set"] = self.working_set
         return payload
 
 
@@ -57,6 +60,7 @@ def load_cli_context(environ: Mapping[str, str] | None = None) -> CliContextStat
     server_url = payload.get("server_url")
     server_socket = payload.get("server_socket")
     instance_id = payload.get("instance_id")
+    working_set = payload.get("working_set")
     for key, value in (
         ("server_url", server_url),
         ("server_socket", server_socket),
@@ -64,10 +68,13 @@ def load_cli_context(environ: Mapping[str, str] | None = None) -> CliContextStat
     ):
         if value is not None and not isinstance(value, str):
             raise ConfigError(f"CLI context field '{key}' must be a string when set")
+    if working_set is not None and not isinstance(working_set, bool):
+        raise ConfigError("CLI context field 'working_set' must be a boolean when set")
     return CliContextState(
         server_url=server_url,
         server_socket=server_socket,
         instance_id=instance_id,
+        working_set=working_set,
     )
 
 
