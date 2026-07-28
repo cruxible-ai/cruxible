@@ -14,16 +14,19 @@ agent process and the daemon stays blind to it. This module never imports
 from ``cruxible_core.cli`` or ``cruxible_core.mcp``.
 
 File layout
-    ``<working-set root>/<instance-key>/records.jsonl``. The root defaults to
+    ``<working-set root>/<instance-key>/records.jsonl`` holds captured reads;
+    its sibling ``catalog.jsonl`` is a complete, bounded control-plane catalog
+    regenerated from config by ``ws refresh`` or ``ws catalog`` and never
+    appended during capture. The root defaults to
     ``~/.cruxible/working-set`` and can be redirected with the
-    ``CRUXIBLE_WORKING_SET_DIR`` environment variable (precedence:
-    explicit env > default home dir; the ``cruxible ws`` group resolves paths
-    the same way). The instance key is the daemon instance id in server mode
-    and ``local-<sha256(resolved instance root)[:16]>`` in local mode — the
-    same instance binding rule continuation tokens use (``local:<root>``),
-    hashed so it is filesystem-safe. Line 1 of every file is a ``#``-prefixed
-    header marking the cache non-authoritative; readers (this module
-    included) must tolerate it, and ``jq``/``rg`` users skip it naturally.
+    ``CRUXIBLE_WORKING_SET_DIR`` environment variable (precedence: explicit
+    env > default home dir; the ``cruxible ws`` group resolves paths the same
+    way). The instance key is the daemon instance id in server mode and
+    ``local-<sha256(resolved instance root)[:16]>`` in local mode — the same
+    instance binding rule continuation tokens use (``local:<root>``), hashed
+    so it is filesystem-safe. Line 1 of every file is a ``#``-prefixed header
+    marking the cache non-authoritative; readers (this module included) must
+    tolerate it, and ``jq``/``rg`` users skip it naturally.
 
 Credential scope (server mode)
     When a bearer credential is configured, the server-mode instance key gains
@@ -41,10 +44,11 @@ Credential scope (server mode)
 Record shape (one JSON object per line)
     ``kind`` (``entity`` | ``edge``), identity fields (``entity_type`` /
     ``entity_id`` or ``relationship_type``/``from_type``/``from_id``/
-    ``to_type``/``to_id``/``edge_key``/``claim_id``), ``props`` (the compact-profile
-    property slice — the same serializer as ``--profile compact``, never a new
-    projection), ``lifecycle``, ``review`` (``None`` for entities — they have
-    no review axis), ``read_revision`` (``None`` means the source response
+    ``to_type``/``to_id``/``edge_key``/``claim_id``), ``props`` (the compact
+    display slice plus scalar properties already present in the emitted
+    payload, capped at 64 scalar keys), ``lifecycle``, ``review`` (``None`` for
+    entities — they have no review axis), optional edge ``corroboration``,
+    ``read_revision`` (``None`` means the source response
     carried no revision and none could be resolved locally; ``ws verify``
     reports such records as ``unknown``), ``config_digest`` (the active config
     digest at capture time — local mode uses the lock digest continuation
@@ -59,9 +63,11 @@ Record shape (one JSON object per line)
 Dedupe
     Appends dedupe by identity key: the record with the newest
     ``read_revision`` wins; a missing revision loses to any concrete one;
-    ties are broken by the latest ``as_of``. Superseding an existing line (or
-    exceeding ``COMPACT_THRESHOLD_BYTES``) triggers a dedupe-compaction: the
-    whole file is rewritten atomically (temp file + rename).
+    ties are broken by the latest ``as_of``. A winning record overlays its
+    ``props`` onto the superseded record so a later compact read cannot erase
+    fields from an earlier explicit projection. Superseding an existing line
+    (or exceeding ``COMPACT_THRESHOLD_BYTES``) triggers a dedupe-compaction:
+    the whole file is rewritten atomically (temp file + rename).
 
 Concurrency limits (honest edition)
     Plain appends use a single ``O_APPEND`` ``os.write`` per capture, so
@@ -78,11 +84,12 @@ Safety rails
     The cache is NEVER read by any write path or by any CLI command other
     than the capture hooks and the ``cruxible ws`` group. Working-set
     directories (the configured root AND each instance directory) are
-    created mode 0700 and records files mode 0600 — and all of them are
+    created mode 0700 and JSONL files mode 0600 — and all of them are
     idempotently re-tightened on every write touch, so pre-existing
     lax-mode caches heal on next use; ancestors above the configured root
-    are never chmod'd. Every verb — capture, verify, refresh, clear —
-    validates the FULL path chain (root, instance dir, records file, and
+    are never chmod'd. Every filesystem verb — capture, catalog, status,
+    verify, refresh, clear —
+    validates the FULL path chain (root, instance dir, target JSONL file, and
     the scope-salt file where applicable) with ``lstat``/``O_NOFOLLOW``
     discipline BEFORE its first read, stat, write, or unlink: a symlink at
     any level is refused outright. The reader validates every line against the record
@@ -120,10 +127,18 @@ from cruxible_core.temporal import format_datetime, utc_now
 WORKING_SET_DIR_ENV = "CRUXIBLE_WORKING_SET_DIR"
 
 HEADER_LINE = "# NON-AUTHORITATIVE CACHE — never a write source; verify with: cruxible ws verify"
+CATALOG_FORMAT = "cruxible-working-set-catalog-v1"
+CATALOG_HEADER_PREFIX = "# NON-AUTHORITATIVE CATALOG"
+_CATALOG_INPUT_REF_RE = re.compile(r"\$input\.([A-Za-z_][\w-]*)")
+_CATALOG_CONSTRAINT_PARAM_RE = re.compile(r"\$([A-Za-z_][\w-]*)(?:\.([A-Za-z_][\w-]*))?")
+_CATALOG_QUERY_SCOPES = frozenset(
+    {"entry", "result", "path", "relationship", "from_entity", "to_entity"}
+)
 
 # Dedupe-compaction threshold: files past this size are fully rewritten
 # (deduped) on the next append instead of growing further.
 COMPACT_THRESHOLD_BYTES = 5 * 1024 * 1024
+ENTITY_RECORD_MAX_SCALAR_PROPERTIES = 64
 
 # Instance keys become directory names; anything outside this set (path
 # separators, traversal dots-only names, leading dots) is refused so the
@@ -138,7 +153,7 @@ class WorkingSetPathError(RuntimeError):
 
 
 def working_set_dir() -> Path:
-    """Return the root directory that holds every per-instance records file.
+    """Return the root directory that holds every per-instance cache file.
 
     Precedence: an explicit ``CRUXIBLE_WORKING_SET_DIR`` environment
     override wins; otherwise the default ``~/.cruxible/working-set``. The
@@ -220,13 +235,20 @@ def records_path(instance_key: str) -> Path:
     return working_set_dir() / instance_key / "records.jsonl"
 
 
+def catalog_path(instance_key: str) -> Path:
+    """Return the catalog file path for *instance_key*, validating the key."""
+    if not _INSTANCE_KEY_RE.match(instance_key):
+        raise ValueError(f"invalid working-set instance key: {instance_key!r}")
+    return working_set_dir() / instance_key / "catalog.jsonl"
+
+
 # ---- directory/file hygiene and symlink refusal ----
 
 
 def _working_set_levels(path: Path) -> tuple[Path, ...]:
     """Every filesystem level from the configured working-set root down to *path*.
 
-    For a records path this is ``(root, instance dir, records file)``; for the
+    For a JSONL path this is ``(root, instance dir, target file)``; for the
     scope-salt file ``(root, salt file)``. A *path* outside the configured
     root (never produced by this module's own path builders; possible only
     for a caller-supplied path) degrades to ``(parent, path)`` — the levels
@@ -277,6 +299,13 @@ def secure_records_path(instance_key: str) -> Path:
     return path
 
 
+def secure_catalog_path(instance_key: str) -> Path:
+    """Validated catalog path for *instance_key*, refusing symlinked levels."""
+    path = catalog_path(instance_key)
+    refuse_symlinks(path)
+    return path
+
+
 def _prepare_write_dirs(path: Path) -> None:
     """Create missing directories and tighten the working-set-owned levels.
 
@@ -299,7 +328,198 @@ def _prepare_write_dirs(path: Path) -> None:
             pass
 
 
+# ---- deterministic config catalog (control plane; never capture-time work) ----
+
+
+def catalog_header_line(config_digest: str | None) -> str:
+    """Return the non-authoritative catalog header for one config digest."""
+    digest = config_digest if config_digest is not None else "unknown"
+    return f"{CATALOG_HEADER_PREFIX} format={CATALOG_FORMAT} config_digest={digest}"
+
+
+def _catalog_input_params(value: Any) -> set[str]:
+    """Collect explicit ``$input.<name>`` references from a schema value."""
+    if isinstance(value, str):
+        return set(_CATALOG_INPUT_REF_RE.findall(value))
+    if isinstance(value, list | tuple):
+        params: set[str] = set()
+        for item in value:
+            params.update(_catalog_input_params(item))
+        return params
+    if isinstance(value, dict):
+        params = set()
+        for key, item in value.items():
+            params.update(_catalog_input_params(key))
+            params.update(_catalog_input_params(item))
+        return params
+    return set()
+
+
+def _catalog_constraint_params(value: Any) -> set[str]:
+    """Collect legacy bare ``$param`` references from query constraints."""
+    if isinstance(value, list):
+        params: set[str] = set()
+        for item in value:
+            params.update(_catalog_constraint_params(item))
+        return params
+    if not isinstance(value, dict):
+        return set()
+    params = set()
+    for key, item in value.items():
+        if key == "constraint" and isinstance(item, str):
+            for name, dotted_name in _CATALOG_CONSTRAINT_PARAM_RE.findall(item):
+                if name == "input" and dotted_name:
+                    params.add(dotted_name)
+                elif name not in _CATALOG_QUERY_SCOPES:
+                    params.add(name)
+        else:
+            params.update(_catalog_constraint_params(item))
+    return params
+
+
+def _catalog_query_params(
+    query: dict[str, Any],
+    entity_types: dict[str, Any],
+) -> list[str]:
+    """Infer the config-declared invocation parameters for one named query."""
+    params = _catalog_input_params(query)
+    params.update(_catalog_constraint_params(query))
+    entry_point = query.get("entry_point")
+    if isinstance(entry_point, str):
+        entity_schema = entity_types.get(entry_point)
+        if isinstance(entity_schema, dict):
+            properties = entity_schema.get("properties")
+            if isinstance(properties, dict):
+                for name, property_schema in properties.items():
+                    if (
+                        isinstance(name, str)
+                        and isinstance(property_schema, dict)
+                        and property_schema.get("primary_key") is True
+                    ):
+                        params.add(name)
+    return sorted(params)
+
+
+def build_catalog_records(schema: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build the complete deterministic control-plane catalog from schema JSON."""
+    records: list[dict[str, Any]] = []
+    raw_entity_types = schema.get("entity_types")
+    entity_types = raw_entity_types if isinstance(raw_entity_types, dict) else {}
+    for name in sorted(entity_types):
+        entity_schema = entity_types[name]
+        properties = entity_schema.get("properties") if isinstance(entity_schema, dict) else None
+        property_names = sorted(properties) if isinstance(properties, dict) else []
+        records.append(
+            {
+                "kind": "entity_type",
+                "name": name,
+                "property_names": property_names,
+            }
+        )
+
+    runtime = schema.get("runtime")
+    default_write_policy = (
+        runtime.get("default_write_policy") if isinstance(runtime, dict) else None
+    )
+    relationships = schema.get("relationships")
+    relationship_items = relationships if isinstance(relationships, list) else []
+    for relationship in sorted(
+        (item for item in relationship_items if isinstance(item, dict)),
+        key=lambda item: (
+            str(item.get("name") or ""),
+            str(item.get("from_entity") or item.get("from") or ""),
+            str(item.get("to_entity") or item.get("to") or ""),
+        ),
+    ):
+        declared_policy = relationship.get("write_policy")
+        write_policy = declared_policy or default_write_policy
+        records.append(
+            {
+                "kind": "relationship_type",
+                "name": relationship.get("name"),
+                "from_type": relationship.get("from_entity") or relationship.get("from"),
+                "to_type": relationship.get("to_entity") or relationship.get("to"),
+                "governed": bool(
+                    relationship.get("proposal_policy")
+                    or (write_policy is not None and write_policy != "direct")
+                ),
+                "write_policy": write_policy,
+            }
+        )
+
+    raw_named_queries = schema.get("named_queries")
+    named_queries = raw_named_queries if isinstance(raw_named_queries, dict) else {}
+    for name in sorted(named_queries):
+        query = named_queries[name]
+        query_schema = query if isinstance(query, dict) else {}
+        records.append(
+            {
+                "kind": "named_query",
+                "name": name,
+                "params": _catalog_query_params(query_schema, entity_types),
+                "returns": query_schema.get("returns"),
+            }
+        )
+
+    raw_procedures = schema.get("procedures")
+    if isinstance(raw_procedures, dict):
+        for name in sorted(raw_procedures):
+            procedure = raw_procedures[name]
+            summary = ""
+            if isinstance(procedure, dict):
+                summary = str(procedure.get("summary") or procedure.get("description") or "")
+            records.append({"kind": "procedure", "name": name, "summary": summary})
+    return records
+
+
+def write_catalog(
+    path: Path,
+    records: list[dict[str, Any]],
+    *,
+    config_digest: str | None,
+) -> None:
+    """Atomically regenerate a private catalog JSONL file from bounded records."""
+    refuse_symlinks(path)
+    _prepare_write_dirs(path)
+    lines = [catalog_header_line(config_digest)]
+    lines.extend(
+        json.dumps(record, default=str, sort_keys=True, separators=(",", ":")) for record in records
+    )
+    temp_path = path.parent / f".{path.name}.tmp.{os.getpid()}"
+    fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, ("\n".join(lines) + "\n").encode("utf-8"))
+    finally:
+        os.close(fd)
+    temp_path.replace(path)
+
+
 # ---- record normalization (compact profile serializer, never a new shape) ----
+
+
+def _is_scalar_property(value: Any) -> bool:
+    return value is None or isinstance(value, str | int | float | bool)
+
+
+def _entity_record_properties(
+    compact_properties: dict[str, Any],
+    incoming_properties: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep compact display fields plus bounded scalars already shown to the agent."""
+    properties = dict(compact_properties)
+    scalar_count = sum(_is_scalar_property(value) for value in properties.values())
+    for key in sorted(incoming_properties):
+        if key in properties:
+            continue
+        value = incoming_properties[key]
+        if not _is_scalar_property(value):
+            continue
+        if scalar_count >= ENTITY_RECORD_MAX_SCALAR_PROPERTIES:
+            break
+        properties[key] = value
+        scalar_count += 1
+    return properties
 
 
 def normalize_entity_record(
@@ -321,11 +541,15 @@ def normalize_entity_record(
         },
         "compact",
     )
+    incoming_properties = payload.get("properties") or {}
     return {
         "kind": "entity",
         "entity_type": compact.get("entity_type"),
         "entity_id": compact.get("entity_id"),
-        "props": compact.get("properties") or {},
+        "props": _entity_record_properties(
+            compact.get("properties") or {},
+            incoming_properties if isinstance(incoming_properties, dict) else {},
+        ),
         "lifecycle": (compact.get("metadata") or {}).get("lifecycle"),
         "review": None,
         "read_revision": read_revision,
@@ -348,7 +572,7 @@ def normalize_edge_record(
     """Build one edge working-set record from a serialized edge payload."""
     compact = neighborhood_edge_payload(payload, "compact")
     assertion = (compact.get("metadata") or {}).get("assertion") or {}
-    return {
+    record: dict[str, Any] = {
         "kind": "edge",
         "relationship_type": compact.get("relationship_type"),
         "from_type": compact.get("from_type"),
@@ -369,6 +593,9 @@ def normalize_edge_record(
         "receipt_refs": receipt_refs,
         "source_cmd": source_cmd,
     }
+    if "corroboration" in compact:
+        record["corroboration"] = compact["corroboration"]
+    return record
 
 
 def record_identity(record: dict[str, Any]) -> RecordIdentity:
@@ -406,6 +633,19 @@ def record_wins(new: dict[str, Any], old: dict[str, Any]) -> bool:
     if new_rank != old_rank:
         return new_rank > old_rank
     return str(new.get("as_of") or "") >= str(old.get("as_of") or "")
+
+
+def _merge_winning_record(
+    old: dict[str, Any],
+    new: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep old-only properties while otherwise superseding with the winner."""
+    merged = dict(new)
+    old_props = old.get("props")
+    new_props = new.get("props")
+    if isinstance(old_props, dict) and isinstance(new_props, dict):
+        merged["props"] = {**old_props, **new_props}
+    return merged
 
 
 # ---- typed record validation (used by the tolerant reader) ----
@@ -517,7 +757,7 @@ def _dedupe(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
             changed = True
             index = by_identity[identity]
             if record_wins(record, deduped[index]):
-                deduped[index] = record
+                deduped[index] = _merge_winning_record(deduped[index], record)
         else:
             by_identity[identity] = len(deduped)
             deduped.append(record)
@@ -569,7 +809,7 @@ def append_records(path: Path, new_records: list[dict[str, Any]]) -> None:
         if identity in by_identity:
             index = by_identity[identity]
             if record_wins(record, existing[index]):
-                existing[index] = record
+                existing[index] = _merge_winning_record(existing[index], record)
                 superseded = True
         else:
             by_identity[identity] = len(existing)

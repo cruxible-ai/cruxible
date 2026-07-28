@@ -5,18 +5,23 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
 from cruxible_core.cli.working_set import (
+    CATALOG_FORMAT,
     HEADER_LINE,
+    catalog_path,
     local_instance_key,
     read_records,
     records_path,
     server_instance_key,
+    working_set_activation,
     working_set_dir,
     working_set_enabled,
 )
@@ -30,7 +35,7 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture(autouse=True)
-def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolate HOME (working-set dir + CLI context) and the opt-in env var."""
     home = tmp_path / "ws-home"
     home.mkdir()
@@ -40,7 +45,7 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return home
 
 
-def _chdir_run(runner: CliRunner, directory: Path, args: list[str]):
+def _chdir_run(runner: CliRunner, directory: Path, args: list[str]) -> Result:
     original = os.getcwd()
     try:
         os.chdir(directory)
@@ -53,7 +58,9 @@ def _ws_file(instance: CruxibleInstance) -> Path:
     return records_path(local_instance_key(instance.get_root_path()))
 
 
-def _records_by_identity(instance: CruxibleInstance) -> dict[tuple, dict]:
+def _records_by_identity(
+    instance: CruxibleInstance,
+) -> dict[tuple[Any, ...], dict[str, Any]]:
     from cruxible_core.cli.working_set import record_identity
 
     return {record_identity(record): record for record in read_records(_ws_file(instance))}
@@ -64,7 +71,12 @@ def _mutate(instance: CruxibleInstance, graph: EntityGraph) -> None:
     instance.save_graph(graph)
 
 
-def _find_edge(by_identity: dict[tuple, dict], relationship: str, from_id: str, to_id: str) -> dict:
+def _find_edge(
+    by_identity: dict[tuple[Any, ...], dict[str, Any]],
+    relationship: str,
+    from_id: str,
+    to_id: str,
+) -> dict[str, Any]:
     """Look up one captured edge record, ignoring the graph-assigned edge_key."""
     matches = [
         record
@@ -125,6 +137,71 @@ class TestOptIn:
         monkeypatch.setenv("CRUXIBLE_WORKING_SET", "0")
         assert working_set_enabled() is False
 
+    def test_activation_precedence_and_persisted_verbs(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from cruxible_core.cli.context import load_cli_context
+
+        root = populated_instance.get_root_path()
+        assert working_set_activation() == (False, "default")
+
+        enabled = _chdir_run(runner, root, ["ws", "enable"])
+        assert enabled.exit_code == 0
+        assert load_cli_context().working_set is True
+        assert working_set_activation() == (True, "persisted context")
+        captured = _chdir_run(
+            runner,
+            root,
+            ["entity", "get", "--type", "Part", "--id", "BP-1001", "--json"],
+        )
+        assert captured.exit_code == 0
+        assert _ws_file(populated_instance).exists()
+        assert _chdir_run(runner, root, ["ws", "clear"]).exit_code == 0
+
+        monkeypatch.setenv("CRUXIBLE_WORKING_SET", "0")
+        assert working_set_activation() == (False, "CRUXIBLE_WORKING_SET")
+        assert working_set_activation(ws_flag=True) == (True, "explicit --ws")
+
+        status = _chdir_run(runner, root, ["ws", "status", "--json"])
+        assert status.exit_code == 0
+        payload = json.loads(status.output)
+        assert payload["capture_enabled"] is False
+        assert payload["activation_source"] == "CRUXIBLE_WORKING_SET"
+
+        monkeypatch.delenv("CRUXIBLE_WORKING_SET")
+        disabled = _chdir_run(runner, root, ["ws", "disable"])
+        assert disabled.exit_code == 0
+        assert load_cli_context().working_set is False
+        assert working_set_activation() == (False, "persisted context")
+        not_captured = _chdir_run(
+            runner,
+            root,
+            ["entity", "get", "--type", "Part", "--id", "BP-1001", "--json"],
+        )
+        assert not_captured.exit_code == 0
+        assert not _ws_file(populated_instance).exists()
+
+    def test_old_context_without_working_set_field_remains_readable(
+        self,
+        isolated_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from cruxible_core.cli.context import load_cli_context
+
+        context_path = isolated_home / ".cruxible" / "client-context.json"
+        monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(context_path))
+        context_path.parent.mkdir()
+        context_path.write_text(
+            json.dumps({"server_url": "http://server", "instance_id": "inst_old"})
+        )
+        state = load_cli_context()
+        assert state.server_url == "http://server"
+        assert state.instance_id == "inst_old"
+        assert state.working_set is None
+
     def test_stdout_unchanged_by_ws_flag(
         self,
         runner: CliRunner,
@@ -178,8 +255,13 @@ class TestCaptureShapes:
         assert entity["source_cmd"] == "query run"
         # The query receipt is threaded into receipt_refs.
         assert entity["receipt_refs"]
-        # Compact profile: display key only, not the full property bag.
-        assert entity["props"] == {"name": "Ceramic Brake Pads"}
+        # Every scalar field emitted to the agent survives normalization.
+        assert entity["props"] == {
+            "name": "Ceramic Brake Pads",
+            "category": "brakes",
+            "part_number": "BP-1001",
+            "price": 49.99,
+        }
 
     def test_inspect_neighborhood_captures_nodes_and_edges(
         self,
@@ -447,6 +529,178 @@ class TestConfigDigest:
         assert payload["unknown"] == 1
 
 
+class TestServerDigestMemoization:
+    def test_config_status_is_called_once_across_multiple_captures(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import cruxible_core.cli.working_set as cli_working_set
+        from cruxible_core.cli.commands import _common
+
+        calls = 0
+
+        class StubClient:
+            def config_status(self, instance_id: str) -> SimpleNamespace:
+                nonlocal calls
+                calls += 1
+                assert instance_id == "inst_memo"
+                return SimpleNamespace(
+                    provenance=SimpleNamespace(active_config_digest="digest-memo")
+                )
+
+        cli_working_set._SERVER_CONFIG_DIGEST_CACHE.clear()
+        monkeypatch.setattr(_common, "_get_client", lambda: StubClient())
+        monkeypatch.setattr(
+            cli_working_set,
+            "resolve_capture_context",
+            lambda: cli_working_set.CaptureContext(
+                instance_key="inst_memo",
+                server_instance_id="inst_memo",
+            ),
+        )
+        try:
+            for entity_id in ("WI-1", "WI-2"):
+                cli_working_set.capture_json_read(
+                    {
+                        "entity_type": "WorkItem",
+                        "entity_id": entity_id,
+                        "properties": {"title": entity_id},
+                        "metadata": {},
+                        "read_revision": 4,
+                    },
+                    source_cmd="test",
+                    ws_flag=True,
+                )
+        finally:
+            cli_working_set._SERVER_CONFIG_DIGEST_CACHE.clear()
+
+        assert calls == 1
+        records = read_records(records_path("inst_memo"))
+        assert len(records) == 2
+        assert {record["config_digest"] for record in records} == {"digest-memo"}
+
+
+class TestCatalog:
+    def test_catalog_is_deterministic_and_digest_stamped(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        from cruxible_core.workflow.compiler import compute_lock_config_digest
+
+        root = populated_instance.get_root_path()
+        first = _chdir_run(runner, root, ["ws", "catalog", "--json"])
+        assert first.exit_code == 0
+        payload = json.loads(first.output)
+        path = catalog_path(local_instance_key(root))
+        assert payload["path"] == str(path)
+        assert payload["format"] == CATALOG_FORMAT
+        assert payload["entry_count"] == 6
+        first_bytes = path.read_bytes()
+
+        expected_digest = compute_lock_config_digest(populated_instance.load_config())
+        lines = path.read_text().splitlines()
+        assert lines[0].startswith("# NON-AUTHORITATIVE CATALOG ")
+        assert f"format={CATALOG_FORMAT}" in lines[0]
+        assert f"config_digest={expected_digest}" in lines[0]
+        entries = [json.loads(line) for line in lines[1:]]
+        assert entries == sorted(
+            entries,
+            key=lambda item: (
+                {"entity_type": 0, "relationship_type": 1, "named_query": 2}[item["kind"]],
+                item["name"],
+            ),
+        )
+        part = next(
+            item for item in entries if item["kind"] == "entity_type" and item["name"] == "Part"
+        )
+        assert part["property_names"] == ["category", "name", "part_number", "price"]
+        vehicles = next(
+            item
+            for item in entries
+            if item["kind"] == "named_query" and item["name"] == "vehicles_for_part"
+        )
+        assert vehicles["params"] == ["part_number"]
+        assert vehicles["returns"] == "list[Vehicle]"
+        fits = next(
+            item
+            for item in entries
+            if item["kind"] == "relationship_type" and item["name"] == "fits"
+        )
+        assert fits == {
+            "from_type": "Part",
+            "governed": False,
+            "kind": "relationship_type",
+            "name": "fits",
+            "to_type": "Vehicle",
+            "write_policy": "direct",
+        }
+        assert (path.stat().st_mode & 0o777) == 0o600
+        assert (path.parent.stat().st_mode & 0o777) == 0o700
+
+        second = _chdir_run(runner, root, ["ws", "catalog", "--json"])
+        assert second.exit_code == 0
+        assert path.read_bytes() == first_bytes
+
+    def test_refresh_regenerates_catalog_without_capture_records(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        root = populated_instance.get_root_path()
+        path = catalog_path(local_instance_key(root))
+        assert not path.exists()
+        refresh = _chdir_run(runner, root, ["ws", "refresh"])
+        assert refresh.exit_code == 0
+        assert "No working-set records to refresh." in refresh.output
+        assert path.exists()
+
+    def test_server_mode_catalog_uses_existing_schema_read_surface(
+        self,
+        runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from cruxible_core.cli.commands import working_set as ws_commands
+
+        class StubClient:
+            def schema(self, instance_id: str) -> dict[str, object]:
+                assert instance_id == "inst_catalog"
+                return {
+                    "entity_types": {
+                        "Task": {"properties": {"task_id": {"type": "string", "primary_key": True}}}
+                    },
+                    "relationships": [],
+                    "named_queries": {},
+                    "runtime": {"default_write_policy": "direct"},
+                }
+
+            def config_status(self, instance_id: str) -> SimpleNamespace:
+                assert instance_id == "inst_catalog"
+                return SimpleNamespace(
+                    provenance=SimpleNamespace(active_config_digest="server-digest")
+                )
+
+        monkeypatch.setattr(ws_commands, "_get_client", lambda: StubClient())
+        result = runner.invoke(
+            cli,
+            [
+                "--server-url",
+                "http://server",
+                "--instance-id",
+                "inst_catalog",
+                "ws",
+                "catalog",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["config_digest"] == "server-digest"
+        assert payload["kind_counts"] == {"entity_type": 1}
+        path = catalog_path("inst_catalog")
+        assert "server-digest" in path.read_text().splitlines()[0]
+
+
 class TestCredentialScope:
     def test_distinct_credentials_get_distinct_dirs(
         self,
@@ -639,7 +893,12 @@ class TestRefresh:
         # Stale entity refreshed in place with the new revision and new props.
         refreshed = by_identity[("entity", "Part", "BP-1001")]
         assert refreshed["read_revision"] == current_revision
-        assert refreshed["props"] == {"name": "Renamed Brake Pads"}
+        assert refreshed["props"] == {
+            "name": "Renamed Brake Pads",
+            "category": "brakes",
+            "part_number": "BP-1001",
+            "price": 59.99,
+        }
         assert refreshed["source_cmd"] == "ws refresh"
         # Deleted entity dropped, along with edges owned by it.
         assert ("entity", "Part", "BP-1002") not in by_identity
@@ -776,15 +1035,19 @@ class TestClear:
         root = populated_instance.get_root_path()
         _chdir_run(runner, root, ["sample", "--type", "Part", "--ws", "--json"])
         path = _ws_file(populated_instance)
+        catalog = catalog_path(local_instance_key(root))
+        assert _chdir_run(runner, root, ["ws", "catalog"]).exit_code == 0
         assert path.exists()
+        assert catalog.exists()
 
         cleared = _chdir_run(runner, root, ["ws", "clear"])
         assert cleared.exit_code == 0
         assert not path.exists()
+        assert not catalog.exists()
 
         again = _chdir_run(runner, root, ["ws", "clear"])
         assert again.exit_code == 0
-        assert "No working-set records file" in again.output
+        assert "No working-set files" in again.output
 
         # Traversal attempt: a hostile instance key is refused outright.
         from cruxible_core.cli.commands import working_set as ws_commands
@@ -805,6 +1068,8 @@ class TestClear:
         for hostile in ("../x", "a/b", "..", ".hidden", "", "/abs"):
             with pytest.raises(ValueError):
                 records_path(hostile)
+            with pytest.raises(ValueError):
+                catalog_path(hostile)
 
 
 class TestCorruption:
@@ -1047,6 +1312,30 @@ class TestSymlinkProtection:
         assert verify.exit_code != 0
         assert "symlink" in verify.output
 
+    @pytest.mark.parametrize("verb", ("catalog", "refresh", "clear"))
+    def test_catalog_file_symlink_is_refused(
+        self,
+        verb: str,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        isolated_home: Path,
+    ) -> None:
+        key = local_instance_key(populated_instance.get_root_path())
+        instance_dir = isolated_home / ".cruxible" / "working-set" / key
+        instance_dir.mkdir(parents=True)
+        target = isolated_home / "outside-catalog.jsonl"
+        target.write_text("untouched\n")
+        (instance_dir / "catalog.jsonl").symlink_to(target)
+
+        result = _chdir_run(
+            runner,
+            populated_instance.get_root_path(),
+            ["ws", verb],
+        )
+        assert result.exit_code != 0
+        assert "symlink" in result.output
+        assert target.read_text() == "untouched\n"
+
 
 class TestRecordValidation:
     def test_wrong_shaped_lines_are_skipped_counted_and_never_fresh(
@@ -1224,14 +1513,20 @@ class _WorkingSetTouched(AssertionError):
 class _StubWriteClient:
     """Server-mode stub covering every client call the write commands make."""
 
-    def schema(self, instance_id):
+    def schema(self, instance_id: str) -> dict[str, Any]:
         return {
             "entity_types": {
                 "Part": {"properties": {"part_number": {"type": "string", "primary_key": True}}}
             }
         }
 
-    def get_entity(self, instance_id, entity_type, entity_id, profile=None):
+    def get_entity(
+        self,
+        instance_id: str,
+        entity_type: str,
+        entity_id: str,
+        profile: str | None = None,
+    ) -> Any:
         from cruxible_client import contracts
 
         # BP-1001 "exists" (entity update passes); BP-9000 does not (add passes).
@@ -1243,7 +1538,7 @@ class _StubWriteClient:
             metadata={},
         )
 
-    def get_relationship(self, instance_id, **kwargs):
+    def get_relationship(self, instance_id: str, **kwargs: Any) -> Any:
         from cruxible_client import contracts
 
         return contracts.GetRelationshipResult(
@@ -1255,7 +1550,13 @@ class _StubWriteClient:
             to_id=kwargs["to_id"],
         )
 
-    def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+    def batch_direct_write(
+        self,
+        instance_id: str,
+        payload: Any,
+        *,
+        dry_run: bool = False,
+    ) -> Any:
         from cruxible_client import contracts
 
         return contracts.BatchDirectWriteResult(
@@ -1266,7 +1567,7 @@ class _StubWriteClient:
             receipt_id="RCPT-WRITE",
         )
 
-    def workflow_apply(self, instance_id, **kwargs):
+    def workflow_apply(self, instance_id: str, **kwargs: Any) -> Any:
         from cruxible_client import contracts
 
         return contracts.WorkflowApplyResult(
@@ -1275,7 +1576,7 @@ class _StubWriteClient:
             receipt_id="RCPT-APPLY",
         )
 
-    def propose_workflow(self, instance_id, **kwargs):
+    def propose_workflow(self, instance_id: str, **kwargs: Any) -> Any:
         from cruxible_client import contracts
 
         return contracts.WorkflowProposeResult(

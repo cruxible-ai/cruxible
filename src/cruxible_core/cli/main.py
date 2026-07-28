@@ -657,6 +657,21 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "ws_status_cmd",
                 "Show record counts, file size, and cached-vs-current revision spread.",
             ),
+            "enable": _command(
+                "working_set",
+                "ws_enable_cmd",
+                "Persistently enable working-set capture.",
+            ),
+            "disable": _command(
+                "working_set",
+                "ws_disable_cmd",
+                "Persistently disable working-set capture.",
+            ),
+            "catalog": _command(
+                "working_set",
+                "ws_catalog_cmd",
+                "Regenerate the control-plane catalog from the active config.",
+            ),
             "verify": _command(
                 "working_set",
                 "ws_verify_cmd",
@@ -665,12 +680,12 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "refresh": _command(
                 "working_set",
                 "ws_refresh_cmd",
-                "Re-fetch stale/unknown records; drop deleted ones; leave fresh untouched.",
+                "Regenerate the catalog and refresh stale/unknown records.",
             ),
             "clear": _command(
                 "working_set",
                 "ws_clear_cmd",
-                "Delete the current context's records file (working-set dir only).",
+                "Delete the current context's records and catalog files.",
             ),
         },
         module="working_set",
@@ -1000,6 +1015,7 @@ def cli(
             "instance_id": resolved_instance_id,
             "require_server": settings.require_server,
             "json_compact": json_compact,
+            "working_set": stored.working_set,
             "target_transport_source": _target_source(
                 explicit=server_url is not None or server_socket is not None,
                 environment=env_server_url is not None or env_server_socket is not None,

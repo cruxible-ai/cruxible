@@ -5,9 +5,10 @@ the transport-neutral core, :mod:`cruxible_core.working_set` (shared with the
 MCP capture hook in :mod:`cruxible_core.mcp.working_set`); this module adds
 only what is CLI-specific:
 
-- the opt-in gate (``CRUXIBLE_WORKING_SET=1`` env / per-command ``--ws``
-  flag) — when neither gate is open every function here is a no-op: no file
-  is created and read commands behave byte-for-byte identically;
+- the opt-in gate (per-command ``--ws`` flag / ``CRUXIBLE_WORKING_SET`` env /
+  persisted CLI-context preference) — when no gate is open every function
+  here is a no-op: no file is created and read commands behave byte-for-byte
+  identically;
 - click-context resolution of the capture identity (server vs local mode,
   the same instance binding continuation tokens use); and
 - :func:`capture_json_read`, the hook the ``--json`` read commands call after
@@ -27,15 +28,20 @@ from typing import Any
 
 import click
 
+from cruxible_core.cli.context import load_cli_context
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.workflow.compiler import compute_lock_config_digest
 from cruxible_core.working_set import (
+    CATALOG_FORMAT,
     COMPACT_THRESHOLD_BYTES,
     HEADER_LINE,
     RecordReadResult,
     WorkingSetPathError,
     append_records,
+    build_catalog_records,
     capture_read_payload,
+    catalog_header_line,
+    catalog_path,
     credential_scope,
     extract_read_records,
     iter_record_lines,
@@ -48,20 +54,24 @@ from cruxible_core.working_set import (
     record_wins,
     records_path,
     refuse_symlinks,
+    secure_catalog_path,
     secure_records_path,
     server_instance_key,
     validate_record,
     working_set_dir,
     working_set_warning,
+    write_catalog,
     write_records,
 )
 
 WORKING_SET_ENV = "CRUXIBLE_WORKING_SET"
 
 _ENV_TRUE = {"1", "true", "yes", "on"}
+_SERVER_CONFIG_DIGEST_CACHE: dict[str, str | None] = {}
 
 # Re-exported so the CLI surface keeps one import point for capture + verbs.
 __all__ = [
+    "CATALOG_FORMAT",
     "COMPACT_THRESHOLD_BYTES",
     "HEADER_LINE",
     "WORKING_SET_ENV",
@@ -69,6 +79,9 @@ __all__ = [
     "RecordReadResult",
     "WorkingSetPathError",
     "append_records",
+    "build_catalog_records",
+    "catalog_header_line",
+    "catalog_path",
     "capture_json_read",
     "capture_read_payload",
     "credential_scope",
@@ -85,21 +98,38 @@ __all__ = [
     "refuse_symlinks",
     "resolve_active_config_digest",
     "resolve_capture_context",
+    "secure_catalog_path",
     "secure_records_path",
     "server_instance_key",
     "validate_record",
+    "working_set_activation",
     "working_set_dir",
     "working_set_enabled",
     "working_set_warning",
+    "write_catalog",
     "write_records",
 ]
 
 
+def working_set_activation(ws_flag: bool = False) -> tuple[bool, str]:
+    """Return capture activation and its highest-precedence source."""
+    if ws_flag:
+        return True, "explicit --ws"
+    if WORKING_SET_ENV in os.environ:
+        enabled = os.environ.get(WORKING_SET_ENV, "").strip().lower() in _ENV_TRUE
+        return enabled, WORKING_SET_ENV
+    try:
+        persisted = load_cli_context().working_set
+    except Exception:
+        persisted = None
+    if persisted is not None:
+        return persisted, "persisted context"
+    return False, "default"
+
+
 def working_set_enabled(ws_flag: bool = False) -> bool:
     """Return whether working-set capture is enabled for this invocation."""
-    if ws_flag:
-        return True
-    return os.environ.get(WORKING_SET_ENV, "").strip().lower() in _ENV_TRUE
+    return working_set_activation(ws_flag)[0]
 
 
 def _cli_root_obj() -> dict[str, Any]:
@@ -153,9 +183,9 @@ def resolve_active_config_digest(context: CaptureContext) -> str | None:
 
     Local mode computes the same lock digest continuation tokens bind to;
     server mode reads the daemon's recorded active config digest via the
-    config-status endpoint (one extra read per capture — acceptable for an
-    opt-in cache). ``None`` when unresolvable; such records verify as
-    ``unknown`` on the config axis.
+    config-status endpoint once per instance and process, then reuses that
+    value for later captures. ``None`` when unresolvable; such records verify
+    as ``unknown`` on the config axis.
     """
     if context.local_instance is not None:
         try:
@@ -164,17 +194,22 @@ def resolve_active_config_digest(context: CaptureContext) -> str | None:
             return None
     if context.server_instance_id is None:
         return None
+    if context.server_instance_id in _SERVER_CONFIG_DIGEST_CACHE:
+        return _SERVER_CONFIG_DIGEST_CACHE[context.server_instance_id]
     try:
         # Imported lazily: _common pulls in the full command surface.
         from cruxible_core.cli.commands._common import _get_client
 
         client = _get_client()
         if client is None:
-            return None
-        provenance = client.config_status(context.server_instance_id).provenance
-        return provenance.active_config_digest if provenance is not None else None
+            digest = None
+        else:
+            provenance = client.config_status(context.server_instance_id).provenance
+            digest = provenance.active_config_digest if provenance is not None else None
     except Exception:
-        return None
+        digest = None
+    _SERVER_CONFIG_DIGEST_CACHE[context.server_instance_id] = digest
+    return digest
 
 
 def capture_json_read(

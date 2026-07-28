@@ -24,23 +24,30 @@ from cruxible_core.cli.commands._common import (
     _guard_local_read_fallback,
     _require_instance_id,
 )
+from cruxible_core.cli.context import CliContextState, load_cli_context, save_cli_context
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.cli.working_set import working_set_activation
+from cruxible_core.config.schema import schema_wire_payload
 from cruxible_core.service import service_get_entity, service_inspect_entity
 from cruxible_core.service.types import InspectNeighborhoodResult
 from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import compute_lock_config_digest
 from cruxible_core.working_set import (
+    CATALOG_FORMAT,
     WorkingSetPathError,
+    build_catalog_records,
     local_instance_key,
     normalize_edge_record,
     normalize_entity_record,
     read_records_detailed,
     record_identity,
     records_path,
+    secure_catalog_path,
     secure_records_path,
     server_instance_key,
     working_set_dir,
+    write_catalog,
     write_records,
 )
 
@@ -118,6 +125,45 @@ def _current_config_digest(context: _WsContext) -> str | None:
         return None
 
 
+def _catalog_schema(context: _WsContext) -> dict[str, Any]:
+    """Load the active config through the existing local/server schema surface."""
+    if context.client is not None and context.instance_id is not None:
+        payload = context.client.schema(context.instance_id)
+        if not isinstance(payload, dict):
+            raise click.UsageError(
+                "catalog unavailable in server mode: schema endpoint returned no config object"
+            )
+        return payload
+    assert context.instance is not None
+    return schema_wire_payload(context.instance.load_config())
+
+
+def _regenerate_catalog(
+    context: _WsContext,
+    *,
+    config_digest: str | None,
+) -> dict[str, Any]:
+    """Rebuild the complete catalog atomically and return its summary shape."""
+    try:
+        path = secure_catalog_path(context.instance_key)
+        records = build_catalog_records(_catalog_schema(context))
+        write_catalog(path, records, config_digest=config_digest)
+    except (ValueError, WorkingSetPathError) as exc:
+        raise click.UsageError(str(exc)) from exc
+    kind_counts: dict[str, int] = {}
+    for record in records:
+        kind = str(record["kind"])
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+    return {
+        "instance_key": context.instance_key,
+        "path": str(path),
+        "format": CATALOG_FORMAT,
+        "config_digest": config_digest,
+        "entry_count": len(records),
+        "kind_counts": kind_counts,
+    }
+
+
 def _classify(
     records: list[dict[str, Any]],
     current_revision: int | None,
@@ -171,12 +217,12 @@ def _identity_label(record: dict[str, Any]) -> str:
 def ws_group() -> None:
     """Agent-local working set: opt-in, NON-AUTHORITATIVE read cache.
 
-    Enable capture with CRUXIBLE_WORKING_SET=1 or per-command --ws on JSON
-    reads; MCP read tools capture when CRUXIBLE_WORKING_SET_DIR is set
-    (that variable also redirects the cache root these verbs use). Records
-    are revision-stamped; verify before trusting them. Cache files are
-    same-user-writable by design — hygiene reduces accidents, not
-    adversaries.
+    Enable capture persistently with ``ws enable``, with
+    CRUXIBLE_WORKING_SET=1, or per-command --ws on JSON reads; MCP read tools
+    capture when CRUXIBLE_WORKING_SET_DIR is set (that variable also redirects
+    the cache root these verbs use). Records are revision-stamped; verify
+    before trusting them. Cache files are same-user-writable by design —
+    hygiene reduces accidents, not adversaries.
     """
 
 
@@ -194,6 +240,7 @@ def ws_path_cmd() -> None:
 def ws_status_cmd(output_json: bool) -> None:
     """Show record counts, file size, and cached-vs-current revision spread."""
     context, path = _ws_paths()
+    capture_enabled, activation_source = working_set_activation()
     read_result = read_records_detailed(path)
     records = read_result.records
     current_revision = _current_read_revision(context)
@@ -227,12 +274,17 @@ def ws_status_cmd(output_json: bool) -> None:
         "current_read_revision": current_revision,
         "newest_cached_revision": max(revisions) if revisions else None,
         "oldest_cached_revision": min(revisions) if revisions else None,
+        "capture_enabled": capture_enabled,
+        "activation_source": activation_source,
     }
     if output_json:
         _emit_json(payload)
         return
     click.echo(f"Instance key: {payload['instance_key']}")
     click.echo(f"Records file: {payload['path']}")
+    click.echo(
+        f"Capture: {'enabled' if capture_enabled else 'disabled'} (source: {activation_source})"
+    )
     if not payload["exists"]:
         click.echo("No working-set records captured yet.")
         return
@@ -250,6 +302,58 @@ def ws_status_cmd(output_json: bool) -> None:
         f"Read revision: current={payload['current_read_revision']} "
         f"newest_cached={payload['newest_cached_revision']} "
         f"oldest_cached={payload['oldest_cached_revision']}"
+    )
+
+
+def _set_persisted_activation(enabled: bool) -> None:
+    """Persist capture activation without disturbing transport selection."""
+    existing = load_cli_context()
+    save_cli_context(
+        CliContextState(
+            server_url=existing.server_url,
+            server_socket=existing.server_socket,
+            instance_id=existing.instance_id,
+            working_set=enabled,
+        )
+    )
+
+
+@ws_group.command("enable")
+@handle_errors
+def ws_enable_cmd() -> None:
+    """Persistently enable working-set capture."""
+    _set_persisted_activation(True)
+    click.echo("Working-set capture enabled in persisted context.")
+
+
+@ws_group.command("disable")
+@handle_errors
+def ws_disable_cmd() -> None:
+    """Persistently disable working-set capture."""
+    _set_persisted_activation(False)
+    click.echo("Working-set capture disabled in persisted context.")
+
+
+@ws_group.command("catalog")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
+@handle_errors
+def ws_catalog_cmd(output_json: bool) -> None:
+    """Regenerate the control-plane catalog from the active config."""
+    context = _ws_context()
+    payload = _regenerate_catalog(
+        context,
+        config_digest=_current_config_digest(context),
+    )
+    if output_json:
+        _emit_json(payload)
+        return
+    counts = payload["kind_counts"]
+    click.echo(
+        f"Catalog regenerated: {payload['entry_count']} entries "
+        f"(entity types={counts.get('entity_type', 0)}, "
+        f"relationship types={counts.get('relationship_type', 0)}, "
+        f"named queries={counts.get('named_query', 0)}, "
+        f"procedures={counts.get('procedure', 0)}) at {payload['path']}"
     )
 
 
@@ -524,19 +628,20 @@ def _refresh_edge_records(
 @ws_group.command("refresh")
 @handle_errors
 def ws_refresh_cmd() -> None:
-    """Re-fetch stale/unknown records; drop deleted ones; leave fresh untouched.
+    """Regenerate the catalog; re-fetch stale/unknown captured records.
 
     Entities are re-read via the compact get-entity read; edges via the
     owning entity's bounded neighborhood inspect. Records whose target is
     gone are dropped with a note. The file is rewritten atomically.
     """
     context, path = _ws_paths()
+    current_config_digest = _current_config_digest(context)
+    _regenerate_catalog(context, config_digest=current_config_digest)
     records = read_records_detailed(path).records
     if not records:
         click.echo("No working-set records to refresh.")
         return
     current_revision = _current_read_revision(context)
-    current_config_digest = _current_config_digest(context)
     fresh, stale, unknown = _classify(records, current_revision, current_config_digest)
     to_refresh = stale + unknown
     as_of = format_datetime(utc_now()) or ""
@@ -599,19 +704,28 @@ def ws_refresh_cmd() -> None:
 @ws_group.command("clear")
 @handle_errors
 def ws_clear_cmd() -> None:
-    """Delete the current context's records file (working-set dir only)."""
+    """Delete the current context's records and catalog files."""
     # _ws_paths refuses a symlink at ANY chain level (root, instance dir,
     # records file) before the containment check and unlink below.
-    _context, path = _ws_paths()
+    context, records = _ws_paths()
+    try:
+        catalog = secure_catalog_path(context.instance_key)
+    except WorkingSetPathError as exc:
+        raise click.UsageError(str(exc)) from exc
     root = working_set_dir().resolve()
-    resolved = path.resolve()
-    if not resolved.is_relative_to(root):
-        raise click.UsageError(f"Refusing to delete outside the working-set directory: {resolved}")
-    if not resolved.exists():
-        click.echo("No working-set records file to clear.")
+    resolved_paths = [records.resolve(), catalog.resolve()]
+    for resolved in resolved_paths:
+        if not resolved.is_relative_to(root):
+            raise click.UsageError(
+                f"Refusing to delete outside the working-set directory: {resolved}"
+            )
+    existing = [path for path in resolved_paths if path.exists()]
+    if not existing:
+        click.echo("No working-set files to clear.")
         return
-    resolved.unlink()
-    click.echo(f"Cleared {resolved}")
+    for path in existing:
+        path.unlink()
+    click.echo(f"Cleared {len(existing)} working-set file(s) in {records.parent}")
 
 
 __all__ = ["ws_group"]
