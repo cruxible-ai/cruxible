@@ -122,6 +122,17 @@ def test_cross_revision_supersede_replaces_wholesale(tmp_path: Path) -> None:
     assert record["props"] == {"title": "New"}
     assert record["read_revision"] == 2
 
+    # Re-arm an old-only field at the winner's exact coordinates, so the
+    # digest-change assertion below can actually detect an illegal merge.
+    projected_again = _entity_record(
+        {"title": "New", "dependency_basis": "read at rev 2"},
+        revision=2,
+        as_of="2026-07-28T12:02:00+00:00",
+    )
+    append_records(path, [projected_again])
+    [record] = read_records(path)
+    assert record["props"]["dependency_basis"] == "read at rev 2"
+
     config_changed = normalize_entity_record(
         {
             "entity_type": "WorkItem",
@@ -130,7 +141,7 @@ def test_cross_revision_supersede_replaces_wholesale(tmp_path: Path) -> None:
             "metadata": {},
         },
         read_revision=2,
-        as_of="2026-07-28T12:02:00+00:00",
+        as_of="2026-07-28T12:03:00+00:00",
         receipt_refs=[],
         source_cmd="test",
         config_digest="other-digest",
@@ -138,6 +149,23 @@ def test_cross_revision_supersede_replaces_wholesale(tmp_path: Path) -> None:
     append_records(path, [config_changed])
     [record] = read_records(path)
     assert record["props"] == {"title": "Other config"}
+
+
+def test_same_batch_duplicates_collapse_with_same_coordinate_merge(tmp_path: Path) -> None:
+    path = tmp_path / "records.jsonl"
+    first = _entity_record(
+        {"title": "A", "only_a": "x"},
+        revision=1,
+        as_of="2026-07-28T12:00:00+00:00",
+    )
+    second = _entity_record(
+        {"title": "B", "only_b": "y"},
+        revision=1,
+        as_of="2026-07-28T12:01:00+00:00",
+    )
+    append_records(path, [first, second])
+    [record] = read_records(path)
+    assert record["props"] == {"only_a": "x", "only_b": "y", "title": "B"}
 
 
 def test_edge_normalization_preserves_corroboration() -> None:

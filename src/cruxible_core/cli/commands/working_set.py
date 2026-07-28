@@ -148,23 +148,28 @@ def _catalog_procedures(context: _WsContext) -> list[dict[str, Any]]:
 
     Procedures are state-held records (never config schema fields), so the
     catalog pages through the same list surface ``cruxible procedure list``
-    uses until the reported total is exhausted. A transport/endpoint failure
-    degrades to zero cards with a stderr warning rather than failing the
-    whole catalog — an older daemon without the procedures routes can still
-    regenerate its config-derived entries.
+    uses. Termination is short-page only — a page smaller than the requested
+    limit ends the walk; the envelope's ``total`` is deliberately not
+    trusted (an inconsistent low total would silently drop later pages) —
+    with a hard page cap as the non-progress guard against a transport that
+    keeps returning full pages. Any failure (including exceeding the cap)
+    degrades to ZERO cards with a stderr warning rather than failing the
+    whole catalog: partial pages are discarded, never presented as the
+    complete procedure set, and an older daemon without the procedures
+    routes can still regenerate its config-derived entries.
     """
     cards: list[dict[str, Any]] = []
     limit = 100
-    offset = 0
+    max_pages = 100  # 10k procedures: far beyond any real instance
     try:
-        while True:
+        for page in range(max_pages):
             if context.client is not None and context.instance_id is not None:
                 result: Any = context.client.list_procedures(
-                    context.instance_id, limit=limit, offset=offset
+                    context.instance_id, limit=limit, offset=page * limit
                 )
             else:
                 assert context.instance is not None
-                result = service_list_procedures(context.instance, limit=limit, offset=offset)
+                result = service_list_procedures(context.instance, limit=limit, offset=page * limit)
             items = list(result.items)
             for item in items:
                 record = ProcedureRecord.model_validate(item)
@@ -177,10 +182,9 @@ def _catalog_procedures(context: _WsContext) -> list[dict[str, Any]]:
                         "summary": record.definition.description or "",
                     }
                 )
-            offset += len(items)
-            total = getattr(result, "total", None)
-            if not items or (isinstance(total, int) and offset >= total):
+            if len(items) < limit:
                 return cards
+        raise RuntimeError(f"procedure listing still returning full pages after {max_pages} pages")
     except Exception as exc:  # degrade: config-derived catalog stays usable
         click.echo(f"warning: catalog lists no procedures ({exc})", err=True)
         return []

@@ -178,6 +178,22 @@ the project's own state instance.
 
 ### Added
 
+- **Working-set capture fidelity + control-plane catalog.** The agent-local
+  working set gains persisted activation (`cruxible ws enable|disable` in
+  the CLI context; precedence `--ws` > `CRUXIBLE_WORKING_SET` > persisted),
+  a deterministic digest-stamped `catalog.jsonl` (`ws catalog`, regenerated
+  by `ws refresh`) indexing entity types, relationship types, named queries,
+  and state-held governed procedures, projection-preserving capture
+  (explicitly projected scalar fields survive, bounded at 64 keys; edge
+  corroboration retained), and one `config_status` read per process instead
+  of per capture. Supersede merges props ONLY when both records carry the
+  same concrete revision and config digest — cross-coordinate supersede
+  replaces wholesale so stale values are never stamped fresh. **Upgrade
+  note for 0.3 pre-release dev builds only:** working-set records captured
+  on a build between the initial fidelity merge and the same-coordinate
+  guard could carry merged stale fields that verify fresh; run
+  `cruxible ws clear` once (no released version wrote such files).
+
 - **The KEV kits adopt the 0.3 mechanics.** `kev-triage` gains a
   `TriageDecision` type carrying the `outcome_tracking` convention and the
   first shipped `requires_resolution_contract` mutation guard: accepting a

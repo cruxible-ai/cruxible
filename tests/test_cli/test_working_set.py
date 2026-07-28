@@ -744,6 +744,147 @@ class TestCatalog:
             "summary": "Look up triage state for one item.",
         }
 
+    @staticmethod
+    def _procedure_item(procedure_id: str) -> dict[str, object]:
+        return {
+            "procedure_id": procedure_id,
+            "definition": {
+                "name": f"proc_{procedure_id}",
+                "steps": [{"id": "eligible", "assert_exists": {"ref": "$input.value"}}],
+                "returns": "eligible",
+                "precondition": {"entity_type": "Task", "condition": {"status": "ready"}},
+                "budget": {"wall_clock_s": 60, "max_provider_calls": 0},
+            },
+            "definition_digest": "sha256:stub",
+            "status": "live",
+            "version": 1,
+            "proposed_actor_context": None,
+        }
+
+    def test_server_pagination_ignores_lying_total_and_stops_on_short_page(
+        self,
+        runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from cruxible_core.cli.commands import working_set as ws_commands
+
+        make_item = self._procedure_item
+
+        class StubClient:
+            def schema(self, instance_id: str) -> dict[str, object]:
+                return {"entity_types": {}, "relationships": [], "named_queries": {}}
+
+            def list_procedures(
+                self, instance_id: str, *, limit: int = 100, offset: int = 0
+            ) -> SimpleNamespace:
+                # Page 0 is FULL but claims total=1 (lying-low); page 1 is the
+                # real short tail. Trusting the total would drop page 1.
+                if offset == 0:
+                    items = [make_item(f"PRC-{index:04d}") for index in range(limit)]
+                elif offset == limit:
+                    items = [make_item("PRC-tail0"), make_item("PRC-tail1")]
+                else:  # pragma: no cover - short page above must terminate
+                    raise AssertionError("walk continued past the short page")
+                return SimpleNamespace(items=items, total=1, limit=limit, offset=offset)
+
+            def config_status(self, instance_id: str) -> SimpleNamespace:
+                return SimpleNamespace(provenance=None)
+
+        monkeypatch.setattr(ws_commands, "_get_client", lambda: StubClient())
+        result = runner.invoke(
+            cli,
+            ["--server-url", "http://server", "--instance-id", "inst_pages", "ws", "catalog"],
+        )
+        assert result.exit_code == 0
+        assert "procedures=102" in result.output
+
+    def test_server_procedure_page_failure_degrades_to_zero_cards(
+        self,
+        runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from cruxible_core.cli.commands import working_set as ws_commands
+
+        make_item = self._procedure_item
+
+        class StubClient:
+            def schema(self, instance_id: str) -> dict[str, object]:
+                return {
+                    "entity_types": {"Task": {"properties": {}}},
+                    "relationships": [],
+                    "named_queries": {},
+                }
+
+            def list_procedures(
+                self, instance_id: str, *, limit: int = 100, offset: int = 0
+            ) -> SimpleNamespace:
+                if offset == 0:
+                    items = [make_item(f"PRC-{index:04d}") for index in range(limit)]
+                    return SimpleNamespace(items=items, total=200, limit=limit, offset=offset)
+                raise RuntimeError("transport dropped on page 2")
+
+            def config_status(self, instance_id: str) -> SimpleNamespace:
+                return SimpleNamespace(provenance=None)
+
+        monkeypatch.setattr(ws_commands, "_get_client", lambda: StubClient())
+        result = runner.invoke(
+            cli,
+            ["--server-url", "http://server", "--instance-id", "inst_fail", "ws", "catalog"],
+        )
+        assert result.exit_code == 0
+        # Partial pages are discarded entirely — never presented as complete.
+        assert "procedures=0" in result.output
+        assert "warning: catalog lists no procedures" in result.output
+
+    def test_local_catalog_lists_state_held_procedures(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        from datetime import datetime, timezone
+
+        from cruxible_core.governance.actors import GovernedActorContext
+        from cruxible_core.procedure.types import ProcedureDefinition
+        from cruxible_core.service import service_lock, service_propose_procedure
+
+        definition = ProcedureDefinition.model_validate(
+            {
+                "name": "part_eligibility",
+                "description": "Check one part is orderable.",
+                "steps": [{"id": "eligible", "assert_exists": {"ref": "$input.value"}}],
+                "returns": "eligible",
+                "precondition": {"entity_type": "Part", "condition": {"category": "brakes"}},
+                "budget": {"wall_clock_s": 60, "max_provider_calls": 0},
+            }
+        )
+        service_lock(populated_instance)
+        proposed = service_propose_procedure(
+            populated_instance,
+            definition,
+            actor_context=GovernedActorContext(
+                actor_type="human_user",
+                actor_id="catalog-test",
+                org_id="org-ws",
+                operation_id="op-catalog-test",
+                timestamp=datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc),
+            ),
+        )
+
+        root = populated_instance.get_root_path()
+        result = _chdir_run(runner, root, ["ws", "catalog", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["kind_counts"]["procedure"] == 1
+        path = catalog_path(local_instance_key(root))
+        entry = next(
+            json.loads(line)
+            for line in path.read_text().splitlines()[1:]
+            if '"kind":"procedure"' in line
+        )
+        assert entry["procedure_id"] == proposed.procedure.procedure_id
+        assert entry["name"] == "part_eligibility"
+        assert entry["status"] == "pending"
+
 
 class TestCredentialScope:
     def test_distinct_credentials_get_distinct_dirs(
