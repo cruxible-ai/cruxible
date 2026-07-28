@@ -192,7 +192,8 @@ the project's own state instance.
   note for 0.3 pre-release dev builds only:** working-set records captured
   on a build between the initial fidelity merge and the same-coordinate
   guard could carry merged stale fields that verify fresh; run
-  `cruxible ws clear` once (no released version wrote such files).
+  `cruxible ws clear` once per affected context (the verb operates on the
+  current context only; no released version wrote such files).
 
 - **The KEV kits adopt the 0.3 mechanics.** `kev-triage` gains a
   `TriageDecision` type carrying the `outcome_tracking` convention and the
