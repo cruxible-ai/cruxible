@@ -3831,6 +3831,66 @@ File hygiene and tamper honesty:
 - Missing or stale `--instance-id` for daemon-backed commands.
 - No local `.cruxible/` instance found (local mode).
 
+## cruxible ws enable
+
+**Usage:** `cruxible ws enable [OPTIONS]`
+
+**Purpose:** Persistently enable working-set capture.
+
+**Output And Side Effects:**
+- Writes `working_set: true` into the persisted CLI context
+  (`~/.cruxible/client-context.json`), so every later `--json` read captures
+  without needing `--ws` or `CRUXIBLE_WORKING_SET`. Transport fields in the
+  context (server URL/socket, instance id) are preserved untouched.
+- Activation precedence stays: explicit `--ws` flag, then a set
+  `CRUXIBLE_WORKING_SET` environment variable (a present-but-false value
+  overrides a persisted enable), then this persisted preference.
+
+**Common Errors:**
+- Unreadable or malformed CLI context file.
+
+## cruxible ws disable
+
+**Usage:** `cruxible ws disable [OPTIONS]`
+
+**Purpose:** Persistently disable working-set capture.
+
+**Output And Side Effects:**
+- Writes `working_set: false` into the persisted CLI context; `--ws` or the
+  environment variable can still enable capture per invocation. Transport
+  fields are preserved untouched.
+
+**Common Errors:**
+- Unreadable or malformed CLI context file.
+
+## cruxible ws catalog
+
+**Usage:** `cruxible ws catalog [OPTIONS]`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Regenerate the control-plane catalog from the active config.
+
+**Output And Side Effects:**
+- Rewrites `catalog.jsonl` (sibling of `records.jsonl`) atomically: a
+  complete, bounded, deterministic index of the instance's control plane —
+  entity types with property names, relationship types with endpoints and
+  write policy, named queries with params/returns, and procedures — one JSON
+  object per line under a `#` header stamped with the active config digest.
+- Unlike `records.jsonl` (partial, interest-driven), the catalog is total for
+  the control plane and is never appended to during capture; `ws refresh`
+  also regenerates it. Local mode builds it from the loaded instance config;
+  server mode reads the same schema surface `cruxible schema` uses.
+- Prints entry counts by kind and the file path.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- No local `.cruxible/` instance found (local mode).
+
 ## cruxible ws verify
 
 **Usage:** `cruxible ws verify [OPTIONS]`
@@ -3865,9 +3925,11 @@ File hygiene and tamper honesty:
 
 **Usage:** `cruxible ws refresh [OPTIONS]`
 
-**Purpose:** Re-fetch stale/unknown records; drop deleted ones; leave fresh untouched.
+**Purpose:** Regenerate the catalog; re-fetch stale/unknown captured records.
 
 **Output And Side Effects:**
+- Regenerates `catalog.jsonl` from the active config first (see
+  `cruxible ws catalog`), then refreshes captured records.
 - Entities are re-read via the compact get-entity read; edges via the owning
   (from-side) entity's bounded neighborhood inspect, scoped to the edge's
   relationship type. Fresh records are left byte-identical.
@@ -3885,13 +3947,14 @@ File hygiene and tamper honesty:
 
 **Usage:** `cruxible ws clear [OPTIONS]`
 
-**Purpose:** Delete the current context's records file (working-set dir only).
+**Purpose:** Delete the current context's records and catalog files.
 
 **Output And Side Effects:**
-- Deletes only the current context's `records.jsonl`; refuses any path that
-  resolves outside the working-set root (hostile instance keys are rejected
-  before any filesystem access) and refuses a symlink at any path-chain
-  level (configured root, instance directory, records file) outright.
+- Deletes only the current context's `records.jsonl` and `catalog.jsonl`;
+  refuses any path that resolves outside the working-set root (hostile
+  instance keys are rejected before any filesystem access) and refuses a
+  symlink at any path-chain level (configured root, instance directory,
+  target file) outright.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

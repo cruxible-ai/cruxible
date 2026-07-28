@@ -120,6 +120,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
+from cruxible_core.primitives import canonical_json
 from cruxible_core.query.profiles import neighborhood_edge_payload, profile_entity_payload
 from cruxible_core.server.config import get_runtime_bearer_token
 from cruxible_core.temporal import format_datetime, utc_now
@@ -482,9 +483,7 @@ def write_catalog(
     refuse_symlinks(path)
     _prepare_write_dirs(path)
     lines = [catalog_header_line(config_digest)]
-    lines.extend(
-        json.dumps(record, default=str, sort_keys=True, separators=(",", ":")) for record in records
-    )
+    lines.extend(canonical_json(record, default=str) for record in records)
     temp_path = path.parent / f".{path.name}.tmp.{os.getpid()}"
     fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     try:
