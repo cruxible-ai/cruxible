@@ -148,7 +148,7 @@ class TestWorkflowCli:
         payload = _read_lock_yaml(kit_dir)
         assert result.stdout.startswith(f"Wrote lock file to {lock_path}")
         assert f"digest={payload['lock_digest']}" in result.output
-        assert "providers=2 artifacts=1" in result.output
+        assert "providers=3 artifacts=1" in result.output
         assert "CRUXIBLE_KIT_DEV_RESOLVE" not in os.environ
 
     def test_lock_kit_dir_pins_kit_layer_only(
