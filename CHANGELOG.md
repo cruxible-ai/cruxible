@@ -7,6 +7,8 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## 0.3.0 — 2026-07-29
+
 ### Changed (BREAKING)
 
 - **Claim feedback now uses `accept` instead of `approve`** across the CLI
