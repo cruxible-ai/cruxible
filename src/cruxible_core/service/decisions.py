@@ -12,6 +12,7 @@ from cruxible_core.decision.types import (
     DecisionRecord,
     digest_payload,
 )
+from cruxible_core.deprecation import DECISION_OPENED_BY_INPUT, emit_python_deprecation
 from cruxible_core.errors import ConfigError
 from cruxible_core.governance.actors import GovernedActorContext, derived_actor_kind
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -47,8 +48,11 @@ def service_create_decision_record(
     subject_type: str | None = None,
     subject_id: str | None = None,
     actor_context: GovernedActorContext | None = None,
+    opened_by: str | None = None,
 ) -> DecisionRecordServiceResult:
     """Create a new open decision record."""
+    if opened_by is not None:
+        emit_python_deprecation(DECISION_OPENED_BY_INPUT)
     record = DecisionRecord(
         question=question,
         subject_type=subject_type,

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from typing import cast
+
+from fastapi import APIRouter, Query, Response
 
 from cruxible_client import contracts
+from cruxible_core.deprecation import DECISION_OPENED_BY_INPUT, emit_http_deprecations
 from cruxible_core.runtime import api
 from cruxible_core.server.request_models import (
     DecisionRecordAbandonRequest,
@@ -20,13 +23,20 @@ router = APIRouter(prefix="/api/v1", tags=["decision-records"])
 async def create_decision_record(
     instance_id: str,
     req: DecisionRecordCreateRequest,
+    response: Response,
 ) -> contracts.DecisionRecordResult:
-    return api.create_decision_record(
+    result = api.create_decision_record(
         resolve_server_instance_id(instance_id),
         question=req.question,
         subject_type=req.subject_type,
         subject_id=req.subject_id,
         actor_context=req.actor_context,
+        opened_by=req.opened_by,
+    )
+    notices = [DECISION_OPENED_BY_INPUT] if "opened_by" in req.model_fields_set else []
+    return cast(
+        contracts.DecisionRecordResult,
+        emit_http_deprecations(response, result, notices),
     )
 
 

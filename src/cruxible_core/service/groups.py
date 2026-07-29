@@ -8,6 +8,11 @@ from typing import Any, Literal
 import structlog
 
 from cruxible_core.config.schema import ProposalPolicySchema
+from cruxible_core.deprecation import (
+    GROUP_PROPOSED_BY_INPUT,
+    GROUP_RESOLVED_BY_INPUT,
+    emit_python_deprecation,
+)
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -575,6 +580,7 @@ def service_propose_group_inputs(
     source_step_ids: list[str] | None = None,
     expected_pending_version: int | None = None,
     actor_context: GovernedActorContext | None = None,
+    proposed_by: str | None = None,
 ) -> ProposeGroupResult:
     """Normalize proposal input payloads, then propose a candidate group."""
     return service_propose_group(
@@ -601,6 +607,7 @@ def service_propose_group_inputs(
         source_step_ids=source_step_ids,
         expected_pending_version=expected_pending_version,
         actor_context=actor_context,
+        proposed_by=proposed_by,
     )
 
 
@@ -621,8 +628,11 @@ def service_propose_group(
     source_step_ids: list[str] | None = None,
     expected_pending_version: int | None = None,
     actor_context: GovernedActorContext | None = None,
+    proposed_by: str | None = None,
 ) -> ProposeGroupResult:
     """Propose a group of candidate edges for batch review/approval."""
+    if proposed_by is not None:
+        emit_python_deprecation(GROUP_PROPOSED_BY_INPUT)
     config = instance.load_config()
     caller_thesis_facts = thesis_facts or {}
     analysis_state = analysis_state or {}
@@ -963,8 +973,11 @@ def service_resolve_group(
     expected_pending_version: int | None = None,
     actor_context: GovernedActorContext | None = None,
     stamp_existing: bool = False,
+    resolved_by: str | None = None,
 ) -> ResolveGroupResult:
     """Resolve a candidate group — approve creates edges, reject records decision."""
+    if resolved_by is not None:
+        emit_python_deprecation(GROUP_RESOLVED_BY_INPUT)
     return resolve_group_transition(
         instance,
         group_id,

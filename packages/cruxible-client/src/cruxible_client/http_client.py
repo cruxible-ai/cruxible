@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 import json
 import os
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import Any, TypeVar
 
@@ -138,14 +139,22 @@ class CruxibleClient:
 
     def _parse_model(self, response: httpx.Response, model_cls: type[ModelT]) -> ModelT:
         self._check_error(response)
+        self._warn_deprecations(response)
         return model_cls.model_validate(response.json())
 
     def _parse_json(self, response: httpx.Response) -> dict[str, Any]:
         self._check_error(response)
+        self._warn_deprecations(response)
         payload = response.json()
         if not isinstance(payload, dict):
             raise CoreError("Expected JSON object response from Cruxible server")
         return payload
+
+    @staticmethod
+    def _warn_deprecations(response: httpx.Response) -> None:
+        """Forward the server's structured warning without defining a second shape."""
+        for notice in response.headers.get_list("Deprecation"):
+            warnings.warn(notice, DeprecationWarning, stacklevel=3)
 
     @staticmethod
     def _omit_none_params(params: Mapping[str, Any]) -> dict[str, Any]:
@@ -460,6 +469,7 @@ class CruxibleClient:
         subject_type: str | None = None,
         subject_id: str | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+        opened_by: str | None = None,
     ) -> contracts.DecisionRecordResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/decision-records",
@@ -468,6 +478,7 @@ class CruxibleClient:
                     "question": question,
                     "subject_type": subject_type,
                     "subject_id": subject_id,
+                    **({"opened_by": opened_by} if opened_by is not None else {}),
                 },
                 actor_context,
             ),
@@ -623,7 +634,7 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        action: contracts.FeedbackAction,
+        action: contracts.FeedbackInputAction,
         from_type: str,
         from_id: str,
         relationship_type: str,
@@ -638,6 +649,7 @@ class CruxibleClient:
         receipt_id: str | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
         claim_id: str | None = None,
+        source: str | None = None,
     ) -> contracts.FeedbackResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/feedback",
@@ -657,6 +669,7 @@ class CruxibleClient:
                     "scope_hints": scope_hints,
                     "corrections": corrections,
                     "group_override": group_override,
+                    **({"source": source} if source is not None else {}),
                 },
                 actor_context,
             ),
@@ -674,7 +687,13 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/feedback/batch",
             json=self._with_actor_context(
                 {
-                    "items": [item.model_dump(mode="json") for item in items],
+                    "items": [
+                        item.model_dump(
+                            mode="json",
+                            exclude={"source"} if item.source is None else None,
+                        )
+                        for item in items
+                    ],
                 },
                 actor_context,
             ),
@@ -687,7 +706,7 @@ class CruxibleClient:
         *,
         receipt_id: str,
         result_index: int,
-        action: contracts.FeedbackAction,
+        action: contracts.FeedbackInputAction,
         reason: str = "",
         reason_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
@@ -696,6 +715,7 @@ class CruxibleClient:
         path_index: int | None = None,
         path_alias: str | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+        source: str | None = None,
     ) -> contracts.FeedbackResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/feedback/from-query",
@@ -711,6 +731,7 @@ class CruxibleClient:
                     "group_override": group_override,
                     "path_index": path_index,
                     "path_alias": path_alias,
+                    **({"source": source} if source is not None else {}),
                 },
                 actor_context,
             ),
@@ -730,6 +751,7 @@ class CruxibleClient:
         outcome_profile_key: str | None = None,
         detail: dict[str, Any] | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+        source: str | None = None,
     ) -> contracts.OutcomeResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/outcome",
@@ -743,6 +765,7 @@ class CruxibleClient:
                     "scope_hints": scope_hints,
                     "outcome_profile_key": outcome_profile_key,
                     "detail": detail,
+                    **({"source": source} if source is not None else {}),
                 },
                 actor_context,
             ),
@@ -2134,6 +2157,7 @@ class CruxibleClient:
         suggested_priority: str | None = None,
         expected_pending_version: int | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+        proposed_by: str | None = None,
     ) -> contracts.ProposeGroupToolResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/groups/propose",
@@ -2147,6 +2171,7 @@ class CruxibleClient:
                     "signal_sources_used": signal_sources_used,
                     "suggested_priority": suggested_priority,
                     "expected_pending_version": expected_pending_version,
+                    **({"proposed_by": proposed_by} if proposed_by is not None else {}),
                 },
                 actor_context,
             ),
@@ -2163,6 +2188,7 @@ class CruxibleClient:
         expected_pending_version: int,
         stamp_existing: bool = False,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+        resolved_by: str | None = None,
     ) -> contracts.ResolveGroupToolResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/groups/{group_id}/resolve",
@@ -2172,6 +2198,7 @@ class CruxibleClient:
                     "rationale": rationale,
                     "expected_pending_version": expected_pending_version,
                     "stamp_existing": stamp_existing,
+                    **({"resolved_by": resolved_by} if resolved_by is not None else {}),
                 },
                 actor_context,
             ),

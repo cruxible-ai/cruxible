@@ -13,6 +13,11 @@ from cruxible_core.config.schema import (
     OutcomeLabel,
     OutcomeRemediationHint,
 )
+from cruxible_core.deprecation import (
+    FEEDBACK_SOURCE_INPUT,
+    OUTCOME_SOURCE_INPUT,
+    accept_deprecated_model_input,
+)
 from cruxible_core.governance.actors import (
     DerivedActorKind,
     GovernedActorContext,
@@ -24,6 +29,11 @@ from cruxible_core.temporal import utc_now
 
 # The WRITE vocabulary: what a caller may ask for today.
 FeedbackAction = Literal["approve", "reject", "correct"]
+
+# The compatibility INPUT vocabulary. ``flag`` reaches the service validation
+# seam solely so its structured deprecation refusal can teach the replacement;
+# no write path persists it.
+FeedbackInputAction = Literal["approve", "reject", "correct", "flag"]
 
 # The READ vocabulary: what a stored row may legally contain.
 #
@@ -37,11 +47,11 @@ FeedbackAction = Literal["approve", "reject", "correct"]
 # STORED vocabulary would make historical instances raise ValidationError on an
 # ordinary list.
 #
-# So the record model tolerates ``flag`` on read while every INPUT type
-# (``FeedbackBatchItem``, ``FeedbackItemInput``, the client contracts, and the
-# service validation seam) stays narrowed to the three live actions. The
-# applier has no ``flag`` branch, so such a row renders and can be counted but
-# can never be written again and can never move an edge.
+# So the record model tolerates ``flag`` on read while compatibility INPUT
+# types admit it only far enough to reach the structured service refusal. The
+# canonical ``FeedbackAction`` and service write vocabulary remain the three
+# live actions. The applier has no ``flag`` branch, so historical rows render
+# and can be counted but no new row can be written and no edge can be moved.
 StoredFeedbackAction = Literal["approve", "reject", "correct", "flag"]
 
 RETIRED_FEEDBACK_ACTIONS: frozenset[str] = frozenset({"flag"})
@@ -87,6 +97,16 @@ class FeedbackRecord(BaseModel):
     actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
+    @model_validator(mode="before")
+    @classmethod
+    def accept_deprecated_source(cls, value: Any) -> Any:
+        """Accept and ignore the caller-declared source compatibility input."""
+        return accept_deprecated_model_input(
+            value,
+            field="source",
+            notice=FEEDBACK_SOURCE_INPUT,
+        )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def source(self) -> DerivedActorKind:
@@ -106,8 +126,8 @@ class FeedbackBatchItem(BaseModel):
     """Input payload for one batch feedback item."""
 
     receipt_id: str
-    action: FeedbackAction
-    """WRITE vocabulary -- an input, so it stays narrow (no ``flag``)."""
+    action: FeedbackInputAction
+    """Compatibility input vocabulary; service validation still refuses ``flag``."""
 
     target: RelationshipInstance
     reason: str = ""
@@ -115,6 +135,8 @@ class FeedbackBatchItem(BaseModel):
     scope_hints: dict[str, Any] = Field(default_factory=dict)
     corrections: dict[str, Any] = Field(default_factory=dict)
     group_override: bool = False
+    source: str | None = None
+    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
 
 
 class OutcomeRecord(BaseModel):
@@ -139,6 +161,16 @@ class OutcomeRecord(BaseModel):
     detail: dict[str, Any] = Field(default_factory=dict)
     actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_deprecated_source(cls, value: Any) -> Any:
+        """Accept and ignore the caller-declared source compatibility input."""
+        return accept_deprecated_model_input(
+            value,
+            field="source",
+            notice=OUTCOME_SOURCE_INPUT,
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

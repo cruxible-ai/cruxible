@@ -45,6 +45,12 @@ GateEvaluationVerdict = Literal["satisfied", "unsatisfied", "error"]
 
 ConstraintSeverity = Literal["warning", "error"]
 FeedbackAction = Literal["approve", "reject", "correct"]
+FeedbackInputAction = Literal["approve", "reject", "correct", "flag"]
+"""Compatibility input vocabulary.
+
+``flag`` is accepted only so the server can return its structured deprecation
+refusal.  It is not a live feedback action and is never persisted.
+"""
 OutcomeValue = Literal["correct", "incorrect", "partial", "unknown"]
 OutcomeAnchorType = Literal["resolution", "receipt"]
 ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
@@ -650,9 +656,10 @@ class PropertyPairInput(BaseModel):
 
 class FeedbackBatchItemInput(BaseModel):
     receipt_id: str = Field(description="Receipt id the feedback is anchored to.")
-    action: FeedbackAction = Field(
+    action: FeedbackInputAction = Field(
         description=(
-            "Adjudication: approve, reject, or correct the edge. To record a "
+            "Adjudication: approve, reject, or correct the edge. Deprecated "
+            "`flag` is accepted only to return its removal warning. To record a "
             "doubt WITHOUT adjudicating, use `cruxible attest --stance "
             "contradict` -- it stores the observation, its evidence, and its "
             "actor instead of silently un-approving the edge."
@@ -673,16 +680,26 @@ class FeedbackBatchItemInput(BaseModel):
     )
     group_override: bool = Field(
         default=False,
-        description="If true, mark the edge assertion as a group-resolve override.",
+        description=(
+            "Deprecated compatibility write; use force_review. If true, mark "
+            "the edge assertion as a group-resolve override."
+        ),
+    )
+    source: str | None = Field(
+        default=None,
+        description=(
+            "Deprecated and ignored compatibility input; actor kind is derived from actor_context."
+        ),
     )
 
 
 class FeedbackFromQueryInput(BaseModel):
     receipt_id: str = Field(description="Query receipt id whose row is being adjudicated.")
     result_index: int = Field(description="Zero-based index of the result row in the receipt.")
-    action: FeedbackAction = Field(
+    action: FeedbackInputAction = Field(
         description=(
-            "Adjudication: approve, reject, or correct the edge. To record a "
+            "Adjudication: approve, reject, or correct the edge. Deprecated "
+            "`flag` is accepted only to return its removal warning. To record a "
             "doubt WITHOUT adjudicating, use `cruxible attest --stance "
             "contradict` -- it stores the observation, its evidence, and its "
             "actor instead of silently un-approving the edge."
@@ -702,7 +719,16 @@ class FeedbackFromQueryInput(BaseModel):
     )
     group_override: bool = Field(
         default=False,
-        description="If true, mark the edge assertion as a group-resolve override.",
+        description=(
+            "Deprecated compatibility write; use force_review. If true, mark "
+            "the edge assertion as a group-resolve override."
+        ),
+    )
+    source: str | None = Field(
+        default=None,
+        description=(
+            "Deprecated and ignored compatibility input; actor kind is derived from actor_context."
+        ),
     )
     path_index: int | None = Field(
         default=None,

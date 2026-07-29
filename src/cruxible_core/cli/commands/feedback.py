@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import click
 import yaml
@@ -20,6 +20,18 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.deprecation import (
+    FEEDBACK_SOURCE_INPUT,
+    GROUP_OVERRIDE,
+    LEGACY_OUTCOME_PROFILE,
+    LEGACY_OUTCOME_RECORD,
+    OUTCOME_SOURCE_INPUT,
+    emit_cli_deprecation,
+)
+
+
+class _SourceAliasKwargs(TypedDict, total=False):
+    source: str
 
 
 def _service_attr(name: str) -> Any:
@@ -75,7 +87,7 @@ def outcome_group() -> None:
 @click.option(
     "--action",
     required=True,
-    type=click.Choice(["approve", "reject", "correct"]),
+    type=click.Choice(["approve", "reject", "correct", "flag"]),
     help="Feedback action.",
 )
 @click.option("--from-type", required=True, help="Source entity type.")
@@ -96,8 +108,9 @@ def outcome_group() -> None:
     "--group-override",
     is_flag=True,
     default=False,
-    help="Mark edge assertion metadata as a group override (edge must exist).",
+    help="Deprecated; use force_review. Marks group override metadata (edge must exist).",
 )
+@click.option("--source", default=None, hidden=True)
 @json_option
 @handle_errors
 def feedback_cmd(
@@ -114,11 +127,19 @@ def feedback_cmd(
     scope_hints: str | None,
     corrections: str | None,
     group_override: bool,
+    source: str | None,
     output_json: bool,
 ) -> None:
     """Submit feedback on a specific edge by explicit relationship coordinates."""
+    if group_override:
+        emit_cli_deprecation(GROUP_OVERRIDE)
+    if source is not None:
+        emit_cli_deprecation(FEEDBACK_SOURCE_INPUT)
     corrections_dict = _parse_corrections(corrections)
     scope_hints_dict = _parse_json_object(scope_hints, option="--scope-hints")
+    deprecated_kwargs: _SourceAliasKwargs = {}
+    if source is not None:
+        deprecated_kwargs["source"] = source
 
     target = _service_attr("RelationshipTargetInput")(
         from_type=from_type,
@@ -133,7 +154,7 @@ def feedback_cmd(
         lambda client, instance_id: client.feedback(
             instance_id,
             receipt_id=receipt_id,
-            action=cast(contracts.FeedbackAction, action),
+            action=cast(contracts.FeedbackInputAction, action),
             from_type=from_type,
             from_id=from_id,
             relationship_type=relationship,
@@ -145,19 +166,21 @@ def feedback_cmd(
             scope_hints=scope_hints_dict,
             corrections=corrections_dict,
             group_override=group_override,
+            **deprecated_kwargs,
         ),
         lambda instance: _call_service(
             "service_feedback_input",
             instance,
             _service_attr("FeedbackItemInput")(
                 receipt_id=receipt_id,
-                action=cast(contracts.FeedbackAction, action),
+                action=cast(contracts.FeedbackInputAction, action),
                 target=target,
                 reason=reason,
                 reason_code=reason_code,
                 scope_hints=scope_hints_dict,
                 corrections=corrections_dict,
                 group_override=group_override,
+                **deprecated_kwargs,
             ),
         ),
         allow_local=False,
@@ -187,7 +210,7 @@ def feedback_cmd(
 @click.option(
     "--action",
     required=True,
-    type=click.Choice(["approve", "reject", "correct"]),
+    type=click.Choice(["approve", "reject", "correct", "flag"]),
     help="Feedback action.",
 )
 @click.option("--reason", default="", help="Reason for feedback.")
@@ -202,7 +225,7 @@ def feedback_cmd(
     "--group-override",
     is_flag=True,
     default=False,
-    help="Mark selected edge assertion metadata as a group override (edge must exist).",
+    help="Deprecated; use force_review. Marks group override metadata (edge must exist).",
 )
 @click.option(
     "--path-index",
@@ -215,6 +238,7 @@ def feedback_cmd(
     default=None,
     help="Traversal alias for the selected path segment.",
 )
+@click.option("--source", default=None, hidden=True)
 @json_option
 @handle_errors
 def feedback_from_query_cmd(
@@ -228,18 +252,26 @@ def feedback_from_query_cmd(
     group_override: bool,
     path_index: int | None,
     path_alias: str | None,
+    source: str | None,
     output_json: bool,
 ) -> None:
     """Submit edge feedback by selecting relationship evidence from a query receipt."""
+    if group_override:
+        emit_cli_deprecation(GROUP_OVERRIDE)
+    if source is not None:
+        emit_cli_deprecation(FEEDBACK_SOURCE_INPUT)
     corrections_dict = _parse_corrections(corrections)
     scope_hints_dict = _parse_json_object(scope_hints, option="--scope-hints")
+    deprecated_kwargs: _SourceAliasKwargs = {}
+    if source is not None:
+        deprecated_kwargs["source"] = source
 
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.feedback_from_query(
             instance_id,
             receipt_id=receipt_id,
             result_index=result_index,
-            action=cast(contracts.FeedbackAction, action),
+            action=cast(contracts.FeedbackInputAction, action),
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints_dict,
@@ -247,13 +279,14 @@ def feedback_from_query_cmd(
             group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
+            **deprecated_kwargs,
         ),
         lambda instance: _call_service(
             "service_feedback_from_query_result",
             instance,
             receipt_id=receipt_id,
             result_index=result_index,
-            action=cast(contracts.FeedbackAction, action),
+            action=cast(contracts.FeedbackInputAction, action),
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints_dict,
@@ -261,6 +294,7 @@ def feedback_from_query_cmd(
             group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
+            **deprecated_kwargs,
         ),
         allow_local=False,
         command_name="feedback from-query",
@@ -309,6 +343,10 @@ def feedback_batch_cmd(
 
     if not isinstance(raw_items, list):
         raise click.BadParameter("Items must be a top-level array.")
+    if any(bool(item.get("group_override")) for item in raw_items if isinstance(item, dict)):
+        emit_cli_deprecation(GROUP_OVERRIDE)
+    if any("source" in item for item in raw_items if isinstance(item, dict)):
+        emit_cli_deprecation(FEEDBACK_SOURCE_INPUT)
 
     batch_items = [
         contracts.FeedbackBatchItemInput(
@@ -318,6 +356,7 @@ def feedback_batch_cmd(
             reason=item.get("reason", ""),
             corrections=item.get("corrections"),
             group_override=item.get("group_override", False),
+            source=item.get("source"),
         )
         for item in raw_items
     ]
@@ -345,6 +384,7 @@ def feedback_batch_cmd(
                     reason=item.reason,
                     corrections=item.corrections or {},
                     group_override=item.group_override,
+                    source=item.source,
                 )
                 for item in batch_items
             ],
@@ -373,15 +413,20 @@ def feedback_batch_cmd(
     help="Outcome of the decision.",
 )
 @click.option("--detail", default=None, help="JSON string with outcome details.")
+@click.option("--source", default=None, hidden=True)
 @json_option
 @handle_errors
 def outcome_cmd(
     receipt_id: str,
     outcome_value: str,
     detail: str | None,
+    source: str | None,
     output_json: bool,
 ) -> None:
     """Record the outcome of a decision."""
+    emit_cli_deprecation(LEGACY_OUTCOME_RECORD)
+    if source is not None:
+        emit_cli_deprecation(OUTCOME_SOURCE_INPUT)
     try:
         detail_dict = json.loads(detail) if detail else None
     except json.JSONDecodeError as exc:
@@ -389,12 +434,16 @@ def outcome_cmd(
     if detail_dict is not None and not isinstance(detail_dict, dict):
         raise click.BadParameter("--detail must be a JSON object")
 
+    deprecated_kwargs: _SourceAliasKwargs = {}
+    if source is not None:
+        deprecated_kwargs["source"] = source
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.outcome(
             instance_id,
             receipt_id=receipt_id,
             outcome=cast(contracts.OutcomeValue, outcome_value),
             detail=detail_dict,
+            **deprecated_kwargs,
         ),
         lambda instance: _call_service(
             "service_outcome",
@@ -402,6 +451,7 @@ def outcome_cmd(
             receipt_id=receipt_id,
             outcome=cast(contracts.OutcomeValue, outcome_value),
             detail=detail_dict,
+            **deprecated_kwargs,
         ),
         allow_local=False,
         command_name="outcome record",
@@ -476,6 +526,7 @@ def outcome_profile_cmd(
     output_json: bool,
 ) -> None:
     """Display the configured outcome profile for one anchor context."""
+    emit_cli_deprecation(LEGACY_OUTCOME_PROFILE)
     client = _get_client()
     if client is not None:
         result = client.get_outcome_profile(
