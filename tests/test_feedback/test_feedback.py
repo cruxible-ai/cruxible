@@ -4,7 +4,6 @@ import json
 from typing import get_args
 
 import pytest
-from pydantic import ValidationError
 
 from cruxible_core.config.schema import (
     CoreConfig,
@@ -14,7 +13,7 @@ from cruxible_core.config.schema import (
     RelationshipSchema,
     TraversalStep,
 )
-from cruxible_core.errors import RelationshipAmbiguityError
+from cruxible_core.errors import ConfigError, RelationshipAmbiguityError
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.feedback.types import FeedbackBatchItem, FeedbackRecord, OutcomeRecord
@@ -1137,26 +1136,35 @@ class TestHistoricalFlagRowsStayReadable:
     def test_the_retired_action_is_still_refused_on_every_write_path(
         self, target: RelationshipInstance
     ):
-        """Readable is not writable: the input types stay narrow.
+        """Readable is not writable: compatibility input reaches one refusal.
 
-        This is the half that makes the widened read model safe — history can
-        be read back, but nothing can add to it.
+        During the deprecation window the input model accepts ``flag`` so the
+        service can return the structured replacement warning. The canonical
+        action type and write vocabulary stay narrow, and nothing can add a
+        ``flag`` row.
         """
         from cruxible_core.feedback.types import (
             RETIRED_FEEDBACK_ACTIONS,
             FeedbackAction,
             StoredFeedbackAction,
         )
-        from cruxible_core.service.feedback import _VALID_ACTIONS
+        from cruxible_core.service.feedback import (
+            _VALID_ACTIONS,
+            _validate_feedback_request_values,
+        )
 
         assert set(get_args(StoredFeedbackAction)) - set(get_args(FeedbackAction)) == (
             RETIRED_FEEDBACK_ACTIONS
         )
         assert "flag" not in _VALID_ACTIONS
 
-        with pytest.raises(ValidationError):
-            FeedbackBatchItem(
-                receipt_id="RCP-1",
-                action="flag",  # type: ignore[arg-type]
-                target=target,
+        item = FeedbackBatchItem(
+            receipt_id="RCP-1",
+            action="flag",
+            target=target,
+        )
+        with pytest.raises(ConfigError, match="attest --stance contradict"):
+            _validate_feedback_request_values(
+                action=item.action,
+                corrections=item.corrections,
             )

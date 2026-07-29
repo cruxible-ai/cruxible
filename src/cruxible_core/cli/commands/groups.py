@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import click
 
@@ -21,6 +21,11 @@ from cruxible_core.cli.commands._common import (
 )
 from cruxible_core.cli.formatting import group_detail_table, groups_table, resolutions_table
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.deprecation import (
+    GROUP_PROPOSED_BY_INPUT,
+    GROUP_RESOLVED_BY_INPUT,
+    emit_cli_deprecation,
+)
 from cruxible_core.group.types import (
     CandidateGroup,
     GroupResolution,
@@ -38,6 +43,14 @@ from cruxible_core.service import (
     service_resolve_group,
     service_update_trust_status,
 )
+
+
+class _ProposedByAliasKwargs(TypedDict, total=False):
+    proposed_by: str
+
+
+class _ResolvedByAliasKwargs(TypedDict, total=False):
+    resolved_by: str
 
 
 @click.group("group")
@@ -101,6 +114,7 @@ def _resolution_action_filter(action: str | None) -> ResolutionAction | None:
     default=None,
     help="Refuse the re-propose if the live pending group is not at this version.",
 )
+@click.option("--proposed-by", default=None, hidden=True)
 @handle_errors
 def group_propose(
     relationship: str,
@@ -111,8 +125,11 @@ def group_propose(
     analysis_state: str | None,
     signal_source: tuple[str, ...],
     expected_pending_version: int | None,
+    proposed_by: str | None,
 ) -> None:
     """Propose a candidate group of edges for batch review."""
+    if proposed_by is not None:
+        emit_cli_deprecation(GROUP_PROPOSED_BY_INPUT)
     if members_file and members_json:
         raise click.BadParameter("Provide --members-file or --members, not both.")
     if not members_file and not members_json:
@@ -193,6 +210,9 @@ def group_propose(
         )
         for m in raw_members
     ]
+    deprecated_kwargs: _ProposedByAliasKwargs = {}
+    if proposed_by is not None:
+        deprecated_kwargs["proposed_by"] = proposed_by
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.propose_group(
             instance_id,
@@ -203,6 +223,7 @@ def group_propose(
             analysis_state=state,
             signal_sources_used=list(signal_source) if signal_source else None,
             expected_pending_version=expected_pending_version,
+            **deprecated_kwargs,
         ),
         lambda instance: service_propose_group_inputs(
             instance,
@@ -213,6 +234,7 @@ def group_propose(
             analysis_state=state,
             signal_sources_used=list(signal_source) if signal_source else None,
             expected_pending_version=expected_pending_version,
+            **deprecated_kwargs,
         ),
         allow_local=False,
         command_name="group propose",
@@ -263,6 +285,7 @@ def group_propose(
         "live) with this group's review status + provenance instead of skipping it."
     ),
 )
+@click.option("--resolved-by", default=None, hidden=True)
 @json_option
 @handle_errors
 def group_resolve(
@@ -271,9 +294,15 @@ def group_resolve(
     rationale: str,
     expected_pending_version: int,
     stamp_existing: bool,
+    resolved_by: str | None,
     output_json: bool,
 ) -> None:
     """Resolve a candidate group (approve or reject)."""
+    if resolved_by is not None:
+        emit_cli_deprecation(GROUP_RESOLVED_BY_INPUT)
+    deprecated_kwargs: _ResolvedByAliasKwargs = {}
+    if resolved_by is not None:
+        deprecated_kwargs["resolved_by"] = resolved_by
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.resolve_group(
             instance_id,
@@ -282,6 +311,7 @@ def group_resolve(
             rationale=rationale,
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
+            **deprecated_kwargs,
         ),
         lambda instance: service_resolve_group(
             instance,
@@ -290,6 +320,7 @@ def group_resolve(
             rationale=rationale,
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
+            **deprecated_kwargs,
         ),
         allow_local=False,
         command_name="group resolve",

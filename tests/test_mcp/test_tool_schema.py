@@ -49,17 +49,16 @@ class TestInputSchema:
     def test_feedback_action_enum(self, server):
         schemas = _get_tool_schemas(server)
         action = schemas["cruxible_feedback"].inputSchema["properties"]["action"]
-        assert action["enum"] == ["approve", "reject", "correct"]
+        assert action["enum"] == ["approve", "reject", "correct", "flag"]
 
-    def test_feedback_has_no_declared_source_input(self, server):
-        """The caller does not get to declare whether it is a human.
+    def test_feedback_source_input_is_deprecated_compatibility_only(self, server):
+        """The retired declaration remains accepted during the removal window.
 
-        The kind is derived from the runtime actor context, so exposing a
-        ``source`` input would just re-open the hole: the reason-code rule
-        keys off that kind.
+        Its value is ignored; the reason-code rule still keys off the runtime
+        actor context.
         """
         schemas = _get_tool_schemas(server)
-        assert "source" not in schemas["cruxible_feedback"].inputSchema["properties"]
+        assert "source" in schemas["cruxible_feedback"].inputSchema["properties"]
 
     def test_feedback_receipt_is_optional_for_explicit_coordinates(self, server):
         schemas = _get_tool_schemas(server)
@@ -73,8 +72,8 @@ class TestInputSchema:
         props = schemas["cruxible_feedback_from_query"].inputSchema["properties"]
         required = set(schemas["cruxible_feedback_from_query"].inputSchema["required"])
         assert {"instance_id", "receipt_id", "result_index", "action"} <= required
-        assert props["action"]["enum"] == ["approve", "reject", "correct"]
-        assert "source" not in props
+        assert props["action"]["enum"] == ["approve", "reject", "correct", "flag"]
+        assert "source" in props
         assert "reason_code" in props
         assert "scope_hints" in props
         assert "path_index" in props
@@ -283,10 +282,25 @@ class TestOutputSchema:
                     "warnings",
                 },
             ),
-            ("cruxible_feedback", {"feedback_id", "applied", "receipt_id"}),
-            ("cruxible_feedback_from_query", {"feedback_id", "applied", "receipt_id"}),
-            ("cruxible_outcome", {"outcome_id"}),
-            ("cruxible_get_outcome_profile", {"found", "profile_key", "anchor_type", "profile"}),
+            (
+                "cruxible_feedback",
+                {"feedback_id", "applied", "receipt_id", "deprecation_warnings"},
+            ),
+            (
+                "cruxible_feedback_from_query",
+                {"feedback_id", "applied", "receipt_id", "deprecation_warnings"},
+            ),
+            ("cruxible_outcome", {"outcome_id", "deprecation_warnings"}),
+            (
+                "cruxible_get_outcome_profile",
+                {
+                    "found",
+                    "profile_key",
+                    "anchor_type",
+                    "profile",
+                    "deprecation_warnings",
+                },
+            ),
             (
                 "cruxible_list",
                 {

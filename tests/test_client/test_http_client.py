@@ -704,6 +704,131 @@ def test_feedback_from_query_uses_expected_route_and_payload():
     }
 
 
+def test_deprecated_actor_axis_inputs_are_forwarded_for_server_warning() -> None:
+    captured: dict[str, dict[str, Any]] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured[request.url.path] = json.loads(request.content.decode())
+        path = request.url.path
+        if path.endswith("/feedback"):
+            return httpx.Response(200, json={"feedback_id": "FB-1", "applied": True})
+        if path.endswith("/feedback/batch"):
+            return httpx.Response(
+                200,
+                json={"feedback_ids": ["FB-2"], "applied_count": 1, "total": 1},
+            )
+        if path.endswith("/outcome"):
+            return httpx.Response(200, json={"outcome_id": "OUT-1"})
+        if path.endswith("/groups/propose"):
+            return httpx.Response(
+                200,
+                json={
+                    "signature": "sig",
+                    "status": "pending_review",
+                    "review_priority": "review",
+                    "member_count": 0,
+                },
+            )
+        if path.endswith("/resolve"):
+            return httpx.Response(
+                200,
+                json={
+                    "group_id": "GRP-1",
+                    "action": "reject",
+                    "edges_created": 0,
+                    "edges_skipped": 0,
+                },
+            )
+        return httpx.Response(200, json={"record": {}})
+
+    client = _build_client(handler)
+    client.feedback(
+        "inst_123",
+        action="approve",
+        from_type="Part",
+        from_id="P-1",
+        relationship_type="fits",
+        to_type="Vehicle",
+        to_id="V-1",
+        source="human",
+    )
+    client.feedback_batch(
+        "inst_123",
+        items=[
+            contracts.FeedbackBatchItemInput(
+                receipt_id="RCP-1",
+                action="approve",
+                target=contracts.EdgeTargetInput(
+                    from_type="Part",
+                    from_id="P-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                ),
+                source="human",
+            )
+        ],
+    )
+    client.outcome(
+        "inst_123",
+        receipt_id="RCP-1",
+        outcome="correct",
+        source="human",
+    )
+    client.propose_group(
+        "inst_123",
+        relationship_type="fits",
+        members=[],
+        proposed_by="agent",
+    )
+    client.resolve_group(
+        "inst_123",
+        "GRP-1",
+        action="reject",
+        expected_pending_version=1,
+        resolved_by="human",
+    )
+    client.create_decision_record(
+        "inst_123",
+        question="Ship it?",
+        opened_by="human",
+    )
+
+    assert captured["/api/v1/inst_123/feedback"]["source"] == "human"
+    assert captured["/api/v1/inst_123/feedback/batch"]["items"][0]["source"] == "human"
+    assert captured["/api/v1/inst_123/outcome"]["source"] == "human"
+    assert captured["/api/v1/inst_123/groups/propose"]["proposed_by"] == "agent"
+    assert captured["/api/v1/inst_123/groups/GRP-1/resolve"]["resolved_by"] == "human"
+    assert captured["/api/v1/inst_123/decision-records"]["opened_by"] == "human"
+
+
+def test_client_forwards_structured_http_deprecation_header() -> None:
+    notice = (
+        '{"removal_version":"0.4.0","replacement":"actor_context",'
+        '"surface":"FeedbackRecord.source input"}'
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"feedback_id": "FB-1", "applied": True},
+            headers=[("Deprecation", notice)],
+        )
+
+    client = _build_client(handler)
+    with pytest.warns(DeprecationWarning, match="FeedbackRecord.source input"):
+        client.feedback(
+            "inst_123",
+            action="approve",
+            from_type="Part",
+            from_id="P-1",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-1",
+            source="human",
+        )
+
+
 def test_source_artifact_methods_use_expected_routes_and_payloads():
     captured: list[dict[str, Any]] = []
 

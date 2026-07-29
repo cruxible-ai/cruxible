@@ -9,14 +9,19 @@ the project's own state instance.
 
 ### Changed (BREAKING)
 
-- **The `flag` feedback action is removed** — from the write vocabulary on
-  every surface (service, CLI `feedback --action`, MCP tool schema, HTTP
-  request models, client contracts). As shipped it un-approved an edge to
+- **The `flag` feedback action is removed from the live write vocabulary** —
+  from the canonical vocabulary on every surface (service, CLI
+  `feedback --action`, MCP tool schema, HTTP request models, client contracts).
+  As shipped it un-approved an edge to
   `pending` while storing no annotation, destroying the reviewer's actual
   signal at the moment it was given. Historical `flag` rows written by 0.2.x
   instances remain fully readable (the stored-record vocabulary still admits
   them; they render and move nothing). Submitting `flag` now refuses with a
-  teaching message. **Migration:** record a doubt with
+  teaching message. During 0.3 it remains accepted as a deprecated refused
+  alias so old callers receive the structured `{surface, replacement,
+  removal_version}` warning rather than a schema-level unknown-value error; the
+  alias never reaches a mutation and is removed in 0.4.0.
+  **Migration:** record a doubt with
   `cruxible attest --stance contradict` (MCP: `cruxible_attest`) — it stores
   the observation, its evidence refs, and its actor without touching review
   status; adjudicate with `approve`/`reject`/`correct`. Note the tier
@@ -41,8 +46,11 @@ the project's own state instance.
   `GroupResolution.resolved_by`, `CandidateGroup.proposed_by`, and
   `DecisionRecord.opened_by` are re-emitted, computed from
   `derived_actor_kind(actor_context)`. What is gone is the ability to DECLARE
-  them. The retired request fields are accepted and ignored with a
-  `deprecated_request_field` warning rather than rejected.
+  them. The retired request fields are accepted and ignored with the standard
+  `{surface, replacement, removal_version}` warning rather than rejected.
+  During 0.3 the removed parameters and hidden CLI flags remain deprecated
+  input aliases across Python, CLI, MCP, HTTP, and client surfaces; their values
+  are never honored, and the aliases are removed in 0.4.0.
 
   The `reason_code` requirement now keys off the derived kind and applies to
   everything that is not a resolved human — including `"unknown"`, because an
@@ -129,11 +137,11 @@ the project's own state instance.
   `governed_write` actor could stage an edge (attestation on an absent
   claim, or a `pending` write) and then approve its own proposal, reaching
   a live approved claim on a `proposal_only` type with no reviewer above
-  it. `flag` is the only feedback action still available at
-  `governed_write` — it moves an edge *to* `pending`, i.e. it asks for
-  review rather than granting it — alongside persisting the
-  `FeedbackRecord` itself. The refusal is a receipted
-  `PermissionDeniedError` (HTTP 403) naming the required tier.
+  it. The tools stay callable at `governed_write` so canonical actions reach a
+  receipted `PermissionDeniedError` (HTTP 403) naming the required tier, but no
+  feedback action completes at that floor. The former `flag` exception is now
+  only a deprecated compatibility input; it refuses with the structured
+  replacement warning on every write tier.
 
   **Migration:** any caller that approves/rejects/corrects with a
   `governed_write` credential must present a `graph_write` one. This also
@@ -154,8 +162,9 @@ the project's own state instance.
   the kill-switch is set, the feedback actions that move an edge *into*
   accepted state (`approve` / `correct`) are refused alongside the direct
   write verbs, so freezing live writes can no longer be walked around via
-  feedback. `reject` / `flag` stay available — they move edges *out* of
-  live state.
+  feedback. `reject` stays available because it moves an edge *out* of live
+  state. The deprecated `flag` compatibility input refuses independently and
+  never reaches this kill-switch.
 
 - **Four MCP tools now return an object-rooted `{"result": ...}` envelope**:
   `cruxible_query`, `cruxible_query_inline`, `cruxible_list_queries`, and
@@ -177,6 +186,13 @@ the project's own state instance.
   **Migration:** read `payload["result"]` where you previously read `payload`.
 
 ### Added
+
+- **Structured deprecation mechanics.** A dependency-free registry now owns the
+  common `{surface, replacement, removal_version}` warning shape. CLI aliases
+  emit one stderr line, MCP results use an existing `warnings` field or an
+  additive `deprecation_warnings` key, and HTTP responses carry a `Deprecation`
+  header (plus a body entry only for contracts that already expose `warnings`).
+  `DEPRECATIONS.md` is the removal schedule, guarded against registry drift.
 
 - **Working-set capture fidelity + control-plane catalog.** The agent-local
   working set gains persisted activation (`cruxible ws enable|disable` in
@@ -473,9 +489,10 @@ removal in the release after 0.3.
   what the matching SQL columns already store. Declaring them is gone; reading
   them is not. Read `actor_context` instead.
 - **Retired declared-actor REQUEST fields are accepted and ignored.** Sending
-  `source` / `proposed_by` / `resolved_by` / `opened_by` to a mutating HTTP route
-  logs a `deprecated_request_field` warning instead of silently dropping the
-  value. It is never honored — the kind is derived from `actor_context`.
+  `source` / `proposed_by` / `resolved_by` / `opened_by` to a mutating surface
+  emits the standard structured deprecation warning instead of rejecting or
+  silently dropping the value. It is never honored — the kind is derived from
+  `actor_context`.
 - **`StateHealthGroupsSection.auto_resolved_count` returns, always 0.** An honest
   zero: no path can grow that bucket any more. Read `withdrawn_count`.
 

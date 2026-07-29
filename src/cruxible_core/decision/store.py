@@ -127,7 +127,10 @@ class DecisionStore(DecisionStoreProtocol):
                     record.decision_class,
                     record.rationale,
                     record.abandoned_reason,
-                    record.model_dump_json(),
+                    # The compatibility projection remains in API dumps and its
+                    # denormalized SQL column, but is not fed back into the model
+                    # on every canonical store read.
+                    record.model_dump_json(exclude={"opened_by"}),
                 ),
             )
         except sqlite3.IntegrityError as exc:
@@ -255,7 +258,7 @@ class DecisionStore(DecisionStoreProtocol):
                 record.decision_class,
                 record.rationale,
                 record.abandoned_reason,
-                record.model_dump_json(),
+                record.model_dump_json(exclude={"opened_by"}),
                 record.decision_record_id,
             ),
         )

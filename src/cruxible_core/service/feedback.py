@@ -19,6 +19,16 @@ from cruxible_core.config.schema import (
     OutcomeProfileSchema,
     OutcomeRemediationHint,
 )
+from cruxible_core.deprecation import (
+    FEEDBACK_SOURCE_INPUT,
+    FLAG_FEEDBACK_ACTION,
+    GROUP_OVERRIDE,
+    LEGACY_OUTCOME_PROFILE,
+    LEGACY_OUTCOME_RECORD,
+    OUTCOME_SOURCE_INPUT,
+    deprecation_refusal_message,
+    emit_python_deprecation,
+)
 from cruxible_core.errors import (
     ConfigError,
     DataValidationError,
@@ -30,6 +40,7 @@ from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.types import (
     FeedbackAction,
     FeedbackBatchItem,
+    FeedbackInputAction,
     FeedbackRecord,
     OutcomeRecord,
 )
@@ -70,14 +81,14 @@ that read fine but can never be written again.
 _VALID_OUTCOMES = ("correct", "incorrect", "partial", "unknown")
 
 
-_REMOVED_FLAG_ACTION_MESSAGE = (
-    "The 'flag' feedback action was removed. It un-approved an edge to 'pending' "
-    "while storing no annotation, so the reviewer's actual signal -- what they "
-    "doubted and why -- was destroyed at the moment it was given. To record a "
-    "doubt about a claim, use 'cruxible attest --stance contradict' (MCP: "
-    "cruxible_attest): it stores the observation, its evidence refs, and its "
-    "actor, and it changes no review status. To adjudicate, use approve, "
-    "reject, or correct."
+_DEPRECATED_FLAG_ACTION_MESSAGE = deprecation_refusal_message(
+    FLAG_FEEDBACK_ACTION,
+    "The 'flag' feedback action was removed from the live write vocabulary and "
+    "survives only as a deprecated refused alias because it un-approved an edge "
+    "to 'pending' while storing no annotation, destroying the reviewer's actual "
+    "signal. Use 'cruxible attest --stance contradict' (MCP: cruxible_attest) to "
+    "store the observation, evidence refs, and actor without changing review "
+    "status. To adjudicate, use approve, reject, or correct.",
 )
 
 
@@ -95,7 +106,7 @@ def _validate_feedback_request_values(
     refusals without each restating them.
     """
     if action == "flag":
-        raise ConfigError(_REMOVED_FLAG_ACTION_MESSAGE)
+        raise ConfigError(_DEPRECATED_FLAG_ACTION_MESSAGE)
 
     if action not in _VALID_ACTIONS:
         raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_ACTIONS)}")
@@ -123,7 +134,7 @@ def _normalize_feedback_record(
     graph: EntityGraph,
     receipt: Receipt | None,
     receipt_id: str | None,
-    action: FeedbackAction,
+    action: FeedbackInputAction,
     target: RelationshipInstance,
     reason: str,
     reason_code: str | None,
@@ -777,6 +788,7 @@ def service_get_outcome_profile(
     surface_name: str | None = None,
 ) -> tuple[str | None, OutcomeProfileSchema | None]:
     """Resolve the focused outcome profile for one anchor context."""
+    emit_python_deprecation(LEGACY_OUTCOME_PROFILE)
     config = instance.load_config()
     return _resolve_outcome_profile(
         config=config,
@@ -829,6 +841,7 @@ def _feedback_batch_item_from_input(item: FeedbackItemInput) -> FeedbackBatchIte
         scope_hints=item.scope_hints or {},
         corrections=item.corrections or {},
         group_override=item.group_override,
+        source=item.source,
     )
 
 
@@ -1082,6 +1095,7 @@ def service_feedback_input(
         scope_hints=item.scope_hints,
         corrections=item.corrections,
         group_override=item.group_override,
+        source=item.source,
         actor_context=actor_context,
     )
 
@@ -1091,12 +1105,13 @@ def service_feedback_from_query_result(
     *,
     receipt_id: str,
     result_index: int,
-    action: FeedbackAction,
+    action: FeedbackInputAction,
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
     group_override: bool = False,
+    source: str | None = None,
     path_index: int | None = None,
     path_alias: str | None = None,
     actor_context: GovernedActorContext | None = None,
@@ -1140,6 +1155,7 @@ def service_feedback_from_query_result(
         scope_hints=scope_hints,
         corrections=corrections,
         group_override=group_override,
+        source=source,
         _feedback_from_query={
             **query_selection,
             "action": action,
@@ -1155,7 +1171,7 @@ def service_feedback_from_query_result(
 def service_feedback(
     instance: InstanceProtocol,
     receipt_id: str | None,
-    action: FeedbackAction,
+    action: FeedbackInputAction,
     target: RelationshipInstance,
     reason: str = "",
     reason_code: str | None = None,
@@ -1164,6 +1180,7 @@ def service_feedback(
     group_override: bool = False,
     _feedback_from_query: dict[str, Any] | None = None,
     actor_context: GovernedActorContext | None = None,
+    source: str | None = None,
 ) -> FeedbackServiceResult:
     """Record feedback on an edge.
 
@@ -1171,6 +1188,10 @@ def service_feedback(
     and applies to the graph. If group_override=True, marks the edge assertion
     metadata as a group override after applying feedback.
     """
+    if group_override:
+        emit_python_deprecation(GROUP_OVERRIDE)
+    if source is not None:
+        emit_python_deprecation(FEEDBACK_SOURCE_INPUT)
     _validate_feedback_request_values(
         action=action,
         corrections=corrections,
@@ -1267,6 +1288,10 @@ def service_feedback_batch(
     """Record a batch of edge feedback with one top-level receipt."""
     if not items:
         raise ConfigError("Batch feedback items must not be empty")
+    if any(item.group_override for item in items):
+        emit_python_deprecation(GROUP_OVERRIDE)
+    if any(item.source is not None for item in items):
+        emit_python_deprecation(FEEDBACK_SOURCE_INPUT)
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
         relationship_types=[item.target.relationship_type for item in items],
@@ -1373,12 +1398,16 @@ def service_outcome(
     outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
     actor_context: GovernedActorContext | None = None,
+    source: str | None = None,
 ) -> OutcomeServiceResult:
     """Record an anchored outcome for a prior receipt or proposal resolution.
 
     Validates the anchor, resolves an outcome profile when available,
     and persists a bounded lineage snapshot for later analysis.
     """
+    emit_python_deprecation(LEGACY_OUTCOME_RECORD)
+    if source is not None:
+        emit_python_deprecation(OUTCOME_SOURCE_INPUT)
     _validate_outcome_request_values(
         outcome=outcome,
         detail=detail,

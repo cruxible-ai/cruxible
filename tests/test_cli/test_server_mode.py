@@ -5037,7 +5037,7 @@ def test_server_mode_outcome_profile_json_emits_profile_and_key(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload == {
         "profile_key": "receipt::*",
         "profile": {"outcomes": ["correct", "incorrect"]},
