@@ -164,10 +164,11 @@ def test_hidden_outcome_routes_cover_open_resolve_dispose_list_and_queue(
     assert outcome_client.get(f"/api/v1/{instance_id}/outcome-contracts/queue").json()["total"] == 1
 
 
-def test_outcome_routes_are_hidden_from_frozen_openapi() -> None:
+def test_outcome_routes_are_part_of_the_public_openapi() -> None:
+    """Flipped by the 0.3.0 surface commit: exposure is deliberate contract."""
     spec = create_app().openapi()
-    assert all("/outcome-contracts" not in path for path in spec["paths"])
-    assert all("/outcome-resolutions" not in path for path in spec["paths"])
+    assert any("/outcome-contracts" in path for path in spec["paths"])
+    assert any("/outcome-resolutions" in path for path in spec["paths"])
 
 
 def test_daemon_refusal_parity_for_an_absent_subject(

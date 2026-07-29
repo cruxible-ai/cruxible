@@ -145,12 +145,13 @@ def test_hidden_lifecycle_routes_cover_all_verbs_and_mint_local_operator(
     assert retired.json()["stranded_live_edge_count"] == 0
 
 
-def test_lifecycle_routes_are_hidden_from_frozen_openapi() -> None:
+def test_lifecycle_routes_are_part_of_the_public_openapi() -> None:
+    """Flipped by the 0.3.0 surface commit: exposure is deliberate contract."""
     paths = create_app().openapi()["paths"]
-    assert all("/claims/{claim_id}/supersede" not in path for path in paths)
-    assert all("/claims/{claim_id}/retract" not in path for path in paths)
-    assert all("/{entity_id}/supersede" not in path for path in paths)
-    assert all("/{entity_id}/retire" not in path for path in paths)
+    assert any("/claims/{claim_id}/supersede" in path for path in paths)
+    assert any("/claims/{claim_id}/retract" in path for path in paths)
+    assert any("/{entity_id}/supersede" in path for path in paths)
+    assert any("/{entity_id}/retire" in path for path in paths)
 
 
 def test_http_lifecycle_routes_refuse_an_empty_reason_and_change_nothing(

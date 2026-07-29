@@ -77,9 +77,18 @@
     },
     "FeedbackAction": {
       "values": [
-        "approve",
+        "accept",
         "reject",
         "correct"
+      ]
+    },
+    "FeedbackInputAction": {
+      "values": [
+        "accept",
+        "reject",
+        "correct",
+        "approve",
+        "flag"
       ]
     },
     "FindingCategory": {
@@ -7943,11 +7952,13 @@
           "json_name": "action",
           "required": true,
           "schema": {
-            "description": "Adjudication: approve, reject, or correct the edge. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
-              "approve",
+              "accept",
               "reject",
-              "correct"
+              "correct",
+              "approve",
+              "flag"
             ],
             "title": "Action",
             "type": "string"
@@ -7984,7 +7995,7 @@
           "required": false,
           "schema": {
             "default": false,
-            "description": "If true, mark the edge assertion as a group-resolve override.",
+            "description": "Deprecated compatibility write; use force_review. If true, mark the edge assertion as a group-resolve override.",
             "title": "Group Override",
             "type": "boolean"
           }
@@ -8045,6 +8056,27 @@
             "description": "Optional hints scoping how broadly the feedback should generalize.",
             "title": "Scope Hints",
             "type": "object"
+          }
+        },
+        "source": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Deprecated and ignored compatibility input; actor kind is derived from actor_context.",
+            "title": "Source"
           }
         },
         "target": {
@@ -8127,11 +8159,13 @@
         },
         "properties": {
           "action": {
-            "description": "Adjudication: approve, reject, or correct the edge. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
-              "approve",
+              "accept",
               "reject",
-              "correct"
+              "correct",
+              "approve",
+              "flag"
             ],
             "title": "Action",
             "type": "string"
@@ -8152,7 +8186,7 @@
           },
           "group_override": {
             "default": false,
-            "description": "If true, mark the edge assertion as a group-resolve override.",
+            "description": "Deprecated compatibility write; use force_review. If true, mark the edge assertion as a group-resolve override.",
             "title": "Group Override",
             "type": "boolean"
           },
@@ -8185,6 +8219,19 @@
             "description": "Optional hints scoping how broadly the feedback should generalize.",
             "title": "Scope Hints",
             "type": "object"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Deprecated and ignored compatibility input; actor kind is derived from actor_context.",
+            "title": "Source"
           },
           "target": {
             "$ref": "#/$defs/EdgeTargetInput",
@@ -8311,11 +8358,13 @@
           "json_name": "action",
           "required": true,
           "schema": {
-            "description": "Adjudication: approve, reject, or correct the edge. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
-              "approve",
+              "accept",
               "reject",
-              "correct"
+              "correct",
+              "approve",
+              "flag"
             ],
             "title": "Action",
             "type": "string"
@@ -8352,7 +8401,7 @@
           "required": false,
           "schema": {
             "default": false,
-            "description": "If true, mark the edge assertion as a group-resolve override.",
+            "description": "Deprecated compatibility write; use force_review. If true, mark the edge assertion as a group-resolve override.",
             "title": "Group Override",
             "type": "boolean"
           }
@@ -8477,16 +8526,39 @@
             "description": "Optional hints scoping how broadly the feedback should generalize.",
             "title": "Scope Hints"
           }
+        },
+        "source": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Deprecated and ignored compatibility input; actor kind is derived from actor_context.",
+            "title": "Source"
+          }
         }
       },
       "json_schema": {
         "properties": {
           "action": {
-            "description": "Adjudication: approve, reject, or correct the edge. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
-              "approve",
+              "accept",
               "reject",
-              "correct"
+              "correct",
+              "approve",
+              "flag"
             ],
             "title": "Action",
             "type": "string"
@@ -8507,7 +8579,7 @@
           },
           "group_override": {
             "default": false,
-            "description": "If true, mark the edge assertion as a group-resolve override.",
+            "description": "Deprecated compatibility write; use force_review. If true, mark the edge assertion as a group-resolve override.",
             "title": "Group Override",
             "type": "boolean"
           },
@@ -8579,6 +8651,19 @@
             "default": null,
             "description": "Optional hints scoping how broadly the feedback should generalize.",
             "title": "Scope Hints"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Deprecated and ignored compatibility input; actor kind is derived from actor_context.",
+            "title": "Source"
           }
         },
         "required": [

@@ -735,7 +735,7 @@ class TestFeedback:
                 corrections={},
             )
         message = str(exc_info.value)
-        assert "'approve'" in message
+        assert "'accept'" in message
         assert "attest --stance contradict" in message
 
     def test_batch_correct_with_empty_corrections_refuses(
@@ -821,7 +821,7 @@ class TestFeedback:
 
 
 class TestFeedbackFromQuery:
-    def test_relationship_row_can_be_approved_from_query_receipt(
+    def test_relationship_row_can_be_accepted_from_query_receipt(
         self,
         populated_instance: CruxibleInstance,
     ) -> None:
@@ -838,7 +838,7 @@ class TestFeedbackFromQuery:
             populated_instance,
             receipt_id=query.receipt_id,
             result_index=0,
-            action="approve",
+            action="accept",
             reason="catalog evidence accepted",
         )
 
@@ -863,7 +863,7 @@ class TestFeedbackFromQuery:
         assert detail["result_index"] == 0
         assert detail["result_shape"] == "relationship"
         assert detail["resolved_target"]["relationship_type"] == "fits"
-        assert detail["action"] == "approve"
+        assert detail["action"] == "accept"
         assert detail["reason"] == "catalog evidence accepted"
 
     def test_feedback_from_query_supports_profiled_agent_feedback(

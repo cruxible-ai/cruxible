@@ -141,6 +141,7 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     assert retired.json()["procedure"]["status"] == "retired"
 
 
-def test_internal_procedure_transport_routes_do_not_expand_frozen_public_openapi() -> None:
+def test_procedure_routes_are_part_of_the_public_openapi() -> None:
+    """Flipped by the 0.3.0 surface commit: exposure is deliberate contract."""
     spec = create_app().openapi()
-    assert all("/procedures" not in path for path in spec["paths"])
+    assert any("/procedures" in path for path in spec["paths"])

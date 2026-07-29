@@ -122,9 +122,10 @@ def test_hidden_attestation_routes_cover_record_queue_list_and_resolve(
     assert attestation_client.get(f"/api/v1/{instance_id}/attestations/queue").json()["total"] == 0
 
 
-def test_attestation_routes_are_hidden_from_frozen_openapi() -> None:
+def test_attestation_routes_are_part_of_the_public_openapi() -> None:
+    """Flipped by the 0.3.0 surface commit: exposure is deliberate contract."""
     spec = create_app().openapi()
-    assert all("/attestations" not in path for path in spec["paths"])
+    assert any("/attestations" in path for path in spec["paths"])
 
 
 def test_daemon_refusal_parity_contradict_on_absent_claim(

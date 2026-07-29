@@ -101,10 +101,11 @@ def test_hidden_post_route_and_get_retrieval_round_trip(
     assert artifact["content"]["summary"] == body["summary"]
 
 
-def test_routes_are_hidden_from_the_openapi_document(app_client: TestClient) -> None:
+def test_routes_are_part_of_the_public_openapi(app_client: TestClient) -> None:
+    """Flipped by the 0.3.0 surface commit: exposure is deliberate contract."""
     paths = app_client.get("/openapi.json").json()["paths"]
-    assert "/api/v1/{instance_id}/state/diff" not in paths
-    assert "/api/v1/{instance_id}/state/diff/artifacts/{diff_digest}" not in paths
+    assert "/api/v1/{instance_id}/state/diff" in paths
+    assert "/api/v1/{instance_id}/state/diff/artifacts/{diff_digest}" in paths
 
 
 def test_client_parity_for_both_routes(app_client: TestClient, tmp_path: Path) -> None:

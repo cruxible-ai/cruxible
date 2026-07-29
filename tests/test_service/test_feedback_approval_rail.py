@@ -213,7 +213,7 @@ def test_no_feedback_action_sits_at_the_governed_floor_anymore() -> None:
     to describe a governed-tier feedback action. If one is ever re-introduced,
     this fails and the prose has to be revisited with it.
     """
-    assert set(FEEDBACK_ACTION_PERMISSIONS) == {"approve", "reject", "correct"}
+    assert set(FEEDBACK_ACTION_PERMISSIONS) == {"accept", "reject", "correct"}
     assert set(FEEDBACK_ACTION_PERMISSIONS.values()) == {PermissionMode.GRAPH_WRITE}
 
 
@@ -236,7 +236,7 @@ def test_batch_is_gated_at_its_strictest_action(rail: Rail) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("action", ["approve", "correct"])
+@pytest.mark.parametrize("action", ["accept", "approve", "correct"])
 def test_kill_switch_refuses_acceptance_actions(
     rail: Rail,
     monkeypatch: pytest.MonkeyPatch,
@@ -247,7 +247,9 @@ def test_kill_switch_refuses_acceptance_actions(
         _feedback(rail, action)
     assert exc.value.kind == "feedback"
     assert exc.value.type_name == "fits"
-    assert exc.value.source == action
+    # The deprecated ``approve`` alias is normalized before the gate, so the
+    # refusal names the canonical action it refused.
+    assert exc.value.source == ("accept" if action == "approve" else action)
     assert "CRUXIBLE_REFUSE_DIRECT_WRITES" in str(exc.value)
     assert exc.value.mutation_receipt_id is not None
     assert _review_status(rail) == "pending"

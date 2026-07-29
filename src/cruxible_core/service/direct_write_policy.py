@@ -90,7 +90,10 @@ _ENV_REFUSE_DIRECT_WRITES = "CRUXIBLE_REFUSE_DIRECT_WRITES"
 
 # Feedback actions that transition an edge INTO accepted state. Both promote the
 # review status to ``approved`` in ``feedback/applier.py``.
-FEEDBACK_ACCEPTANCE_ACTIONS: frozenset[str] = frozenset({"accept", "correct"})
+# The deprecated ``approve`` alias stays in this set even though every write
+# path normalizes it to ``accept`` BEFORE the gate: the kill-switch must
+# refuse the alias no matter what order a future caller wires those steps in.
+FEEDBACK_ACCEPTANCE_ACTIONS: frozenset[str] = frozenset({"accept", "approve", "correct"})
 
 
 def _is_truthy(value: str | None) -> bool:
