@@ -4151,6 +4151,7 @@ class TestQueryGraphLayout:
         local_payload["receipt_id"] = "<varies>"
         remote_payload["receipt_id"] = "<varies>"
         assert local_payload == remote_payload
+        assert "include_sets" not in local_payload
         # Ordered-key parity for the envelope and every node/edge card.
         assert list(local_payload) == list(remote_payload)
         for local_node, remote_node in zip(

@@ -1030,6 +1030,26 @@ class QueryGraphIncludeResult(BaseModel):
     items: list[QueryGraphIncludeItemRef] = Field(default_factory=list)
 
 
+class QueryGraphCompactIncludeResult(BaseModel):
+    """Sparse include envelope stored in compact graph `include_sets`.
+
+    The enclosing map key supplies the alias. `exists` is absent when it is
+    derivable from `count`/`items`; false truncation and null limits are absent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    many: bool
+    count: int
+    exists: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    limit: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    truncated: bool = Field(default=False, exclude_if=lambda value: value is False)
+    items: list[QueryGraphIncludeItemRef] = Field(default_factory=list)
+
+
+QueryGraphIncludesRef: TypeAlias = dict[str, QueryGraphIncludeResult] | int
+
+
 class QueryGraphEntityRef(BaseModel):
     """Entity-shaped result row as a node reference."""
 
@@ -1051,7 +1071,7 @@ class QueryGraphPathRef(BaseModel):
     entry: int
     result: int
     paths: list[int] = Field(default_factory=list)
-    includes: dict[str, QueryGraphIncludeResult] = Field(default_factory=dict)
+    includes: QueryGraphIncludesRef = Field(default_factory=dict)
 
 
 class QueryGraphRelationshipRef(BaseModel):
@@ -1063,7 +1083,7 @@ class QueryGraphRelationshipRef(BaseModel):
     edge: int
     from_entity: int | None = None
     to_entity: int | None = None
-    includes: dict[str, QueryGraphIncludeResult] = Field(default_factory=dict)
+    includes: QueryGraphIncludesRef = Field(default_factory=dict)
 
 
 QueryGraphBaseRef: TypeAlias = QueryGraphEntityRef | QueryGraphPathRef | QueryGraphRelationshipRef
@@ -1091,7 +1111,10 @@ class QueryGraphToolResult(BaseModel):
     carried per occurrence on path step refs and include item refs, never
     on the card), `results` preserves today's row order as index
     references, and `paths` holds step-ref sequences (edge index + alias)
-    for path-shaped results so `dedupe=path` semantics stay distinct.
+    for path-shaped results so `dedupe=path` semantics stay distinct. Under
+    `profile="compact"`, repeated non-empty include maps are interned in
+    `include_sets` and a result/source `includes` integer indexes that table;
+    standard/full retain their inline include maps.
     Envelope, truncation, policy-summary, and receipt fields are verbatim
     :class:`QueryToolResult` passthrough — normalization happens strictly
     after filtering, ordering, and pagination.
@@ -1102,6 +1125,10 @@ class QueryGraphToolResult(BaseModel):
     edges: list[QueryGraphEdgeItem] = Field(default_factory=list)
     results: list[QueryGraphResultRef] = Field(default_factory=list)
     paths: list[list[QueryGraphPathStepRef]] = Field(default_factory=list)
+    include_sets: list[dict[str, QueryGraphCompactIncludeResult]] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     receipt_id: str | None
     receipt: dict[str, Any] | None
     total: int

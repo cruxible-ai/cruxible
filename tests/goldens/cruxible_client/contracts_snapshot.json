@@ -18310,6 +18310,195 @@
         "properties"
       ]
     },
+    "QueryGraphCompactIncludeResult": {
+      "fields": {
+        "count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "count",
+          "required": true,
+          "schema": {
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "exists": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "exists",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Exists"
+          }
+        },
+        "items": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "items",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/QueryGraphIncludeItemRef"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "many": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "many",
+          "required": true,
+          "schema": {
+            "title": "Many",
+            "type": "boolean"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryGraphIncludeItemRef": {
+            "additionalProperties": false,
+            "description": "One include item as references into the shared nodes/edges arrays.\n\n`alias` is the per-occurrence traversal alias of the referenced edge —\naliases live on references, never on the shared `edges` cards.",
+            "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
+              "edge": {
+                "title": "Edge",
+                "type": "integer"
+              },
+              "source": {
+                "title": "Source",
+                "type": "integer"
+              },
+              "target": {
+                "title": "Target",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "edge",
+              "source",
+              "target"
+            ],
+            "title": "QueryGraphIncludeItemRef",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Sparse include envelope stored in compact graph `include_sets`.\n\nThe enclosing map key supplies the alias. `exists` is absent when it is\nderivable from `count`/`items`; false truncation and null limits are absent.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "exists": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Exists"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/$defs/QueryGraphIncludeItemRef"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "many": {
+            "title": "Many",
+            "type": "boolean"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "many",
+          "count"
+        ],
+        "title": "QueryGraphCompactIncludeResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "count",
+        "many"
+      ]
+    },
     "QueryGraphEdgeItem": {
       "fields": {
         "claim_id": {
@@ -18875,11 +19064,18 @@
           "json_name": "includes",
           "required": false,
           "schema": {
-            "additionalProperties": {
-              "$ref": "#/$defs/QueryGraphIncludeResult"
-            },
-            "title": "Includes",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryGraphIncludeResult"
+                },
+                "type": "object"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Includes"
           }
         },
         "paths": {
@@ -19007,11 +19203,18 @@
             "type": "integer"
           },
           "includes": {
-            "additionalProperties": {
-              "$ref": "#/$defs/QueryGraphIncludeResult"
-            },
-            "title": "Includes",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryGraphIncludeResult"
+                },
+                "type": "object"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Includes"
           },
           "paths": {
             "items": {
@@ -19257,11 +19460,18 @@
                 "type": "integer"
               },
               "includes": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/QueryGraphIncludeResult"
-                },
-                "title": "Includes",
-                "type": "object"
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/QueryGraphIncludeResult"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "title": "Includes"
               },
               "paths": {
                 "items": {
@@ -19307,11 +19517,18 @@
                 "title": "From Entity"
               },
               "includes": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/QueryGraphIncludeResult"
-                },
-                "title": "Includes",
-                "type": "object"
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/QueryGraphIncludeResult"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "title": "Includes"
               },
               "to_entity": {
                 "anyOf": [
@@ -19419,11 +19636,18 @@
           "json_name": "includes",
           "required": false,
           "schema": {
-            "additionalProperties": {
-              "$ref": "#/$defs/QueryGraphIncludeResult"
-            },
-            "title": "Includes",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryGraphIncludeResult"
+                },
+                "type": "object"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Includes"
           }
         },
         "to_entity": {
@@ -19564,11 +19788,18 @@
             "title": "From Entity"
           },
           "includes": {
-            "additionalProperties": {
-              "$ref": "#/$defs/QueryGraphIncludeResult"
-            },
-            "title": "Includes",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryGraphIncludeResult"
+                },
+                "type": "object"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Includes"
           },
           "to_entity": {
             "anyOf": [
@@ -19626,6 +19857,32 @@
             },
             "title": "Edges",
             "type": "array"
+          }
+        },
+        "include_sets": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "include_sets",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/QueryGraphCompactIncludeResult"
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Include Sets"
           }
         },
         "layout": {
@@ -20070,6 +20327,62 @@
             "title": "QueryEntityItem",
             "type": "object"
           },
+          "QueryGraphCompactIncludeResult": {
+            "additionalProperties": false,
+            "description": "Sparse include envelope stored in compact graph `include_sets`.\n\nThe enclosing map key supplies the alias. `exists` is absent when it is\nderivable from `count`/`items`; false truncation and null limits are absent.",
+            "properties": {
+              "count": {
+                "title": "Count",
+                "type": "integer"
+              },
+              "exists": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Exists"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/QueryGraphIncludeItemRef"
+                },
+                "title": "Items",
+                "type": "array"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "many": {
+                "title": "Many",
+                "type": "boolean"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "many",
+              "count"
+            ],
+            "title": "QueryGraphCompactIncludeResult",
+            "type": "object"
+          },
           "QueryGraphEdgeItem": {
             "description": "One PHYSICAL relationship card in the shared graph-layout `edges` array.\n\nExactly the serialized edge payload minus the per-occurrence traversal\n`alias`: aliases are reference-level metadata (path step refs, include\nitem refs), so one physical edge is always one card even when visited\nunder several step aliases.",
             "properties": {
@@ -20265,11 +20578,18 @@
                 "type": "integer"
               },
               "includes": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/QueryGraphIncludeResult"
-                },
-                "title": "Includes",
-                "type": "object"
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/QueryGraphIncludeResult"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "title": "Includes"
               },
               "paths": {
                 "items": {
@@ -20376,11 +20696,18 @@
                 "title": "From Entity"
               },
               "includes": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/QueryGraphIncludeResult"
-                },
-                "title": "Includes",
-                "type": "object"
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/QueryGraphIncludeResult"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "title": "Includes"
               },
               "to_entity": {
                 "anyOf": [
@@ -20449,7 +20776,7 @@
             "type": "object"
           }
         },
-        "description": "Normalized graph transport for query output (`layout=\"graph\"`).\n\nCarries the same information as the rows layout of\n:class:`QueryToolResult`: `nodes` holds each unique entity once,\n`edges` each unique PHYSICAL relationship once (edge identity =\nrelationship type + endpoints + `edge_key`; traversal-step aliases are\ncarried per occurrence on path step refs and include item refs, never\non the card), `results` preserves today's row order as index\nreferences, and `paths` holds step-ref sequences (edge index + alias)\nfor path-shaped results so `dedupe=path` semantics stay distinct.\nEnvelope, truncation, policy-summary, and receipt fields are verbatim\n:class:`QueryToolResult` passthrough — normalization happens strictly\nafter filtering, ordering, and pagination.",
+        "description": "Normalized graph transport for query output (`layout=\"graph\"`).\n\nCarries the same information as the rows layout of\n:class:`QueryToolResult`: `nodes` holds each unique entity once,\n`edges` each unique PHYSICAL relationship once (edge identity =\nrelationship type + endpoints + `edge_key`; traversal-step aliases are\ncarried per occurrence on path step refs and include item refs, never\non the card), `results` preserves today's row order as index\nreferences, and `paths` holds step-ref sequences (edge index + alias)\nfor path-shaped results so `dedupe=path` semantics stay distinct. Under\n`profile=\"compact\"`, repeated non-empty include maps are interned in\n`include_sets` and a result/source `includes` integer indexes that table;\nstandard/full retain their inline include maps.\nEnvelope, truncation, policy-summary, and receipt fields are verbatim\n:class:`QueryToolResult` passthrough — normalization happens strictly\nafter filtering, ordering, and pagination.",
         "properties": {
           "dedupe": {
             "default": "path",
@@ -20467,6 +20794,24 @@
             },
             "title": "Edges",
             "type": "array"
+          },
+          "include_sets": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/QueryGraphCompactIncludeResult"
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Include Sets"
           },
           "layout": {
             "const": "graph",

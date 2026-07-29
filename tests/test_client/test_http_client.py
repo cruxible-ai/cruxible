@@ -337,8 +337,24 @@ def test_query_graph_layout_sends_param_and_parses_graph_model():
                         "metadata": {},
                     }
                 ],
-                "results": [{"entry": 0, "result": 1, "paths": [0], "includes": {}}],
+                "results": [{"entry": 0, "result": 1, "paths": [0], "includes": 0}],
                 "paths": [[{"edge": 0, "alias": "fit"}]],
+                "include_sets": [
+                    {
+                        "fit_context": {
+                            "many": False,
+                            "count": 1,
+                            "items": [
+                                {
+                                    "edge": 0,
+                                    "alias": "fit_context",
+                                    "source": 1,
+                                    "target": 0,
+                                }
+                            ],
+                        }
+                    }
+                ],
                 "receipt_id": "RCP-1",
                 "receipt": None,
                 "total": 1,
@@ -362,6 +378,10 @@ def test_query_graph_layout_sends_param_and_parses_graph_model():
     ref = result.results[0]
     assert isinstance(ref, contracts.QueryGraphPathRef)
     assert (ref.entry, ref.result, ref.paths) == (0, 1, [0])
+    assert ref.includes == 0
+    assert result.include_sets is not None
+    assert result.include_sets[0]["fit_context"].count == 1
+    assert result.include_sets[0]["fit_context"].exists is None
     assert result.paths == [[contracts.QueryGraphPathStepRef(edge=0, alias="fit")]]
 
 

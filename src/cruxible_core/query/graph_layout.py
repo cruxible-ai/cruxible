@@ -39,6 +39,10 @@ Identity rules:
   with distinct paths therefore keep distinct path entries and distinct
   ``results[]`` entries — multiple valid paths to one result are never
   collapsed.
+* compact include-set identity = the ordered include map after node/edge
+  normalization. Repeated non-empty maps serialize once in ``include_sets``;
+  each result/source ``includes`` field is that table index. Empty compact
+  include maps remain ``{}``. Standard/full graph output keeps the inline map.
 
 The per-row ``entities`` array of path rows is NOT materialized: it is the
 visited-entity walk, recoverable from ``entry`` plus the path's edge sequence
@@ -54,6 +58,8 @@ copies them verbatim from the rows result.
 from __future__ import annotations
 
 from typing import Any
+
+from cruxible_core.query.profiles import ReadProfile
 
 # Canonical serialized-edge keys, in contract order (RelationshipInstance
 # field order). Deliberately excludes ``alias``: cards are physical, aliases
@@ -79,9 +85,11 @@ class _GraphBuilder:
         self.nodes: list[dict[str, Any]] = []
         self.edges: list[dict[str, Any]] = []
         self.paths: list[list[dict[str, Any]]] = []
+        self.include_sets: list[dict[str, dict[str, Any]]] = []
         self._node_index: dict[tuple[Any, Any], int] = {}
         self._edge_index: dict[tuple[Any, ...], int] = {}
         self._path_index: dict[tuple[tuple[int, str | None], ...], int] = {}
+        self._include_set_index: dict[tuple[Any, ...], int] = {}
 
     def add_node(self, entity: dict[str, Any]) -> int:
         key = (entity.get("entity_type"), entity.get("entity_id"))
@@ -121,6 +129,29 @@ class _GraphBuilder:
             self.paths.append([{"edge": edge, "alias": alias} for edge, alias in steps])
         return index
 
+    def add_include_set(self, includes: dict[str, dict[str, Any]]) -> int:
+        """Intern one ordered, non-empty compact include map."""
+        key = _structural_key(includes)
+        index = self._include_set_index.get(key)
+        if index is None:
+            index = len(self.include_sets)
+            self._include_set_index[key] = index
+            self.include_sets.append(includes)
+        return index
+
+
+def _structural_key(value: Any) -> tuple[Any, ...]:
+    """Return a hashable key without erasing map or list ordering."""
+    if isinstance(value, dict):
+        return ("dict", tuple((key, _structural_key(item)) for key, item in value.items()))
+    if isinstance(value, (list, tuple)):
+        return ("list", tuple(_structural_key(item) for item in value))
+    try:
+        hash(value)
+    except TypeError:
+        return ("repr", type(value).__qualname__, repr(value))
+    return ("value", type(value).__qualname__, value)
+
 
 def _relationship_edge_payload(item: dict[str, Any]) -> dict[str, Any]:
     """Extract the edge card from a relationship-shaped row payload.
@@ -135,13 +166,16 @@ def _relationship_edge_payload(item: dict[str, Any]) -> dict[str, Any]:
 def _include_refs(
     includes: dict[str, Any] | None,
     builder: _GraphBuilder,
+    *,
+    compact: bool,
 ) -> dict[str, dict[str, Any]]:
     """Transform per-row include results into node/edge references.
 
-    Include envelope fields pass through verbatim; only ``items`` payloads are
-    replaced by references. Include neighbors and edges dedupe into the shared
-    top-level arrays like every other card; the per-occurrence edge ``alias``
-    is carried on the item ref, never on the shared card.
+    Standard/full include envelope fields pass through verbatim. Compact rows
+    arrive pre-sparsified and retain that sparse envelope. In every profile,
+    only ``items`` payloads are replaced by references. Include neighbors and
+    edges dedupe into the shared top-level arrays like every other card; the
+    per-occurrence edge ``alias`` is carried on the item ref, never on the card.
     """
     refs: dict[str, dict[str, Any]] = {}
     for alias, include in (includes or {}).items():
@@ -156,19 +190,45 @@ def _include_refs(
                     "target": builder.add_node(entry.get("target") or {}),
                 }
             )
-        refs[alias] = {
-            "alias": include.get("alias", alias),
-            "many": include.get("many", False),
-            "exists": include.get("exists", False),
-            "count": include.get("count", 0),
-            "limit": include.get("limit"),
-            "truncated": include.get("truncated", False),
-            "items": items,
-        }
+        if compact:
+            compact_ref = {
+                key: include[key]
+                for key in ("many", "count", "exists", "limit", "truncated")
+                if key in include
+            }
+            compact_ref["items"] = items
+            refs[alias] = compact_ref
+        else:
+            refs[alias] = {
+                "alias": include.get("alias", alias),
+                "many": include.get("many", False),
+                "exists": include.get("exists", False),
+                "count": include.get("count", 0),
+                "limit": include.get("limit"),
+                "truncated": include.get("truncated", False),
+                "items": items,
+            }
     return refs
 
 
-def _base_result_ref(item: dict[str, Any], builder: _GraphBuilder) -> dict[str, Any]:
+def _include_ref_value(
+    includes: dict[str, Any] | None,
+    builder: _GraphBuilder,
+    *,
+    compact: bool,
+) -> dict[str, dict[str, Any]] | int:
+    refs = _include_refs(includes, builder, compact=compact)
+    if compact and refs:
+        return builder.add_include_set(refs)
+    return refs
+
+
+def _base_result_ref(
+    item: dict[str, Any],
+    builder: _GraphBuilder,
+    *,
+    compact: bool,
+) -> dict[str, Any]:
     """Normalize one non-projected serialized row into a reference entry.
 
     Shape detection mirrors ``profiles.profile_query_item`` exactly: the same
@@ -180,7 +240,7 @@ def _base_result_ref(item: dict[str, Any], builder: _GraphBuilder) -> dict[str, 
         for endpoint_key in ("from_entity", "to_entity"):
             endpoint = item.get(endpoint_key)
             ref[endpoint_key] = builder.add_node(endpoint) if endpoint is not None else None
-        ref["includes"] = _include_refs(item.get("includes"), builder)
+        ref["includes"] = _include_ref_value(item.get("includes"), builder, compact=compact)
         return ref
     if "entry" in item and "result" in item:
         entry_index = builder.add_node(item["entry"])
@@ -196,18 +256,25 @@ def _base_result_ref(item: dict[str, Any], builder: _GraphBuilder) -> dict[str, 
             "entry": entry_index,
             "result": result_index,
             "paths": [builder.add_path(steps)],
-            "includes": _include_refs(item.get("includes"), builder),
+            "includes": _include_ref_value(item.get("includes"), builder, compact=compact),
         }
     return {"result": builder.add_node(item)}
 
 
-def normalize_query_items(items: list[dict[str, Any]]) -> dict[str, Any]:
+def normalize_query_items(
+    items: list[dict[str, Any]],
+    *,
+    profile: ReadProfile = "standard",
+) -> dict[str, Any]:
     """Normalize serialized query rows into the graph-layout sections.
 
     Returns ``{"nodes": [...], "edges": [...], "results": [...], "paths":
     [...]}`` where ``results`` preserves the input row order one-to-one and
-    ``paths`` is non-empty only for path-shaped rows.
+    ``paths`` is non-empty only for path-shaped rows. Compact output with
+    retained includes also has ``include_sets``; non-empty result/source
+    ``includes`` values index it.
     """
+    compact = profile == "compact"
     builder = _GraphBuilder()
     results: list[dict[str, Any]] = []
     for item in items:
@@ -216,17 +283,24 @@ def normalize_query_items(items: list[dict[str, Any]]) -> dict[str, Any]:
             results.append(
                 {
                     "values": item["values"],
-                    "source": _base_result_ref(source, builder) if source is not None else None,
+                    "source": (
+                        _base_result_ref(source, builder, compact=compact)
+                        if source is not None
+                        else None
+                    ),
                 }
             )
         else:
-            results.append(_base_result_ref(item, builder))
-    return {
+            results.append(_base_result_ref(item, builder, compact=compact))
+    sections = {
         "nodes": builder.nodes,
         "edges": builder.edges,
         "results": results,
         "paths": builder.paths,
     }
+    if compact and builder.include_sets:
+        sections["include_sets"] = builder.include_sets
+    return sections
 
 
 __all__ = ["normalize_query_items"]

@@ -786,6 +786,22 @@ configured owner, service, exposure, and exception context attached under the
 row's `includes` map. Include context can also be selected with
 `$include.<alias>...` projection refs.
 
+**Compact include output:** With `profile=compact`, a configured include alias
+is absent from a row's `includes` map when it is semantically empty (`items` is
+empty, `count` is `0`, `exists` is false, and it is not truncated). Use query
+describe to discover every configured include; absence in compact results means
+empty. Retained compact includes keep cardinality (`many`), count, item order
+and references, non-null limits, and true truncation. They omit the duplicated
+`alias`, derivable `exists`, false `truncated`, and null `limit` fields.
+
+With both `profile=compact` and `layout=graph`, repeated non-empty include maps
+are stored once in the top-level `include_sets` array. A path or relationship
+result (including a projected result's `source`) uses an integer `includes`
+value to index that array; `{}` means no retained includes. Resolving the index
+and then the include items' `edge`/`source`/`target` indexes reconstructs the
+compact rows shape exactly. Standard/full graph and rows output keep their
+existing inline include envelopes.
+
 ### TraversalStep
 
 Each step in the traversal sequence:

@@ -21,9 +21,11 @@ Design rules:
   that MUST survive (entity ``metadata.lifecycle``; edge
   ``metadata.assertion`` review + lifecycle). No ``actor_context``, no
   provenance blobs, no full property bags.
-* Envelope fields (``total``/``limit``/``offset``/``truncated``/counts and
-  truncation flags) are NEVER trimmed by any profile: the transforms here only
-  touch item payloads, never envelopes.
+* Top-level result envelope fields (``total``/``limit``/``offset``/
+  ``truncated``/counts and truncation flags) are NEVER trimmed by any profile.
+  Compact include envelopes are intentionally sparse: configured-empty aliases
+  are omitted and retained aliases drop fields derivable from their map key,
+  item list, or defaults.
 
 Compact property selection: the well-known display keys
 (``name``/``title``/``label``/``summary``/``status``) are kept when present;
@@ -175,11 +177,11 @@ def profile_edge_payload(payload: dict[str, Any], profile: ReadProfile) -> dict[
 
 
 def _profile_include_result(payload: dict[str, Any], profile: ReadProfile) -> dict[str, Any]:
-    """Profile one include-result; counts and truncation flags pass through."""
+    """Profile one include result, keeping every meaningful envelope fact."""
     if profile != "compact":
         return payload
-    compact = dict(payload)
-    compact["items"] = [
+
+    compact_items = [
         {
             "edge": profile_edge_payload(item.get("edge") or {}, profile),
             "source": profile_entity_payload(item.get("source") or {}, profile),
@@ -187,13 +189,37 @@ def _profile_include_result(payload: dict[str, Any], profile: ReadProfile) -> di
         }
         for item in payload.get("items") or []
     ]
+    count = payload.get("count", 0)
+    exists = payload.get("exists", False)
+    compact: dict[str, Any] = {
+        # Cardinality and count remain explicit even when the retained item list
+        # is shorter because an include limit truncated it.
+        "many": payload.get("many", False),
+        "count": count,
+    }
+    if exists != bool(count or compact_items):
+        compact["exists"] = exists
+    if payload.get("limit") is not None:
+        compact["limit"] = payload["limit"]
+    if payload.get("truncated", False):
+        compact["truncated"] = True
+    compact["items"] = compact_items
     return compact
 
 
 def _profile_includes(payload: dict[str, Any], profile: ReadProfile) -> dict[str, Any]:
+    includes = payload.get("includes") or {}
+    if profile != "compact":
+        return includes
     return {
         alias: _profile_include_result(include, profile)
-        for alias, include in (payload.get("includes") or {}).items()
+        for alias, include in includes.items()
+        if (
+            bool(include.get("items"))
+            or include.get("count", 0) != 0
+            or include.get("exists", False) is not False
+            or bool(include.get("truncated", False))
+        )
     }
 
 

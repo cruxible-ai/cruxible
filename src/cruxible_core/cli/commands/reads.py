@@ -195,7 +195,10 @@ def _query_graph_sections(
     row dicts (post-filter, post-paginate), so graph output cannot drift
     between modes.
     """
-    return normalize_query_items(profile_query_items(payload_rows, profile))
+    return normalize_query_items(
+        profile_query_items(payload_rows, profile),
+        profile=profile,
+    )
 
 
 def _print_graph_query_sections(sections: dict[str, Any]) -> None:

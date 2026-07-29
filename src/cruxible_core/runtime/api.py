@@ -1787,7 +1787,7 @@ def _query_tool_result(
         # optional fields on QueryToolResult) so the rows layout stays
         # bit-for-bit — nullable graph fields would otherwise appear in every
         # rows response.
-        sections = normalize_query_items(items)
+        sections = normalize_query_items(items, profile=profile)
         return contracts.QueryGraphToolResult(
             nodes=[contracts.QueryEntityItem.model_validate(node) for node in sections["nodes"]],
             edges=[contracts.QueryGraphEdgeItem.model_validate(edge) for edge in sections["edges"]],
@@ -1796,6 +1796,7 @@ def _query_tool_result(
                 sections["results"],
             ),
             paths=sections["paths"],
+            include_sets=sections.get("include_sets"),
             receipt_id=result.receipt_id,
             receipt=(
                 result.receipt.model_dump(mode="json")

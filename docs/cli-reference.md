@@ -2818,7 +2818,7 @@ cruxible outcome due [--queue due|overdue|contradicted] [--limit N] [--offset N]
 | `--count` | no | `False` | boolean | Show only summary metadata. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--profile` | no | `standard` | choice | JSON output profile: `compact` (bounded identity cards with governance markers), `standard` (full shape), or `full` (reserved superset of standard). |
-| `--layout` | no | `rows` | choice | Query output layout: `rows` (per-row items) or `graph` (normalized nodes/edges with results as ordered references; each entity and relationship serialized once). |
+| `--layout` | no | `rows` | choice | Query output layout: `rows` (per-row items) or `graph` (normalized nodes/edges with results as ordered references; compact graph interns repeated non-empty include maps in `include_sets`). |
 | `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
@@ -2846,7 +2846,7 @@ cruxible outcome due [--queue due|overdue|contradicted] [--limit N] [--offset N]
 | `--limit` | no | `` | integer range | Max results to display. |
 | `--state` | no | `` | choice | Read-visibility state: `live` (default), `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. Overriding the inline definition's configured state requires `allow_relationship_state_override: true`. |
 | `--lifecycle-status` | no | `` | choice | Exact kind-correct lifecycle status to read: relationships take `active`/`inactive`/`superseded`/`retracted`, entities take `live`/`retired`/`superseded`. Orthogonal to `--state`: `--state` is the coarse visibility selector, this is an exact-match filter on the lifecycle axis. Vocabulary from the wrong kind is refused. |
-| `--layout` | no | `rows` | choice | Query output layout: `rows` (per-row items) or `graph` (normalized nodes/edges with results as ordered references; each entity and relationship serialized once). |
+| `--layout` | no | `rows` | choice | Query output layout: `rows` (per-row items) or `graph` (normalized nodes/edges with results as ordered references; compact graph interns repeated non-empty include maps in `include_sets`). |
 | `--count` | no | `False` | boolean | Show only summary metadata. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--json` | no | `False` | boolean | Output as JSON. |

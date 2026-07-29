@@ -43,18 +43,17 @@ def _segment_from_ref(ref: dict[str, Any], edges: list[dict[str, Any]]) -> dict[
 
 
 def _reconstruct_includes(
-    include_refs: dict[str, Any],
+    include_ref: dict[str, Any] | int,
+    sections: dict[str, Any],
     nodes: list[dict[str, Any]],
     edges: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    include_refs = (
+        sections["include_sets"][include_ref] if isinstance(include_ref, int) else include_ref
+    )
     return {
         alias: {
-            "alias": include["alias"],
-            "many": include["many"],
-            "exists": include["exists"],
-            "count": include["count"],
-            "limit": include["limit"],
-            "truncated": include["truncated"],
+            **{key: value for key, value in include.items() if key != "items"},
             "items": [
                 {
                     "edge": _segment_from_ref(item, edges),
@@ -78,7 +77,7 @@ def _reconstruct_base_row(ref: dict[str, Any], sections: dict[str, Any]) -> dict
         row["entry"] = nodes[ref["entry"]]
         row["from_entity"] = nodes[ref["from_entity"]] if ref["from_entity"] is not None else None
         row["to_entity"] = nodes[ref["to_entity"]] if ref["to_entity"] is not None else None
-        row["includes"] = _reconstruct_includes(ref["includes"], nodes, edges)
+        row["includes"] = _reconstruct_includes(ref["includes"], sections, nodes, edges)
         return row
     if "entry" in ref:
         (path_index,) = ref["paths"]
@@ -98,7 +97,7 @@ def _reconstruct_base_row(ref: dict[str, Any], sections: dict[str, Any]) -> dict
             "result": nodes[ref["result"]],
             "entities": entities,
             "path": path_edges,
-            "includes": _reconstruct_includes(ref["includes"], nodes, edges),
+            "includes": _reconstruct_includes(ref["includes"], sections, nodes, edges),
         }
     return nodes[ref["result"]]
 
@@ -131,7 +130,7 @@ def _dump_rows(result: Any, profile: ReadProfile = "standard") -> list[dict[str,
 def _assert_lossless(result: Any, profile: ReadProfile) -> dict[str, Any]:
     """Normalize the serialized rows, reconstruct them, and assert equality."""
     items = _dump_rows(result, profile)
-    sections = normalize_query_items(items)
+    sections = normalize_query_items(items, profile=profile)
     assert _reconstruct_rows(sections) == items
     return sections
 
@@ -193,6 +192,7 @@ def config() -> CoreConfig:
                         "relationship": "replaces",
                         "direction": "incoming",
                         "many": True,
+                        "limit": 1,
                     }
                 },
             ),
@@ -250,6 +250,15 @@ def config() -> CoreConfig:
                     "part": "$result.properties.name",
                     "verified": "$path.fit.edge.properties.verified",
                 },
+                include={
+                    "replacements": {
+                        "from": "$result",
+                        "relationship": "replaces",
+                        "direction": "incoming",
+                        "many": True,
+                        "limit": 1,
+                    }
+                },
             ),
         },
     )
@@ -278,6 +287,7 @@ def diamond_graph() -> EntityGraph:
     g.add_entity(_entity("Part", "P-A", part_number="P-A", name="Anchor"))
     g.add_entity(_entity("Part", "P-DUAL", part_number="P-DUAL", name="Dual"))
     g.add_entity(_entity("Part", "P-REP", part_number="P-REP", name="Replacement"))
+    g.add_entity(_entity("Part", "P-REP-2", part_number="P-REP-2", name="Replacement 2"))
     g.add_entity(_entity("Vehicle", "V-1", vehicle_id="V-1", make="Honda"))
     g.add_entity(_entity("Vehicle", "V-2", vehicle_id="V-2", make="Toyota"))
     g.add_relationship(_fits("P-A", "V-1", verified=True))
@@ -290,6 +300,17 @@ def diamond_graph() -> EntityGraph:
             relationship_type="replaces",
             from_type="Part",
             from_id="P-REP",
+            to_type="Part",
+            to_id="P-DUAL",
+            properties={"direction": "upgrade"},
+        )
+    )
+    g.add_relationship(
+        RelationshipInstance(
+            claim_id=mint_claim_id(),
+            relationship_type="replaces",
+            from_type="Part",
+            from_id="P-REP-2",
             to_type="Part",
             to_id="P-DUAL",
             properties={"direction": "upgrade"},
@@ -315,6 +336,54 @@ class TestLosslessness:
         assert len(dual_nodes) == 1
         # Include neighbors dedupe into the shared arrays too.
         assert any(node["entity_id"] == "P-REP" for node in sections["nodes"])
+
+    def test_compact_repeated_truncated_include_sets_are_interned_once(
+        self, config, diamond_graph
+    ) -> None:
+        result = execute_query(
+            config, diamond_graph, "diamond_back_to_part", {"part_number": "P-A"}
+        )
+        items = _dump_rows(result, "compact")
+        sections = normalize_query_items(items, profile="compact")
+
+        assert _reconstruct_rows(sections) == items
+        assert len(sections["include_sets"]) == 1
+        assert [ref["includes"] for ref in sections["results"]] == [0, 0]
+        replacements = sections["include_sets"][0]["replacements"]
+        assert replacements["many"] is True
+        assert replacements["count"] == 2
+        assert replacements["limit"] == 1
+        assert replacements["truncated"] is True
+        assert "alias" not in replacements
+        assert "exists" not in replacements
+        assert len(replacements["items"]) == 1
+
+    @pytest.mark.parametrize("profile", ["standard", "full"])
+    def test_standard_and_full_keep_inline_include_maps(
+        self, config, diamond_graph, profile
+    ) -> None:
+        result = execute_query(
+            config, diamond_graph, "diamond_back_to_part", {"part_number": "P-A"}
+        )
+        items = _dump_rows(result, profile)
+        sections = normalize_query_items(items, profile=profile)
+
+        assert "include_sets" not in sections
+        assert all(isinstance(ref["includes"], dict) for ref in sections["results"])
+        assert _reconstruct_rows(sections) == items
+
+    def test_projected_compact_path_source_references_include_set(
+        self, config, diamond_graph
+    ) -> None:
+        result = execute_query(config, diamond_graph, "part_names_projected", {"vehicle_id": "V-1"})
+        items = _dump_rows(result, "compact")
+        sections = normalize_query_items(items, profile="compact")
+
+        assert _reconstruct_rows(sections) == items
+        source_refs = [ref["source"] for ref in sections["results"]]
+        assert any(
+            source is not None and isinstance(source["includes"], int) for source in source_refs
+        )
 
     @pytest.mark.parametrize("profile", ["standard", "compact"])
     def test_parallel_edges_round_trip(self, config, profile) -> None:
@@ -494,7 +563,7 @@ class TestProfileComposition:
             config, diamond_graph, "diamond_back_to_part", {"part_number": "P-A"}
         )
         items = profile_query_items(_dump_rows(result), "compact")
-        sections = normalize_query_items(items)
+        sections = normalize_query_items(items, profile="compact")
         first_row = items[0]
         entry_index = sections["results"][0]["entry"]
         assert sections["nodes"][entry_index] is first_row["entry"]
@@ -624,7 +693,7 @@ class TestSceneryByteMeasurement:
         assert result.total_results == 38
 
         rows = profile_query_items(_dump_rows(result), "compact")
-        sections = normalize_query_items(rows)
+        sections = normalize_query_items(rows, profile="compact")
         assert _reconstruct_rows(sections) == rows
 
         rows_bytes = len(json.dumps({"items": rows}).encode())
@@ -638,3 +707,54 @@ class TestSceneryByteMeasurement:
             f"expected graph layout at least 5x smaller: rows={rows_bytes} "
             f"graph={graph_bytes} ratio={ratio:.1f}x"
         )
+
+
+class TestIncludeSetByteMeasurement:
+    def test_five_repeated_include_bundles_are_materially_smaller(
+        self, config, diamond_graph
+    ) -> None:
+        """Deterministic five-result equivalent of the dogfood include fanout."""
+        result = execute_query(
+            config, diamond_graph, "diamond_back_to_part", {"part_number": "P-A"}
+        )
+        compact_row = _dump_rows(result, "compact")[0]
+        sparse_include = compact_row["includes"]["replacements"]
+        legacy_include = {
+            "alias": "replacements",
+            "many": sparse_include["many"],
+            "exists": True,
+            "count": sparse_include["count"],
+            "limit": sparse_include["limit"],
+            "truncated": sparse_include["truncated"],
+            "items": sparse_include["items"],
+        }
+        empty_includes = {
+            f"empty_{index}": {
+                "alias": f"empty_{index}",
+                "many": True,
+                "exists": False,
+                "count": 0,
+                "limit": None,
+                "truncated": False,
+                "items": [],
+            }
+            for index in range(10)
+        }
+        legacy_row = {
+            **compact_row,
+            "includes": {"replacements": legacy_include, **empty_includes},
+        }
+
+        before = normalize_query_items([legacy_row] * 5)
+        after = normalize_query_items([compact_row] * 5, profile="compact")
+        before_bytes = len(
+            json.dumps({"layout": "graph", **before}, separators=(",", ":")).encode()
+        )
+        after_bytes = len(json.dumps({"layout": "graph", **after}, separators=(",", ":")).encode())
+        print(
+            f"\ncompact include fixture bytes: before={before_bytes} "
+            f"after={after_bytes} reduction={(before_bytes - after_bytes) / before_bytes:.1%}"
+        )
+
+        assert len(after["include_sets"]) == 1
+        assert after_bytes * 2 <= before_bytes

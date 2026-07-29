@@ -510,6 +510,7 @@ def test_query_graph_layout_returns_normalized_sections(
     assert {"layout", "nodes", "edges", "results", "paths"}.isdisjoint(rows)
 
     assert graph["layout"] == "graph"
+    assert "include_sets" not in graph
     assert "items" not in graph
     assert graph["total"] == rows["total"] == 2
     assert graph["result_shape"] == rows["result_shape"]

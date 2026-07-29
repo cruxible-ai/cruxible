@@ -628,13 +628,16 @@ class TestOutputSchema:
             rows["required"]
         )
         assert {"receipt_id", "receipt", "total", "steps_executed"} <= set(graph["required"])
-        assert {"layout", "nodes", "edges", "results", "paths"} <= set(graph["properties"])
+        assert {"layout", "nodes", "edges", "results", "paths", "include_sets"} <= set(
+            graph["properties"]
+        )
         # Edge cards are physical: the traversal-step alias lives on the
         # path/include references, never on the shared edges[] cards.
         defs = output["$defs"]
         assert "alias" not in defs["QueryGraphEdgeItem"]["properties"]
         assert "alias" in defs["QueryGraphPathStepRef"]["properties"]
         assert "alias" in defs["QueryGraphIncludeItemRef"]["properties"]
+        assert "alias" not in defs["QueryGraphCompactIncludeResult"]["properties"]
 
     def test_list_queries_output_schema_documents_both_details(self, server):
         schemas = _get_tool_schemas(server)

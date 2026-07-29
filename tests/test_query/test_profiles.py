@@ -29,6 +29,7 @@ from cruxible_core.graph.types import (
 )
 from cruxible_core.query.profiles import (
     COMPACT_MAX_SCALAR_PROPERTIES,
+    ReadProfile,
     compact_display_properties,
     inspect_neighbor_payload,
     profile_edge_payload,
@@ -180,6 +181,79 @@ class TestCompactQueryRows:
         compact = profile_query_item(row, "compact")
         assert compact["values"] == {"title": "x"}
         assert "actor_context" not in str(compact["source"])
+
+    def test_empty_includes_are_omitted_and_retained_envelopes_are_sparse(self) -> None:
+        entity = _entity_payload()
+        edge = _pending_edge_payload()
+        row = {
+            "entry": entity,
+            "result": entity,
+            "entities": [entity],
+            "path": [edge],
+            "includes": {
+                "empty": {
+                    "alias": "empty",
+                    "many": True,
+                    "exists": False,
+                    "count": 0,
+                    "limit": None,
+                    "truncated": False,
+                    "items": [],
+                },
+                "owner": {
+                    "alias": "owner",
+                    "many": False,
+                    "exists": True,
+                    "count": 1,
+                    "limit": None,
+                    "truncated": False,
+                    "items": [{"edge": edge, "source": entity, "target": entity}],
+                },
+            },
+        }
+
+        compact = profile_query_item(row, "compact")
+
+        assert set(compact["includes"]) == {"owner"}
+        owner = compact["includes"]["owner"]
+        assert set(owner) == {"many", "count", "items"}
+        assert owner["many"] is False
+        assert owner["count"] == 1
+        assert len(owner["items"]) == 1
+
+    def test_truncated_include_keeps_limit_count_and_truncation(self) -> None:
+        entity = _entity_payload()
+        edge = _pending_edge_payload()
+        include = {
+            "alias": "reviews",
+            "many": True,
+            "exists": True,
+            "count": 4,
+            "limit": 1,
+            "truncated": True,
+            "items": [{"edge": edge, "source": entity, "target": entity}],
+        }
+        row = {
+            "entry": entity,
+            "result": entity,
+            "entities": [entity],
+            "path": [edge],
+            "includes": {"reviews": include},
+        }
+
+        compact = profile_query_item(row, "compact")["includes"]["reviews"]
+
+        assert compact["many"] is True
+        assert compact["count"] == 4
+        assert compact["limit"] == 1
+        assert compact["truncated"] is True
+        assert "alias" not in compact
+        assert "exists" not in compact
+
+    @pytest.mark.parametrize("profile", ["standard", "full"])
+    def test_standard_and_full_include_rows_are_unchanged(self, profile: ReadProfile) -> None:
+        row = {"includes": {"empty": {"alias": "empty", "items": []}}}
+        assert profile_query_item(row, profile) is row
 
 
 class TestCompactInspect:

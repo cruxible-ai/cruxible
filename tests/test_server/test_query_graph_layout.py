@@ -187,6 +187,7 @@ class TestGraphLayout:
         ).json()
 
         assert graph["layout"] == "graph"
+        assert "include_sets" not in graph
         assert set(graph) == set(rows) - {"items", "receipt"} | GRAPH_ONLY_KEYS | {"receipt"}
         for key in ENVELOPE_KEYS:
             assert graph[key] == rows[key], key
@@ -264,6 +265,7 @@ class TestGraphLayout:
         }
         graph = app_client.post(f"/api/v1/{seeded_instance}/queries/run-inline", json=body).json()
         assert graph["layout"] == "graph"
+        assert "include_sets" not in graph
         # Compact node cards are bounded identity cards.
         part = next(node for node in graph["nodes"] if node["entity_id"] == "BP-1")
         assert part["properties"] == {"name": "Ceramic Brake Pads"}
