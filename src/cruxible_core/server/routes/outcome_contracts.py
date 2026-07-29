@@ -19,7 +19,6 @@ router = APIRouter(prefix="/api/v1", tags=["outcome-contracts"])
 @router.post(
     "/{instance_id}/outcome-contracts/open",
     response_model=contracts.OutcomeContractResult,
-    include_in_schema=False,
 )
 async def open_outcome_contract(
     instance_id: str,
@@ -41,7 +40,6 @@ async def open_outcome_contract(
 @router.post(
     "/{instance_id}/outcome-contracts/{contract_id}/resolve",
     response_model=contracts.OutcomeResolutionResult,
-    include_in_schema=False,
 )
 async def resolve_outcome(
     instance_id: str,
@@ -64,7 +62,6 @@ async def resolve_outcome(
 @router.post(
     "/{instance_id}/outcome-resolutions/{resolution_id}/dispose",
     response_model=contracts.OutcomeDispositionResult,
-    include_in_schema=False,
 )
 async def dispose_outcome_resolution(
     instance_id: str,
@@ -83,7 +80,6 @@ async def dispose_outcome_resolution(
 @router.get(
     "/{instance_id}/outcome-contracts",
     response_model=contracts.ListResult,
-    include_in_schema=False,
 )
 async def list_outcome_contracts(
     instance_id: str,
@@ -106,7 +102,6 @@ async def list_outcome_contracts(
 @router.get(
     "/{instance_id}/outcome-contracts/queue",
     response_model=contracts.ListResult,
-    include_in_schema=False,
 )
 async def outcome_due(
     instance_id: str,

@@ -44,12 +44,13 @@ GateEvaluationVerdict = Literal["satisfied", "unsatisfied", "error"]
 # ── Constrained input types ───────────────────────────────────────────
 
 ConstraintSeverity = Literal["warning", "error"]
-FeedbackAction = Literal["approve", "reject", "correct"]
-FeedbackInputAction = Literal["approve", "reject", "correct", "flag"]
+FeedbackAction = Literal["accept", "reject", "correct"]
+FeedbackInputAction = Literal["accept", "reject", "correct", "approve", "flag"]
 """Compatibility input vocabulary.
 
+``approve`` delegates to ``accept`` with a structured deprecation warning.
 ``flag`` is accepted only so the server can return its structured deprecation
-refusal.  It is not a live feedback action and is never persisted.
+refusal; it is not a live feedback action and is never persisted.
 """
 OutcomeValue = Literal["correct", "incorrect", "partial", "unknown"]
 OutcomeAnchorType = Literal["resolution", "receipt"]
@@ -658,8 +659,9 @@ class FeedbackBatchItemInput(BaseModel):
     receipt_id: str = Field(description="Receipt id the feedback is anchored to.")
     action: FeedbackInputAction = Field(
         description=(
-            "Adjudication: approve, reject, or correct the edge. Deprecated "
-            "`flag` is accepted only to return its removal warning. To record a "
+            "Adjudication: accept, reject, or correct the edge. Deprecated `approve` "
+            "delegates to `accept`; deprecated `flag` is accepted only to return its "
+            "removal warning. To record a "
             "doubt WITHOUT adjudicating, use `cruxible attest --stance "
             "contradict` -- it stores the observation, its evidence, and its "
             "actor instead of silently un-approving the edge."
@@ -698,8 +700,9 @@ class FeedbackFromQueryInput(BaseModel):
     result_index: int = Field(description="Zero-based index of the result row in the receipt.")
     action: FeedbackInputAction = Field(
         description=(
-            "Adjudication: approve, reject, or correct the edge. Deprecated "
-            "`flag` is accepted only to return its removal warning. To record a "
+            "Adjudication: accept, reject, or correct the edge. Deprecated `approve` "
+            "delegates to `accept`; deprecated `flag` is accepted only to return its "
+            "removal warning. To record a "
             "doubt WITHOUT adjudicating, use `cruxible attest --stance "
             "contradict` -- it stores the observation, its evidence, and its "
             "actor instead of silently un-approving the edge."

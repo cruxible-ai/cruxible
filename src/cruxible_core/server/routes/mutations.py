@@ -30,7 +30,6 @@ router = APIRouter(prefix="/api/v1", tags=["mutations"])
 @router.post(
     "/{instance_id}/claims/{claim_id}/supersede",
     response_model=contracts.ClaimLifecycleResult,
-    include_in_schema=False,
 )
 async def supersede_claim(
     instance_id: str,
@@ -50,7 +49,6 @@ async def supersede_claim(
 @router.post(
     "/{instance_id}/claims/{claim_id}/retract",
     response_model=contracts.ClaimLifecycleResult,
-    include_in_schema=False,
 )
 async def retract_claim(
     instance_id: str,
@@ -69,7 +67,6 @@ async def retract_claim(
 @router.post(
     "/{instance_id}/entities/{entity_type}/{entity_id}/supersede",
     response_model=contracts.EntityLifecycleResult,
-    include_in_schema=False,
 )
 async def supersede_entity(
     instance_id: str,
@@ -92,7 +89,6 @@ async def supersede_entity(
 @router.post(
     "/{instance_id}/entities/{entity_type}/{entity_id}/retire",
     response_model=contracts.EntityLifecycleResult,
-    include_in_schema=False,
 )
 async def retire_entity(
     instance_id: str,

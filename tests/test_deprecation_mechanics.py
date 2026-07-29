@@ -13,6 +13,7 @@ from fastapi import Response
 from cruxible_client import contracts
 from cruxible_core.decision.types import DecisionRecord
 from cruxible_core.deprecation import (
+    APPROVE_FEEDBACK_ACTION,
     DECISION_OPENED_BY_INPUT,
     FEEDBACK_SOURCE_INPUT,
     GROUP_OVERRIDE,
@@ -55,7 +56,7 @@ def _header_notices(response: Response) -> list[dict[str, str]]:
 
 def test_retired_actor_axis_request_fields_are_accepted_as_ignored_inputs() -> None:
     feedback = FeedbackRequest(
-        action="approve",
+        action="accept",
         from_type="Part",
         from_id="P-1",
         relationship_type="fits",
@@ -66,7 +67,7 @@ def test_retired_actor_axis_request_fields_are_accepted_as_ignored_inputs() -> N
     from_query = FeedbackFromQueryRequest(
         receipt_id="RCP-1",
         result_index=0,
-        action="approve",
+        action="accept",
         source="agent",
     )
     outcome = OutcomeRequest(
@@ -106,7 +107,7 @@ def test_retired_actor_axis_record_fields_warn_and_remain_derived() -> None:
         to_id="V-1",
     )
     with pytest.warns(DeprecationWarning) as warning_info:
-        feedback = FeedbackRecord(action="approve", target=target, source="human")
+        feedback = FeedbackRecord(action="accept", target=target, source="human")
         outcome = OutcomeRecord(
             receipt_id="RCP-1",
             outcome="correct",
@@ -228,6 +229,7 @@ def test_mcp_aliases_emit_additive_structured_warnings(
         },
     )
     assert feedback["deprecation_warnings"] == [
+        APPROVE_FEEDBACK_ACTION.as_dict(),
         GROUP_OVERRIDE.as_dict(),
         FEEDBACK_SOURCE_INPUT.as_dict(),
     ]
@@ -299,6 +301,11 @@ def test_http_routes_emit_headers_without_expanding_warningless_bodies(
     monkeypatch.setattr(decision_routes, "resolve_server_instance_id", lambda value: value)
     monkeypatch.setattr(
         feedback_routes.api,
+        "feedback",
+        lambda **_kwargs: contracts.FeedbackResult(feedback_id="FB-1", applied=True),
+    )
+    monkeypatch.setattr(
+        feedback_routes.api,
         "outcome",
         lambda **_kwargs: contracts.OutcomeResult(outcome_id="OUT-1"),
     )
@@ -317,6 +324,28 @@ def test_http_routes_emit_headers_without_expanding_warningless_bodies(
         "create_decision_record",
         lambda *_args, **_kwargs: contracts.DecisionRecordResult(record={}),
     )
+
+    feedback_response = Response()
+    feedback_result = asyncio.run(
+        feedback_routes.feedback(
+            "inst-1",
+            FeedbackRequest(
+                action="approve",
+                from_type="Part",
+                from_id="P-1",
+                relationship_type="fits",
+                to_type="Vehicle",
+                to_id="V-1",
+            ),
+            feedback_response,
+        )
+    )
+    assert _header_notices(feedback_response) == [APPROVE_FEEDBACK_ACTION.as_dict()]
+    assert feedback_result.model_dump() == {
+        "feedback_id": "FB-1",
+        "applied": True,
+        "receipt_id": None,
+    }
 
     outcome_response = Response()
     outcome_result = asyncio.run(

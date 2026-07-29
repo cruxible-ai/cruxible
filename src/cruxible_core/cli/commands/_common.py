@@ -397,6 +397,10 @@ def _echo_write_target(mode: str, params: Mapping[str, Any]) -> None:
         else:
             _echo_active_write_target()
         return
+    if mode == "kit":
+        kit_dir = Path(str(params["kit_dir"])).resolve()
+        click.echo(f"target: kit metadata @ {kit_dir} (explicit)", err=True)
+        return
     raise AssertionError(f"Unknown write target mode: {mode}")
 
 

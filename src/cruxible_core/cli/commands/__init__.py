@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     inspect_entity_history_cmd: Any
     inspect_group: Any
     inspect_relationship_lineage_cmd: Any
+    kit_group: Any
+    kit_repin_cmd: Any
     lint_cmd: Any
     list_group: Any
     lock_cmd: Any
@@ -100,6 +102,8 @@ _COMMAND_MODULES = {
     "inspect_entity_history_cmd": "reads",
     "inspect_group": "reads",
     "inspect_relationship_lineage_cmd": "reads",
+    "kit_group": "kits",
+    "kit_repin_cmd": "kits",
     "lint_cmd": "reads",
     "list_group": "lists",
     "lock_cmd": "workflows",
@@ -177,6 +181,8 @@ __all__ = [
     "inspect_entity_history_cmd",
     "inspect_group",
     "inspect_relationship_lineage_cmd",
+    "kit_group",
+    "kit_repin_cmd",
     "lint_cmd",
     "list_group",
     "lock_cmd",

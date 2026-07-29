@@ -1524,7 +1524,7 @@ class TestCanonicalViews:
 
 
 class TestFeedback:
-    def test_feedback_approve(
+    def test_feedback_accept(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
@@ -1549,7 +1549,7 @@ class TestFeedback:
                 "--receipt",
                 receipt_id,
                 "--action",
-                "approve",
+                "accept",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -1631,7 +1631,7 @@ class TestFeedback:
                 "--receipt",
                 receipt_id,
                 "--action",
-                "approve",
+                "accept",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -1660,7 +1660,7 @@ class TestFeedback:
                 "--result-index",
                 "0",
                 "--action",
-                "approve",
+                "accept",
             ],
         )
 
@@ -2831,7 +2831,7 @@ class TestStoreLifecycle:
                 "--receipt",
                 receipt_id,
                 "--action",
-                "approve",
+                "accept",
                 "--from-type",
                 "Part",
                 "--from-id",

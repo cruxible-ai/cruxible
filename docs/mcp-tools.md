@@ -522,7 +522,7 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when a person or reviewer agent adjudicated one explicit relationship and you need to record support, rejection, or a correction. To record a DOUBT without adjudicating, use cruxible_attest with stance 'contradict' instead. Use edge_key only to disambiguate multiple stored edges with the same relationship tuple; receipt_id is optional for explicit-coordinate feedback.
 
-**Action tier:** every live action this tool accepts — `approve` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `flag` is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
+**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `approve` delegates to `accept` with a structured warning; deprecated `flag` is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
 
 **Arguments:**
 
@@ -530,7 +530,7 @@ happened; they never prove its inputs are still current.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `receipt_id` | no | string |  |
-| `action` | yes | enum: approve, reject, correct, flag | Deprecated `flag` is a refused compatibility alias. |
+| `action` | yes | enum: accept, reject, correct, approve, flag | Deprecated `approve` delegates to `accept`; deprecated `flag` is a refused compatibility alias. |
 | `from_type` | yes | string |  |
 | `from_id` | yes | string |  |
 | `relationship_type` | yes | string |  |
@@ -560,7 +560,7 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when a query receipt and result index identify the relationship that needs feedback. This path requires receipt_id because the receipt/result selection is the target selector.
 
-**Action tier:** every live action this tool accepts — `approve` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `flag` is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
+**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `approve` delegates to `accept` with a structured warning; deprecated `flag` is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
 
 **Arguments:**
 
@@ -569,7 +569,7 @@ happened; they never prove its inputs are still current.
 | `instance_id` | yes | string | Governed instance ID or local instance root. |
 | `receipt_id` | yes | string | Query receipt ID. |
 | `result_index` | yes | integer | Zero-based query result row index. |
-| `action` | yes | enum: approve, reject, correct, flag | Deprecated `flag` is a refused compatibility alias. |
+| `action` | yes | enum: accept, reject, correct, approve, flag | Deprecated `approve` delegates to `accept`; deprecated `flag` is a refused compatibility alias. |
 | `reason` | no | string | Reason for feedback. |
 | `reason_code` | no | string | Structured feedback reason code. |
 | `scope_hints` | no | object | Structured feedback scope hints. |
@@ -595,7 +595,7 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when you need to record several relationship feedback decisions from the same review session.
 
-**Action tier:** every live action this tool accepts — `approve` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `flag` in any item is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `approve` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
+**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `approve` in any item delegates to `accept` with a structured warning; deprecated `flag` is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
 
 **Arguments:**
 

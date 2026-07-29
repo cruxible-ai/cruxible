@@ -10,6 +10,7 @@ together.
 | Surface | Replacement | Deprecated in | Removal version |
 | --- | --- | --- | --- |
 | `feedback action 'flag'` | `attest --stance contradict` | 0.3.0 | 0.4.0 |
+| `feedback action 'approve'` | `feedback action 'accept'` | 0.3.0 | 0.4.0 |
 | `legacy outcome record functions` | `resolution contracts and attestations` | 0.3.0 | 0.4.0 |
 | `legacy outcome profile functions` | `resolution contract declarations` | 0.3.0 | 0.4.0 |
 | `feedback group_override write path` | `force_review` | 0.3.0 | 0.4.0 |

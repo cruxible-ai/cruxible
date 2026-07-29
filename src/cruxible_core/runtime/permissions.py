@@ -223,7 +223,7 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_state_health": PermissionMode.READ_ONLY,
     "cruxible_list_source_artifacts": PermissionMode.READ_ONLY,
     "cruxible_get_source_artifact": PermissionMode.READ_ONLY,
-    # Adjudicating a claim (feedback approve / reject / correct). See
+    # Adjudicating a claim (feedback accept / reject / correct). See
     # FEEDBACK_ACTION_PERMISSIONS below: the feedback TOOLS sit at
     # GOVERNED_WRITE, but the adjudication ACTIONS they carry are GRAPH_WRITE.
     "cruxible_feedback_adjudicate": PermissionMode.GRAPH_WRITE,
@@ -246,11 +246,11 @@ PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
 # The permission map above is per-TOOL, and ``cruxible_feedback`` (with its
 # batch/from_query siblings) is not one operation: it multiplexes RECORDING an
 # observation with ADJUDICATING a claim. Recording is a governed-operator act.
-# Adjudication is not: ``approve``/``correct`` make a non-live edge LIVE and
+# Adjudication is not: ``accept``/``correct`` make a non-live edge LIVE and
 # ``reject`` retracts one, which is the same authority a direct graph write or a
 # group resolution carries. Leaving every action at the tool's GOVERNED_WRITE
 # floor let a single GOVERNED_WRITE actor attest a pending edge and then
-# approve their own proposal — a live approved claim on a proposal_only type
+# accept their own proposal — a live approved claim on a proposal_only type
 # with no reviewer above them (wi-feedback-approval-rail).
 #
 # So the adjudication verbs are gated at GRAPH_WRITE, the same tier that
@@ -272,7 +272,7 @@ PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
 # surface funnels through), not here, because the requirement is a property of
 # the payload's action rather than of the tool name.
 FEEDBACK_ACTION_PERMISSIONS: dict[str, PermissionMode] = {
-    "approve": PermissionMode.GRAPH_WRITE,
+    "accept": PermissionMode.GRAPH_WRITE,
     "reject": PermissionMode.GRAPH_WRITE,
     "correct": PermissionMode.GRAPH_WRITE,
 }

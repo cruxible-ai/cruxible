@@ -28,12 +28,13 @@ from cruxible_core.primitives import new_id
 from cruxible_core.temporal import utc_now
 
 # The WRITE vocabulary: what a caller may ask for today.
-FeedbackAction = Literal["approve", "reject", "correct"]
+FeedbackAction = Literal["accept", "reject", "correct"]
 
-# The compatibility INPUT vocabulary. ``flag`` reaches the service validation
-# seam solely so its structured deprecation refusal can teach the replacement;
-# no write path persists it.
-FeedbackInputAction = Literal["approve", "reject", "correct", "flag"]
+# The compatibility INPUT vocabulary. ``approve`` delegates to ``accept`` with
+# a warning. ``flag`` reaches the service validation seam solely so its
+# structured deprecation refusal can teach the replacement; no write path
+# persists it.
+FeedbackInputAction = Literal["accept", "reject", "correct", "approve", "flag"]
 
 # The READ vocabulary: what a stored row may legally contain.
 #
@@ -47,12 +48,12 @@ FeedbackInputAction = Literal["approve", "reject", "correct", "flag"]
 # STORED vocabulary would make historical instances raise ValidationError on an
 # ordinary list.
 #
-# So the record model tolerates ``flag`` on read while compatibility INPUT
-# types admit it only far enough to reach the structured service refusal. The
-# canonical ``FeedbackAction`` and service write vocabulary remain the three
-# live actions. The applier has no ``flag`` branch, so historical rows render
-# and can be counted but no new row can be written and no edge can be moved.
-StoredFeedbackAction = Literal["approve", "reject", "correct", "flag"]
+# So the record model tolerates both historical ``approve`` and ``flag`` rows
+# on read. Compatibility INPUT types admit ``approve`` as a warned alias that
+# new writes normalize to ``accept``; they admit ``flag`` only far enough to
+# reach the structured service refusal. The applier retains an ``approve`` read
+# branch for historical records but has no ``flag`` branch.
+StoredFeedbackAction = Literal["accept", "approve", "reject", "correct", "flag"]
 
 RETIRED_FEEDBACK_ACTIONS: frozenset[str] = frozenset({"flag"})
 """Actions readable from history but refused on every write path."""

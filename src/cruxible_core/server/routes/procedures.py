@@ -23,7 +23,6 @@ router = APIRouter(prefix="/api/v1", tags=["procedures"])
 @router.post(
     "/{instance_id}/procedures/propose",
     response_model=dict[str, Any],
-    include_in_schema=False,
 )
 async def propose_procedure(
     instance_id: str,
@@ -41,7 +40,6 @@ async def propose_procedure(
 @router.get(
     "/{instance_id}/procedures",
     response_model=contracts.ListResult,
-    include_in_schema=False,
 )
 async def list_procedures(
     instance_id: str,
@@ -60,7 +58,6 @@ async def list_procedures(
 @router.get(
     "/{instance_id}/procedures/{procedure_id}",
     response_model=dict[str, Any],
-    include_in_schema=False,
 )
 async def get_procedure(instance_id: str, procedure_id: str) -> dict[str, Any]:
     return api.get_procedure(resolve_server_instance_id(instance_id), procedure_id)
@@ -69,7 +66,6 @@ async def get_procedure(instance_id: str, procedure_id: str) -> dict[str, Any]:
 @router.post(
     "/{instance_id}/procedures/{procedure_id}/resolve",
     response_model=dict[str, Any],
-    include_in_schema=False,
 )
 async def resolve_procedure(
     instance_id: str,
@@ -89,7 +85,6 @@ async def resolve_procedure(
 @router.post(
     "/{instance_id}/procedures/{procedure_id}/retire",
     response_model=dict[str, Any],
-    include_in_schema=False,
 )
 async def retire_procedure(
     instance_id: str,
@@ -108,7 +103,6 @@ async def retire_procedure(
 @router.post(
     "/{instance_id}/procedures/{procedure_id}/run",
     response_model=dict[str, Any],
-    include_in_schema=False,
 )
 async def run_procedure(
     instance_id: str,
@@ -126,7 +120,6 @@ async def run_procedure(
 @router.get(
     "/{instance_id}/procedures/{procedure_id}/runs",
     response_model=contracts.ListResult,
-    include_in_schema=False,
 )
 async def list_procedure_runs(
     instance_id: str,

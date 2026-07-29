@@ -194,13 +194,13 @@ overrides, including `admin`:
   (`workflow_apply`, `group_resolve`) or, for relationships, staged with
   `pending=true`. The `CRUXIBLE_REFUSE_DIRECT_WRITES` env kill-switch forces
   this instance-wide, and while it is set the acceptance-transitioning feedback
-  actions (`approve` / `correct`) are refused too.
+  actions (`accept` / `correct`) are refused too.
 - `mint_only` — refuses **every** writer including the governed verbs; only
   the `token_mint` source may write.
 
 Two further rails are hard constraints at the same chokepoints:
 
-- **Adjudication tier.** `feedback approve` / `reject` / `correct` require
+- **Adjudication tier.** `feedback accept` / `reject` / `correct` require
   `graph_write` even though the feedback tools sit at `governed_write`:
   promoting a claim to live is the same authority as a direct write. These are
   the only feedback actions: `flag` was removed. Register a doubt with

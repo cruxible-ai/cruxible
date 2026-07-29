@@ -744,7 +744,7 @@ def test_deprecated_actor_axis_inputs_are_forwarded_for_server_warning() -> None
     client = _build_client(handler)
     client.feedback(
         "inst_123",
-        action="approve",
+        action="accept",
         from_type="Part",
         from_id="P-1",
         relationship_type="fits",
@@ -757,7 +757,7 @@ def test_deprecated_actor_axis_inputs_are_forwarded_for_server_warning() -> None
         items=[
             contracts.FeedbackBatchItemInput(
                 receipt_id="RCP-1",
-                action="approve",
+                action="accept",
                 target=contracts.EdgeTargetInput(
                     from_type="Part",
                     from_id="P-1",
@@ -795,7 +795,9 @@ def test_deprecated_actor_axis_inputs_are_forwarded_for_server_warning() -> None
     )
 
     assert captured["/api/v1/inst_123/feedback"]["source"] == "human"
+    assert captured["/api/v1/inst_123/feedback"]["action"] == "accept"
     assert captured["/api/v1/inst_123/feedback/batch"]["items"][0]["source"] == "human"
+    assert captured["/api/v1/inst_123/feedback/batch"]["items"][0]["action"] == "accept"
     assert captured["/api/v1/inst_123/outcome"]["source"] == "human"
     assert captured["/api/v1/inst_123/groups/propose"]["proposed_by"] == "agent"
     assert captured["/api/v1/inst_123/groups/GRP-1/resolve"]["resolved_by"] == "human"
@@ -804,8 +806,8 @@ def test_deprecated_actor_axis_inputs_are_forwarded_for_server_warning() -> None
 
 def test_client_forwards_structured_http_deprecation_header() -> None:
     notice = (
-        '{"removal_version":"0.4.0","replacement":"actor_context",'
-        '"surface":"FeedbackRecord.source input"}'
+        '{"removal_version":"0.4.0","replacement":"feedback action \'accept\'",'
+        '"surface":"feedback action \'approve\'"}'
     )
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -816,7 +818,7 @@ def test_client_forwards_structured_http_deprecation_header() -> None:
         )
 
     client = _build_client(handler)
-    with pytest.warns(DeprecationWarning, match="FeedbackRecord.source input"):
+    with pytest.warns(DeprecationWarning, match="feedback action 'approve'"):
         client.feedback(
             "inst_123",
             action="approve",
@@ -825,7 +827,6 @@ def test_client_forwards_structured_http_deprecation_header() -> None:
             relationship_type="fits",
             to_type="Vehicle",
             to_id="V-1",
-            source="human",
         )
 
 
@@ -2899,7 +2900,7 @@ def test_governed_write_clients_serialize_actor_context_when_supplied():
     client.feedback(
         "inst_123",
         receipt_id="RCP-1",
-        action="approve",
+        action="accept",
         from_type="Part",
         from_id="P-1",
         relationship_type="fits",
@@ -2947,7 +2948,7 @@ def test_feedback_omits_source_receipt_by_default():
     client = _build_client(handler)
     result = client.feedback(
         "inst_123",
-        action="approve",
+        action="accept",
         from_type="Part",
         from_id="P-1",
         relationship_type="fits",

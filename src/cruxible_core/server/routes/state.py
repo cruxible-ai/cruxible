@@ -65,7 +65,6 @@ async def state_health(instance_id: str) -> contracts.StateHealthResult:
 @router.post(
     "/{instance_id}/state/diff",
     response_model=contracts.StateDiffResult,
-    include_in_schema=False,
 )
 async def state_diff(
     instance_id: str,
@@ -93,7 +92,6 @@ async def state_diff(
 @router.get(
     "/{instance_id}/state/diff/artifacts/{diff_digest}",
     response_model=contracts.StateDiffArtifactResult,
-    include_in_schema=False,
 )
 async def state_diff_artifact(
     instance_id: str,

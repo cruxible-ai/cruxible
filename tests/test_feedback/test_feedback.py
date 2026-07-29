@@ -242,10 +242,10 @@ class TestFeedbackTarget:
 
 
 class TestApplier:
-    def test_approve(self, graph: EntityGraph, target: RelationshipInstance):
+    def test_accept(self, graph: EntityGraph, target: RelationshipInstance):
         fb = FeedbackRecord(
             receipt_id="RCP-test",
-            action="approve",
+            action="accept",
             target=target,
             actor_context=human_actor(),
         )
@@ -281,7 +281,7 @@ class TestApplier:
             graph,
             FeedbackRecord(
                 receipt_id="RCP-seed",
-                action="approve",
+                action="accept",
                 target=target,
                 actor_context=human_actor(),
             ),
@@ -338,7 +338,7 @@ class TestApplier:
     ):
         fb = FeedbackRecord(
             receipt_id="RCP-test",
-            action="approve",
+            action="accept",
             target=target,
             actor_context=human_actor(),
         )
@@ -356,7 +356,7 @@ class TestApplier:
     ):
         fb = FeedbackRecord(
             receipt_id="RCP-test",
-            action="approve",
+            action="accept",
             target=target,
             model_id="claude-opus-4-6",
             actor_context=agent_actor(),
@@ -398,12 +398,12 @@ class TestApplier:
         assert_review_state(rel, status="approved", source="human")
         assert rel.properties["fitment_notes"] == "checked"
 
-    def test_approve_updates_provenance(self, graph: EntityGraph, target: RelationshipInstance):
+    def test_accept_updates_provenance(self, graph: EntityGraph, target: RelationshipInstance):
         """Feedback actions update provenance metadata with modification fields."""
         set_edge_provenance(graph)
         fb = FeedbackRecord(
             receipt_id="RCP-test",
-            action="approve",
+            action="accept",
             target=target,
             actor_context=actor_context(),
         )
@@ -413,7 +413,7 @@ class TestApplier:
         assert prov is not None
         assert prov.source == "ingest"
         assert prov.last_modified_at is not None
-        assert prov.last_modified_by == "feedback:approve"
+        assert prov.last_modified_by == "feedback:accept"
         assert prov.last_modified_actor_context is not None
         assert prov.last_modified_actor_context.actor_id == "usr_feedback"
         assert rel.metadata.assertion.review.actor_context is not None
@@ -487,7 +487,7 @@ class TestApplier:
         """
         fb = FeedbackRecord(
             receipt_id="RCP-test",
-            action="approve",
+            action="accept",
             target=target,
             actor_context=human_actor(),
         )
@@ -498,9 +498,9 @@ class TestApplier:
         assert prov is not None
         assert prov.source == "unknown_backfilled"
         assert prov.source_ref == "unknown_backfilled"
-        assert prov.touched_by == "feedback:approve"
+        assert prov.touched_by == "feedback:accept"
         assert prov.backfilled_at is not None
-        assert prov.last_modified_by == "feedback:approve"
+        assert prov.last_modified_by == "feedback:accept"
         assert prov.last_modified_at is not None
 
     def test_ambiguous_target_requires_edge_key(self, graph: EntityGraph):
@@ -517,7 +517,7 @@ class TestApplier:
         )
         fb = FeedbackRecord(
             receipt_id="RCP-test",
-            action="approve",
+            action="accept",
             target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-1",
@@ -553,7 +553,7 @@ class TestApplier:
         )
         fb = FeedbackRecord(
             receipt_id="RCP-test",
-            action="approve",
+            action="accept",
             target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-1",
@@ -595,7 +595,7 @@ class TestFeedbackStore:
         store: FeedbackStore,
         target: RelationshipInstance,
     ) -> None:
-        fb = FeedbackRecord(action="approve", target=target, reason="Reviewed coordinates")
+        fb = FeedbackRecord(action="accept", target=target, reason="Reviewed coordinates")
         fid = store.save_feedback(fb)
 
         loaded = store.get_feedback(fid)
@@ -608,7 +608,7 @@ class TestFeedbackStore:
         assert store.get_feedback("FB-nope") is None
 
     def test_list_by_receipt(self, store: FeedbackStore, target: RelationshipInstance):
-        fb1 = FeedbackRecord(receipt_id="RCP-1", action="approve", target=target)
+        fb1 = FeedbackRecord(receipt_id="RCP-1", action="accept", target=target)
         fb2 = FeedbackRecord(receipt_id="RCP-2", action="reject", target=target)
         store.save_feedback(fb1)
         store.save_feedback(fb2)
@@ -622,7 +622,7 @@ class TestFeedbackStore:
             store.save_feedback(
                 FeedbackRecord(
                     receipt_id=f"RCP-{i}",
-                    action="approve",
+                    action="accept",
                     target=target,
                 )
             )
@@ -631,7 +631,7 @@ class TestFeedbackStore:
     def test_model_id_persisted(self, store: FeedbackStore, target: RelationshipInstance):
         fb = FeedbackRecord(
             receipt_id="RCP-1",
-            action="approve",
+            action="accept",
             target=target,
             model_id="claude-opus-4-6",
             actor_context=agent_actor(),
@@ -695,7 +695,7 @@ class TestFeedbackStore:
         assert loaded.context_snapshot["from"]["properties"] == {"category": "brakes"}
 
     def test_list_feedback_by_entity_ids(self, store: FeedbackStore, target: RelationshipInstance):
-        fb1 = FeedbackRecord(receipt_id="RCP-1", action="approve", target=target)
+        fb1 = FeedbackRecord(receipt_id="RCP-1", action="accept", target=target)
         fb2 = FeedbackRecord(
             receipt_id="RCP-2",
             action="reject",
@@ -715,7 +715,7 @@ class TestFeedbackStore:
         assert fb2.feedback_id in ids
 
     def test_count_feedback(self, store: FeedbackStore, target: RelationshipInstance):
-        store.save_feedback(FeedbackRecord(receipt_id="RCP-1", action="approve", target=target))
+        store.save_feedback(FeedbackRecord(receipt_id="RCP-1", action="accept", target=target))
         store.save_feedback(FeedbackRecord(receipt_id="RCP-2", action="reject", target=target))
         assert store.count_feedback() == 2
         assert store.count_feedback(receipt_id="RCP-1") == 1
@@ -846,17 +846,17 @@ class TestFeedbackQueryIntegration:
         assert "P-1" in result_ids
         assert "P-2" not in result_ids
 
-    def test_approve_keeps_edge_live(
+    def test_accept_keeps_edge_live(
         self,
         config: CoreConfig,
         graph: EntityGraph,
     ):
-        """Approved active edges pass canonical live traversal."""
-        # Approve both edges
+        """Accepted active edges pass canonical live traversal."""
+        # Accept both edges
         for part_id in ["P-1", "P-2"]:
             fb = FeedbackRecord(
                 receipt_id="RCP-test",
-                action="approve",
+                action="accept",
                 target=RelationshipInstance(
                     from_type="Part",
                     from_id=part_id,
@@ -1154,7 +1154,7 @@ class TestHistoricalFlagRowsStayReadable:
         )
 
         assert set(get_args(StoredFeedbackAction)) - set(get_args(FeedbackAction)) == (
-            RETIRED_FEEDBACK_ACTIONS
+            RETIRED_FEEDBACK_ACTIONS | {"approve"}
         )
         assert "flag" not in _VALID_ACTIONS
 

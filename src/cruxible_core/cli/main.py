@@ -27,11 +27,13 @@ if TYPE_CHECKING:
 # - active: acts on the selected instance.
 # - create: creates/restores an instance and therefore has no instance ID yet.
 # - lock: acts on the selected instance unless --kit-dir names an explicit kit.
+# - kit: writes metadata for the explicitly selected local materialized kit.
 # - manual: the command resolves its target from command-specific inputs and
 #   emits the notice itself immediately before the write.
 MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("init",): "create",
     ("lock",): "lock",
+    ("kit", "repin"): "kit",
     ("run",): "active",
     ("apply",): "active",
     ("propose",): "active",
@@ -402,6 +404,18 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "workflows",
         "lock_cmd",
         "Generate a workflow lock file for the current instance config.",
+    ),
+    "kit": _group(
+        "Manage local materialized kits.",
+        {
+            "repin": _command(
+                "kits",
+                "kit_repin_cmd",
+                "Accept intentional runtime-file edits in a materialized kit.",
+            ),
+        },
+        module="kits",
+        attr="kit_group",
     ),
     "state": _group(
         "Compare, publish, and track state across coordinates.",

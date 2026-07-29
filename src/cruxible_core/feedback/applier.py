@@ -92,11 +92,13 @@ def _review_source_for(feedback: FeedbackRecord) -> RelationshipReviewSource:
 
 
 _ACTION_PAST: dict[str, RelationshipReviewStatus] = {
+    "accept": "approved",
+    # Historical 0.2.x feedback rows retain the shipped verb on read.
     "approve": "approved",
     "reject": "rejected",
 }
 
-# Feedback actions that transition a relationship's review state. ``approve``
+# Feedback actions that transition a relationship's review state. ``accept``
 # and ``correct`` promote the status to ``approved`` (the ``correct`` branch in
 # ``apply_feedback`` below calls ``_review_metadata(..., status="approved")``),
 # making a previously non-live edge live and able to satisfy a review-mediated
@@ -109,7 +111,7 @@ _ACTION_PAST: dict[str, RelationshipReviewStatus] = {
 # ``flag`` was removed in 2026-07: it also moved an edge out of live state
 # (-> ``pending``) but stored no annotation, so it destroyed the reviewer's
 # signal. Use ``cruxible attest --stance contradict`` instead.
-REVIEW_TRANSITION_ACTIONS: frozenset[str] = frozenset({"approve", "correct", "reject"})
+REVIEW_TRANSITION_ACTIONS: frozenset[str] = frozenset({"accept", "approve", "correct", "reject"})
 
 
 def _review_metadata(

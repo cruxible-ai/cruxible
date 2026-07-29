@@ -79,10 +79,10 @@ TOKEN_MINT_SOURCE = "token_mint"
 # verbs at the chokepoint (overrides per-type opt-outs + the default).
 #
 # Scope: the write chokepoint AND the acceptance-transitioning feedback actions
-# (``approve``/``correct``). The switch previously disclaimed the feedback
+# (``accept``/``correct``). The switch previously disclaimed the feedback
 # channel, which made it a half-switch: an operator who flipped it to freeze
 # live writes could still have state promoted into accepted/live through
-# feedback approve, and a proposal_only type could be made live that way with no
+# feedback accept, and a proposal_only type could be made live that way with no
 # direct write at all (wi-feedback-approval-rail). ``reject`` is NOT
 # covered -- it moves an edge OUT of live state, which is the direction the
 # kill-switch wants, and refusing it would strand pending edges.
@@ -90,7 +90,7 @@ _ENV_REFUSE_DIRECT_WRITES = "CRUXIBLE_REFUSE_DIRECT_WRITES"
 
 # Feedback actions that transition an edge INTO accepted state. Both promote the
 # review status to ``approved`` in ``feedback/applier.py``.
-FEEDBACK_ACCEPTANCE_ACTIONS: frozenset[str] = frozenset({"approve", "correct"})
+FEEDBACK_ACCEPTANCE_ACTIONS: frozenset[str] = frozenset({"accept", "correct"})
 
 
 def _is_truthy(value: str | None) -> bool:

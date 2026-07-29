@@ -21,6 +21,7 @@ from cruxible_core.cli.commands._common import (
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.deprecation import (
+    APPROVE_FEEDBACK_ACTION,
     FEEDBACK_SOURCE_INPUT,
     GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
@@ -72,6 +73,14 @@ def _result_payload(result: Any) -> dict[str, Any]:
     return cast(dict[str, Any], dict(result))
 
 
+def _normalize_cli_feedback_action(action: str) -> str:
+    """Warn once and map the deprecated claim verdict to its replacement."""
+    if action == "approve":
+        emit_cli_deprecation(APPROVE_FEEDBACK_ACTION)
+        return "accept"
+    return action
+
+
 @click.group("feedback")
 def feedback_group() -> None:
     """Record, batch, analyze, and inspect edge feedback."""
@@ -87,7 +96,7 @@ def outcome_group() -> None:
 @click.option(
     "--action",
     required=True,
-    type=click.Choice(["approve", "reject", "correct", "flag"]),
+    type=click.Choice(["accept", "reject", "correct", "approve", "flag"]),
     help="Feedback action.",
 )
 @click.option("--from-type", required=True, help="Source entity type.")
@@ -131,6 +140,7 @@ def feedback_cmd(
     output_json: bool,
 ) -> None:
     """Submit feedback on a specific edge by explicit relationship coordinates."""
+    action = _normalize_cli_feedback_action(action)
     if group_override:
         emit_cli_deprecation(GROUP_OVERRIDE)
     if source is not None:
@@ -210,7 +220,7 @@ def feedback_cmd(
 @click.option(
     "--action",
     required=True,
-    type=click.Choice(["approve", "reject", "correct", "flag"]),
+    type=click.Choice(["accept", "reject", "correct", "approve", "flag"]),
     help="Feedback action.",
 )
 @click.option("--reason", default="", help="Reason for feedback.")
@@ -256,6 +266,7 @@ def feedback_from_query_cmd(
     output_json: bool,
 ) -> None:
     """Submit edge feedback by selecting relationship evidence from a query receipt."""
+    action = _normalize_cli_feedback_action(action)
     if group_override:
         emit_cli_deprecation(GROUP_OVERRIDE)
     if source is not None:
@@ -343,6 +354,12 @@ def feedback_batch_cmd(
 
     if not isinstance(raw_items, list):
         raise click.BadParameter("Items must be a top-level array.")
+    if any(item.get("action") == "approve" for item in raw_items if isinstance(item, dict)):
+        emit_cli_deprecation(APPROVE_FEEDBACK_ACTION)
+        raw_items = [
+            {**item, "action": "accept"} if item.get("action") == "approve" else item
+            for item in raw_items
+        ]
     if any(bool(item.get("group_override")) for item in raw_items if isinstance(item, dict)):
         emit_cli_deprecation(GROUP_OVERRIDE)
     if any("source" in item for item in raw_items if isinstance(item, dict)):

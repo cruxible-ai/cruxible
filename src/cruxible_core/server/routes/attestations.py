@@ -15,7 +15,6 @@ router = APIRouter(prefix="/api/v1", tags=["attestations"])
 @router.post(
     "/{instance_id}/attestations/record",
     response_model=contracts.AttestationRecordResult,
-    include_in_schema=False,
 )
 async def attest(
     instance_id: str,
@@ -43,7 +42,6 @@ async def attest(
 @router.get(
     "/{instance_id}/attestations",
     response_model=contracts.ListResult,
-    include_in_schema=False,
 )
 async def list_attestations(
     instance_id: str,
@@ -72,7 +70,6 @@ async def list_attestations(
 @router.get(
     "/{instance_id}/attestations/queue",
     response_model=contracts.ListResult,
-    include_in_schema=False,
 )
 async def attestation_queue(
     instance_id: str,
@@ -89,7 +86,6 @@ async def attestation_queue(
 @router.post(
     "/{instance_id}/attestations/{attestation_id}/resolve",
     response_model=contracts.AttestationDispositionResult,
-    include_in_schema=False,
 )
 async def resolve_attestation(
     instance_id: str,

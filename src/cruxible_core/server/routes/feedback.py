@@ -8,6 +8,7 @@ from fastapi import APIRouter, Response
 
 from cruxible_client import contracts
 from cruxible_core.deprecation import (
+    APPROVE_FEEDBACK_ACTION,
     FEEDBACK_SOURCE_INPUT,
     GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
@@ -38,6 +39,11 @@ async def feedback(
 ) -> contracts.FeedbackResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     notices: list[DeprecationNotice] = []
+    normalized_action: contracts.FeedbackInputAction = (
+        "accept" if req.action == "approve" else req.action
+    )
+    if req.action == "approve":
+        notices.append(APPROVE_FEEDBACK_ACTION)
     if req.group_override:
         notices.append(GROUP_OVERRIDE)
     if "source" in req.model_fields_set:
@@ -45,7 +51,7 @@ async def feedback(
     result = api.feedback(
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
-        action=req.action,
+        action=normalized_action,
         from_type=req.from_type,
         from_id=req.from_id,
         relationship_type=req.relationship_type,
@@ -72,13 +78,19 @@ async def feedback_batch(
 ) -> contracts.FeedbackBatchResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     notices: list[DeprecationNotice] = []
+    normalized_items = [
+        item.model_copy(update={"action": "accept"}) if item.action == "approve" else item
+        for item in req.items
+    ]
+    if any(item.action == "approve" for item in req.items):
+        notices.append(APPROVE_FEEDBACK_ACTION)
     if any(item.group_override for item in req.items):
         notices.append(GROUP_OVERRIDE)
     if any("source" in item.model_fields_set for item in req.items):
         notices.append(FEEDBACK_SOURCE_INPUT)
     result = api.feedback_batch(
         instance_id=resolved_instance_id,
-        items=req.items,
+        items=normalized_items,
         actor_context=req.actor_context,
     )
     return cast(
@@ -95,6 +107,11 @@ async def feedback_from_query(
 ) -> contracts.FeedbackResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     notices: list[DeprecationNotice] = []
+    normalized_action: contracts.FeedbackInputAction = (
+        "accept" if req.action == "approve" else req.action
+    )
+    if req.action == "approve":
+        notices.append(APPROVE_FEEDBACK_ACTION)
     if req.group_override:
         notices.append(GROUP_OVERRIDE)
     if "source" in req.model_fields_set:
@@ -103,7 +120,7 @@ async def feedback_from_query(
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
         result_index=req.result_index,
-        action=req.action,
+        action=normalized_action,
         reason=req.reason,
         reason_code=req.reason_code,
         scope_hints=req.scope_hints,

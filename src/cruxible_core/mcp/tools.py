@@ -16,6 +16,7 @@ from pydantic import Field, TypeAdapter
 from cruxible_client import contracts
 from cruxible_core import __version__
 from cruxible_core.deprecation import (
+    APPROVE_FEEDBACK_ACTION,
     DECISION_OPENED_BY_INPUT,
     FEEDBACK_SOURCE_INPUT,
     GROUP_OVERRIDE,
@@ -442,10 +443,13 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         group override for group resolve; use `force_review`. The edge must
         already exist in the graph.
         """
+        normalized_action: contracts.FeedbackInputAction = (
+            "accept" if action == "approve" else action
+        )
         result = handlers.handle_feedback(
             instance_id=instance_id,
             receipt_id=receipt_id,
-            action=action,
+            action=normalized_action,
             from_type=from_type,
             from_id=from_id,
             relationship_type=relationship_type,
@@ -461,6 +465,8 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             source=source,
         )
         notices: list[DeprecationNotice] = []
+        if action == "approve":
+            notices.append(APPROVE_FEEDBACK_ACTION)
         if group_override:
             notices.append(GROUP_OVERRIDE)
         if source is not None:
@@ -473,8 +479,14 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         items: list[contracts.FeedbackBatchItemInput],
     ) -> _MCPFeedbackBatchResult:
         """Record batch edge feedback under one top-level mutation receipt."""
-        result = handlers.handle_feedback_batch(instance_id, items)
+        normalized_items = [
+            item.model_copy(update={"action": "accept"}) if item.action == "approve" else item
+            for item in items
+        ]
+        result = handlers.handle_feedback_batch(instance_id, normalized_items)
         notices: list[DeprecationNotice] = []
+        if any(item.action == "approve" for item in items):
+            notices.append(APPROVE_FEEDBACK_ACTION)
         if any(item.group_override for item in items):
             notices.append(GROUP_OVERRIDE)
         if any(item.source is not None for item in items):
@@ -502,11 +514,14 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         resolve candidate groups; use group resolution for group theses and
         member-set decisions.
         """
+        normalized_action: contracts.FeedbackInputAction = (
+            "accept" if action == "approve" else action
+        )
         result = handlers.handle_feedback_from_query(
             instance_id,
             receipt_id=receipt_id,
             result_index=result_index,
-            action=action,
+            action=normalized_action,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,
@@ -517,6 +532,8 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             source=source,
         )
         notices: list[DeprecationNotice] = []
+        if action == "approve":
+            notices.append(APPROVE_FEEDBACK_ACTION)
         if group_override:
             notices.append(GROUP_OVERRIDE)
         if source is not None:

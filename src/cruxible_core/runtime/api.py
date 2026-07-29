@@ -411,7 +411,7 @@ def _require_review_transition_actor(
     """Reject anonymous review-state transitions under an auth-on governed runtime.
 
     ``cruxible_feedback`` is a GOVERNED_WRITE tool, but every feedback action
-    transitions a relationship's review state: ``approve``/``correct`` promote it
+    transitions a relationship's review state: ``accept``/``correct`` promote it
     to ``approved``/live, which can satisfy a GRAPH_WRITE close-gate precondition
     (audit F3), and ``reject`` moves an edge OUT of live review state — an
     anonymous retraction (wi-feedback-write-tier-bypass, mechanism 2). When server

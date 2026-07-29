@@ -34,6 +34,10 @@ FLAG_FEEDBACK_ACTION = DeprecationNotice(
     surface="feedback action 'flag'",
     replacement="attest --stance contradict",
 )
+APPROVE_FEEDBACK_ACTION = DeprecationNotice(
+    surface="feedback action 'approve'",
+    replacement="feedback action 'accept'",
+)
 LEGACY_OUTCOME_RECORD = DeprecationNotice(
     surface="legacy outcome record functions",
     replacement="resolution contracts and attestations",
@@ -69,6 +73,7 @@ DECISION_OPENED_BY_INPUT = DeprecationNotice(
 
 DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
     FLAG_FEEDBACK_ACTION,
+    APPROVE_FEEDBACK_ACTION,
     LEGACY_OUTCOME_RECORD,
     LEGACY_OUTCOME_PROFILE,
     GROUP_OVERRIDE,

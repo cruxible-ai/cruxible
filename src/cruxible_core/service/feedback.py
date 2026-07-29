@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Literal, get_args
+from typing import Any, Literal, cast, get_args
 
 from pydantic import ValidationError
 
@@ -20,6 +20,7 @@ from cruxible_core.config.schema import (
     OutcomeRemediationHint,
 )
 from cruxible_core.deprecation import (
+    APPROVE_FEEDBACK_ACTION,
     FEEDBACK_SOURCE_INPUT,
     FLAG_FEEDBACK_ACTION,
     GROUP_OVERRIDE,
@@ -88,7 +89,7 @@ _DEPRECATED_FLAG_ACTION_MESSAGE = deprecation_refusal_message(
     "to 'pending' while storing no annotation, destroying the reviewer's actual "
     "signal. Use 'cruxible attest --stance contradict' (MCP: cruxible_attest) to "
     "store the observation, evidence refs, and actor without changing review "
-    "status. To adjudicate, use approve, reject, or correct.",
+    "status. To adjudicate, use accept, reject, or correct.",
 )
 
 
@@ -108,7 +109,8 @@ def _validate_feedback_request_values(
     if action == "flag":
         raise ConfigError(_DEPRECATED_FLAG_ACTION_MESSAGE)
 
-    if action not in _VALID_ACTIONS:
+    normalized_action = "accept" if action == "approve" else action
+    if normalized_action not in _VALID_ACTIONS:
         raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_ACTIONS)}")
 
     if corrections is not None and not isinstance(corrections, dict):
@@ -117,15 +119,28 @@ def _validate_feedback_request_values(
     # ``correct`` with nothing to correct promoted the edge to ``approved``
     # anyway -- an approval wearing a correction's name, at the correction's
     # tier, with no record of what was corrected. If the intent is approval,
-    # say approve; if it is a doubt, attest a contradiction.
+    # say accept; if it is a doubt, attest a contradiction.
     if action == "correct" and not corrections:
         raise ConfigError(
             "Feedback action 'correct' requires a non-empty 'corrections' object naming "
             "the properties to change. An empty correction still promoted the edge to "
-            "'approved' while recording nothing that was corrected. Use action 'approve' "
+            "'approved' while recording nothing that was corrected. Use action 'accept' "
             "to accept the claim as it stands, or 'cruxible attest --stance contradict' "
             "to record a doubt without adjudicating."
         )
+
+
+def _normalize_feedback_action(
+    action: FeedbackInputAction,
+    *,
+    warn: bool,
+) -> FeedbackAction:
+    """Map the deprecated public alias to the canonical claim verdict."""
+    if action == "approve":
+        if warn:
+            emit_python_deprecation(APPROVE_FEEDBACK_ACTION)
+        return "accept"
+    return cast(FeedbackAction, action)
 
 
 def _normalize_feedback_record(
@@ -134,7 +149,7 @@ def _normalize_feedback_record(
     graph: EntityGraph,
     receipt: Receipt | None,
     receipt_id: str | None,
-    action: FeedbackInputAction,
+    action: FeedbackAction,
     target: RelationshipInstance,
     reason: str,
     reason_code: str | None,
@@ -987,10 +1002,10 @@ def _enforce_feedback_governance(records: Iterable[FeedbackRecord]) -> None:
     Two governance rails the per-TOOL permission map cannot express, both keyed
     on the payload's ``action`` (wi-feedback-approval-rail):
 
-    1. **Tier.** ``approve``/``reject``/``correct`` adjudicate a claim and
+    1. **Tier.** ``accept``/``reject``/``correct`` adjudicate a claim and
        require GRAPH_WRITE (see ``FEEDBACK_ACTION_PERMISSIONS``). Without this,
        one GOVERNED_WRITE actor could attest an edge into ``pending`` and then
-       approve their own proposal — a live approved claim on a proposal_only
+       accept their own proposal — a live approved claim on a proposal_only
        type with no reviewer above them. ``action`` is a closed Literal with no
        action-less variant, and since ``flag`` was removed EVERY action is an
        adjudication, so nothing is left at the tools' GOVERNED_WRITE floor but
@@ -999,7 +1014,7 @@ def _enforce_feedback_governance(records: Iterable[FeedbackRecord]) -> None:
        ``cruxible_attest`` (stance ``contradict``) instead.
     2. **Kill-switch.** ``CRUXIBLE_REFUSE_DIRECT_WRITES`` refuses the actions
        that transition an edge INTO accepted state, so freezing live writes
-       daemon-wide cannot be walked around through feedback approve.
+       daemon-wide cannot be walked around through feedback accept.
 
     Called INSIDE the ``mutation_receipt`` block so a refusal is receipted (and
     the open write transaction rolls back), exactly like a chokepoint refusal.
@@ -1196,6 +1211,7 @@ def service_feedback(
         action=action,
         corrections=corrections,
     )
+    normalized_action = _normalize_feedback_action(action, warn=True)
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
         relationship_types=[target.relationship_type],
@@ -1208,7 +1224,7 @@ def service_feedback(
         graph=graph,
         receipt=receipt,
         receipt_id=receipt_id,
-        action=action,
+        action=normalized_action,
         target=target,
         reason=reason,
         reason_code=reason_code,
@@ -1220,12 +1236,15 @@ def service_feedback(
 
     receipt_parameters: dict[str, Any] = {
         "source_receipt_id": receipt_id,
-        "action": action,
+        "action": normalized_action,
         "actor_kind": derived_actor_kind(actor_context),
         "target": _feedback_target_label(target),
     }
     if _feedback_from_query is not None:
-        receipt_parameters["feedback_from_query"] = _feedback_from_query
+        receipt_parameters["feedback_from_query"] = {
+            **_feedback_from_query,
+            "action": normalized_action,
+        }
 
     with mutation_receipt(
         instance,
@@ -1245,7 +1264,7 @@ def service_feedback(
         )
         ctx.builder.record_feedback_applied(
             _feedback_target_label(record.target),
-            action,
+            normalized_action,
             applied,
         )
 
@@ -1302,6 +1321,8 @@ def service_feedback_batch(
             action=item.action,
             corrections=item.corrections,
         )
+    if any(item.action == "approve" for item in items):
+        emit_python_deprecation(APPROVE_FEEDBACK_ACTION)
 
     graph = instance.load_graph()
     config = instance.load_config()
@@ -1313,7 +1334,7 @@ def service_feedback_batch(
             graph=graph,
             receipt=receipts[item.receipt_id],
             receipt_id=item.receipt_id,
-            action=item.action,
+            action=_normalize_feedback_action(item.action, warn=False),
             target=item.target,
             reason=item.reason,
             reason_code=item.reason_code,

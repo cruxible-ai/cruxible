@@ -18,6 +18,7 @@ from cruxible_core.cli.main import MUTATING_COMMAND_TARGETS, cli
 EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("init",): "create",
     ("lock",): "lock",
+    ("kit", "repin"): "kit",
     ("run",): "active",
     ("apply",): "active",
     ("propose",): "active",

@@ -339,6 +339,35 @@ def write_materialized_kit_metadata(root: Path, *, bundle_digest: str | None = N
     )
 
 
+def repin_materialized_kit(root: Path) -> tuple[str, str]:
+    """Re-record the runtime digest of an intentionally edited materialized kit."""
+    root = root.resolve()
+    metadata_path = root / ".cruxible" / KIT_METADATA_FILE
+    if not metadata_path.exists():
+        raise ConfigError(
+            f"No materialized kit metadata exists at {metadata_path}. Kit materialization "
+            "creates .cruxible/kit.json; `cruxible kit repin` only re-records an "
+            "intentionally edited materialized kit."
+        )
+    try:
+        metadata = json.loads(metadata_path.read_text())
+    except ValueError as exc:
+        raise ConfigError(f"Invalid kit metadata at {metadata_path}: {exc}") from exc
+    if not isinstance(metadata, dict):
+        raise ConfigError(f"Invalid kit metadata at {metadata_path}: expected a JSON object")
+
+    manifest = load_kit_manifest(root)
+    if metadata.get("kit_id") != manifest.kit_id or metadata.get("version") != manifest.version:
+        raise ConfigError("Materialized kit metadata does not match cruxible-kit.yaml")
+
+    recorded_digest = metadata.get("runtime_digest") or metadata.get("digest")
+    old_digest = str(recorded_digest) if recorded_digest else "<missing>"
+    new_digest = compute_kit_runtime_digest(root, manifest)
+    metadata["runtime_digest"] = new_digest
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+    return old_digest, new_digest
+
+
 def namespace_kit_provider_ref(ref: str, kit_id: str) -> str:
     """Rewrite a kit:// provider ref to its kit-scoped form for composed instances."""
     rel_path, attr = _parse_kit_provider_ref(ref)
@@ -806,8 +835,9 @@ def _validate_dev_tree_metadata(root: Path) -> None:
             if os.environ.get("CRUXIBLE_KIT_DEV_RESOLVE") != "1":
                 raise ConfigError(
                     "Materialized kit contents changed since installation. "
-                    "Re-materialize the kit or set CRUXIBLE_KIT_DEV_RESOLVE=1 "
-                    "for local development."
+                    f"Run `cruxible kit repin --kit-dir {root}` to accept intentional "
+                    "local edits, re-materialize the kit to restore its installed content, "
+                    "or set CRUXIBLE_KIT_DEV_RESOLVE=1 for CI development checks."
                 )
 
 

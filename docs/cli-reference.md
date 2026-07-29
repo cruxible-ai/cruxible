@@ -1398,7 +1398,7 @@ findings.
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--receipt` | yes | `Sentinel.UNSET` | text | Receipt ID. |
-| `--action` | yes | `Sentinel.UNSET` | choice | Feedback action. |
+| `--action` | yes | `Sentinel.UNSET` | choice | Feedback action: `accept`, `reject`, or `correct`. Deprecated `approve` delegates to `accept`; deprecated `flag` returns its removal refusal. |
 | `--from-type` | yes | `Sentinel.UNSET` | text | Source entity type. |
 | `--from-id` | yes | `Sentinel.UNSET` | text | Source entity ID. |
 | `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
@@ -1432,7 +1432,7 @@ findings.
 | --- | --- | --- | --- | --- |
 | `--receipt` | yes | `Sentinel.UNSET` | text | Query receipt ID. |
 | `--result-index` | yes | `Sentinel.UNSET` | integer | Zero-based index of the query result row to adjudicate. |
-| `--action` | yes | `Sentinel.UNSET` | choice | Feedback action. |
+| `--action` | yes | `Sentinel.UNSET` | choice | Feedback action: `accept`, `reject`, or `correct`. Deprecated `approve` delegates to `accept`; deprecated `flag` returns its removal refusal. |
 | `--reason` | no | `` | text | Reason for feedback. |
 | `--reason-code` | no | `` | text | Structured feedback reason code. |
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
@@ -1469,6 +1469,7 @@ findings.
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+- Batch item actions use `accept`, `reject`, or `correct`; deprecated `approve` delegates to `accept` with a warning.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
@@ -2451,6 +2452,44 @@ Text output labels an interrupted record as
 - `--kit-dir` cannot be combined with explicit server transport flags or `--instance-id`, and the kit directory must contain `config.yaml`.
 - Canonical artifact digest mismatches fail unless `--force` is used to accept the on-disk hash.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible kit
+
+**Usage:** `cruxible kit [OPTIONS]`
+
+**Purpose:** Manage local materialized kits.
+
+**Subcommands:**
+
+- `cruxible kit repin` - Accept intentional runtime-file edits in a materialized kit.
+
+**Output And Side Effects:**
+- Writes only explicitly requested local materialized-kit metadata.
+
+**Common Errors:**
+- The selected directory is not a materialized kit.
+
+## cruxible kit repin
+
+**Usage:** `cruxible kit repin [OPTIONS]`
+
+**Purpose:** Recompute a materialized kit's runtime digest after intentional local edits and re-record it in `.cruxible/kit.json`.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--kit-dir` | no | `.` | directory | Materialized kit root. Defaults to the current directory. |
+
+**Output And Side Effects:**
+- Preserves the materialization metadata and replaces only its `runtime_digest`, printing the old and new digests.
+- Does not materialize a kit. An existing `.cruxible/kit.json` is required.
+- `CRUXIBLE_KIT_DEV_RESOLVE=1` remains available for CI development checks, but intentional local edits should use this command.
+
+**Common Errors:**
+- `.cruxible/kit.json` is missing or invalid.
+- Materialized metadata does not match `cruxible-kit.yaml`.
+- A declared runtime path is invalid or contains a symlink.
 
 ## cruxible outcome
 

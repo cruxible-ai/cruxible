@@ -2716,6 +2716,7 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
         def feedback_batch(self, instance_id, *, items):
             assert instance_id == "inst_123"
             assert len(items) == 1
+            assert items[0].action == "accept"
             return contracts.FeedbackBatchResult(
                 feedback_ids=["FB-1"],
                 applied_count=1,
@@ -2741,7 +2742,7 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
             assert instance_id == "inst_123"
             assert receipt_id == "RCP-QUERY-1"
             assert result_index == 0
-            assert action == "approve"
+            assert action == "accept"
             assert reason == "looks valid"
             assert reason_code == "vendor_mismatch"
             assert scope_hints == {"vendor": "acme"}
@@ -2772,6 +2773,7 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
     )
     assert feedback.exit_code == 0
     assert "Batch feedback recorded for 1/1 item(s)." in feedback.output
+    assert "feedback action 'approve'" in feedback.output
 
     feedback_from_query = runner.invoke(
         cli,
@@ -2800,6 +2802,7 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
     )
     assert feedback_from_query.exit_code == 0
     assert "Feedback FB-QUERY-1 applied to graph." in feedback_from_query.output
+    assert "feedback action 'approve'" in feedback_from_query.output
 
 
 def test_feedback_explicit_coordinates_without_receipt_forwards_none(
@@ -2846,7 +2849,8 @@ def test_feedback_explicit_coordinates_without_receipt_forwards_none(
     assert result.exit_code == 0, result.output
     assert captured["instance_id"] == "inst_123"
     assert captured["receipt_id"] is None
-    assert captured["action"] == "approve"
+    assert captured["action"] == "accept"
+    assert "feedback action 'approve'" in result.output
     assert "Feedback FB-no-receipt applied to graph." in result.output
 
 
@@ -2860,7 +2864,7 @@ def test_feedback_and_outcome_write_commands_emit_json_in_server_mode(
         """[
   {
     "receipt_id": "RCP-1",
-    "action": "approve",
+    "action": "accept",
     "target": {
       "from_type": "Part",
       "from_id": "BP-1",
@@ -2914,7 +2918,7 @@ def test_feedback_and_outcome_write_commands_emit_json_in_server_mode(
             "feedback",
             "record",
             "--action",
-            "approve",
+            "accept",
             "--from-type",
             "Part",
             "--from-id",
@@ -4759,7 +4763,7 @@ def test_server_mode_feedback_json_emits_payload(
             "--receipt",
             "rcpt-0",
             "--action",
-            "approve",
+            "accept",
             "--from-type",
             "Part",
             "--from-id",
@@ -4848,7 +4852,7 @@ def test_server_mode_feedback_batch_json_emits_payload(
         [
             {
                 "receipt_id": "rcpt-0",
-                "action": "approve",
+                "action": "accept",
                 "target": {
                     "from_type": "Part",
                     "from_id": "BP-1001",

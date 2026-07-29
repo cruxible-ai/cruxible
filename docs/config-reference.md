@@ -136,7 +136,7 @@ direct-write verbs above through the proposal/workflow path. *Promotion* of an
 already-staged (`pending`) edge to live goes through the separate `feedback`
 review channel, which carries its own two rails:
 
-- **Tier.** `feedback approve` / `reject` / `correct` are adjudication acts and
+- **Tier.** `feedback accept` / `reject` / `correct` are adjudication acts and
   require **`graph_write`** — the same tier as a direct write or a group
   resolution — even though the `cruxible_feedback` tool itself sits at
   `governed_write`. Since `flag` was removed (see below), *every* feedback
@@ -147,7 +147,7 @@ review channel, which carries its own two rails:
   `operator` when auth is off).
 
 The `CRUXIBLE_REFUSE_DIRECT_WRITES` kill-switch spans both: while it is set, the
-feedback actions that move an edge *into* accepted state (`approve` / `correct`)
+feedback actions that move an edge *into* accepted state (`accept` / `correct`)
 are refused too, so freezing live writes cannot be walked around through
 feedback. `reject` stays available — it moves edges *out* of live state.
 
@@ -157,7 +157,7 @@ Three knobs control it:
 |------|-------|--------|--------|
 | `write_policy` (per type) | `entity_types.<T>` / `relationships[]` | `direct` \| `proposal_only` \| `mint_only` (entity types only) \| unset | Per-type policy. Unset inherits the instance default. An explicit `direct` opts out of the instance default (but **not** the env kill-switch). `mint_only` (entity types only) is stricter than `proposal_only`: the type is writable **only** by the internal `token_mint` source and refuses all other sources, including the governed verbs `workflow_apply` / `group_resolve`. A config whose workflow `make_entities` step targets a `mint_only` entity type is rejected at load (fail-closed). |
 | `default_write_policy` | `runtime` | `direct` (default) \| `proposal_only` | Instance-wide default for types whose own `write_policy` is unset. |
-| `CRUXIBLE_REFUSE_DIRECT_WRITES` | process env (daemon) | truthy (`1`/`true`/`yes`/`on`) | Daemon-wide **kill-switch**: forces `proposal_only` for every type *at the write chokepoint*, overriding every per-type opt-out and the default, **and** refuses the acceptance-transitioning feedback actions (`approve` / `correct`). `reject` stays available; see Scope above. |
+| `CRUXIBLE_REFUSE_DIRECT_WRITES` | process env (daemon) | truthy (`1`/`true`/`yes`/`on`) | Daemon-wide **kill-switch**: forces `proposal_only` for every type *at the write chokepoint*, overriding every per-type opt-out and the default, **and** refuses the acceptance-transitioning feedback actions (`accept` / `correct`). `reject` stays available; see Scope above. |
 
 **Effective policy (union — any path to `proposal_only` wins):** a write is
 refused when the env kill-switch is set **OR** the type's explicit `write_policy`
@@ -224,7 +224,7 @@ Semantics:
   directly.
 - **Creates and updates are one surface.** The tier declares who may
   direct-write the type, not which verb flavor they use.
-- **Adjudication sits above the tier, not inside it.** Feedback `approve`,
+- **Adjudication sits above the tier, not inside it.** Feedback `accept`,
   `reject`, and `correct` decide a claim's fate — they make a non-live edge
   live, or retract one — so they require `graph_write` *whatever* the touched
   type declares, across `feedback`, `feedback_batch` (one adjudication item
@@ -237,7 +237,7 @@ Semantics:
   approval wearing a correction's name. It is now refused. The refusal happens
   at the service **validation** seam, which runs *before* the tier and
   kill-switch checks, so an empty `correct` returns the shape error even from a
-  tier that could not have performed the adjudication anyway. Use `approve` to
+  tier that could not have performed the adjudication anyway. Use `accept` to
   accept a claim as it stands.
 - **`flag` was removed.** The `flag` action moved an edge to `pending` while
   storing no annotation, so the reviewer's actual signal — what they doubted and

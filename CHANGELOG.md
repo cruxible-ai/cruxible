@@ -9,6 +9,15 @@ the project's own state instance.
 
 ### Changed (BREAKING)
 
+- **Claim feedback now uses `accept` instead of `approve`** across the CLI
+  (`feedback record`, `feedback from-query`, and batch item actions), MCP tool
+  schemas, HTTP request models, service inputs, and client contracts. During
+  0.3, `approve` remains a deprecated input alias: it emits the standard
+  structured warning and delegates to `accept`; it is removed in 0.4.0. New
+  feedback rows store `accept`, while historical 0.2.x rows containing
+  `approve` remain readable. The stored relationship review status remains
+  `approved`; this is a public verdict rename, not a storage-status migration.
+
 - **The `flag` feedback action is removed from the live write vocabulary** —
   from the canonical vocabulary on every surface (service, CLI
   `feedback --action`, MCP tool schema, HTTP request models, client contracts).
@@ -24,7 +33,7 @@ the project's own state instance.
   **Migration:** record a doubt with
   `cruxible attest --stance contradict` (MCP: `cruxible_attest`) — it stores
   the observation, its evidence refs, and its actor without touching review
-  status; adjudicate with `approve`/`reject`/`correct`. Note the tier
+  status; adjudicate with `accept`/`reject`/`correct`. Note the tier
   consequence: every remaining feedback action requires `GRAPH_WRITE`, so no
   feedback action completes at the `GOVERNED_WRITE` floor any more.
 
@@ -129,13 +138,13 @@ the project's own state instance.
   names the head it moved from and to) and thread the resolved actor, which the
   facades previously computed and discarded.
 
-- **Feedback adjudication requires `graph_write`**: `feedback approve`,
+- **Feedback adjudication requires `graph_write`**: `feedback accept`,
   `reject`, and `correct` decide a claim's fate — they make a non-live
   edge live, or retract one — so they now require `GRAPH_WRITE` even
   though the `cruxible_feedback` / `_batch` / `_from_query` tools
   themselves stay at `GOVERNED_WRITE`. Previously a single
   `governed_write` actor could stage an edge (attestation on an absent
-  claim, or a `pending` write) and then approve its own proposal, reaching
+  claim, or a `pending` write) and then accept its own proposal, reaching
   a live approved claim on a `proposal_only` type with no reviewer above
   it. The tools stay callable at `governed_write` so canonical actions reach a
   receipted `PermissionDeniedError` (HTTP 403) naming the required tier, but no
@@ -143,7 +152,7 @@ the project's own state instance.
   only a deprecated compatibility input; it refuses with the structured
   replacement warning on every write tier.
 
-  **Migration:** any caller that approves/rejects/corrects with a
+  **Migration:** any caller that accepts/rejects/corrects with a
   `governed_write` credential must present a `graph_write` one. This also
   overrides a type's config-declared `write_tier: governed_write` for
   those three actions — a type owner may lower who *direct-writes* their
@@ -160,7 +169,7 @@ the project's own state instance.
 
 - **`CRUXIBLE_REFUSE_DIRECT_WRITES` now spans the feedback channel**: while
   the kill-switch is set, the feedback actions that move an edge *into*
-  accepted state (`approve` / `correct`) are refused alongside the direct
+  accepted state (`accept` / `correct`) are refused alongside the direct
   write verbs, so freezing live writes can no longer be walked around via
   feedback. `reject` stays available because it moves an edge *out* of live
   state. The deprecated `flag` compatibility input refuses independently and
