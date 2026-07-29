@@ -813,11 +813,13 @@ named_queries:
     description: >
       Starting from one CVE, return the business services standing behind it:
       the vulnerability affects a reference product, assets run that product,
-      and services depend on those assets. Exposure is a PATH, not a label —
-      every result carries the product, host, and posture edge it came from,
-      so the answer to "what does this CVE actually put at risk" is auditable
-      rather than asserted. Accepted posture is the strong signal; pending and
-      unreviewed rows stay visible so triage can start before review finishes.
+      and services depend on those assets. This is candidate REACHABILITY —
+      the blast radius a CVE could touch — not current exposure: the traversal
+      does not filter on posture status, so remediated and exception-covered
+      pairs still appear, and rows may carry no posture edge at all. Each
+      result includes the posture edges that DO exist as decoration for
+      triage; for the posture-filtered work queue use
+      asset_vulnerability_postures_requiring_action or owner_patch_queue.
     entry_point: Vulnerability
     returns: BusinessService
     result_shape: path
@@ -944,6 +946,17 @@ mutation_guards:
         Open one against this decision (cruxible outcome open), then accept.
         If the call has no honest measurable result, set outcome_tracking to
         not_applicable and say why in the rationale.
+
+  # outcome_tracking is fixed at proposal time: without this freeze, the
+  # accepting write could flip required -> not_applicable in the SAME write
+  # and the acceptance guard above would never fire (its where-scope reads
+  # the proposed entity). The record is never edited into a different call.
+  - triage_decision_outcome_tracking_immutable:
+      freeze: TriageDecision.outcome_tracking
+      message: >
+        Whether a triage call commits to a measurable outcome is fixed when
+        the decision is proposed. Supersede the decision to make a different
+        call.
 
 # ─── Constraints ──────────────────────────────────────────────────────
 

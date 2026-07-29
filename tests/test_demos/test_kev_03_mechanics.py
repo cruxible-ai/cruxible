@@ -11,7 +11,7 @@ revision rather than by whatever the feed happens to say today.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -30,8 +30,11 @@ from cruxible_core.service import (
     service_open_resolution_contract,
     service_query_surface,
 )
+from cruxible_core.temporal import utc_now
 
-NOW = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+# Anchored to the real clock: guard eligibility compares expires_at against
+# wall time, so a fixed date would turn this suite red when it passed.
+NOW = utc_now()
 CHECK_AT = NOW + timedelta(days=7)
 EXPIRES_AT = NOW + timedelta(days=30)
 
@@ -105,13 +108,16 @@ def _open_contract(instance: CruxibleInstance, decision_id: str) -> Any:
         instance,
         entity_type="TriageDecision",
         entity_id=decision_id,
-        description=f"No host still exposed to {DEMO_CVE} one week after the patch window",
+        description=("No asset still carries an exposed posture one week after the patch window"),
         check_at=CHECK_AT,
         expires_at=EXPIRES_AT,
+        # Measured with the posture-FILTERED work queue: exposed_services is
+        # candidate reachability and never shrinks on remediation, so its
+        # max_count could not reach 0 after a successful patch.
         measurement={
             "kind": "query",
-            "query_name": "exposed_services",
-            "params": {"cve_id": DEMO_CVE},
+            "query_name": "asset_vulnerability_postures_requiring_action",
+            "params": {},
             "expect": {"max_count": 0},
         },
         actor_context=_actor("triager"),
@@ -179,6 +185,37 @@ def test_accepting_succeeds_once_a_contract_is_open(kev_triage: CruxibleInstance
     assert len(activated) == 1
     # The acceptance CONSUMED the contract: it is now on the clock, not just filed.
     assert activated[0].activation is not None
+
+
+def test_accepting_write_cannot_flip_outcome_tracking_past_the_guard(
+    kev_triage: CruxibleInstance,
+) -> None:
+    """The bypass the freeze exists for: acceptance guards scope on the
+    PROPOSED entity, so without the freeze a single write of
+    {accepted, not_applicable} against a stored {proposed, required} record
+    would slip past the contract requirement unrecorded."""
+    _write_decision(
+        kev_triage,
+        "TD-flip",
+        status="proposed",
+        outcome_tracking="required",
+        actor_id="triager",
+    )
+
+    with pytest.raises(DataValidationError) as excinfo:
+        _write_decision(
+            kev_triage,
+            "TD-flip",
+            status="accepted",
+            outcome_tracking="not_applicable",
+            actor_id="reviewer",
+        )
+
+    assert "fixed when" in str(excinfo.value.errors)
+    stored = kev_triage.load_graph().get_entity("TriageDecision", "TD-flip")
+    assert stored is not None
+    assert stored.properties["status"] == "proposed"
+    assert stored.properties["outcome_tracking"] == "required"
 
 
 def test_a_decision_with_no_measurable_outcome_opts_out_explicitly(

@@ -216,11 +216,15 @@ the project's own state instance.
   first shipped `requires_resolution_contract` mutation guard: accepting a
   decision that tracks its outcome refuses until a resolution contract has
   committed, in advance, to what result would count. `not_applicable`
-  remains an explicit, reviewable opt-out. Two named queries land with it —
-  `exposed_services` (from one CVE, traverse product → host → service so
-  exposure is an auditable PATH rather than a label) and
-  `open_triage_queue` (decisions still awaiting a reviewer, the read that
-  pairs with the contract queues). `kev-reference` now registers the CISA
+  remains an explicit opt-out, and `outcome_tracking` is frozen at proposal
+  time so the accepting write cannot flip it past the guard. Two named
+  queries land with it — `exposed_services` (from one CVE, traverse
+  product → host → service: candidate reachability/blast radius as an
+  auditable PATH — posture edges decorate the rows but do not filter them,
+  so the posture-filtered work queues remain
+  `asset_vulnerability_postures_requiring_action` and `owner_patch_queue`)
+  and `open_triage_queue` (decisions still awaiting a reviewer, the read
+  that pairs with the contract queues). `kev-reference` now registers the CISA
   KEV feed snapshot as the revisioned source artifact `cisa_kev_catalog`
   and pins every reference claim's evidence to `cisa_kev_catalog@{revision}`
   with a heading-path locator, so "which settled decisions cite evidence
