@@ -1393,9 +1393,10 @@ declare no evidence floor and rely on ambient attribution: provenance, receipts,
 actor context, and review history. Every guard field is load-bearing.
 
 The `condition` is a **discriminated union** keyed by an explicit `condition.type`
-field — one of `query`, `actor`, `co_write`, `evidence`, or `frozen`. The type is
-required; guard shape is never inferred from which keys are present. The
-guard-level `operation` / `effect` discriminator fields deliberately do not exist.
+field — one of `query`, `actor`, `co_write`, `evidence`, `frozen`, or
+`requires_resolution_contract`. The type is required; guard shape is never
+inferred from which keys are present. The guard-level `operation` / `effect`
+discriminator fields deliberately do not exist.
 
 ```yaml
 mutation_guards:
@@ -1492,6 +1493,7 @@ The `condition.type` discriminator selects the condition variant:
 | `co_write` | CoWriteGuardCondition | entity guards |
 | `evidence` | EvidenceRequirementGuardCondition | relationship guards |
 | `frozen` | FrozenPropertyGuardCondition | entity guards |
+| `requires_resolution_contract` | ResolutionContractGuardCondition | entity guards |
 
 ### NamedQueryResultCountGuardCondition (`type: query`)
 
@@ -1670,6 +1672,114 @@ when derived relationships ship, derived-edge effects will be reported in a
 separate additive field, never folded into the write counts. Guard conditions
 already see query-time derived edges in dry-runs by construction, since guards
 evaluate the named-query engine against the proposed graph.
+
+### ResolutionContractGuardCondition (`type: requires_resolution_contract`)
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `type` | `requires_resolution_contract` | **yes** | — | Condition discriminator; this condition takes no other fields |
+
+This outcome-forcing condition is an entity-property guard backed by the
+resolution-contract store. When its transition and optional scope predicates
+match, the write is refused unless an eligible contract already exists for the
+subject. An eligible contract is unexpired, has never been activated, and is
+pinned to the subject's entity type, id, and pre-write content. A passing write
+activates the selected contract atomically with the transition. One contract
+satisfies exactly one guarded transition, including within a batch.
+
+The explicit config shape is:
+
+```yaml
+mutation_guards:
+  - name: triage_decision_acceptance_requires_contract
+    entity_type: TriageDecision
+    property: status
+    new_value: accepted
+    where:
+      candidate.properties.outcome_tracking:
+        eq: required
+    condition:
+      type: requires_resolution_contract
+    message: >
+      This triage decision tracks its outcome, so it cannot be accepted
+      until a resolution contract commits to what would count as success.
+```
+
+The condition has no options: unknown condition fields are rejected. Opening a
+contract also requires an existing subject and type-level coverage by a
+`requires_resolution_contract` guard. A scoped guard counts as coverage for its
+entity type because its `where` predicate can be evaluated only when the later
+write is attempted. The guarded workflow is therefore **propose → open →
+accept**. Creating a subject directly with the guarded value is refused because
+no contract can predate the subject it names.
+
+The guard also refuses these attempts rather than silently weakening the
+commitment:
+
+- accepting without an eligible contract, or trying to reuse a contract already
+  activated by another transition;
+- editing the subject after opening the contract, which changes the pinned
+  content and requires a new contract;
+- changing other subject content in the same write as the guarded transition;
+  the guarded lifecycle property is the only permitted difference from the
+  content the contract pinned;
+- omitting a property read by the guard's `where` scope. Existing records must
+  be migrated to make the scoping choice explicit.
+
+#### `outcome_tracking` adoption convention
+
+Configs that adopt outcome forcing should expose an `outcome_tracking` property
+with a reviewable choice such as `required` or `not_applicable`, then scope the
+resolution-contract guard to `outcome_tracking: required`. `required` demands
+the propose → open → accept flow. `not_applicable` is the explicit opt-out for a
+decision with no honest measurable result; it should be justified in the
+decision rationale rather than represented by a fabricated measurement.
+
+The property name and enum values are a convention, not hidden guard syntax:
+the guard's `where` clause remains the source of truth for enforcement. Config
+validation warns when an entity type declares `outcome_tracking` but no
+`requires_resolution_contract` guard covers that type. If the guarded
+transition is attempted without the scoped property set, evaluation fails
+closed instead of treating absence as `not_applicable`.
+
+The shipped `kev-triage` kit is the first adoption. The following is lifted from
+`kits/kev-triage/config.yaml` (unrelated entity properties are omitted):
+
+```yaml
+enums:
+  outcome_tracking_mode:
+    values:
+    - required
+    - not_applicable
+    description: >
+      Whether accepting a decision must first commit to a measurable outcome.
+      not_applicable is a reviewable choice, not an absence: some triage calls
+      (scope rulings, ownership routing) have no honest observable result, and
+      forcing a fake measurement would poison the outcome corpus.
+
+entity_types:
+  TriageDecision:
+    id: decision_id
+    properties:
+      status: enum triage_decision_status
+      outcome_tracking: enum outcome_tracking_mode
+      rationale: string
+
+mutation_guards:
+  - triage_decision_acceptance_requires_contract:
+      when: TriageDecision.status -> accepted
+      where:
+        candidate.properties.outcome_tracking:
+          eq: required
+      require:
+        resolution_contract: true
+      message: >
+        This triage decision tracks its outcome, so it cannot be accepted
+        until a resolution contract commits to what would count as success.
+        Open one against this decision (cruxible outcome open), then accept.
+        If the call has no honest measurable result, set outcome_tracking to
+        not_applicable and say why in the rationale.
+```
 
 ---
 

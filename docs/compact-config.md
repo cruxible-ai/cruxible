@@ -510,8 +510,8 @@ include:
 A mutation guard is a single-key list item: `<name>: {when:, require:,
 message:}`. `when:` is a compact trigger grammar, `<Entity>.<prop> ->
 <value>` (or `-> [value_a, value_b]` for multiple trigger values); `require:`
-is one of three compact condition shapes, discriminated by which key it
-carries. A fourth form, `freeze:`, replaces `when`/`require` entirely (see
+is one of four compact condition shapes, discriminated by which key it
+carries. A fifth form, `freeze:`, replaces `when`/`require` entirely (see
 below). Every guard below is a real kit guard.
 
 **`co_write`** — a companion entity must be written, linked via a named
@@ -556,6 +556,55 @@ passthrough of `allowed_actor_ids`):
       message: >-
         Work items cannot be closed until an approved ReviewRequest reviews them.
 ```
+
+**`resolution_contract`** — the exact sugar is:
+
+```yaml
+require: {resolution_contract: true}
+```
+
+The value must be the literal boolean `true`, and the condition takes no
+options. From the shipped `kev-triage` kit:
+
+```yaml
+  - triage_decision_acceptance_requires_contract:
+      when: TriageDecision.status -> accepted
+      where:
+        candidate.properties.outcome_tracking:
+          eq: required
+      require: {resolution_contract: true}
+      message: >
+        This triage decision tracks its outcome, so it cannot be accepted
+        until a resolution contract commits to what would count as success.
+        Open one against this decision (cruxible outcome open), then accept.
+        If the call has no honest measurable result, set outcome_tracking to
+        not_applicable and say why in the rationale.
+```
+
+That guard expands to:
+
+```yaml
+- name: triage_decision_acceptance_requires_contract
+  entity_type: TriageDecision
+  property: status
+  new_value: accepted
+  where:
+    candidate.properties.outcome_tracking:
+      eq: required
+  condition:
+    type: requires_resolution_contract
+  message: >
+    This triage decision tracks its outcome, so it cannot be accepted
+    until a resolution contract commits to what would count as success.
+    Open one against this decision (cruxible outcome open), then accept.
+    If the call has no honest measurable result, set outcome_tracking to
+    not_applicable and say why in the rationale.
+```
+
+See the config reference's
+[`outcome_tracking` adoption convention](config-reference.md#outcome_tracking-adoption-convention)
+for the guarded propose → open → accept flow and the reviewable
+`not_applicable` opt-out.
 
 **`freeze`** — the property may not *change* on updates (there is no `->`
 value: any change fires). Optional `while: {prop: value, ...}` limits the
