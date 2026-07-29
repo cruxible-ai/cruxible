@@ -1623,6 +1623,11 @@ without it, only the active materialized digest is checked.
 
 **Purpose:** Use when a decision is about to be accepted and you need to state in advance what result counts as success, how it will be measured, when to check it, and when the commitment expires.
 
+**Preconditions:** The subject already exists, and its entity type is covered by
+a `requires_resolution_contract` mutation guard on the accepting transition;
+otherwise opening is refused. See the
+[`outcome_tracking` adoption convention](config-reference.md#outcome_tracking-adoption-convention).
+
 **Arguments:**
 
 | Name | Required | Type | Description |
@@ -1645,6 +1650,10 @@ without it, only the active materialized digest is checked.
 **Permission:** `GOVERNED_WRITE`
 
 **Purpose:** Use when you checked an outcome contract and need to record what reality said: satisfied, contradicted, or indeterminate.
+
+**Preconditions:** The contract was activated by a successful
+`requires_resolution_contract`-guarded acceptance. A prepared contract that was
+never activated has nothing to resolve and simply expires.
 
 **Arguments:**
 

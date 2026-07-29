@@ -2557,6 +2557,9 @@ cruxible outcome open --entity-type TYPE --entity-id ID --description TEXT --che
 
 **Common Errors:**
 - The subject does not exist yet — propose the record first, then open the contract.
+- No `requires_resolution_contract` mutation guard covers the subject's entity
+  type. Declare the guard on the accepting transition before opening; see the
+  [`outcome_tracking` adoption convention](config-reference.md#outcome_tracking-adoption-convention).
 - `--check-at` at or after `--expires-at`, or a measurement query that is not defined in `named_queries`.
 - A measurement param key the query cannot read (typos are refused, not ignored).
 - A condition-only expectation with `condition_scope: all` and no `min_count` — an ALL condition over zero rows is vacuously satisfied.
@@ -2592,7 +2595,10 @@ cruxible outcome resolve CONTRACT_ID --verdict satisfied|contradicted|indetermin
 - Requires daemon transport so actor attribution and permissions are enforced.
 
 **Common Errors:**
-- The contract was never activated by an acceptance, or already carries a standing resolution.
+- The contract was never activated by a successful
+  `requires_resolution_contract`-guarded acceptance, or already carries a
+  standing resolution. A prepared contract has nothing to resolve and expires
+  without activation.
 - The resolving receipt ran a different query, different params, different execution options (e.g. a `relationship_state` override), was truncated, or contradicts the verdict.
 - The resolving receipt was created before the contract was opened, carries no `read_revision` stamp, or — for `satisfied` — was created before the declared check time. The evidence's own clock is what settles the timing, not the caller's `--observed-at`.
 - A cited attestation predates the contract's opening, was invalidated by a reviewer disposition, or — for `satisfied` — is older than the declared check time.
