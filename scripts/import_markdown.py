@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""Import an LLM wiki (a directory of Markdown pages) into a Cruxible instance
-as digest-pinned source artifacts.
+"""Register a directory of Markdown pages as digest-pinned source artifacts.
 
-This is Stage 1 of the wiki-to-instance pipeline and it is deliberately dumb:
-every page registers deterministically as a source artifact with a stable id,
-a content hash, and a parsed chunk manifest. Nothing here reads prose meaning.
-Turning wiki text into typed state (work items, decisions, risks, notes) is
-agent judgment and belongs in Stage 2, where every claim flows through
-proposals or evidence-carrying writes that cite the chunks this script
-registers. See skills/wiki-to-state/SKILL.md.
+Every page registers deterministically with a stable artifact id, content hash,
+and parsed chunk manifest. Nothing here interprets prose or turns a document
+corpus into graph state. Registered chunks remain source evidence that agents,
+workflows, and governed proposals may cite selectively.
 
 Registration shells out to the `cruxible` CLI (`cruxible source register`), so
 this script works against a remote daemon with only the CLI installed; it never

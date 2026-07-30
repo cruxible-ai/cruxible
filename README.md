@@ -110,7 +110,7 @@ without an ontology team or a rewrite.
   with its rules and procedures, [overlay kits](https://github.com/cruxible-ai/cruxible/blob/main/docs/kit-authoring.md)
   compose over an upstream base
 - [Authoring skills](https://github.com/cruxible-ai/cruxible/tree/main/skills) draft the model from your
-  exports or an existing wiki; you review instead of author
+  source systems and artifacts; you review instead of author
   ([Modeling State](https://github.com/cruxible-ai/cruxible/blob/main/docs/modeling-state.md))
 </details>
 
@@ -272,11 +272,6 @@ because prose was the only interface they spoke. What changes:
 | No record of when a source was captured | Sources are dated and hashed; staleness is queryable |
 | A correction is just more text | Feedback attaches to the exact claim; claims mature from proposed to accepted |
 | A better model reads the pile better | It can't read what was never written; the record and its derivations don't move when you swap models |
-
-If the wiki already exists (a team wiki, an Obsidian vault), the
-[`wiki-to-state`](https://github.com/cruxible-ai/cruxible/tree/main/skills/wiki-to-state)
-skill converts it: pages become pinned evidence, an agent proposes the
-typed claims, you review what gets minted.
 
 ## Kits
 

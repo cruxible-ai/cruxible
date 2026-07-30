@@ -338,8 +338,8 @@ graph. The type map of the composed supply-chain instance above:
 ## State That Compounds
 
 The one real cost is the config — the types, rules, and queries that model
-your domain. You don't write it from scratch: point an agent at your data,
-or an existing wiki, and it drafts the model; you review
+your domain. You don't write it from scratch: point an agent at your source
+systems and artifacts, and it drafts the model; you review
 what it proposes instead of authoring it. The rules are few, static, and
 reviewed once; the writes they govern are many and continuous — that
 asymmetry is the point. And the cost keeps paying: knowledge no longer gets

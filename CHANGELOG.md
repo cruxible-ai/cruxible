@@ -11,6 +11,14 @@ the project's own state instance.
 
 ### Changed (BREAKING)
 
+- **The `wiki-to-state` skill and synthetic wiki-import demo are removed.**
+  Their corpus-conversion framing encouraged broad restatement of documents as
+  graph state. Markdown remains a supported, content-hashed source-artifact
+  format, and `scripts/import_markdown.py` remains as a deterministic batch
+  registration helper; only operational claims and procedures that need an
+  explicit lifecycle or executable consequence should be promoted from source
+  evidence into governed state.
+
 - **Claim feedback now uses `accept` instead of `approve`** across the CLI
   (`feedback record`, `feedback from-query`, and batch item actions), MCP tool
   schemas, HTTP request models, service inputs, and client contracts. During
