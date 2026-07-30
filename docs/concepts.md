@@ -244,6 +244,30 @@ surface spelling, so command or tool renames cannot leak into stored provenance.
 Provenance is historical record: values written by earlier versions are never
 rewritten.
 
+## Claim Identity
+
+The graph is a multigraph: several parallel edges can share one relationship
+tuple (`relationship_type`, `from_type`, `from_id`, `to_type`, `to_id`). Three
+keys with different jobs address this, and they are not interchangeable:
+
+| Key | What it identifies | Stability |
+| --- | --- | --- |
+| `claim_id` | One claim (edge), as a minted opaque identity | Stable — survives pull-apply, snapshot/clone, publish→pull, backup/restore |
+| `edge_key` | One stored edge within a tuple, for this load | Unstable — a per-load disambiguation hint, never identity |
+| `idempotency_key` | One *write request*, for retry safety | Caller-supplied, scoped to the resolved actor and subject |
+
+Tuple coordinates remain authoritative for naming a claim. When a tuple is
+ambiguous (parallel edges), `claim_id` is the preferred disambiguator and takes
+precedence over `edge_key`; supplying both with disagreeing values is refused.
+`edge_key` survives for legacy records only: images materialized before claim
+identity existed carry no `claim_id`, and those images can be re-materialized
+forever (old snapshots, overlays tracking never-upgraded upstreams), so the
+per-load key remains the only way to address their parallel edges.
+
+`idempotency_key` identifies nothing in the graph. Retrying a write with the
+same key applies it once and returns the original result; reusing a key with a
+different declaration is refused.
+
 ## Named Queries
 
 Named queries are deterministic read surfaces over the graph. Each query has an
@@ -256,6 +280,26 @@ traversal and evidence path, and can attach bounded one-hop side context with
 `include` when related facts such as owners, services, exceptions, controls, or
 patch windows are part of the query contract. Use read tools for ad hoc context
 that is not stable enough to belong in the named query surface.
+
+## The Working Set
+
+The working set is an opt-in, agent-local, NON-AUTHORITATIVE read cache — an
+answer to re-querying for facts an agent already fetched this session. With
+capture enabled (`--ws` on supported `--json` reads, or
+`CRUXIBLE_WORKING_SET=1`, or persisted via `cruxible ws enable`), every entity
+and edge a read returns is also appended, in the compact profile, to a
+per-instance JSONL file. Re-finding something then costs a grep instead of a
+round trip.
+
+It is a cache with honest freshness accounting, not state: every record
+carries the `read_revision` and config digest it was captured at, `ws verify`
+classifies records fresh/stale/unknown against the live instance (missing
+coordinates are `unknown`, never fresh), and `ws refresh` re-fetches stale
+records. `ws catalog` additionally maintains a digest-stamped index of the
+instance's control plane — entity types, relationship types, named queries,
+and state-held governed procedures — so an agent can grep what exists before
+deciding what to read. No write path or other command ever reads the cache,
+and records are hints to re-verify, never proof.
 
 ## Receipts, Traces, And Decision Records
 
@@ -280,24 +324,28 @@ receipts. This is not a named query over live graph state: it only reports diffs
 explicitly recorded on entity-write receipts, so receipts created before that
 detail existed are treated as legacy gaps rather than inferred timeline events.
 
-## Feedback And Outcomes
+## Feedback, Attestations, And Outcome Contracts
 
-Feedback is edge-level review tied to a receipt:
+Three verbs carry judgment about claims, and they answer three different
+questions. **Feedback** adjudicates: a reviewer changes a claim's review
+status. **Attestation** observes: an actor records what they saw, without
+moving review status. **Outcome contracts** commit in advance to what result
+would prove a decision right, then record what reality said.
+
+### Feedback (adjudication)
+
+Feedback is edge-level review tied to a receipt. Every action requires
+`GRAPH_WRITE` — adjudication is a reviewer-tier act:
 
 | Action | Effect |
 | --- | --- |
-| `approve` | Mark the edge trusted by the reviewer source |
+| `accept` | Mark the edge trusted by the reviewer (`approve` is a deprecated input alias until 0.4.0; the stored review status remains `approved`) |
 | `reject` | Exclude the edge from future query results |
-| `correct` | Apply declared property corrections and approve (requires a non-empty `corrections` object) |
+| `correct` | Apply declared property corrections and accept (requires a non-empty `corrections` object) |
 
-To record a doubt about a claim *without* adjudicating it, use an attestation
-(`cruxible attest --stance contradict`) rather than feedback. The former `flag`
-action was removed: it un-approved the edge to `pending` while storing no
-annotation, so it destroyed the reviewer's signal instead of recording it.
-
-Outcomes record whether a result, proposal, or resolution was correct,
-incorrect, partial, or unknown. Feedback and outcomes let Cruxible accumulate
-accepted judgment state without relying on agent memory.
+The former `flag` action was removed: it un-approved the edge to `pending`
+while storing no annotation, so it destroyed the reviewer's signal instead of
+recording it. Record a doubt with an attestation instead.
 
 Query receipts with relationship or path results can be used as evidence for
 edge feedback via `feedback from-query`: the user selects one relationship row
@@ -305,6 +353,49 @@ or one path segment, and Cruxible applies the normal feedback path to that
 existing assertion. This is separate from group resolution. Use `group get` and
 `group resolve` when the decision is about a candidate group thesis or member
 set rather than one existing edge.
+
+### Attestations (observation)
+
+An attestation records one actor's dated observation about one claim tuple:
+stance `support`, `contradict`, or `unsure`, with optional evidence refs and a
+note. Attestations are immutable and append-only; they attach to the claim
+without touching its review status, so a `governed_write` agent that cannot
+adjudicate can still put what it saw on the record. `support` on an absent
+tuple creates a pending claim when both endpoints exist; `contradict` and
+`unsure` refuse to conjure claims they dispute.
+
+`attest queue` lists live claims with open current-content contradictions —
+the reviewer's inbox of disputed state. A reviewer answers with
+`attest resolve` (`upheld` / `corrected` / `invalidated`), appending a
+disposition while the original observation stays intact. The split matters:
+observations are data about whether state is *true*; adjudications are
+decisions about whether state is *accepted*.
+
+### Outcome Contracts (resolution contracts)
+
+A resolution contract is opened on a subject *before* it is accepted:
+`outcome open` declares a free-text success criterion, a check time, an
+expiry, and a pinned measurement (a named query with frozen definition digest
+and execution options, or a set of attestations). The subject is never
+mutated.
+
+A contract only becomes answerable through governance: a
+`requires_resolution_contract` mutation guard on the accepting transition
+activates it, and accepting an outcome-tracked decision refuses until a
+contract exists. A prepared contract that no guarded acceptance activates
+expires unanswered.
+
+`outcome resolve` records the verdict — `satisfied`, `contradicted`, or
+`indeterminate` — under evidence-clock discipline: the resolving receipt's or
+attestation's own timestamps settle timing, not the caller's claim, and if the
+measurement query changed since opening, only `indeterminate` remains. One
+standing resolution per contract; `outcome dispose` upholds or overturns it,
+and an overturn re-opens the contract for exactly one further answer.
+`outcome due` is the attention surface (`due` / `overdue` / `contradicted`).
+
+Together the three verbs let Cruxible accumulate judgment state — and a
+calibration record of how those judgments fared — without relying on agent
+memory.
 
 ## Constraints And Evaluation
 

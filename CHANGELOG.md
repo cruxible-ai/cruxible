@@ -198,12 +198,71 @@ the project's own state instance.
 
 ### Added
 
+- **Attestations: an observation channel separate from adjudication.**
+  `cruxible attest record|list|queue|resolve` (MCP `cruxible_attest*`, HTTP
+  routes, client methods) records one actor's dated, immutable observation
+  about one claim tuple — stance `support`/`contradict`/`unsure`, with
+  evidence refs and a note — without touching the claim's review status.
+  `support` on an absent tuple creates a pending claim when both endpoints
+  exist; `contradict`/`unsure` refuse to conjure the claims they dispute.
+  `attest queue` surfaces live claims with open current-content
+  contradictions; `attest resolve` appends a reviewer disposition
+  (`upheld`/`corrected`/`invalidated`) while the original observation stays
+  intact. Writes take an optional `idempotency_key` (actor + tuple scoped)
+  for safe retries. This is the replacement the removed `flag` action points
+  at: doubt becomes recorded signal instead of destroyed review state.
+
+- **Resolution contracts: commit to the outcome before the acceptance.**
+  `cruxible outcome open|resolve|dispose|list|due` (plus MCP/HTTP/client
+  surfaces). `outcome open` declares, on a not-yet-accepted subject, what
+  result would count — a free-text criterion, a check time, an expiry, and a
+  pinned measurement (a named query frozen at definition digest AND execution
+  options, or a set of attestations). Contracts are activated only by a
+  `requires_resolution_contract`-guarded acceptance; a contract nothing
+  activates expires unanswered. `outcome resolve` records
+  `satisfied`/`contradicted`/`indeterminate` under evidence-clock discipline
+  (the resolving receipt's or attestation's own timestamps settle timing,
+  never the caller's word; a drifted measurement query leaves only
+  `indeterminate`). One standing resolution per contract; `outcome dispose`
+  upholds or overturns, an overturn re-opening exactly one further answer.
+  `outcome due` is the attention surface (`due`/`overdue`/`contradicted`).
+  The legacy `outcome record`/`outcome profile` functions are deprecated
+  toward this (see *Deprecated*).
+
+- **The loop surfaces are public HTTP contract.** All 22 previously hidden
+  routes — procedures, attestations, outcome contracts, lifecycle verbs, and
+  state diff — are exposed and pinned in the `http_surface` snapshot, and
+  `cruxible-client` 0.3.0 ships a method for every one of them with its core
+  pin aligned. What shipped as internal loop machinery during 0.2 is now
+  surface area with compatibility obligations.
+
+- **`cruxible kit repin`: first-class acceptance of intentional kit edits.**
+  Editing a materialized kit used to strand the instance behind a digest
+  mismatch unless `CRUXIBLE_KIT_DEV_RESOLVE=1` waved every check through.
+  `kit repin` recomputes and re-records the runtime digest for a deliberate
+  edit, making "I meant to change this kit" a receipted acceptance rather
+  than an environment variable; the env override remains for CI.
+
 - **Structured deprecation mechanics.** A dependency-free registry now owns the
   common `{surface, replacement, removal_version}` warning shape. CLI aliases
   emit one stderr line, MCP results use an existing `warnings` field or an
   additive `deprecation_warnings` key, and HTTP responses carry a `Deprecation`
   header (plus a body entry only for contracts that already expose `warnings`).
   `DEPRECATIONS.md` is the removal schedule, guarded against registry drift.
+
+- **An agent-local working set: opt-in, non-authoritative read cache.**
+  With capture enabled (`--ws` on supported `--json` reads, or
+  `CRUXIBLE_WORKING_SET=1`), every entity and edge a read returns is also
+  appended, in the compact profile, to a per-instance JSONL file under
+  `~/.cruxible/working-set` — so re-finding a fact costs a grep instead of a
+  re-query. Records carry the `read_revision` and config digest they were
+  captured at; `cruxible ws status|verify|refresh|clear|path` manage the
+  cache with honest freshness classification (fresh/stale/unknown — missing
+  coordinates are never fresh). Credential-scoped instance keys keep
+  different bearers' caches separate, the whole path chain is
+  symlink-refusing and permission-tightened, and no write path or other
+  command ever reads the cache. An opt-in prototype: records are hints to
+  re-verify, never proof.
 
 - **Working-set capture fidelity + control-plane catalog.** The agent-local
   working set gains persisted activation (`cruxible ws enable|disable` in
@@ -313,6 +372,17 @@ the project's own state instance.
   `cruxible state pull-preview --repair` then
   `cruxible state pull-apply --repair --apply-digest ...`. Repair preserves
   claim ids.
+
+- **Compact query payloads shed derivable include bytes.** Under
+  `profile="compact"` only: configured-but-empty include aliases are omitted
+  from query rows, retained include envelopes drop fields derivable from the
+  map key, item list, or defaults (`exists`, null `limit`, false
+  `truncated` — cardinality and counts stay explicit), and the graph layout
+  interns repeated non-empty include maps into a top-level `include_sets`
+  table that result refs index by integer. A deterministic five-result
+  equivalent shrank 77.8% (7,895 → 1,751 bytes). Standard and full profiles
+  are byte-identical to 0.2.x; the only shared-contract change widens graph
+  `includes` to `dict | int`, which still accepts every prior payload.
 
 ### Security
 
