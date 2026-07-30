@@ -651,7 +651,7 @@ cruxible relationship add \
 | `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
 | `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
 | `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
-| `--edge-key` | no | `` | integer | Edge key (multi-edge disambiguation). |
+| `--edge-key` | no | `` | integer | Unstable per-load hint for parallel-edge disambiguation; tuple coordinates remain authoritative. |
 | `--ws` | no | `False` | boolean | Also capture this `--json` read into the agent-local working set (non-authoritative cache; see `cruxible ws`). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
@@ -680,7 +680,7 @@ Noun-first read of a relationship's lineage.
 | `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
 | `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
 | `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
-| `--edge-key` | no | `` | integer | Edge key (multi-edge disambiguation). |
+| `--edge-key` | no | `` | integer | Unstable per-load hint for parallel-edge disambiguation; tuple coordinates remain authoritative. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1404,7 +1404,7 @@ findings.
 | `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
 | `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
 | `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
-| `--edge-key` | no | `` | integer | Edge key (multi-edge disambiguation). |
+| `--edge-key` | no | `` | integer | Unstable per-load hint for parallel-edge disambiguation; tuple coordinates remain authoritative. |
 | `--reason` | no | `` | text | Reason for feedback. |
 | `--reason-code` | no | `` | text | Structured feedback reason code. |
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |

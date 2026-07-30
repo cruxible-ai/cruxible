@@ -1981,7 +1981,15 @@ def inspect_trace_cmd(trace_id: str, output_json: bool) -> None:
 @click.option("--relationship", "relationship_type", required=True, help="Relationship type.")
 @click.option("--to-type", required=True, help="Target entity type.")
 @click.option("--to-id", required=True, help="Target entity ID.")
-@click.option("--edge-key", default=None, type=int, help="Edge key (multi-edge disambiguation).")
+@click.option(
+    "--edge-key",
+    default=None,
+    type=int,
+    help=(
+        "Unstable per-load hint for parallel-edge disambiguation; tuple coordinates remain "
+        "authoritative."
+    ),
+)
 @json_option
 @handle_errors
 def inspect_relationship_lineage_cmd(
@@ -2116,7 +2124,15 @@ def get_entity_cmd(
 @click.option("--relationship", required=True, help="Relationship type.")
 @click.option("--to-type", required=True, help="Target entity type.")
 @click.option("--to-id", required=True, help="Target entity ID.")
-@click.option("--edge-key", default=None, type=int, help="Edge key (multi-edge disambiguation).")
+@click.option(
+    "--edge-key",
+    default=None,
+    type=int,
+    help=(
+        "Unstable per-load hint for parallel-edge disambiguation; tuple coordinates remain "
+        "authoritative."
+    ),
+)
 @ws_option
 @json_option
 @handle_errors

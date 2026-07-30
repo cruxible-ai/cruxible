@@ -536,7 +536,7 @@ happened; they never prove its inputs are still current.
 | `relationship_type` | yes | string |  |
 | `to_type` | yes | string |  |
 | `to_id` | yes | string |  |
-| `edge_key` | no | integer | null |  |
+| `edge_key` | no | integer | null | Unstable per-load hint for parallel-edge disambiguation; prefer `claim_id` where accepted; tuple coordinates remain authoritative. |
 | `reason` | no | string |  |
 | `reason_code` | no | string | null |  |
 | `scope_hints` | no | object | null |  |
@@ -2325,7 +2325,7 @@ never activated has nothing to resolve and simply expires.
 | `relationship_type` | yes | string |  |
 | `to_type` | yes | string |  |
 | `to_id` | yes | string |  |
-| `edge_key` | no | integer | null |  |
+| `edge_key` | no | integer | null | Unstable per-load hint for parallel-edge disambiguation; tuple coordinates remain authoritative. |
 
 **Returns:** Top-level fields: `found`, `from_type`, `from_id`, `relationship_type`, `to_type`, `to_id`, `edge_key`, `properties`, `metadata`
 
@@ -2352,7 +2352,7 @@ never activated has nothing to resolve and simply expires.
 | `relationship_type` | yes | string | Relationship type. |
 | `to_type` | yes | string | Target entity type. |
 | `to_id` | yes | string | Target entity ID. |
-| `edge_key` | no | integer | null | Edge key for multi-edge disambiguation. |
+| `edge_key` | no | integer | null | Unstable per-load hint for parallel-edge disambiguation; tuple coordinates remain authoritative. |
 
 **Returns:** Top-level fields: `found`, `relationship`, `provenance`, `group`, `resolution`, `source_workflow_receipt_id`, `source_trace_ids`, `warnings`
 

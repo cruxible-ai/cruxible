@@ -612,8 +612,11 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         returns bounded identity cards with governance markers; pass `standard`
         or `full` when you need provenance or actor context.
 
-        Edge items include `edge_key` for use with `cruxible_feedback` when
-        multiple edges exist between the same endpoints.
+        Edge items include `edge_key`, an unstable per-load disambiguation hint for
+        parallel edges on one relationship tuple, for use with `cruxible_feedback`;
+        tuple coordinates remain authoritative. Prefer `claim_id` (the stable minted
+        identity) where accepted. It takes precedence, and supplying both with
+        disagreeing values is refused.
 
         Pagination loop: when `truncated` is true the response carries a
         `continuation_token` — pass it back as `continuation` with the SAME
@@ -1944,8 +1947,10 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
     ) -> contracts.GetRelationshipResult:
         """Look up a specific relationship by its endpoints and type. Returns its properties.
 
-        If multiple same-type edges exist between the same endpoints, pass edge_key
-        to select a specific one. Without edge_key, raises an error if ambiguous.
+        `edge_key` is an unstable per-load hint for parallel-edge disambiguation;
+        tuple coordinates remain authoritative. Pass it when multiple same-type
+        edges exist between the same endpoints. Without `edge_key`, raises an error
+        if ambiguous.
         """
         return handlers.handle_get_relationship(
             instance_id, from_type, from_id, relationship_type, to_type, to_id, edge_key

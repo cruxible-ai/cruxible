@@ -104,7 +104,15 @@ def outcome_group() -> None:
 @click.option("--relationship", required=True, help="Relationship type.")
 @click.option("--to-type", required=True, help="Target entity type.")
 @click.option("--to-id", required=True, help="Target entity ID.")
-@click.option("--edge-key", default=None, type=int, help="Edge key (multi-edge disambiguation).")
+@click.option(
+    "--edge-key",
+    default=None,
+    type=int,
+    help=(
+        "Unstable per-load hint for parallel-edge disambiguation; tuple coordinates remain "
+        "authoritative."
+    ),
+)
 @click.option("--reason", default="", help="Reason for feedback.")
 @click.option("--reason-code", default=None, help="Structured feedback reason code.")
 @click.option("--scope-hints", default=None, help="JSON object of structured scope hints.")
