@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [
     {name = "Cruxible LLC"},
 ]
-keywords = ["ai-agents", "hard-state", "state-management", "ontology", "knowledge-graph", "governance", "provenance", "agent-memory", "mcp", "workflows", "deterministic", "receipts"]
+keywords = ["ai-agents", "hard-state", "state-management", "ontology", "knowledge-as-code", "governance", "provenance", "mcp", "workflows", "deterministic", "receipts"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -42,7 +42,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.0"]
+# <2: mcp 2.0.0 removed the bundled mcp.server.fastmcp the tools are built
+# on; the SDK-2.0 migration is tracked separately (wi-mcp-sdk-2-migration).
+mcp = ["mcp>=1.0,<2"]
 # The daemon ships in the default install; kept as an empty alias so
 # `pip install "cruxible[server]"` from older docs keeps working.
 server = []
