@@ -20,6 +20,7 @@ from cruxible_core.errors import (
     OutcomeNotFoundError,
     PendingEdgeWriteRefusedError,
     PermissionDeniedError,
+    ProcedureNotFoundError,
     QueryExecutionError,
     QueryNotFoundError,
     ReceiptNotFoundError,
@@ -123,6 +124,11 @@ from cruxible_core.server.errors import (
             {"instance_id": "inst_123"},
         ),
         (GroupNotFoundError("GRP-1"), client_errors.GroupNotFoundError, {"group_id": "GRP-1"}),
+        (
+            ProcedureNotFoundError("PRC-1"),
+            client_errors.ProcedureNotFoundError,
+            {"procedure_id": "PRC-1"},
+        ),
         (QueryExecutionError("query failed"), client_errors.QueryExecutionError, {}),
         (
             CustomerCodeExecutionUnsupportedError(),
@@ -160,6 +166,8 @@ def test_error_round_trip_preserves_subclass_and_context(
 
     assert type(restored) is expected_type
     assert restored.mutation_receipt_id == "RCPT-xyz"
+    if isinstance(error, ProcedureNotFoundError):
+        assert status == 404
     if isinstance(error, CustomerCodeExecutionUnsupportedError):
         assert status == 403
         assert body.error_code == "customer_code_execution_unsupported"

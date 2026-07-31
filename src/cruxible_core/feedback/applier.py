@@ -110,7 +110,7 @@ _ACTION_PAST: dict[str, RelationshipReviewStatus] = {
 #
 # ``flag`` was removed in 2026-07: it also moved an edge out of live state
 # (-> ``pending``) but stored no annotation, so it destroyed the reviewer's
-# signal. Use ``cruxible attest --stance contradict`` instead.
+# signal. Use ``cruxible attest record --stance contradict`` instead.
 REVIEW_TRANSITION_ACTIONS: frozenset[str] = frozenset({"accept", "approve", "correct", "reject"})
 
 
@@ -196,9 +196,9 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
     # ``pending`` while storing no annotation anywhere, so the reviewer's actual
     # signal -- what they doubted and why -- was destroyed at the moment it was
     # given, leaving only a status regression nobody could interpret. Recording
-    # a doubt is what ``cruxible attest --stance contradict`` is for: it stores
-    # the observation, its evidence refs, and its actor, and it changes no
-    # status. There is no deprecation window; the action never worked.
+    # a doubt is what ``cruxible attest record --stance contradict`` is for: it
+    # stores the observation, its evidence refs, and its actor, and it changes
+    # no status. There is no deprecation window; the action never worked.
 
     if feedback.action == "correct":
         updates = dict(feedback.corrections)

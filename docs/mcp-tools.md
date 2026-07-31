@@ -28,7 +28,7 @@ Set `CRUXIBLE_MCP_PROFILE` to shrink the advertised catalog for focused clients:
 | --- | --- |
 | `full` | Default. Advertise every tool allowed by the active permission mode. |
 | `state_authoring` | Tools for creating, inspecting, querying, and directly loading state. |
-| `review` | Tools for queries, receipts, feedback, outcomes, and proposal-group review. |
+| `review` | Tools for queries, receipts, feedback, attestations, outcomes, and proposal-group review. |
 
 Set `CRUXIBLE_MCP_TOOLS` or `CRUXIBLE_MCP_TOOL_ALLOWLIST` to a comma-separated list of exact tool names for an explicit allowlist. Profile and allowlist curation are both intersected with `CRUXIBLE_MODE`.
 

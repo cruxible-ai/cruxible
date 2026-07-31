@@ -21,6 +21,7 @@ from cruxible_core.graph.types import EntityInstance, mint_claim_id
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.service import (
+    FeedbackItemInput,
     service_add_entities,
     service_init,
     service_propose_group,
@@ -112,6 +113,62 @@ def test_json_compact_environment_variable(
     assert result.exit_code == 0
     assert json.loads(result.output)["entity_count"] == 4
     assert "\n" not in result.output.removesuffix("\n")
+
+
+def test_feedback_batch_items_file_forwards_reason_metadata_to_service(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import cruxible_core.cli.commands.feedback as feedback_commands
+
+    items_file = tmp_path / "feedback-items.yaml"
+    items_file.write_text(
+        """\
+- receipt_id: RCP-1
+  action: accept
+  target:
+    from_type: Part
+    from_id: BP-1
+    relationship_type: fits
+    to_type: Vehicle
+    to_id: V-1
+  reason: verified manually
+  reason_code: verified_source
+  scope_hints:
+    market: us
+"""
+    )
+    captured_name: list[str] = []
+    captured_items: list[FeedbackItemInput] = []
+
+    def capture_service(
+        name: str,
+        _instance: object,
+        items: list[FeedbackItemInput],
+    ) -> object:
+        captured_name.append(name)
+        captured_items.extend(items)
+        return contracts.FeedbackBatchResult(
+            feedback_ids=["FB-1"],
+            applied_count=1,
+            total=1,
+        )
+
+    monkeypatch.setattr(feedback_commands, "_call_service", capture_service)
+    monkeypatch.setattr(
+        feedback_commands,
+        "_dispatch_cli_instance",
+        lambda _server_fn, local_fn, **_kwargs: local_fn(object()),
+    )
+
+    result = runner.invoke(cli, ["feedback", "batch", "--items-file", str(items_file)])
+
+    assert result.exit_code == 0, result.output
+    assert captured_name == ["service_feedback_batch_inputs"]
+    [item] = captured_items
+    assert item.reason_code == "verified_source"
+    assert item.scope_hints == {"market": "us"}
 
 
 def test_json_compact_flag_wins_over_disabled_environment(

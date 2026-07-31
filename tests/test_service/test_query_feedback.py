@@ -736,7 +736,7 @@ class TestFeedback:
             )
         message = str(exc_info.value)
         assert "'accept'" in message
-        assert "attest --stance contradict" in message
+        assert "cruxible attest record --stance contradict" in message
 
     def test_batch_correct_with_empty_corrections_refuses(
         self, populated_instance: CruxibleInstance
@@ -773,7 +773,7 @@ class TestFeedback:
             )
         message = str(exc_info.value)
         assert "'flag' feedback action was removed" in message
-        assert "attest --stance contradict" in message
+        assert "cruxible attest record --stance contradict" in message
 
     def test_profile_requires_reason_code_for_system(
         self, populated_instance: CruxibleInstance

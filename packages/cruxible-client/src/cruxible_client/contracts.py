@@ -662,7 +662,7 @@ class FeedbackBatchItemInput(BaseModel):
             "Adjudication: accept, reject, or correct the edge. Deprecated `approve` "
             "delegates to `accept`; deprecated `flag` is accepted only to return its "
             "removal warning. To record a "
-            "doubt WITHOUT adjudicating, use `cruxible attest --stance "
+            "doubt WITHOUT adjudicating, use `cruxible attest record --stance "
             "contradict` -- it stores the observation, its evidence, and its "
             "actor instead of silently un-approving the edge."
         )
@@ -703,7 +703,7 @@ class FeedbackFromQueryInput(BaseModel):
             "Adjudication: accept, reject, or correct the edge. Deprecated `approve` "
             "delegates to `accept`; deprecated `flag` is accepted only to return its "
             "removal warning. To record a "
-            "doubt WITHOUT adjudicating, use `cruxible attest --stance "
+            "doubt WITHOUT adjudicating, use `cruxible attest record --stance "
             "contradict` -- it stores the observation, its evidence, and its "
             "actor instead of silently un-approving the edge."
         )

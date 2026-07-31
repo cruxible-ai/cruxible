@@ -7952,7 +7952,7 @@
           "json_name": "action",
           "required": true,
           "schema": {
-            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
               "accept",
               "reject",
@@ -8159,7 +8159,7 @@
         },
         "properties": {
           "action": {
-            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
               "accept",
               "reject",
@@ -8358,7 +8358,7 @@
           "json_name": "action",
           "required": true,
           "schema": {
-            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
               "accept",
               "reject",
@@ -8552,7 +8552,7 @@
       "json_schema": {
         "properties": {
           "action": {
-            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
               "accept",
               "reject",

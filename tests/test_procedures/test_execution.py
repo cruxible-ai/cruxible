@@ -14,6 +14,7 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import (
     ConfigError,
+    PermissionDeniedError,
     ProcedureRepeatExhaustedError,
     QueryExecutionError,
 )
@@ -618,7 +619,7 @@ def test_run_rederives_and_enforces_effective_tier(
     )
 
     with request_permission_scope(PermissionMode.GOVERNED_WRITE):
-        with pytest.raises(ConfigError, match="requires tier 'graph_write'") as exc_info:
+        with pytest.raises(PermissionDeniedError, match="GRAPH_WRITE") as exc_info:
             service_run_procedure(
                 procedure_instance,
                 procedure_id,

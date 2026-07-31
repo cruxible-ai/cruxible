@@ -66,13 +66,15 @@ the `CRUXIBLE_MODE` environment variable:
 - `READ_ONLY`: query, inspect, validate — no graph or config mutations.
   Reads are not side-effect-free: `cruxible_query` and gate checks persist
   their receipt rows, which is how their evidence survives the call.
-- `GOVERNED_WRITE`: READ_ONLY + workflow runs, governed proposal and
-  feedback surfaces, snapshots, and governed config ADDITIONS
-  (`cruxible_add_constraint`, `cruxible_add_decision_policy`)
+- `GOVERNED_WRITE`: READ_ONLY + workflow and procedure runs, governed
+  proposals, feedback, attestations, outcomes, decision records, and source
+  artifact registration.
 - `GRAPH_WRITE`: GOVERNED_WRITE + raw graph mutation, canonical workflow
-  apply, and proposal resolution
+  apply, governed resolution and lifecycle transitions, and snapshot creation.
 - `ADMIN` (default): all tools, including instance lifecycle, backup and
-  restore, locks, replacing the ACTIVE config wholesale
+  restore, locks, active-config additions
+  (`cruxible_add_constraint`, `cruxible_add_decision_policy`), replacing the
+  ACTIVE config wholesale
   (`cruxible_reload_config`, `cruxible_state_pull_apply`), and published-state
   trust boundaries
 
