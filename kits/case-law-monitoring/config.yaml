@@ -94,6 +94,9 @@ enums:
   outcome_result: [won, lost, settled, dismissed, default_judgment, withdrawn, moot]
   outcome_argument_role: [primary_argument, alternative_argument, defensive, amicus, not_reached]
   outcome_weight: [adopted, distinguished, rejected, not_reached]
+  matter_action_decision_status: [proposed, accepted, rejected]
+  matter_action: [update_brief, notify_client, change_strategy, take_no_action]
+  legal_outcome_tracking_mode: [required, not_applicable]
 
 entity_types:
   Opinion:
@@ -203,6 +206,20 @@ entity_types:
       resolved_at: date
       notes: string?
 
+  MatterActionDecision:
+    description: >
+      A reviewed operational response to a legal development affecting one
+      matter. This records what the team chose to do, not whether the legal
+      conclusion was objectively correct. Measurable responses must commit to
+      their resolution contract before acceptance.
+    id: action_decision_id
+    properties:
+      title: string indexed
+      status: enum matter_action_decision_status
+      outcome_tracking: enum legal_outcome_tracking_mode
+      action: enum matter_action
+      rationale: string
+
 relationships:
   # --- Corpus anchors (deterministic, seed/fetch-loaded) ---
   - opinion_from_court: Opinion -> Court            # Opinion was issued by a court.
@@ -240,6 +257,8 @@ relationships:
     write_policy: proposal_only
     basis: routing_basis
     properties: {obligation_type: enum obligation_type optional}
+  - matter_action_decision_for_matter: MatterActionDecision -> Matter  # The matter whose operational response this decision governs.
+  - matter_action_decision_considers_opinion: MatterActionDecision -> Opinion  # Optional authority or development motivating the response.
 
   # --- Governed legal judgments ---
   - matter_turns_on_statute: Matter -> Statute      # Governed: the matter's legal scope depends on this statute or doctrine.
@@ -292,6 +311,23 @@ relationships:
       deadline_date: date?
 
 named_queries:
+  open_matter_action_decisions:
+    explicit: true
+    mode: collection
+    description: >
+      Matter-action decisions still awaiting review. Decisions with
+      outcome_tracking required also need an eligible resolution contract
+      before acceptance.
+    returns: MatterActionDecision
+    result_shape: entity
+    dedupe: entity
+    where:
+      result.properties.status:
+        eq: proposed
+    order_by:
+      - by: $result.entity_id
+        direction: asc
+
   matters_impacted_by_opinion:
     mode: traversal
     entry_point: Opinion
@@ -557,6 +593,26 @@ named_queries:
     select:
       properties: [case_name, citation]
 
+mutation_guards:
+  - matter_action_acceptance_requires_contract:
+      when: MatterActionDecision.status -> accepted
+      where:
+        candidate.properties.outcome_tracking:
+          eq: required
+      require:
+        resolution_contract: true
+      message: >
+        This matter action tracks its outcome, so it cannot be accepted until
+        a resolution contract commits to what would count as success. Open one
+        against this decision, then accept it. If the action has no honest
+        measurable result, choose not_applicable and explain why.
+
+  - matter_action_outcome_tracking_immutable:
+      freeze: MatterActionDecision.outcome_tracking
+      message: >
+        Whether a matter action commits to a measurable outcome is fixed when
+        proposed. Supersede the decision to make a different call.
+
 decision_policies:
   - name: matter_scope_requires_review
     description: Matter statutory-scope judgments are reviewed before downstream impact workflows rely on them.
@@ -591,6 +647,15 @@ decision_policies:
     effect: require_review
 
 quality_checks:
+  - matter_action_decisions_have_matter:
+      cardinality:
+        entity: MatterActionDecision
+        relationship: matter_action_decision_for_matter
+        direction: out
+        min: 1
+        max: 1
+      description: Every matter-action decision should govern exactly one matter.
+      severity: error
   - opinions_have_court:
       cardinality:
         entity: Opinion

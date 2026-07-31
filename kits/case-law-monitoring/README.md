@@ -283,10 +283,11 @@ flowchart LR
   entity_Judge["Judge"]
   entity_LegalIssue["Legal Issue"]
   entity_Matter["Matter"]
+  entity_MatterActionDecision["Matter Action Decision"]
   entity_Opinion["Opinion"]
   entity_Statute["Statute"]
   entity_WorkItem["Work Item"]
-  class entity_Argument,entity_CaseOutcome,entity_Client,entity_Court,entity_Deadline,entity_Filing,entity_Judge,entity_LegalIssue,entity_Matter,entity_Opinion,entity_Statute canonicalEntity
+  class entity_Argument,entity_CaseOutcome,entity_Client,entity_Court,entity_Deadline,entity_Filing,entity_Judge,entity_LegalIssue,entity_Matter,entity_MatterActionDecision,entity_Opinion,entity_Statute canonicalEntity
   class entity_Holding governedEntity
   class entity_Actor,entity_WorkItem baseEntity
 
@@ -295,6 +296,8 @@ flowchart LR
   entity_Argument -- "Argument In Matter" --> entity_Matter
   entity_Argument -- "Argument Raises Issue" --> entity_LegalIssue
   entity_Filing -- "Filing In Matter" --> entity_Matter
+  entity_MatterActionDecision -- "Matter Action Decision Considers Opinion" --> entity_Opinion
+  entity_MatterActionDecision -- "Matter Action Decision For Matter" --> entity_Matter
   entity_Matter -- "Matter For Client" --> entity_Client
   entity_Matter -- "Matter Has Deadline" --> entity_Deadline
   entity_Matter -- "Matter In Jurisdiction" --> entity_Court
@@ -318,8 +321,8 @@ flowchart LR
   entity_Opinion -. "Opinion Creates Work Item" .-> entity_WorkItem
   entity_Opinion -. "Opinion Has Holding" .-> entity_Holding
   entity_Opinion -. "Opinion Treats Opinion" .-> entity_Opinion
-  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 15,16,17,18,19,20,21,22,23,24 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 17,18,19,20,21,22,23,24,25,26 stroke:#e74c3c,stroke-width:2px
 ```
 
 **Diagram legend:** blue node = canonical entity (deterministic writes); orange node = governed entity (enters via proposal/review); dashed grey node = base-kit entity shown for seam context; solid edge = deterministic relationship; dotted edge = governed relationship.
@@ -338,6 +341,7 @@ flowchart LR
 | `Judge` | `judge_id: string (pk)`, `name: string?`, `court_hint: string?` | Judge, panel member, or adjudicator associated with an opinion. |
 | `LegalIssue` | `issue_id: string (pk)`, `name: string?`, `practice_area: string?`, `description: string?` | Practice-specific legal issue or doctrine tracked by the firm. |
 | `Matter` | `matter_id: string (pk)`, `name: string?`, `matter_type: matter_type?`, `status: matter_status?`, `jurisdiction: string?` | Firm matter, pending case, investigation, deal, or representation that legal developments may affect. |
+| `MatterActionDecision` | `action_decision_id: string (pk)`, `title: string?`, `status: matter_action_decision_status?`, `outcome_tracking: legal_outcome_tracking_mode?`, `action: matter_action?`, `rationale: string?` | A reviewed operational response to a legal development affecting one matter. This records what the team chose to do, not whether the legal conclusion was objectively correct. Measurable responses must commit to their resolution contract before acceptance. |
 | `Opinion` | `opinion_id: string (pk)`, `case_name: string?`, `citation: string?`, `docket_number: string?`, `date_filed: date?`, `jurisdiction: string?`, `precedential_status: precedential_status?`, `source_url: string?` | Published opinion, order, or precedential authority in the monitored corpus (CourtListener-sourced). |
 | `Statute` | `statute_id: string (pk)`, `title: string?`, `section: string?`, `jurisdiction: string?`, `topic: string?` | Statute, regulation, rule, or doctrinal source interpreted by opinions and relevant to matters. |
 
@@ -353,6 +357,9 @@ flowchart LR
 | `deadline_type` | filing, response, discovery, hearing, statute_of_limitations, client_update |
 | `filing_type` | complaint, motion, brief, order, notice, letter, memo |
 | `holding_type` | rule, exception, application, distinction, procedural |
+| `legal_outcome_tracking_mode` | required, not_applicable |
+| `matter_action` | update_brief, notify_client, change_strategy, take_no_action |
+| `matter_action_decision_status` | proposed, accepted, rejected |
 | `matter_status` | active, stayed, closed, monitoring |
 | `matter_type` | litigation, investigation, advisory, transaction, regulatory |
 | `outcome_result` | won, lost, settled, dismissed, default_judgment, withdrawn, moot |
@@ -898,7 +905,10 @@ Called by workflow `refresh_stale_deadlines`, step `sweep`:
 <!-- CRUXIBLE:END governance-table -->
 
 <!-- CRUXIBLE:BEGIN mutation-guards -->
-No mutation guards declared.
+| Guard | Fires On | Refused Unless | Message |
+| --- | --- | --- | --- |
+| `matter_action_acceptance_requires_contract` | `MatterActionDecision.status` -> `accepted` | requires_resolution_contract | This matter action tracks its outcome, so it cannot be accepted until a resolution contract commits to what would count as success. Open one against this decision, then accept it. If the action has no honest measurable result, choose not_applicable and explain why.<br> |
+| `matter_action_outcome_tracking_immutable` | any change to `MatterActionDecision.outcome_tracking` | the property is unchanged (immutable after create; creates set it freely) | Whether a matter action commits to a measurable outcome is fixed when proposed. Supersede the decision to make a different call.<br> |
 <!-- CRUXIBLE:END mutation-guards -->
 
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
@@ -944,6 +954,7 @@ No mutation guards declared.
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
+| Open Matter Action Decisions | collection | Matter Action Decision | live |  | Matter-action decisions still awaiting review. Decisions with outcome_tracking required also need an eligible resolution contract before acceptance. |
 | Upcoming Deadlines | collection | Deadline | live |  | All live deadlines still awaiting action, soonest first — the practice-wide docket view. |
 
 ### Judge
@@ -967,7 +978,7 @@ No mutation guards declared.
 | Authorities In Matter Jurisdiction | traversal | Opinion | live | Matter In Jurisdiction (Outgoing) -> Opinion From Court (Incoming) | Opinions issued by courts in the matter's jurisdiction. |
 | Case Outcomes For Matter | traversal | Case Outcome | live | Outcome Of Matter (Incoming) | Case outcomes recorded for this matter. |
 | Filing Response Obligations For Matter | traversal | Filing | reviewable | Filing Requires Response (Incoming) | Filings judged to require a response or deadline for this matter. |
-| Matter Context | traversal | Any Entity | reviewable | Filing In Matter \| Matter For Client \| Matter In Jurisdiction \| Matter Has Deadline \| Argument In Matter \| Outcome Of Matter \| Matter Owned By Actor \| Work Item Targets Matter \| Matter Turns On Statute \| Opinion Affects Matter \| Filing Requires Response (Both) | Everything attached to a matter: client, owner, arguments, scope, impacts, filings, deadlines, work, outcomes. all_adjacent expands against the composed config, so base seam edges are traversed too. |
+| Matter Context | traversal | Any Entity | reviewable | Filing In Matter \| Matter For Client \| Matter In Jurisdiction \| Matter Has Deadline \| Argument In Matter \| Outcome Of Matter \| Matter Owned By Actor \| Work Item Targets Matter \| Matter Action Decision For Matter \| Matter Turns On Statute \| Opinion Affects Matter \| Filing Requires Response (Both) | Everything attached to a matter: client, owner, arguments, scope, impacts, filings, deadlines, work, outcomes. all_adjacent expands against the composed config, so base seam edges are traversed too. |
 | Matter Statutory Scope | traversal | Statute | reviewable | Matter Turns On Statute (Outgoing) | Statutes and doctrines within the matter's accepted or proposed legal scope. |
 | Negative Treatment For Cited Authorities | traversal | Opinion | reviewable | Argument In Matter (Incoming) -> Argument Cites Opinion (Outgoing) -> Opinion Treats Opinion (Incoming) | New opinions that negatively treat authorities cited by this matter's arguments, newest treatment first. follows is not negative treatment. |
 | Statute Interpretations For Matter | traversal | Opinion | reviewable | Matter Turns On Statute (Outgoing) -> Holding Interprets Statute (Incoming) -> Opinion Has Holding (Incoming) | Opinions whose holdings interpret statutes in this matter's scope. |
@@ -980,10 +991,10 @@ No mutation guards declared.
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Matters Impacted By Opinion | traversal | Matter | reviewable | Opinion Affects Matter (Outgoing) | Matters judged affected by an opinion, pending judgments visible. |
-| Opinion Context | traversal | Any Entity | reviewable | Opinion From Court \| Opinion Decided By Judge \| Opinion Cites Opinion \| Argument Cites Opinion \| Opinion Creates Work Item \| Opinion Has Holding \| Opinion Treats Opinion \| Opinion Affects Matter (Both) | Court, judges, citations, treatments, holdings, impacts, and created work for one opinion. |
+| Opinion Context | traversal | Any Entity | reviewable | Opinion From Court \| Opinion Decided By Judge \| Opinion Cites Opinion \| Argument Cites Opinion \| Opinion Creates Work Item \| Matter Action Decision Considers Opinion \| Opinion Has Holding \| Opinion Treats Opinion \| Opinion Affects Matter (Both) | Court, judges, citations, treatments, holdings, impacts, and created work for one opinion. |
 | Opinion Work Items | traversal | Work Item | reviewable | Opinion Creates Work Item (Outgoing) | Review obligations created by this opinion. |
 
-Plus 18 queries inherited from the base kit — see its README.
+Plus 20 queries inherited from the base kit — see its README.
 <!-- CRUXIBLE:END query-catalog -->
 
 ## Quality Rules
@@ -1000,6 +1011,7 @@ No configured constraints.
 | `case_outcomes_have_matter` | Cardinality | Case Outcome -> Outcome Of Matter (out) | Error | min `1`, max `1` |
 | `deadlines_have_matter` | Cardinality | Deadline -> Matter Has Deadline (in) | Warning | min `1` |
 | `holdings_belong_to_an_opinion` | Cardinality | Holding -> Opinion Has Holding (in) | Warning | min `1` |
+| `matter_action_decisions_have_matter` | Cardinality | Matter Action Decision -> Matter Action Decision For Matter (out) | Error | min `1`, max `1` |
 | `matter_impacts_have_level` | Property | Opinion Affects Matter.impact_level | Error | Required |
 | `matters_have_one_client` | Cardinality | Matter -> Matter For Client (out) | Warning | min `1`, max `1` |
 | `matters_have_owner` | Cardinality | Matter -> Matter Owned By Actor (out) | Warning | min `1` |

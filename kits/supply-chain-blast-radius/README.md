@@ -127,6 +127,7 @@ flowchart LR
   entity_BufferAssessment["Buffer Assessment"]
   entity_Component["Component"]
   entity_Incident["Incident"]
+  entity_IncidentResponseDecision["Incident Response Decision"]
   entity_InventoryPosition["Inventory Position"]
   entity_Location["Location"]
   entity_Product["Product"]
@@ -134,7 +135,7 @@ flowchart LR
   entity_Shipment["Shipment"]
   entity_Supplier["Supplier"]
   entity_WorkItem["Work Item"]
-  class entity_Assembly,entity_BufferAssessment,entity_Component,entity_Incident,entity_InventoryPosition,entity_Location,entity_Product,entity_Shipment,entity_Supplier canonicalEntity
+  class entity_Assembly,entity_BufferAssessment,entity_Component,entity_Incident,entity_IncidentResponseDecision,entity_InventoryPosition,entity_Location,entity_Product,entity_Shipment,entity_Supplier canonicalEntity
   class entity_Risk,entity_WorkItem baseEntity
 
   %% Deterministic canonical relationships
@@ -146,6 +147,7 @@ flowchart LR
   entity_Component -- "Component Buffer Assessment" --> entity_BufferAssessment
   entity_Component -- "Component Inventory Position" --> entity_InventoryPosition
   entity_Component -- "Component Part Of Assembly" --> entity_Assembly
+  entity_IncidentResponseDecision -- "Incident Response Decision For Incident" --> entity_Incident
   entity_InventoryPosition -- "Inventory Position Location" --> entity_Location
   entity_Product -- "Product Buffer Assessment" --> entity_BufferAssessment
   entity_Product -- "Product In Shipment" --> entity_Shipment
@@ -159,8 +161,8 @@ flowchart LR
   entity_Incident -. "Incident Impacts Component" .-> entity_Component
   entity_Incident -. "Incident Impacts Supplier" .-> entity_Supplier
   entity_Risk -. "Risk Attaches To Supplier" .-> entity_Supplier
-  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 15,16,17,18 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 16,17,18,19 stroke:#e74c3c,stroke-width:2px
 ```
 
 **Diagram legend:** blue node = canonical entity (deterministic writes); dashed grey node = base-kit entity shown for seam context; solid edge = deterministic relationship; dotted edge = governed relationship.
@@ -173,6 +175,7 @@ flowchart LR
 | `BufferAssessment` | `buffer_assessment_id: string (pk)`, `item_type: buffer_item_type?`, `item_id: string?`, `product_id: string?`, `bom_variant_id: string?`, `net_available: float?`, `required_per_unit: float?`, `open_demand_units: float?`, `estimated_consumption_rate: float?`, `rate_period: rate_period?`, `coverage_duration: float?`, `coverage_unit: duration_unit?`, `horizon_duration: float?`, `horizon_unit: duration_unit?`, `buffer_state: buffer_state?`, `unit_of_measure: string?`, `as_of: date?`, `rationale: string?` | Reusable coverage assessment of whether inventory covers expected demand for an item in a product/BOM context. |
 | `Component` | `component_id: string (pk)`, `name: string?`, `component_kind: component_kind?`, `manufacturer: string?`, `mpn: string?`, `revision: string?`, `lifecycle_status: catalog_status?`, `criticality: criticality?`, `category: string?` | Raw material or discrete part that rolls up into assemblies. manufacturer/mpn carry the real-world part identity from open-hardware BOMs; the Supplier edge carries who we buy it from. |
 | `Incident` | `incident_id: string (pk)`, `title: string?`, `severity: incident_severity?`, `scope_type: incident_scope_type?`, `scope_id: string?`, `status: incident_status?`, `reported_at: date?`, `closed_at: date?`, `summary: string?` | Supplier-side disruption or geography-level supply event. |
+| `IncidentResponseDecision` | `response_decision_id: string (pk)`, `title: string?`, `status: incident_response_decision_status?`, `outcome_tracking: supply_outcome_tracking_mode?`, `action: incident_response_action?`, `rationale: string?` | A reviewed operational response to one supply-chain incident. The action is proposed before it becomes accepted; when outcome_tracking is required, acceptance must activate a resolution contract that already states what observable result will count. |
 | `InventoryPosition` | `inventory_position_id: string (pk)`, `item_type: inventory_item_type?`, `item_id: string?`, `location_id: string?`, `quantity_on_hand: float?`, `quantity_allocated: float?`, `net_available: float?`, `unit_of_measure: string?`, `as_of: date?` | Time-stamped inventory evidence for an item at a location. |
 | `Location` | `location_id: string (pk)`, `name: string?`, `location_type: location_type?`, `geography: string?` | Plant, warehouse, supplier, or in-transit location holding inventory. |
 | `Product` | `product_id: string (pk)`, `sku: string?`, `name: string?`, `lifecycle_status: catalog_status?` | Finished good shipped to customers. |
@@ -187,15 +190,18 @@ flowchart LR
 | `buffer_state` | no_buffer, partial_buffer, sufficient_buffer, unknown |
 | `catalog_status` | active, deprecated, obsolete |
 | `component_kind` | raw_material, part |
-| `criticality` | critical, standard, low |
+| `criticality` | low, standard, critical |
 | `duration_unit` | days, weeks, months |
+| `incident_response_action` | hold_shipments, activate_alternate, expedite_inventory, monitor |
+| `incident_response_decision_status` | proposed, accepted, rejected |
 | `incident_scope_type` | supplier, geography |
-| `incident_severity` | critical, high, medium, low |
+| `incident_severity` | low, medium, high, critical |
 | `incident_status` | open, monitoring, closed |
 | `inventory_item_type` | component, assembly, product |
 | `location_type` | plant, warehouse, supplier, in_transit |
 | `rate_period` | day, week, month |
 | `shipment_status` | in_flight, delivered, cancelled |
+| `supply_outcome_tracking_mode` | required, not_applicable |
 <!-- CRUXIBLE:END schema-catalog -->
 
 ## Workflows
@@ -561,7 +567,10 @@ Called by workflow `build_seed_state`, step `seed`:
 <!-- CRUXIBLE:END governance-table -->
 
 <!-- CRUXIBLE:BEGIN mutation-guards -->
-No mutation guards declared.
+| Guard | Fires On | Refused Unless | Message |
+| --- | --- | --- | --- |
+| `incident_response_acceptance_requires_contract` | `IncidentResponseDecision.status` -> `accepted` | requires_resolution_contract | This incident response tracks its outcome, so it cannot be accepted until a resolution contract commits to what would count as success. Open one against this decision, then accept it. If the response has no honest measurable result, choose not_applicable and explain why.<br> |
+| `incident_response_outcome_tracking_immutable` | any change to `IncidentResponseDecision.outcome_tracking` | the property is unchanged (immutable after create; creates set it freely) | Whether an incident response commits to a measurable outcome is fixed when proposed. Supersede the decision to make a different call.<br> |
 <!-- CRUXIBLE:END mutation-guards -->
 
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
@@ -587,6 +596,13 @@ No mutation guards declared.
 | Assembly Impacting Incidents | traversal | Incident | reviewable | Incident Impacts Assembly (Incoming) | Incidents judged to impact this assembly directly. |
 | Assembly Inventory Positions | traversal | Inventory Position | live | Assembly Inventory Position (Outgoing) | Inventory positions for this assembly. |
 
+### Collection Query
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Open Incident Impacts | collection | Incident Impacts Supplier | accepted |  | Suppliers impacted by open incidents through accepted impact edges -- the standing blast-radius work queue. Judgment-admitted impacts only; pending proposals stay in the review queue. |
+| Open Incident Response Decisions | collection | Incident Response Decision | live |  | Incident-response decisions still awaiting review. Decisions with outcome_tracking required also need an eligible resolution contract before acceptance. |
+
 ### Component
 
 | Query | Mode | Returns | State | Traversal | Purpose |
@@ -599,7 +615,7 @@ No mutation guards declared.
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Incident Component Exposed Products | traversal | Product | reviewable | Incident Impacts Component (Outgoing) -> Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted component impacts and the component/assembly BOM hierarchy. This is context for an agentic product or shipment judgment, not governed graph state. |
-| Incident Context | traversal | Any Entity | reviewable | Work Item Addresses Incident \| Incident Impacts Supplier \| Incident Impacts Component \| Incident Impacts Assembly (Both) | The incident war room — impacted suppliers/components/assemblies, response work, and anything else adjacent in the composed graph. |
+| Incident Context | traversal | Any Entity | reviewable | Work Item Addresses Incident \| Incident Response Decision For Incident \| Incident Impacts Supplier \| Incident Impacts Component \| Incident Impacts Assembly (Both) | The incident war room — impacted suppliers/components/assemblies, response work, and anything else adjacent in the composed graph. |
 | Incident Direct Assembly Exposed Products | traversal | Product | reviewable | Incident Impacts Assembly (Outgoing) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted direct assembly impacts where the assembly is a top-level product assembly. |
 | Incident Exposed Assembly Context | traversal | Assembly | reviewable | Incident Impacts Supplier \| Incident Impacts Component \| Incident Impacts Assembly (Outgoing) -> Supplier Supplies Assembly \| Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) | Starting from an incident, derive assembly context exposed by accepted supplier, component, or direct assembly impacts through supply and BOM structure. This is a query/view, not governed state. The supply/BOM hop is required false so a directly impacted assembly is itself included even when it has no parent assembly (same pattern as incident_exposed_shipments). |
 | Incident Exposed Shipments | traversal | Shipment | reviewable | Incident Impacts Component \| Incident Impacts Assembly (Outgoing) -> Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) -> Product In Shipment (Outgoing) | Starting from an incident, derive outbound shipments exposed through accepted component and direct assembly impacts, the component/assembly BOM hierarchy, exposed finished products, and the product_in_shipment fulfillment edge. This is the terminal (shipment) derived exposure surface — context for an agentic shipment judgment, not governed graph state. No direct incident-shipment edge is created. The BOM-up hop is required false so directly impacted top-level assemblies reach products and shipments without an intermediate BOM rollup. |
@@ -637,7 +653,7 @@ No mutation guards declared.
 | Supplier Supplied Assemblies | traversal | Assembly | live | Supplier Supplies Assembly (Outgoing) | Assemblies this supplier supplies directly. |
 | Supplier Supplied Components | traversal | Component | live | Supplier Supplies Component (Outgoing) | Components this supplier is qualified to supply. |
 
-Plus 18 queries inherited from the base kit — see its README.
+Plus 20 queries inherited from the base kit — see its README.
 <!-- CRUXIBLE:END query-catalog -->
 
 ## Quality Rules
@@ -654,6 +670,7 @@ No configured constraints.
 | `components_have_kind` | Property | Component.component_kind | Error | Required |
 | `components_have_supplier` | Cardinality | Component -> Supplier Supplies Component (in) | Warning | min `1` |
 | `critical_components_have_redundancy` | Cardinality | Component -> Supplier Supplies Component (in) | Warning | min `2` |
+| `incident_response_decisions_have_incident` | Cardinality | Incident Response Decision -> Incident Response Decision For Incident (out) | Error | min `1`, max `1` |
 | `products_have_assembly_bom` | Cardinality | Product -> Assembly Part Of Product (in) | Error | min `1` |
 | `supplier_risk_attachments_have_basis` | Property | Risk Attaches To Supplier.impact_basis | Warning | Non Empty |
 

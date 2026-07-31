@@ -44,6 +44,9 @@ enums:
   bom_depth_bucket: [direct, tier_2, tier_3_plus]
   proposal_verdict: [support, unsure, contradict]
   product_exposure_basis: [component_bom_path, direct_assembly_bom_path, mixed_paths]
+  incident_response_decision_status: [proposed, accepted, rejected]
+  incident_response_action: [hold_shipments, activate_alternate, expedite_inventory, monitor]
+  supply_outcome_tracking_mode: [required, not_applicable]
 
 entity_types:
   Supplier:
@@ -155,6 +158,20 @@ entity_types:
       closed_at: date?
       summary: string?
 
+  IncidentResponseDecision:
+    description: >
+      A reviewed operational response to one supply-chain incident. The action
+      is proposed before it becomes accepted; when outcome_tracking is
+      required, acceptance must activate a resolution contract that already
+      states what observable result will count.
+    id: response_decision_id
+    properties:
+      title: string indexed
+      status: enum incident_response_decision_status
+      outcome_tracking: enum supply_outcome_tracking_mode
+      action: enum incident_response_action
+      rationale: string
+
 relationships:
   # --- Sourcing (deterministic seed state) ---
   - supplier_supplies_component: Supplier -> Component  # Qualified sourcing path; capacity, posture, and timing live on the edge.
@@ -220,6 +237,7 @@ relationships:
 
   # --- Operating-layer seams ---
   - work_item_addresses_incident: WorkItem -> Incident  # Work item responds to or mitigates an incident.
+  - incident_response_decision_for_incident: IncidentResponseDecision -> Incident  # The incident whose operational response this decision governs.
   - risk_attaches_to_supplier: Risk -> Supplier  # Governed: an operational risk attaches to a supplier.
     proposal_policy: standard_supply
     write_policy: proposal_only
@@ -265,6 +283,23 @@ relationships:
       auto_resolve_when: all_support
 
 named_queries:
+  open_incident_response_decisions:
+    explicit: true
+    mode: collection
+    description: >
+      Incident-response decisions still awaiting review. Decisions with
+      outcome_tracking required also need an eligible resolution contract
+      before acceptance.
+    returns: IncidentResponseDecision
+    result_shape: entity
+    dedupe: entity
+    where:
+      result.properties.status:
+        eq: proposed
+    order_by:
+      - by: $result.entity_id
+        direction: asc
+
   open_incident_impacts:
     explicit: true
     mode: collection
@@ -650,7 +685,36 @@ named_queries:
       - relationship: incident_impacts_assembly
         direction: incoming
 
+mutation_guards:
+  - incident_response_acceptance_requires_contract:
+      when: IncidentResponseDecision.status -> accepted
+      where:
+        candidate.properties.outcome_tracking:
+          eq: required
+      require:
+        resolution_contract: true
+      message: >
+        This incident response tracks its outcome, so it cannot be accepted
+        until a resolution contract commits to what would count as success.
+        Open one against this decision, then accept it. If the response has no
+        honest measurable result, choose not_applicable and explain why.
+
+  - incident_response_outcome_tracking_immutable:
+      freeze: IncidentResponseDecision.outcome_tracking
+      message: >
+        Whether an incident response commits to a measurable outcome is fixed
+        when proposed. Supersede the decision to make a different call.
+
 quality_checks:
+  - incident_response_decisions_have_incident:
+      cardinality:
+        entity: IncidentResponseDecision
+        relationship: incident_response_decision_for_incident
+        direction: out
+        min: 1
+        max: 1
+      description: Every response decision should govern exactly one incident.
+      severity: error
   - components_have_supplier:
       cardinality:
         entity: Component
