@@ -5,7 +5,7 @@ description: Create an overlay from a published reference state, use the inherit
 
 # Overlay And Fit
 
-Use this skill when the user wants to start from a published reference state and fit it to a local use case with the least friction.
+Use this skill when the user wants to start from a published reference state and fit it to a local use case with the least friction. You are extending a published Crux with a local overlay, not authoring one from scratch.
 
 This is the reference-state path, not the greenfield path. Start from the inherited state, use the applied `kit` if one exists, and only add local config or code when the current overlay is not enough.
 

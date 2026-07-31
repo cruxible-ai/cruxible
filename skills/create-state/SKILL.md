@@ -6,6 +6,10 @@ description: Create a new Cruxible state from raw domain data through staged gra
 # Create State
 
 Use this skill when a user wants to turn new data into a usable Cruxible state.
+You are authoring a **Crux** — the governed, executable artifact of the user's
+domain knowledge — so treat every stage below as artifact construction, not
+config editing: what you produce will be reviewed, versioned, and relied on by
+other agents.
 
 If the source files are messy, run `prepare-data` first.
 

@@ -2,7 +2,9 @@
 
 Cruxible is one shared truth for humans and AI agents: a typed
 state layer where every write is governed before it's accepted and every
-answer comes back with a receipt. These docs are built from the
+answer comes back with a receipt. The artifact it produces — your domain's
+ontology, governed claims, queries, and Procedures as one versioned unit — is
+a **Crux** ([Concepts](concepts.md)). These docs are built from the
 repository's `docs/` directory at the documented commit — what you read
 here is what the code ships.
 

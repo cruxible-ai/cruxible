@@ -1,6 +1,7 @@
 # Quickstart
 
-Get from install to a governed kit-backed state model in a few minutes.
+Get from install to your first Crux — a governed, kit-backed state model — in
+a few minutes.
 
 The recommended `0.2` shape is a local Cruxible daemon, launched with
 `cruxible server start`. The daemon

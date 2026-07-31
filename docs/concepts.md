@@ -10,6 +10,11 @@ A **state model** is the governed universe exposed to an agent: entity types,
 relationships, workflows, named queries, review state, receipts, traces, and
 outcomes.
 
+Taken as one versioned unit — the ontology, its governed claims, queries,
+Procedures, and the receipts that explain them — that artifact is a **Crux**.
+The runtime's own vocabulary stays mechanical (instance, state, config); *Crux*
+names the thing you author, review, and ship.
+
 Cruxible state is not private agent memory. Agent memory is prompt-local,
 heuristic, and useful for continuity. Cruxible state is domain-centric,
 explicit, reviewable, queryable, and intended to be operationally trusted.

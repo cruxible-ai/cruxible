@@ -5,7 +5,7 @@ description: Review an existing state, inspect evaluation, queries, governed gro
 
 # Review State
 
-Use this skill on an existing state when the goal is diagnosis, quality review, or prioritizing follow-up work.
+Use this skill on an existing state — the user's Crux — when the goal is diagnosis, quality review, or prioritizing follow-up work.
 
 This skill is for:
 

@@ -5,7 +5,7 @@ description: Classify an internal catalog against a standard taxonomy at scale u
 
 # Classification At Scale
 
-Classify entities from an internal catalog against a standard taxonomy using deterministic providers, relationship-local signal sources, batch group review, and a trust flywheel. LLM reasoning is limited to writing configs, handling ambiguous tails, and critiquing results.
+Classify entities from an internal catalog against a standard taxonomy using deterministic providers, relationship-local signal sources, batch group review, and a trust flywheel. LLM reasoning is limited to writing configs, handling ambiguous tails, and critiquing results. The accepted mappings become governed claims in the user's Crux.
 
 ## When to use this skill
 

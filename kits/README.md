@@ -1,7 +1,7 @@
 # Cruxible Kits
 
-Kits are maintained Cruxible state models intended to be used, overlaid, and
-iterated with agents. Each kit includes a YAML config and a README with generated
+Kits are maintained Cruxible state models — reusable templates for a Crux —
+intended to be used, overlaid, and iterated with agents. Each kit includes a YAML config and a README with generated
 views for the ontology, governed relationships, workflows, and named queries.
 
 ## Maintained Kits
