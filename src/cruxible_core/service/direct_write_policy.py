@@ -85,7 +85,10 @@ TOKEN_MINT_SOURCE = "token_mint"
 # feedback accept, and a proposal_only type could be made live that way with no
 # direct write at all (wi-feedback-approval-rail). ``reject`` is NOT
 # covered -- it moves an edge OUT of live state, which is the direction the
-# kill-switch wants, and refusing it would strand pending edges.
+# kill-switch wants, and refusing it would strand pending edges. The switch is
+# NOT a total freeze: the governed promotion rails (``group_resolve``,
+# ``workflow_apply``) still mint live accepted edges with it on -- that is the
+# proposal rail the switch forces traffic onto, not a gap in it.
 _ENV_REFUSE_DIRECT_WRITES = "CRUXIBLE_REFUSE_DIRECT_WRITES"
 
 # Feedback actions that transition an edge INTO accepted state. Both promote the

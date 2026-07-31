@@ -41,7 +41,7 @@ the project's own state instance.
   removal_version}` warning rather than a schema-level unknown-value error; the
   alias never reaches a mutation and is removed in 0.4.0.
   **Migration:** record a doubt with
-  `cruxible attest --stance contradict` (MCP: `cruxible_attest`) — it stores
+  `cruxible attest record --stance contradict` (MCP: `cruxible_attest`) — it stores
   the observation, its evidence refs, and its actor without touching review
   status; adjudicate with `accept`/`reject`/`correct`. Note the tier
   consequence: every remaining feedback action requires `GRAPH_WRITE`, so no
@@ -54,11 +54,13 @@ the project's own state instance.
   `"human"`, and were never reconciled with `actor_context.actor_type`. They were
   not inert: the feedback and outcome profiles require a `reason_code` only for
   non-human writers, so an agent could skip the accountability rule written for
-  it simply by declaring itself a person. Every one of those fields is removed,
-  along with the matching `source` / `proposed_by` / `resolved_by` / `opened_by`
-  parameters on the service functions, the runtime facade, the MCP tools, the
-  HTTP request models, the CLI (`--source`, `--opened-by`), and the client.
-  Readers derive the value from the actor context.
+  it simply by declaring itself a person. Every one of those declarations now
+  carries no signal: the matching `source` / `proposed_by` / `resolved_by` /
+  `opened_by` parameters are dropped from the service functions and the runtime
+  facade outright, while the MCP tools, the HTTP request models, the CLI
+  (`--source`, `--opened-by`), and the client accept them as deprecated inputs
+  that are ignored with a warning through 0.3 (removed 0.4.0 — see
+  *Deprecated*). Readers derive the value from the actor context.
 
   The READ-side field names survive as DEPRECATED derived projections (see
   *Deprecated* below): `FeedbackRecord.source`, `OutcomeRecord.source`,

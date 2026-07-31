@@ -1,4 +1,4 @@
-"""Hidden HTTP parity routes for claim attestations."""
+"""Public HTTP routes for claim attestations (contract as of 0.3.0)."""
 
 from __future__ import annotations
 

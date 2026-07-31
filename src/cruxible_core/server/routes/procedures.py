@@ -1,4 +1,4 @@
-"""Internal HTTP transport routes for governed procedure surfaces."""
+"""Public HTTP routes for governed procedure surfaces (contract as of 0.3.0)."""
 
 from __future__ import annotations
 

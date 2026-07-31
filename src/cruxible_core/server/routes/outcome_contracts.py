@@ -1,4 +1,4 @@
-"""Hidden HTTP parity routes for outcome resolution contracts."""
+"""Public HTTP routes for outcome resolution contracts (contract as of 0.3.0)."""
 
 from __future__ import annotations
 
