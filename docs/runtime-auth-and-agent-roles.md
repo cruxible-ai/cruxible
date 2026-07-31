@@ -138,6 +138,41 @@ export CRUXIBLE_SERVER_BEARER_TOKEN=<agent-runtime-token>
 Then server-mode CLI, MCP, and client calls can reuse that credential without
 printing it in prompts, shell history, or logs.
 
+### Where that environment lives: orchestrator or harness
+
+There are two workable custody topologies, matching two harness shapes.
+
+**Orchestrator-managed.** One long-lived manager agent (a Claude Code session,
+for example) exports the block above in its own shell, works while subagents
+run in the background, and controls which credential any dispatched work sees.
+Custody stays with the manager; role separation follows the dispatch boundary.
+This is the shape the rest of this document assumes.
+
+**Harness-configured.** A synchronous harness (Codex and most single-agent
+CLIs) runs each task to completion in its own session — there is no manager
+process to inherit an environment from, and nothing returns for a prompt while
+work runs. Configure the credential in the harness itself so every session
+starts authenticated: put the three variables in the `env` block of the
+harness's Cruxible MCP server entry (see the config examples in the
+[Quickstart](quickstart.md#point-an-agent-at-cruxible)), and — if the agent
+also drives the `cruxible` CLI through its shell — in whatever environment the
+harness gives shell commands (its settings' env mechanism, or a profile file
+it sources). The MCP `env` block covers only the MCP process, not the shell.
+
+Three rules keep harness-configured credentials honest:
+
+- **One harness, one role credential.** A token in the harness config makes
+  every session in that harness act as that role. Run reviewer work in a
+  separately configured harness (or through an orchestrator) — one harness
+  holding both writer and reviewer tokens collapses the independence the
+  [Agent Role Pattern](#agent-role-pattern) exists to enforce.
+- **A config file carrying a token is credential material.** Same custody
+  rules as above: keep it out of repositories, restrict it to the OS user
+  (`chmod 600`), rotate on suspected leak.
+- **Attribution and cache scoping come free.** Every write from the harness is
+  attributed to its credential, and the agent-local working set is
+  credential-scoped, so two harnesses on one host never share caches.
+
 ## Actor Identity
 
 For auth-on runtime credentials, Cruxible derives actor identity from the credential:

@@ -183,6 +183,13 @@ CRUXIBLE_MODE = "governed_write"
 CRUXIBLE_SERVER_URL = "http://127.0.0.1:8100"
 ```
 
+With auth on, add `CRUXIBLE_INSTANCE_ID` and `CRUXIBLE_SERVER_BEARER_TOKEN` to
+the same `env` blocks so every session starts authenticated as its role — the
+natural shape for synchronous harnesses that run each task in their own
+session. See [Agent Environment](runtime-auth-and-agent-roles.md#agent-environment)
+for choosing between harness-configured and orchestrator-managed credentials,
+and treat any config file carrying a token as credential material.
+
 If the agent should not have direct state access, keep
 `CRUXIBLE_SERVER_STATE_DIR` outside the workspace and install only
 `cruxible-client` in the agent environment. See
