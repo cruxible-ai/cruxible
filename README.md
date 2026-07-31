@@ -21,11 +21,43 @@
   <a href="https://cruxible.ai/skills">skills</a>
 </p>
 
-**Cruxible is a governed state engine for AI agents.** It turns a YAML
-ontology into a typed knowledge graph with write rules enforced outside
-the model.
+**Cruxible is a governed state engine for AI agents.** It produces a **Crux**:
+an executable artifact of your domain knowledge with a code-like lifecycle —
+typed, reviewed, versioned, auditable, and tested against outcomes.
 
-Declare the model and its rules:
+**The problem.** Code is typed, reviewed, and versioned; it executes
+deterministically, and tests verify it in seconds. The judgments, observations,
+reusable actions, and decisions agents produce land in prose — which doesn't
+execute, has no governed path from proposed to trusted, and puts no bounds on
+what gets repeated. Real decisions resolve over weeks or months, long after
+anything is still tracking them. And prose can't serve as shared ground: an
+organization running many agents needs them all acting on the same current
+claims, rules, and reviewed ways of acting, not on each agent's own reading of
+the documents.
+
+**How it works.** You declare the domain ontology and its rules in YAML.
+Reproducible pipelines turn trusted source data into typed state. When an agent
+or human makes a judgment, Cruxible can require evidence and review before the
+claim becomes live. When an agent learns a way of acting that works, it can
+propose that too: a Procedure passes through the same review cycle as a claim
+and runs only within its declared inputs, preconditions, and limits. A decision
+can be required to declare, before it is accepted, what result will count as
+success; the outcome contract comes due on its own schedule and records what
+reality said. Queries and actions run against the same live state, and invalid
+changes are refused. No LLM runs inside the engine.
+
+**Why use it.** Every agent works against the same live claims and can invoke
+the same reviewed, bounded Procedures. Invalid writes and actions are refused,
+contradictions remain visible until resolved, decisions can be checked against
+what happened, and computed answers, mutations, and action runs carry receipts
+that explain them. Snapshots capture exact config, lock, graph state, and
+procedure definitions at a revision for comparison, branching, and transfer;
+backups preserve the complete audit stores for recovery. The whole artifact
+outlives any single session or model.
+
+One small example: a supplier inventory and incident feed build entities from
+pinned sources. An agent concludes that an incident impacts a supplier, but the
+relationship is declared a judgment call:
 
 ```yaml
 entity_types:
@@ -47,13 +79,13 @@ named_queries:
     mode: traversal
     entry_point: Incident
     returns: Supplier
-    traversal:
+    traverse:
       - relationship: incident_impacts_supplier
         direction: outgoing
 ```
 
-Agents write; the rules run, not the prompt. The refused write, the
-review that admits the judgment, and the receipted answer:
+Now the policy is part of the runtime. The direct write is refused, review
+admits the judgment, and a query computes its consequence:
 
 ```diff
   $ cruxible relationship add incident_impacts_supplier \
@@ -72,91 +104,127 @@ review that admits the judgment, and the receipted answer:
 +   "receipt_id": "RCP-2f61a90c84d3" }
 ```
 
-This repository gates its own releases with Cruxible: a push to main is
-refused until state pins an approved review
-([how](#the-rules-run)).
+The source facts came through deterministic ingest; the inferred edge entered
+through review. Queries can now traverse its consequences, guards and gates can
+act on it, and later observations can contradict it without silently rewriting
+history.
+
+<details>
+<summary><b>Continue through a learned action, measured outcome, and correction</b></summary>
+
+The complete lifecycle, abbreviated:
+
+```text
+INGEST       pinned feeds -> Incident, Supplier, Product, and Shipment state
+CLAIM        incident_impacts_supplier: pending -> live (evidence + reviewer)
+QUERY        incident_impacted_suppliers -> [S-CN-DG-HARNESS]
+
+PROCEDURE    hold_exposed_shipments v1: pending -> live (config + lock pinned)
+DECISION     hold exposed shipments; success = zero exposed shipments released
+RUN          bounded provider calls complete -> receipt RCP-run-...
+OUTCOME      pinned query at check time -> satisfied -> receipt RCP-outcome-...
+
+OBSERVATION  new evidence says the supplier was outside the incident boundary
+ATTESTATION  contradict incident_impacts_supplier (claim remains live)
+REVIEW       attestation upheld; separate adjudication rejects the claim
+QUERY        incident_impacted_suppliers -> []
+
+SNAPSHOT     exact config + lock + graph state + Procedure definitions captured
+```
+
+The Procedure is immutable once accepted and can call only capabilities the
+operator exported, within its reviewed preconditions and budgets. The outcome
+contract is declared before the decision becomes live and pins how success will
+be measured. The attestation is an append-only observation: resolving it does
+not silently change the claim, so the subsequent rejection is a separate,
+receipted decision. The old claim, observation, and reasoning remain available
+after live query results change.
+
+</details>
+
+Cruxible uses the same boundary itself: this repository refuses a push to main
+until state pins an approved review ([how](#the-rules-run)).
 
 > `pip install cruxible` — the
 > [Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md)
 > goes install to first query; [Get Started](#get-started) below runs the
 > seeded demo world in ~3 minutes, with no model calls or API keys.
 
-No LLM inside the engine: Cruxible is a Python daemon with a CLI and MCP
-server, with state in a SQLite file you own. We call the result **hard state**:
-knowledge the rest of your stack can act on without re-checking it. If
-your team's knowledge currently lives in markdown or a vector store,
-[the comparison section](#why-not-markdown-rag-or-vector-memory) explains
-exactly what changes.
-
-Start permissive, then tighten claim types where being wrong is expensive,
-one `write_policy` line at a time. Authoring skills can draft the ontology
-from your data; you review and refine it as the domain teaches you what
-matters. The model gets stricter where experience proves it should,
-without an ontology team or a rewrite.
-
-## Capabilities
-
-<p align="center">
-  <a href="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_architecture.svg">
-    <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/cruxible_architecture.svg" alt="Cruxible architecture: source systems are pinned as artifacts, workflows propose row-matched claims into domain state, the agent operation layer reviews and mints them, and reads come back as deterministic queries with receipts" width="1000">
-  </a>
-</p>
+## Inside a Crux
 
 <details>
-<summary><b>Model</b> — the ontology is a versioned YAML config, drafted by your agent</summary>
+<summary><b>Model</b> — declare the world and the rules that govern it</summary>
 
-- Entity types, relationships, enums, and queries in one
-  [Terraform-like config](https://github.com/cruxible-ai/cruxible/blob/main/docs/config-reference.md); kits package a model
-  with its rules and procedures, [overlay kits](https://github.com/cruxible-ai/cruxible/blob/main/docs/kit-authoring.md)
-  compose over an upstream base
-- [Authoring skills](https://github.com/cruxible-ai/cruxible/tree/main/skills) draft the model from your
-  source systems and artifacts; you review instead of author
+- Entity types, relationships, enums, contracts, queries, guards, and gates live
+  in one [Terraform-like config](https://github.com/cruxible-ai/cruxible/blob/main/docs/config-reference.md)
+- Kits package a reusable model with its policies, workflows, and providers;
+  [overlay kits](https://github.com/cruxible-ai/cruxible/blob/main/docs/kit-authoring.md)
+  compose domain and operating models without copying them
+- [Authoring skills](https://github.com/cruxible-ai/cruxible/tree/main/skills)
+  help draft the ontology from source systems and artifacts; the operator
+  reviews the contract the runtime will enforce
   ([Modeling State](https://github.com/cruxible-ai/cruxible/blob/main/docs/modeling-state.md))
 </details>
 
 <details>
-<summary><b>Govern</b> — writes are validated, refused, or reviewed; nothing is silent</summary>
+<summary><b>Settle</b> — turn evidence and judgment into live operational state</summary>
 
-- Per-type `write_policy`: direct, proposal-only, or mint-only; guards
-  enforce evidence, transitions, and co-writes at one chokepoint
+- Sources remain content-hashed artifacts; claims cite exact source locations
+  instead of copying the corpus into the graph
+- Deterministic facts can be built through previewed, lock-pinned workflows;
+  judgment enters as an evidence-backed proposal
+- Per-type `write_policy` chooses direct, proposal-only, or mint-only admission;
+  guards enforce evidence, transitions, and co-writes at one chokepoint
   ([Concepts](https://github.com/cruxible-ai/cruxible/blob/main/docs/concepts.md))
 - Judgment calls land in [review groups](https://github.com/cruxible-ai/cruxible/blob/main/docs/state-resolution-and-maintenance.md)
-  carrying their matching evidence; approval mints attributed state with
+  carrying their matching evidence; review mints attributed state with the
   rationale on record
 - Four cumulative permission tiers per credential; a guard can require the
-  approving actor differs from the creating actor, anchored on receipts
+  reviewing actor differs from the creating actor, anchored on receipts
   ([Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md))
 </details>
 
 <details>
-<summary><b>Ingest</b> — deterministic, preview-first, pinned</summary>
+<summary><b>Compute</b> — derive exact answers from the same live state</summary>
 
-- Sources register as content-hashed artifacts; claims cite into them
-- Pipelines preview against a clone, then `apply` re-verifies digests
-  before committing; providers are version- and digest-pinned with
-  execution traces ([Providers And Dataflow](https://github.com/cruxible-ai/cruxible/blob/main/docs/common-providers.md))
+- Named traversals compute blast radius, dependencies, eligibility, and other
+  recurring answers outside the model
+- Query receipts identify the state revision and graph paths used; truncation
+  and pagination are explicit rather than silently incomplete
+- Compact output profiles, bounded neighborhoods, graph-shaped results, and a
+  local read working set keep agent context proportional to the question
 </details>
 
 <details>
-<summary><b>Ask</b> — receipted answers, built for agent read budgets</summary>
+<summary><b>Act</b> — execute learned procedures without granting arbitrary code</summary>
 
-- Named traversal queries (blast radius, downstream impact) with a
-  receipt you can `explain`; the same state returns the same answer for
-  every agent
-- Compact/standard profiles, bounded neighborhood reads, and a graph
-  layout cut cold-start read cost by 86% on
-  [our benchmark](https://github.com/cruxible-ai/cruxible/tree/main/benchmarks/read_anchor); every read
-  carries a monotonic revision and truncation is always explicit
+- Procedures are agent-proposable compositions of capabilities explicitly
+  exported by the operator, with declared preconditions and execution budgets
+  ([Concepts](https://github.com/cruxible-ai/cruxible/blob/main/docs/concepts.md#procedures))
+- Independent acceptance pins an immutable Procedure to the reviewed config and
+  lock; stale pins fail closed and revisions supersede rather than mutate it
+- Every run is bounded and receipted. Guards protect state writes; gates hold
+  external actions such as merges or deploys until live state permits them
 </details>
 
 <details>
-<summary><b>Operate</b> — one daemon, many doors, state you own</summary>
+<summary><b>Observe</b> — connect action back to evidence without silent self-modification</summary>
+
+- Attestations append dated support, contradiction, or uncertainty to an exact
+  claim without changing its live status; reviewers resolve the discrepancy
+- Outcome contracts declare the success criterion and pinned measurement before
+  a decision is accepted, then record what reality said when the check comes due
+- Corrections, rejections, and supersession remain explicit governed events.
+  Outcomes inform the next revision; they do not rewrite state automatically
+  ([Concepts](https://github.com/cruxible-ai/cruxible/blob/main/docs/concepts.md#attestations-observation))
+</details>
+
+<details>
+<summary><b>Operate</b> — one daemon, many interfaces, state you own</summary>
 
 - [MCP server, CLI, and Python client](https://github.com/cruxible-ai/cruxible/blob/main/docs/for-ai-agents.md) against the
   same daemon, credentials, and tiers; agent setup is one
   [MCP config block](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md)
-- Gates hold outside actions (a merge, a deploy) until state agrees; the
-  first shipped kind wires into `git` pre-push
 - Snapshots, [backups](https://github.com/cruxible-ai/cruxible/blob/main/docs/local-state-and-backups.md), state
   [publishing](https://github.com/cruxible-ai/cruxible/blob/main/docs/publishing-states.md), and an
   [inspection UI](https://github.com/cruxible-ai/cruxible-app)
@@ -170,7 +238,7 @@ without an ontology team or a rewrite.
 pip install cruxible
 ```
 
-Model your own domain with the
+Build your own Crux with the
 [authoring skills](https://github.com/cruxible-ai/cruxible/tree/main/skills)
 and [Modeling State](https://github.com/cruxible-ai/cruxible/blob/main/docs/modeling-state.md),
 or run the demo — a seeded supply-chain world, ~3 minutes, with no model
@@ -206,6 +274,7 @@ claim the bootstrap credential, and mint each agent its own token — every
 write is attributed. Details, permission tiers, and hardening:
 [Quickstart](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md) ·
 [Runtime Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md).
+
 ## The Rules Run
 
 Cruxible never asks a model to follow the rules, because the rules run as
@@ -217,9 +286,9 @@ mutation, and there is no code path around the chokepoint.
 | "The agent knows an exposure can't be closed while unremediated" | The write chokepoint refuses the transition until the remediation claim, with its evidence, is linked |
 | "The model says these sources support the claim" | The write is refused unless every reference dereferences to a content-hash-verified source chunk |
 | "The agent was told not to accept claims it proposed itself" | The guard compares the acting actor against the creation receipt's recorded actor and refuses, including create-as-accepted |
-| "The agent remembers the ingest procedure" | The workflow is declared, previewed, and locked to pinned providers; every run leaves a receipt |
+| "The agent learned a reusable action sequence" | A Procedure may call only exported providers, within declared preconditions and budgets; independent acceptance pins it to the reviewed config and lock, and every run leaves a receipt |
 
-Guards face inward (the write boundary of accepted state); gates face
+Guards face inward (the write boundary of live state); gates face
 outward (an external action holds until state agrees).
 
 <details>
@@ -256,27 +325,28 @@ The screenshot is the review seat in the
 proposed edge carries the evidence that matched it, with a provenance
 rail back to workflows, receipts, and traces.
 
-## Why Not Markdown, RAG, Or Vector Memory?
+## Where Cruxible Fits
 
-We spent fifty years keeping the facts that matter in systems with schemas,
-constraints, and transactions — then handed agents piles of markdown,
-because prose was the only interface they spoke. What changes:
+Cruxible does not replace source systems, documents, or retrieval. Those layers
+help agents find and interpret evidence. Cruxible holds the smaller set of
+commitments that the rest of the system must query consistently, enforce, or
+act through.
 
-| Markdown · RAG · vector memory | Cruxible |
+| Layer | Job |
 |---|---|
-| A claim is prose; nothing refuses one without a source | Evidence-gated writes refuse references that don't verify against content-hashed sources |
-| Edits are reviewed as diffs, not claims | Writes pass typed validation, guards, and review |
-| Links live in prose, re-inferred on every read | Typed edges, traversed multi-hop, visibility rules at every hop |
-| A rollup is a one-off summary | Counts and joins are deterministic, receipted, re-runnable |
-| No record of which answer was settled on | One accepted state; the same query returns the same answer for every agent |
-| No record of when a source was captured | Sources are dated and hashed; staleness is queryable |
-| A correction is just more text | Feedback attaches to the exact claim; claims mature from proposed to accepted |
-| A better model reads the pile better | It can't read what was never written; the record and its derivations don't move when you swap models |
+| Source systems, artifacts, and retrieval | Preserve and find the evidence |
+| Agents and humans | Interpret evidence, propose claims and Procedures, review judgment |
+| Cruxible | Maintain claim lifecycle, execute exact reads and bounded actions, enforce policy, and attach receipts and outcomes |
+
+If information is only useful to read, leave it in the artifact or retrieval
+layer. When agents across sessions must rely on it as current, traverse its
+consequences, enforce it, or act through it, compile that knowledge into a Crux.
 
 ## Kits
 
-A kit packages an ontology with its governance, queries, workflows, and
-providers as one versioned, composable unit; per-kit
+A kit is a reusable template for a Crux: it packages an ontology with its
+governance, queries, workflows, and providers as one versioned, composable
+unit. Per-kit
 [guides](https://github.com/cruxible-ai/cruxible/tree/main/docs) run each
 end to end.
 
