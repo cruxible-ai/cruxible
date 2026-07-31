@@ -386,6 +386,12 @@ class TestValidation:
 
         assert "cruxible_query" in actual
         assert "cruxible_feedback" in actual
+        assert {
+            "cruxible_attest",
+            "cruxible_list_attestations",
+            "cruxible_attestation_queue",
+            "cruxible_resolve_attestation",
+        } <= actual
         assert "cruxible_batch_direct_write" not in actual
         assert "cruxible_state_publish" not in actual
         validate_runtime_tools(server)
@@ -403,6 +409,7 @@ class TestValidation:
         assert "cruxible_add_relationship" in actual
         assert "cruxible_apply_workflow" in actual
         assert "cruxible_feedback" not in actual
+        assert "cruxible_attest" not in actual
         assert "cruxible_propose_group" not in actual
         assert "cruxible_state_publish" not in actual
         validate_runtime_tools(server)

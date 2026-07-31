@@ -87,7 +87,8 @@ _DEPRECATED_FLAG_ACTION_MESSAGE = deprecation_refusal_message(
     "The 'flag' feedback action was removed from the live write vocabulary and "
     "survives only as a deprecated refused alias because it un-approved an edge "
     "to 'pending' while storing no annotation, destroying the reviewer's actual "
-    "signal. Use 'cruxible attest --stance contradict' (MCP: cruxible_attest) to "
+    "signal. Use 'cruxible attest record --stance contradict' (MCP: "
+    "cruxible_attest) to "
     "store the observation, evidence refs, and actor without changing review "
     "status. To adjudicate, use accept, reject, or correct.",
 )
@@ -125,7 +126,8 @@ def _validate_feedback_request_values(
             "Feedback action 'correct' requires a non-empty 'corrections' object naming "
             "the properties to change. An empty correction still promoted the edge to "
             "'approved' while recording nothing that was corrected. Use action 'accept' "
-            "to accept the claim as it stands, or 'cruxible attest --stance contradict' "
+            "to accept the claim as it stands, or "
+            "'cruxible attest record --stance contradict' "
             "to record a doubt without adjudicating."
         )
 

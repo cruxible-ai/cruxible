@@ -3,9 +3,10 @@
 Two claims went stale and were quietly load-bearing:
 
 * the MCP ``BASE_INSTRUCTIONS`` told agents ``READ_ONLY`` performs no
-  persistence (query and gate-check both write receipt rows) and attributed
-  config mutation to ``ADMIN`` alone (constraints and decision policies are
-  governed-write config additions);
+  persistence (query and gate-check both write receipt rows), and later kept
+  advertising constraints/decision policies at ``GOVERNED_WRITE`` after the
+  0.3.0 tier move raised them to ``ADMIN`` (they write ACTIVE CONFIG — the
+  authority ``reload_config`` carries);
 * the docs presented ``CRUXIBLE_MODE`` as gating every session, when it is a
   boundary only on the daemon and MCP surfaces — the local CLI reads the
   operator's own environment and is an operator console by design;
@@ -58,13 +59,24 @@ def test_base_instructions_admit_that_reads_persist_receipts() -> None:
     assert "receipt" in read_only
 
 
-def test_base_instructions_do_not_reserve_config_mutation_to_admin() -> None:
-    governed = _tier_section("GOVERNED_WRITE")
-    assert "cruxible_add_constraint" in governed
-    assert "cruxible_add_decision_policy" in governed
+def test_base_instructions_put_config_additions_under_admin() -> None:
+    """Pins the 0.3.0 tier move (see the CHANGELOG's "move up a tier" entry).
 
-    # ADMIN owns replacing the ACTIVE config, not "config mutation" generally.
+    This test previously asserted the OPPOSITE — config additions at
+    GOVERNED_WRITE — and kept a stale instructions block green after
+    ``TOOL_PERMISSIONS`` raised them to ADMIN. The map is the authority the
+    prose must follow.
+    """
+    governed = _tier_section("GOVERNED_WRITE")
+    assert "cruxible_add_constraint" not in governed
+    assert "cruxible_add_decision_policy" not in governed
+
+    graph_write = _tier_section("GRAPH_WRITE")
+    assert "snapshot" in graph_write
+
     admin = _tier_section("ADMIN")
+    assert "cruxible_add_constraint" in admin
+    assert "cruxible_add_decision_policy" in admin
     assert "active config" in admin
     assert "cruxible_reload_config" in admin
 

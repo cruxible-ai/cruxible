@@ -14,7 +14,7 @@ authors = [
 ]
 dependencies = [
     "httpx>=0.24",
-    "pydantic>=2.0",
+    "pydantic>=2.12",
 ]
 
 [project.urls]

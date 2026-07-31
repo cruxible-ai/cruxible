@@ -633,7 +633,11 @@ def _execute_collection_query(
         contexts,
         params,
         relationship_state=effective_options.relationship_state,
-        lifecycle_status=effective_options.lifecycle_status,
+        lifecycle_status=(
+            effective_options.lifecycle_status
+            if query_schema.result_shape == "relationship"
+            else None
+        ),
         builder=builder,
     )
     contexts = sort_query_row_contexts(

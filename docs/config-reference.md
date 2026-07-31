@@ -243,7 +243,7 @@ Semantics:
   storing no annotation, so the reviewer's actual signal — what they doubted and
   why — was destroyed at the moment it was given. It is gone, with no
   deprecation window, because it never worked. To record a doubt without
-  adjudicating, use `cruxible attest --stance contradict` (MCP:
+  adjudicating, use `cruxible attest record --stance contradict` (MCP:
   `cruxible_attest`): it stores the observation, its evidence refs, and its
   actor, and it changes no review status.
 - **Nothing a feedback call can *do* sits at `governed_write` any more.** `flag`

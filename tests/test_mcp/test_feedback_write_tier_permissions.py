@@ -338,7 +338,7 @@ class TestFeedbackCorrectTierGate:
             with pytest.raises(ConfigError, match="'flag' feedback action was removed"):
                 _feedback(feedback_tier_instance_id, "flag")
         with request_permission_scope(PermissionMode.GRAPH_WRITE):
-            with pytest.raises(ConfigError, match="attest --stance contradict"):
+            with pytest.raises(ConfigError, match="attest record --stance contradict"):
                 _feedback(feedback_tier_instance_id, "flag")
 
     def test_graph_write_correct_unaffected(self, feedback_tier_instance_id):

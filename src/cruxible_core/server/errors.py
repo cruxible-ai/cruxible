@@ -26,6 +26,7 @@ from cruxible_core.errors import (
     OwnershipError,
     PendingEdgeWriteRefusedError,
     PermissionDeniedError,
+    ProcedureNotFoundError,
     QueryExecutionError,
     QueryNotFoundError,
     ReceiptNotFoundError,
@@ -92,6 +93,7 @@ def _status_for_error(exc: CoreError) -> int:
             TraceNotFoundError,
             InstanceNotFoundError,
             GroupNotFoundError,
+            ProcedureNotFoundError,
             SourceArtifactNotFoundError,
             RuntimeCredentialNotFoundError,
         ),
@@ -175,6 +177,8 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["credential_scope"] = exc.credential_scope
     if isinstance(exc, GroupNotFoundError):
         context["group_id"] = exc.group_id
+    if isinstance(exc, ProcedureNotFoundError):
+        context["procedure_id"] = exc.procedure_id
     if isinstance(exc, SourceArtifactNotFoundError):
         context["source_artifact_id"] = exc.source_artifact_id
     if isinstance(exc, RuntimeCredentialNotFoundError):

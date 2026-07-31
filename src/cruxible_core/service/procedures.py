@@ -12,6 +12,7 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import (
     ConfigError,
     CoreError,
+    PermissionDeniedError,
     ProcedureBudgetExceededError,
     ProcedureNotFoundError,
     QueryExecutionError,
@@ -460,7 +461,7 @@ def service_run_procedure(
     except Exception as exc:
         refusal_error = (
             exc
-            if isinstance(exc, ConfigError)
+            if isinstance(exc, ConfigError | PermissionDeniedError)
             else ConfigError(f"Procedure preflight failed closed: {type(exc).__name__}: {exc}")
         )
         builder.record_validation(
@@ -846,9 +847,10 @@ def _require_procedure_execution_tier(effective_tier: ProcedureTier) -> None:
     current_mode = get_current_mode()
     required_mode = _PERMISSION_BY_TIER[effective_tier]
     if current_mode < required_mode:
-        raise ConfigError(
-            f"Procedure execution requires tier '{effective_tier}', but the caller "
-            f"ceiling is '{current_mode.name.lower()}'"
+        raise PermissionDeniedError(
+            "cruxible_run_procedure",
+            current_mode.name,
+            required_mode.name,
         )
 
 

@@ -19,3 +19,6 @@ together.
 | `GroupResolution.resolved_by input` | `resolved_actor_context` | 0.3.0 | 0.4.0 |
 | `CandidateGroup.proposed_by input` | `proposed_actor_context` | 0.3.0 | 0.4.0 |
 | `DecisionRecord.opened_by input` | `opened_actor_context` | 0.3.0 | 0.4.0 |
+| `GroupStatus 'auto_resolved' read-only member` | `resolved with resolution_source='auto_resolved'` | 0.3.0 | 0.4.0 |
+| `OperationType 'group_clear' read-only member` | `group_withdraw` | 0.3.0 | 0.4.0 |
+| `StateHealthGroupsSection.auto_resolved_count` | `withdrawn_count` | 0.3.0 | 0.4.0 |

@@ -6472,6 +6472,43 @@ class TestLifecycleStatusFilter:
         )
         assert set(_terminal_ids(unfiltered.results)) >= {"BP-1234", "BP-9999"}
 
+    def test_entity_collection_lifecycle_filter_does_not_filter_include_edges(
+        self,
+        config: CoreConfig,
+        graph: EntityGraph,
+    ) -> None:
+        config.named_queries["live_part_replacements"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+            where={"result.entity_id": {"eq": "BP-1234"}},
+            include={
+                "replacements": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                }
+            },
+            select={
+                "part_id": "$result.entity_id",
+                "replacement_count": "$include.replacements.count",
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "live_part_replacements",
+            {},
+            lifecycle_status="live",
+        )
+
+        assert result.total_results == 1
+        [row] = result.results
+        assert isinstance(row, ProjectedQueryRow)
+        assert row.values == {"part_id": "BP-1234", "replacement_count": 2}
+
     def test_wrong_kind_vocabulary_is_refused(self, config, graph):
         """Entity vocabulary on a relationship-shaped read is a QueryExecutionError.
 
