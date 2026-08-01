@@ -25,6 +25,10 @@
 an executable artifact of your domain knowledge with a code-like lifecycle —
 typed, reviewed, versioned, auditable, and tested against outcomes.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/crux-overview.png" alt="What agent platforms are missing — state management, reviewed reflection, shared knowledge artifacts — and the Crux that answers them: typed claims and procedures with a review lifecycle, outcome contracts and gates, versioned and receipted" width="900">
+</p>
+
 **The problem.** Code is typed, reviewed, and versioned; it executes
 deterministically, and tests verify it in seconds. The judgments, observations,
 reusable actions, and decisions agents produce land in prose — which doesn't
