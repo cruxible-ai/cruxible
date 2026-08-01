@@ -990,7 +990,7 @@ error-level finding exists.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use before querying or authoring when you need the compact entity properties, relationship properties, enum vocabularies, topology, and configured write policies.
+**Purpose:** Use when orienting before a query or a write: compact entity and relationship property contracts, enum vocabularies, topology, and configured write policies.
 
 **Arguments:**
 
