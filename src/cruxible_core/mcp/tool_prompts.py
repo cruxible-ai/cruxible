@@ -189,7 +189,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need receipt-derived property changes for one entity type or entity."
     ),
     "cruxible_inspect_ontology": (
-        "Use when you need a compact overview of entity types, relationships, and rules."
+        "Use when orienting before a query or a write: compact entity and relationship "
+        "property contracts, enum vocabularies, topology, and configured write policies."
     ),
     "cruxible_inspect_workflows": (
         "Use when you need to understand the workflows declared by the active config."

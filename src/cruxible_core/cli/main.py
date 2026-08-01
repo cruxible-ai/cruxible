@@ -616,7 +616,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "ontology": _command(
                 "reads",
                 "inspect_ontology_cmd",
-                "Show the canonical ontology view for the current instance config.",
+                "Show compact topology and authoring contracts for the active ontology.",
             ),
             "workflows": _command(
                 "reads",

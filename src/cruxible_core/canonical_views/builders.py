@@ -46,6 +46,7 @@ from cruxible_core.group.types import CandidateGroup, GroupResolution
 def build_ontology_view(
     config: CoreConfig,
     *,
+    entity_counts: dict[str, int] | None = None,
     relationship_counts: dict[str, int] | None = None,
     overlay_scope: OverlayScope | None = None,
 ) -> OntologyView:
@@ -84,6 +85,9 @@ def build_ontology_view(
                 if overlay_scope is not None and name not in overlay_scope.own_entities
                 else "own"
             ),
+            properties=_ontology_property_contracts(schema.properties),
+            write_policy=schema.write_policy or config.runtime.default_write_policy,
+            instance_count=_instance_count(entity_counts, name),
         )
         for name, schema in entity_items
     ]
@@ -96,7 +100,9 @@ def build_ontology_view(
             cardinality=rel.cardinality,
             reverse_name=rel.reverse_name,
             description=rel.description,
-            instance_count=(relationship_counts or {}).get(rel.name),
+            instance_count=_instance_count(relationship_counts, rel.name),
+            properties=_ontology_property_contracts(rel.properties),
+            write_policy=rel.write_policy or config.runtime.default_write_policy,
         )
         for rel in relationships
     ]
@@ -109,6 +115,42 @@ def build_ontology_view(
         relationships=rel_views,
         enums=_build_ontology_enum_views(config),
     )
+
+
+def _instance_count(counts: dict[str, int] | None, name: str) -> int | None:
+    """Distinguish unavailable config-only counts from a known empty loaded store."""
+    return None if counts is None else counts.get(name, 0)
+
+
+def _ontology_property_contracts(
+    properties: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Return compact, write-relevant property contracts.
+
+    The shape mirrors compact config semantics: optional strings are ``{}``
+    and only constraints that affect valid writes or useful lookup are emitted.
+    """
+    contracts: dict[str, dict[str, Any]] = {}
+    for name, prop in properties.items():
+        contract: dict[str, Any] = {}
+        if prop.type != "string":
+            contract["type"] = prop.type
+        if prop.primary_key:
+            contract["primary_key"] = True
+        elif not prop.optional:
+            contract["required"] = True
+        if prop.indexed:
+            contract["indexed"] = True
+        if prop.default is not None:
+            contract["default"] = prop.default
+        if prop.enum_ref is not None:
+            contract["enum_ref"] = prop.enum_ref
+        elif prop.enum is not None:
+            contract["enum"] = list(prop.enum)
+        if prop.json_schema is not None:
+            contract["json_schema"] = prop.json_schema
+        contracts[name] = contract
+    return contracts
 
 
 def _build_ontology_enum_views(config: CoreConfig) -> list[OntologyEnumView]:

@@ -15,6 +15,9 @@ class OntologyEntityView:
     # "own" = defined by the rendered layer; "base" = upstream entity shown
     # only because an owned relationship touches it (overlay-scoped views).
     origin: str = "own"
+    properties: dict[str, dict[str, Any]] = field(default_factory=dict)
+    write_policy: str = "direct"
+    instance_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,8 @@ class OntologyRelationshipView:
     reverse_name: str | None
     description: str | None
     instance_count: int | None = None
+    properties: dict[str, dict[str, Any]] = field(default_factory=dict)
+    write_policy: str = "direct"
 
 
 @dataclass(frozen=True)

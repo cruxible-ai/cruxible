@@ -46,7 +46,11 @@ def service_inspect_view(
     if view == "ontology":
         stats = service_stats(instance)
         payload = canonical_view_payload(
-            build_ontology_view(config, relationship_counts=stats.relationship_counts)
+            build_ontology_view(
+                config,
+                entity_counts=stats.entity_counts,
+                relationship_counts=stats.relationship_counts,
+            )
         )
         return CanonicalViewResult(view=view, payload=payload)
     if view == "workflows":
@@ -89,6 +93,7 @@ def service_inspect_view(
         stats = service_stats(instance)
         ontology = build_ontology_view(
             config,
+            entity_counts=stats.entity_counts,
             relationship_counts=stats.relationship_counts,
         )
         workflows = build_workflow_view(config)
