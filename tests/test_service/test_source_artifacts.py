@@ -7,11 +7,16 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import CitationHandleResolutionError, ConfigError
 from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.graph.types import EntityInstance
+from cruxible_core.primitives import canonical_json
 from cruxible_core.service import (
     GroupMemberInput,
     GroupSignalInput,
+    RelationshipWriteInput,
+    service_add_entities,
+    service_add_relationship_inputs,
     service_dereference_source_evidence,
     service_get_source_artifact,
     service_list_source_artifacts,
@@ -99,6 +104,226 @@ def test_register_source_content_happy_path(tmp_path: Path) -> None:
     assert stored.original_uri == "memory:inline-fitment"
     assert stored.label == "inline fitment"
     assert stored.content_hash == registered.content_hash
+
+
+def test_citation_handles_are_deterministic_and_discoverable(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+    content = "# Fitment\n\nInline BP-1001 evidence.\n"
+
+    first = service_register_source_artifact(
+        instance,
+        source_content=content,
+        source_artifact_id="stable_handle_source",
+    )
+    repeated = service_register_source_artifact(
+        instance,
+        source_content=content,
+        source_artifact_id="stable_handle_source",
+    )
+    listed = service_list_source_artifacts(instance)
+    read = service_get_source_artifact(
+        instance,
+        source_artifact_id="stable_handle_source",
+    )
+
+    assert first.revision_handle is not None
+    assert first.revision_handle.startswith("src1_")
+    assert repeated.revision_handle == first.revision_handle
+    assert [chunk.citation_handle for chunk in repeated.chunks] == [
+        chunk.citation_handle for chunk in first.chunks
+    ]
+    assert all(
+        chunk.citation_handle is not None and chunk.citation_handle.startswith("cite1_")
+        for chunk in first.chunks
+    )
+    assert listed.items[0].artifact_revision_id == first.artifact_revision_id
+    assert listed.items[0].revision_handle == first.revision_handle
+    assert read.revision_handle == first.revision_handle
+    assert [chunk.citation_handle for chunk in read.chunks] == [
+        chunk.citation_handle for chunk in first.chunks
+    ]
+
+    whole_revision = resolve_evidence_refs(
+        instance,
+        citation_handles=[first.revision_handle],
+    )
+    assert [ref.source_record_id for ref in whole_revision] == [
+        chunk.chunk_id for chunk in first.chunks
+    ]
+
+
+def test_chunk_handle_lowers_to_byte_identical_canonical_evidence_and_receipt(
+    tmp_path: Path,
+) -> None:
+    instance = _instance(tmp_path)
+    registered = service_register_source_artifact(
+        instance,
+        source_content="# Fitment\n\nBP-1001 fits V-1.\n",
+        source_artifact_id="canonical_handle_source",
+    )
+    paragraph = next(chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1")
+    assert paragraph.citation_handle is not None
+    explicit = resolve_evidence_refs(
+        instance,
+        source_evidence=[
+            {
+                "source_artifact_id": registered.source_artifact_id,
+                "artifact_revision_id": registered.artifact_revision_id,
+                "chunk_id": paragraph.chunk_id,
+            }
+        ],
+    )
+    by_handle = resolve_evidence_refs(
+        instance,
+        citation_handles=[paragraph.citation_handle],
+    )
+    assert [ref.to_payload() for ref in by_handle] == [ref.to_payload() for ref in explicit]
+    assert canonical_json([ref.to_payload() for ref in by_handle]) == canonical_json(
+        [ref.to_payload() for ref in explicit]
+    )
+    canonical_ref = by_handle[0].to_payload()
+    assert canonical_ref["artifact_id"] == registered.source_artifact_id
+    assert canonical_ref["artifact_revision_id"] == registered.artifact_revision_id
+    assert canonical_ref["source_record_id"] == paragraph.chunk_id
+    assert canonical_ref["metadata"]["content_hash"] == paragraph.content_hash
+    assert canonical_ref["metadata"]["artifact_content_hash"] == registered.content_hash
+    assert "citation_handle" not in canonical_ref
+
+    service_add_entities(
+        instance,
+        [
+            EntityInstance(
+                entity_type="Part",
+                entity_id="BP-1001",
+                properties={"part_number": "BP-1001"},
+            ),
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-1",
+                properties={"vehicle_id": "V-1"},
+            ),
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-2",
+                properties={"vehicle_id": "V-2"},
+            ),
+        ],
+    )
+    written = service_add_relationship_inputs(
+        instance,
+        [
+            RelationshipWriteInput(
+                from_type="Part",
+                from_id="BP-1001",
+                relationship_type="fits",
+                to_type="Vehicle",
+                to_id="V-1",
+                citation_handles=[paragraph.citation_handle],
+            )
+        ],
+        source="test",
+        source_ref="citation_handle",
+    )
+    assert written.receipt_id is not None
+    relationship = instance.load_graph().get_relationship(
+        "Part", "BP-1001", "Vehicle", "V-1", "fits"
+    )
+    assert relationship is not None
+    assert relationship.metadata.evidence is not None
+    assert [ref.to_payload() for ref in relationship.metadata.evidence.evidence_refs] == [
+        ref.to_payload() for ref in explicit
+    ]
+
+    receipt_store = instance.get_receipt_store()
+    try:
+        receipt = receipt_store.get_receipt(written.receipt_id)
+    finally:
+        receipt_store.close()
+    assert receipt is not None
+    write_node = next(node for node in receipt.nodes if node.node_type == "relationship_write")
+    assert write_node.detail["evidence_refs"] == [ref.to_payload() for ref in explicit]
+
+    # Reading/discovering the source never authorizes attachment. A second write
+    # with no explicit handle or locator remains evidence-free.
+    service_get_source_artifact(instance, source_artifact_id=registered.source_artifact_id)
+    service_add_relationship_inputs(
+        instance,
+        [
+            RelationshipWriteInput(
+                from_type="Part",
+                from_id="BP-1001",
+                relationship_type="fits",
+                to_type="Vehicle",
+                to_id="V-2",
+            )
+        ],
+        source="test",
+        source_ref="no_auto_attach",
+    )
+    uncited = instance.load_graph().get_relationship(
+        "Part", "BP-1001", "Vehicle", "V-2", "fits"
+    )
+    assert uncited is not None
+    assert uncited.metadata.evidence is None
+
+
+def test_unknown_citation_handle_fails_closed_with_kind(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+
+    with pytest.raises(CitationHandleResolutionError) as exc_info:
+        resolve_evidence_refs(instance, citation_handles=["cite1_not_registered"])
+
+    assert exc_info.value.failure_kind == "unknown"
+    assert "register, list, or get" in str(exc_info.value)
+
+
+def test_superseded_citation_handle_fails_closed_as_stale(tmp_path: Path) -> None:
+    instance = _instance(tmp_path)
+    first = service_register_source_artifact(
+        instance,
+        source_content="# Fitment\n\nFirst claim.\n",
+        source_artifact_id="stale_handle_source",
+    )
+    stale_handle = next(
+        chunk.citation_handle for chunk in first.chunks if chunk.block_selector == "paragraph:1"
+    )
+    assert stale_handle is not None
+    second = service_register_source_artifact(
+        instance,
+        source_content="# Fitment\n\nSecond claim.\n",
+        source_artifact_id="stale_handle_source",
+    )
+    assert second.revision_handle != first.revision_handle
+    assert stale_handle not in {chunk.citation_handle for chunk in second.chunks}
+
+    with pytest.raises(CitationHandleResolutionError) as exc_info:
+        resolve_evidence_refs(instance, citation_handles=[stale_handle])
+
+    assert exc_info.value.failure_kind == "stale"
+    assert first.artifact_revision_id in str(exc_info.value)
+    assert second.artifact_revision_id in str(exc_info.value)
+
+
+def test_ambiguous_citation_handle_fails_closed_with_kind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance = _instance(tmp_path)
+    service_register_source_artifact(
+        instance,
+        source_content="# One\n\nFirst block.\n\nSecond block.\n",
+        source_artifact_id="ambiguous_handle_source",
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.source_artifacts.source_artifact_chunk_handle",
+        lambda _artifact, _chunk: "cite1_forced_collision",
+    )
+
+    with pytest.raises(CitationHandleResolutionError) as exc_info:
+        resolve_evidence_refs(instance, citation_handles=["cite1_forced_collision"])
+
+    assert exc_info.value.failure_kind == "ambiguous"
+    assert "refuses to guess" in str(exc_info.value)
 
 
 def test_register_source_content_rejects_empty_content(tmp_path: Path) -> None:
@@ -334,6 +559,7 @@ def test_source_evidence_resolves_to_stored_group_evidence_refs(
         actor_context=actor,
     )
     paragraph = next(chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1")
+    assert paragraph.citation_handle is not None
 
     result = service_propose_group_inputs(
         instance,
@@ -349,22 +575,10 @@ def test_source_evidence_resolves_to_stored_group_evidence_refs(
                     GroupSignalInput(
                         signal_source="catalog",
                         signal="support",
-                        source_evidence=[
-                            {
-                                "source_artifact_id": registered.source_artifact_id,
-                                "chunk_id": paragraph.chunk_id,
-                                "label": "catalog row",
-                            }
-                        ],
+                        citation_handles=[paragraph.citation_handle],
                     )
                 ],
-                source_evidence=[
-                    {
-                        "source_artifact_id": registered.source_artifact_id,
-                        "heading_path": ["Fitment"],
-                        "block_selector": "paragraph:1",
-                    }
-                ],
+                citation_handles=[paragraph.citation_handle],
             )
         ],
         thesis_facts={"source": "catalog"},
@@ -405,7 +619,7 @@ def test_source_evidence_resolves_to_stored_group_evidence_refs(
     assert signal_ref.source == "source_artifact"
     assert signal_ref.artifact_id == registered.source_artifact_id
     assert signal_ref.source_record_id == paragraph.chunk_id
-    assert signal_ref.label == "catalog row"
+    assert signal_ref.artifact_revision_id == registered.artifact_revision_id
     assert signal_ref.metadata["operation_id"] == "op_source"
 
 

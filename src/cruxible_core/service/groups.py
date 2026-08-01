@@ -517,6 +517,7 @@ def _candidate_signal_from_input(
             instance,
             evidence_refs=signal.evidence_refs,
             source_evidence=signal.source_evidence,
+            citation_handles=signal.citation_handles,
             actor_context=actor_context,
         ),
         basis=(
@@ -550,6 +551,7 @@ def _candidate_member_from_input(
             instance,
             evidence_refs=member.evidence_refs,
             source_evidence=member.source_evidence,
+            citation_handles=member.citation_handles,
             actor_context=actor_context,
         ),
         evidence_rationale=member.evidence_rationale,

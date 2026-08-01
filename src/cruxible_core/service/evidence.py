@@ -15,7 +15,10 @@ from cruxible_core.graph.evidence import (
     normalize_evidence_ref,
 )
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.service.source_artifacts import resolve_source_evidence_refs
+from cruxible_core.service.source_artifacts import (
+    resolve_citation_handle_refs,
+    resolve_source_evidence_refs,
+)
 from cruxible_core.source_artifacts.types import SourceEvidenceInput
 
 
@@ -33,6 +36,7 @@ def resolve_evidence_refs(
     *,
     evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = (),
     source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = (),
+    citation_handles: Sequence[str] = (),
     actor_context: GovernedActorContext | None = None,
 ) -> list[EvidenceRef]:
     """Resolve explicit and source-backed evidence into canonical refs."""
@@ -54,7 +58,13 @@ def resolve_evidence_refs(
             "Invalid source_evidence",
             errors=_validation_errors(exc),
         ) from exc
+    handle_refs = resolve_citation_handle_refs(
+        instance,
+        citation_handles,
+        actor_context=actor_context,
+    )
     return merge_evidence_ref_objects(
         explicit_refs,
         source_refs,
+        handle_refs,
     )

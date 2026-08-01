@@ -123,6 +123,8 @@ def relationship_input_member(relationship: RelationshipWriteInput) -> dict[str,
         "evidence_rationale": relationship.evidence_rationale,
         "lifecycle": json_safe(relationship.lifecycle),
     }
+    if relationship.citation_handles:
+        member["citation_handles"] = json_safe(relationship.citation_handles)
     shared_keys = getattr(relationship, "shared_evidence_keys", None)
     if shared_keys:
         member["shared_evidence_keys"] = json_safe(shared_keys)
@@ -212,7 +214,13 @@ def batch_direct_write_proposal(
 def _shared_evidence(
     shared_evidence: Mapping[str, SharedEvidenceInput],
 ) -> dict[str, Any]:
-    return {key: json_safe(value) for key, value in shared_evidence.items()}
+    result: dict[str, Any] = {}
+    for key, value in shared_evidence.items():
+        member = json_safe(value)
+        if isinstance(member, dict) and not member.get("citation_handles"):
+            member.pop("citation_handles", None)
+        result[key] = member
+    return result
 
 
 __all__ = [

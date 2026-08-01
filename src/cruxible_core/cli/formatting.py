@@ -447,6 +447,7 @@ def source_artifacts_table(items: list[Any]) -> Table:
     """Build a Rich table for registered source artifact summaries."""
     table = Table(title="Source Artifacts", expand=True)
     table.add_column("Artifact ID", style="cyan", overflow="fold", min_width=11)
+    table.add_column("Revision Handle", overflow="fold", min_width=12)
     table.add_column("Kind", overflow="fold", min_width=4)
     table.add_column("Label", overflow="fold", min_width=8)
     table.add_column("Retention", overflow="fold", min_width=13)
@@ -456,6 +457,7 @@ def source_artifacts_table(items: list[Any]) -> Table:
     for item in items:
         table.add_row(
             item.source_artifact_id,
+            item.revision_handle or "",
             item.kind,
             item.label or "",
             item.retention,
@@ -469,6 +471,7 @@ def source_artifact_chunks_table(chunks: list[Any]) -> Table:
     """Build a Rich table for source artifact chunk summaries."""
     table = Table(title="Source Artifact Chunks", expand=True)
     table.add_column("Chunk ID", style="cyan", overflow="fold", min_width=12)
+    table.add_column("Citation Handle", overflow="fold", min_width=12)
     table.add_column("Heading Path", overflow="fold", ratio=2)
     table.add_column("Block Type")
     table.add_column("Lines", justify="right")
@@ -477,6 +480,7 @@ def source_artifact_chunks_table(chunks: list[Any]) -> Table:
         heading_path = " > ".join(chunk.heading_path)
         table.add_row(
             chunk.chunk_id,
+            chunk.citation_handle or "",
             heading_path,
             chunk.block_type,
             f"{chunk.line_start}-{chunk.line_end}",

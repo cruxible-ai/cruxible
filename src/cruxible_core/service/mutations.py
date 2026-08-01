@@ -658,6 +658,7 @@ def _relationship_from_input(
         instance,
         evidence_refs=value.evidence_refs,
         source_evidence=value.source_evidence,
+        citation_handles=value.citation_handles,
     )
     metadata = RelationshipMetadata()
     if evidence_refs or value.evidence_rationale is not None:
@@ -687,6 +688,7 @@ def _shared_evidence_input(value: SharedEvidenceInput | Mapping[str, Any]) -> Sh
     return SharedEvidenceInput(
         evidence_refs=value.get("evidence_refs", ()),
         source_evidence=value.get("source_evidence", ()),
+        citation_handles=value.get("citation_handles", ()),
     )
 
 
@@ -697,6 +699,7 @@ def _relationship_from_batch_input(
 ) -> tuple[RelationshipInstance, list[EvidenceRef]]:
     evidence_refs: list[EvidenceRef | Mapping[str, Any]] = []
     source_evidence: list[Any] = []
+    citation_handles: list[str] = []
     for key in value.shared_evidence_keys:
         shared = shared_evidence.get(key)
         if shared is None:
@@ -704,12 +707,15 @@ def _relationship_from_batch_input(
         shared_input = _shared_evidence_input(shared)
         evidence_refs.extend(shared_input.evidence_refs)
         source_evidence.extend(shared_input.source_evidence)
+        citation_handles.extend(shared_input.citation_handles)
     evidence_refs.extend(value.evidence_refs)
     source_evidence.extend(value.source_evidence)
+    citation_handles.extend(value.citation_handles)
     resolved_refs = resolve_evidence_refs(
         instance,
         evidence_refs=evidence_refs,
         source_evidence=source_evidence,
+        citation_handles=citation_handles,
     )
     metadata = RelationshipMetadata()
     if resolved_refs or value.evidence_rationale is not None:

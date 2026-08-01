@@ -139,11 +139,13 @@ class TestInputSchema:
         assert {
             "evidence_refs",
             "source_evidence",
+            "citation_handles",
             "evidence_rationale",
             "pending",
         } <= set(rel_def["properties"])
         assert "evidence_refs" not in required
         assert "source_evidence" not in required
+        assert "citation_handles" not in required
         assert "evidence_rationale" not in required
         assert "pending" not in required
 

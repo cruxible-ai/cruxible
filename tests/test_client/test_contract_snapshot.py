@@ -112,6 +112,36 @@ def test_source_evidence_contract_accepts_supported_locator_forms() -> None:
     assert by_heading.block_selector == "paragraph:1"
 
 
+def test_citation_handles_are_additive_on_every_source_evidence_write_contract() -> None:
+    relationship = contracts.RelationshipInput(
+        from_type="Part",
+        from_id="P-1",
+        relationship_type="fits",
+        to_type="Vehicle",
+        to_id="V-1",
+        citation_handles=["cite1_chunk"],
+    )
+    shared = contracts.SharedEvidenceInput(citation_handles=["src1_revision"])
+    signal = contracts.SignalInput(
+        signal_source="catalog",
+        signal="support",
+        citation_handles=["cite1_signal"],
+    )
+    member = contracts.MemberInput(
+        from_type="Part",
+        from_id="P-1",
+        relationship_type="fits",
+        to_type="Vehicle",
+        to_id="V-1",
+        citation_handles=["cite1_member"],
+    )
+
+    assert relationship.citation_handles == ["cite1_chunk"]
+    assert shared.citation_handles == ["src1_revision"]
+    assert signal.citation_handles == ["cite1_signal"]
+    assert member.citation_handles == ["cite1_member"]
+
+
 @pytest.mark.parametrize(
     "payload",
     [

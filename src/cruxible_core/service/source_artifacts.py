@@ -10,7 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from cruxible_core.errors import ConfigError, SourceArtifactNotFoundError
+from cruxible_core.errors import (
+    CitationHandleResolutionError,
+    ConfigError,
+    SourceArtifactNotFoundError,
+)
 from cruxible_core.governance.actors import (
     GovernedActorContext,
     dump_actor_context,
@@ -40,6 +44,9 @@ from cruxible_core.source_artifacts.types import (
 from cruxible_core.temporal import format_datetime, utc_now
 
 _SOURCE_ARTIFACT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}")
+_REVISION_HANDLE_PREFIX = "src1_"
+_CHUNK_HANDLE_PREFIX = "cite1_"
+_HANDLE_DIGEST_LENGTH = 20
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,41 @@ class _SourceContentResolution:
     body_origin: DereferenceBodyOrigin | None = None
     current_artifact_hash: str | None = None
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class _CitationHandleTarget:
+    artifact: SourceArtifactRecord
+    chunk: SourceArtifactChunk | None = None
+
+
+def source_artifact_revision_handle(artifact: SourceArtifactRecord) -> str:
+    """Return the stable, revision-pinned handle for a registered artifact."""
+    return _digest_handle(
+        _REVISION_HANDLE_PREFIX,
+        artifact.artifact_revision_id,
+        artifact.content_hash,
+    )
+
+
+def source_artifact_chunk_handle(
+    artifact: SourceArtifactRecord,
+    chunk: SourceArtifactChunk,
+) -> str:
+    """Return the stable handle for one chunk of one registered revision."""
+    return _digest_handle(
+        _CHUNK_HANDLE_PREFIX,
+        artifact.artifact_revision_id,
+        artifact.content_hash,
+        chunk.chunk_id,
+        chunk.content_hash,
+    )
+
+
+def _digest_handle(prefix: str, *parts: str) -> str:
+    seed = "\x00".join(("cruxible-source-citation-handle-v1", *parts))
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:_HANDLE_DIGEST_LENGTH]
+    return f"{prefix}{digest}"
 
 
 def service_list_source_artifacts(
@@ -108,8 +150,6 @@ def service_get_source_artifact(
         observed = store.get_artifact_revision(artifact.artifact_revision_id) or artifact
         return SourceArtifactReadResult(
             **_artifact_list_item(artifact, chunk_count=len(chunks)).model_dump(mode="python"),
-            artifact_revision_id=artifact.artifact_revision_id,
-            revision=artifact.revision,
             parser_version=artifact.parser_version,
             archived=artifact.archived,
             archive_content_hash=artifact.archive_content_hash,
@@ -122,7 +162,11 @@ def service_get_source_artifact(
             first_drift_observed_hash=observed.first_drift_observed_hash,
             first_drift_observed_at=observed.first_drift_observed_at,
             chunks=[
-                _read_chunk(chunk, content.content if content_available else None)
+                _read_chunk(
+                    chunk,
+                    content.content if content_available else None,
+                    artifact=artifact,
+                )
                 for chunk in chunks
             ],
         )
@@ -432,58 +476,172 @@ def resolve_source_evidence_refs(
         return []
     store = instance.get_source_artifact_store()
     try:
-        refs: list[EvidenceRef] = []
-        for item in source_evidence:
-            locator = (
-                item
-                if isinstance(item, SourceEvidenceInput)
-                else SourceEvidenceInput.model_validate(item)
-            )
-            artifact = _resolve_artifact_revision(store, locator)
-            chunk = _resolve_chunk(store, locator, artifact=artifact)
-            if (
-                locator.expected_content_hash is not None
-                and locator.expected_content_hash != chunk.content_hash
-            ):
-                raise ConfigError(
-                    "source_evidence expected_content_hash does not match registered chunk"
-                )
-            refs.append(
-                EvidenceRef(
-                    source="source_artifact",
-                    source_record_id=chunk.chunk_id,
-                    artifact_id=artifact.source_artifact_id,
-                    # PIN the revision at citation time. Without it the citation
-                    # dereferences against whatever revision is current when it
-                    # is read, which is a different claim from the one made.
-                    artifact_revision_id=artifact.artifact_revision_id,
-                    label=locator.label or chunk.label or artifact.label,
-                    metadata={
-                        "chunk_id": chunk.chunk_id,
-                        "content_hash": chunk.content_hash,
-                        "artifact_content_hash": artifact.content_hash,
-                        "source_kind": artifact.source_kind,
-                        "parser_version": artifact.parser_version,
-                        "heading_path": chunk.heading_path,
-                        "block_selector": chunk.block_selector,
-                        "block_type": chunk.block_type,
-                        "line_start": chunk.line_start,
-                        "line_end": chunk.line_end,
-                        "source_retention": artifact.source_retention,
-                        **(
-                            {
-                                "actor_context": dump_actor_context(actor_context),
-                                "operation_id": actor_context.operation_id,
-                            }
-                            if actor_context is not None
-                            else {}
-                        ),
-                    },
-                )
-            )
-        return merge_evidence_ref_objects(refs)
+        return _resolve_source_evidence_refs_with_store(
+            store,
+            source_evidence,
+            actor_context=actor_context,
+        )
     finally:
         store.close()
+
+
+def resolve_citation_handle_refs(
+    instance: InstanceProtocol,
+    citation_handles: Sequence[str],
+    *,
+    actor_context: GovernedActorContext | None = None,
+) -> list[EvidenceRef]:
+    """Resolve server-minted handles through the canonical source-evidence path.
+
+    A ``cite1_`` handle identifies exactly one chunk. A ``src1_`` revision
+    handle identifies the whole immutable revision and lowers to one canonical
+    source-evidence locator per registered chunk. There is deliberately no
+    floating logical-artifact handle: every accepted token is revision-pinned.
+    """
+    if not citation_handles:
+        return []
+    store = instance.get_source_artifact_store()
+    try:
+        locators: list[SourceEvidenceInput] = []
+        targets = _resolve_citation_handle_targets(store, citation_handles)
+        for handle in citation_handles:
+            target = targets[handle]
+            chunks = (
+                [target.chunk]
+                if target.chunk is not None
+                else store.list_revision_chunks(target.artifact.artifact_revision_id)
+            )
+            for chunk in chunks:
+                assert chunk is not None
+                locators.append(
+                    SourceEvidenceInput(
+                        source_artifact_id=target.artifact.source_artifact_id,
+                        artifact_revision_id=target.artifact.artifact_revision_id,
+                        chunk_id=chunk.chunk_id,
+                    )
+                )
+        return _resolve_source_evidence_refs_with_store(
+            store,
+            locators,
+            actor_context=actor_context,
+        )
+    finally:
+        store.close()
+
+
+def _resolve_citation_handle_targets(
+    store: SourceArtifactStoreProtocol,
+    handles: Sequence[str],
+) -> dict[str, _CitationHandleTarget]:
+    requested = dict.fromkeys(handles)
+    matches: dict[str, list[_CitationHandleTarget]] = {
+        handle: [] for handle in requested
+    }
+    for head in store.list_artifacts():
+        for artifact in store.list_artifact_revisions(head.source_artifact_id):
+            revision_handle = source_artifact_revision_handle(artifact)
+            if revision_handle in requested:
+                matches[revision_handle].append(_CitationHandleTarget(artifact=artifact))
+            for chunk in store.list_revision_chunks(artifact.artifact_revision_id):
+                chunk_handle = source_artifact_chunk_handle(artifact, chunk)
+                if chunk_handle in requested:
+                    matches[chunk_handle].append(
+                        _CitationHandleTarget(artifact=artifact, chunk=chunk)
+                    )
+
+    resolved: dict[str, _CitationHandleTarget] = {}
+    for handle in requested:
+        handle_matches = matches[handle]
+        if not handle_matches:
+            raise CitationHandleResolutionError(
+                handle,
+                "unknown",
+                detail=(
+                    "the token matches no registered source-artifact revision or chunk; "
+                    "use a handle returned by source-artifact register, list, or get"
+                ),
+            )
+        if len(handle_matches) > 1:
+            raise CitationHandleResolutionError(
+                handle,
+                "ambiguous",
+                detail=(
+                    f"the token matches {len(handle_matches)} registered targets; Cruxible "
+                    "refuses to guess, so cite with an explicit revision-pinned "
+                    "source_evidence locator"
+                ),
+            )
+
+        target = handle_matches[0]
+        current = store.get_artifact(target.artifact.source_artifact_id)
+        if current is None or current.artifact_revision_id != target.artifact.artifact_revision_id:
+            current_revision = current.artifact_revision_id if current is not None else "none"
+            raise CitationHandleResolutionError(
+                handle,
+                "stale",
+                detail=(
+                    f"the token targets superseded revision "
+                    f"'{target.artifact.artifact_revision_id}' (current revision: "
+                    f"'{current_revision}'); fetch the current source-artifact handles"
+                ),
+            )
+        resolved[handle] = target
+    return resolved
+
+
+def _resolve_source_evidence_refs_with_store(
+    store: SourceArtifactStoreProtocol,
+    source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]],
+    *,
+    actor_context: GovernedActorContext | None,
+) -> list[EvidenceRef]:
+    refs: list[EvidenceRef] = []
+    for item in source_evidence:
+        locator = (
+            item
+            if isinstance(item, SourceEvidenceInput)
+            else SourceEvidenceInput.model_validate(item)
+        )
+        artifact = _resolve_artifact_revision(store, locator)
+        chunk = _resolve_chunk(store, locator, artifact=artifact)
+        if (
+            locator.expected_content_hash is not None
+            and locator.expected_content_hash != chunk.content_hash
+        ):
+            raise ConfigError(
+                "source_evidence expected_content_hash does not match registered chunk"
+            )
+        refs.append(
+            EvidenceRef(
+                source="source_artifact",
+                source_record_id=chunk.chunk_id,
+                artifact_id=artifact.source_artifact_id,
+                artifact_revision_id=artifact.artifact_revision_id,
+                label=locator.label or chunk.label or artifact.label,
+                metadata={
+                    "chunk_id": chunk.chunk_id,
+                    "content_hash": chunk.content_hash,
+                    "artifact_content_hash": artifact.content_hash,
+                    "source_kind": artifact.source_kind,
+                    "parser_version": artifact.parser_version,
+                    "heading_path": chunk.heading_path,
+                    "block_selector": chunk.block_selector,
+                    "block_type": chunk.block_type,
+                    "line_start": chunk.line_start,
+                    "line_end": chunk.line_end,
+                    "source_retention": artifact.source_retention,
+                    **(
+                        {
+                            "actor_context": dump_actor_context(actor_context),
+                            "operation_id": actor_context.operation_id,
+                        }
+                        if actor_context is not None
+                        else {}
+                    ),
+                },
+            )
+        )
+    return merge_evidence_ref_objects(refs)
 
 
 def _registration_result(
@@ -496,6 +654,7 @@ def _registration_result(
     return RegisterSourceArtifactResult(
         source_artifact_id=record.source_artifact_id,
         artifact_revision_id=record.artifact_revision_id,
+        revision_handle=source_artifact_revision_handle(record),
         revision=record.revision,
         source_kind=record.source_kind,
         source_retention=record.source_retention,
@@ -506,7 +665,12 @@ def _registration_result(
         parser_version=record.parser_version,
         archived=record.archived,
         archive_content_hash=record.archive_content_hash,
-        chunks=chunks,
+        chunks=[
+            chunk.model_copy(
+                update={"citation_handle": source_artifact_chunk_handle(record, chunk)}
+            )
+            for chunk in chunks
+        ],
         supersedes=supersedes,
         already_registered=already_registered,
     )
@@ -519,6 +683,9 @@ def _artifact_list_item(
 ) -> SourceArtifactListItem:
     return SourceArtifactListItem(
         source_artifact_id=artifact.source_artifact_id,
+        artifact_revision_id=artifact.artifact_revision_id,
+        revision=artifact.revision,
+        revision_handle=source_artifact_revision_handle(artifact),
         kind=artifact.source_kind,
         retention=artifact.source_retention,
         original_uri=artifact.original_uri,
@@ -533,6 +700,8 @@ def _artifact_list_item(
 def _read_chunk(
     chunk: SourceArtifactChunk,
     content: bytes | None,
+    *,
+    artifact: SourceArtifactRecord,
 ) -> SourceArtifactReadChunk:
     return SourceArtifactReadChunk(
         chunk_id=chunk.chunk_id,
@@ -542,6 +711,7 @@ def _read_chunk(
         line_start=chunk.line_start,
         line_end=chunk.line_end,
         content_hash=chunk.content_hash,
+        citation_handle=source_artifact_chunk_handle(artifact, chunk),
         text=_chunk_body(content, chunk) if content is not None else None,
     )
 

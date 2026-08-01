@@ -3318,6 +3318,7 @@ def _relationship_input_to_service(
             for ref in edge.evidence_refs
         ],
         source_evidence=[ref.model_dump(mode="python") for ref in edge.source_evidence],
+        citation_handles=list(edge.citation_handles),
         evidence_rationale=edge.evidence_rationale,
         lifecycle=relationship_lifecycle_state(edge.lifecycle),
     )
@@ -3350,6 +3351,7 @@ def _batch_payload_to_service(
                     for ref in edge.evidence_refs
                 ],
                 source_evidence=[ref.model_dump(mode="python") for ref in edge.source_evidence],
+                citation_handles=list(edge.citation_handles),
                 evidence_rationale=edge.evidence_rationale,
                 shared_evidence_keys=list(edge.shared_evidence_keys),
                 lifecycle=relationship_lifecycle_state(edge.lifecycle),
@@ -3363,6 +3365,7 @@ def _batch_payload_to_service(
                     for ref in evidence.evidence_refs
                 ],
                 source_evidence=[ref.model_dump(mode="python") for ref in evidence.source_evidence],
+                citation_handles=list(evidence.citation_handles),
             )
             for key, evidence in payload.shared_evidence.items()
         },
@@ -4340,6 +4343,7 @@ def propose_group(
                     source_evidence=[
                         ref.model_dump(mode="python") for ref in signal.source_evidence
                     ],
+                    citation_handles=list(signal.citation_handles),
                     basis=signal.basis.model_dump(mode="python") if signal.basis else None,
                 )
                 for signal in member.signals
@@ -4350,6 +4354,7 @@ def propose_group(
                 for ref in member.evidence_refs
             ],
             source_evidence=[ref.model_dump(mode="python") for ref in member.source_evidence],
+            citation_handles=list(member.citation_handles),
             evidence_rationale=member.evidence_rationale,
         )
         for member in members

@@ -1107,6 +1107,10 @@ error-level finding exists.
 | `relationships` | yes | array |  |
 | `dry_run` | no | boolean | false | Validate (schema + mutation guards) without mutating graph state |
 
+Each relationship may pass `citation_handles` beside the unchanged
+`source_evidence` locators. Handles are resolved to canonical revision-pinned
+source evidence before mutation guards run.
+
 **Returns:** Top-level fields: `added`, `updated`, `pending_conflicts`, `updated_group_backed_edges`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
@@ -1150,7 +1154,7 @@ error-level finding exists.
 | Name | Required | Type | Description |
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
-| `payload` | yes | BatchDirectWritePayload | Object with `entities` (entity inputs), `relationships` (relationship inputs, each optionally referencing `shared_evidence_keys`), and `shared_evidence` (map of key to shared evidence refs/source evidence). |
+| `payload` | yes | BatchDirectWritePayload | Object with `entities` (entity inputs), `relationships` (relationship inputs, each optionally carrying `citation_handles` and referencing `shared_evidence_keys`), and `shared_evidence` (map of key to shared evidence refs, source evidence, or citation handles). |
 | `dry_run` | no | boolean | Validate the payload without mutating graph state. |
 
 **Returns:** Top-level fields: `dry_run`, `valid`, `entities_added`, `entities_updated`, `relationships_added`, `relationships_updated`, `validation_errors`, `validation_warnings`, `evidence_sources_used`, `pending_conflicts`, `updated_group_backed_edges`, `receipt_id`
@@ -1888,6 +1892,9 @@ never activated has nothing to resolve and simply expires.
 | `expected_pending_version` | no | integer | null | Optimistic guard. A re-propose REWRITES the live pending group; pass the version you computed your delta against to have a bucket that moved underneath you refused instead of overwritten. Omit for an unconditional refresh. |
 | `proposed_by` | no | string | null | Deprecated and ignored; actor kind is derived from the runtime actor context. |
 
+Each member and each nested signal may pass `citation_handles` beside the
+unchanged `source_evidence` locators.
+
 **Returns:** Top-level fields: `group_id`, `signature`, `status`, `review_priority`, `member_count`, `prior_resolution`, `suppressed`, `suppressed_members`, `policy_summary`, `receipt_id`, `deprecation_warnings`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
@@ -2131,7 +2138,7 @@ never activated has nothing to resolve and simply expires.
 | `original_uri` | no | string | null | Original document location for provenance. |
 | `label` | no | string | null | Human-readable label for the artifact. |
 
-**Returns:** Top-level fields: `source_artifact_id`, `source_kind`, `source_retention`, `original_uri`, `label`, `content_hash`, `byte_count`, `parser_version`, `archived`, `archive_content_hash`, `chunks`
+**Returns:** Top-level fields: `source_artifact_id`, `artifact_revision_id`, `revision_handle`, `revision`, `source_kind`, `source_retention`, `original_uri`, `label`, `content_hash`, `byte_count`, `parser_version`, `archived`, `archive_content_hash`, `chunks` (each chunk includes `citation_handle`)
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 

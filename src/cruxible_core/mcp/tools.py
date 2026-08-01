@@ -926,8 +926,9 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         Optional properties must be declared by the relationship schema.
         Entities must already exist. Re-submitting an existing edge merges
         declared domain properties while preserving relationship metadata.
-        Optional evidence_refs and source_evidence attach provenance to the live
-        edge, but do not mark it as group-reviewed accepted state.
+        Optional evidence_refs, source_evidence, and citation_handles attach
+        provenance to the live edge, but do not mark it as group-reviewed
+        accepted state.
 
         For governed judgment relationships, prefer candidate group proposal
         flows so Cruxible can preserve tri-state signal-source evidence

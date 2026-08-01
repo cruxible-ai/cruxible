@@ -114,6 +114,41 @@ def _workflow_receipts(instance: CruxibleInstance):
         store.close()
 
 
+def _assert_source_registration_output(
+    output: dict[str, object],
+    *,
+    registered: int,
+    noops: int,
+) -> None:
+    artifact_ids = ["opinion_text_op_alpha", "opinion_text_op_zeta"]
+    assert output["registered"] == registered
+    assert output["noops"] == noops
+    assert output["artifact_ids"] == artifact_ids
+    assert output["revisions"] == {
+        "opinion_text_op_alpha": "opinion_text_op_alpha@1",
+        "opinion_text_op_zeta": "opinion_text_op_zeta@1",
+    }
+    revision_handles = output["revision_handles"]
+    assert isinstance(revision_handles, dict)
+    assert set(revision_handles) == set(artifact_ids)
+    assert all(str(handle).startswith("src1_") for handle in revision_handles.values())
+    citation_handles = output["citation_handles"]
+    assert isinstance(citation_handles, dict)
+    assert set(citation_handles) == set(artifact_ids)
+    for handles in citation_handles.values():
+        assert isinstance(handles, dict)
+        assert handles
+        assert all(str(handle).startswith("cite1_") for handle in handles.values())
+    assert set(output) == {
+        "registered",
+        "noops",
+        "artifact_ids",
+        "revisions",
+        "revision_handles",
+        "citation_handles",
+    }
+
+
 def test_compile_refuses_register_source_artifacts_in_utility_workflow(
     tmp_path: Path,
 ) -> None:
@@ -143,15 +178,7 @@ def test_register_source_artifacts_service_preview_reports_plan_without_persisti
     assert preview.mode == "preview"
     assert preview.workflow_type == "canonical"
     assert preview.apply_digest is not None
-    assert preview.output == {
-        "registered": 2,
-        "noops": 0,
-        "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
-        "revisions": {
-            "opinion_text_op_alpha": "opinion_text_op_alpha@1",
-            "opinion_text_op_zeta": "opinion_text_op_zeta@1",
-        },
-    }
+    _assert_source_registration_output(preview.output, registered=2, noops=0)
     assert preview.apply_previews["pin_texts"] == preview.output
     assert _list_source_artifacts(instance) == []
 
@@ -174,16 +201,7 @@ def test_register_source_artifacts_service_apply_with_preview_digest_registers_a
     assert applied.mode == "apply"
     assert applied.workflow_type == "canonical"
     assert applied.committed_snapshot_id is not None
-    assert applied.output == {
-        "registered": 2,
-        "noops": 0,
-        "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
-        "revisions": {
-            "opinion_text_op_alpha": "opinion_text_op_alpha@1",
-            "opinion_text_op_zeta": "opinion_text_op_zeta@1",
-        },
-    }
-    assert set(applied.output) == {"registered", "noops", "artifact_ids", "revisions"}
+    _assert_source_registration_output(applied.output, registered=2, noops=0)
     assert applied.apply_previews["pin_texts"] == applied.output
 
     artifacts = sorted(
@@ -244,17 +262,8 @@ def test_register_source_artifacts_happy_path_outputs_and_chunks(
 
     result = execute_workflow(instance, instance.load_config(), "pin_sources", {}, mode="apply")
 
-    assert result.output == {
-        "registered": 2,
-        "noops": 0,
-        "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
-        "revisions": {
-            "opinion_text_op_alpha": "opinion_text_op_alpha@1",
-            "opinion_text_op_zeta": "opinion_text_op_zeta@1",
-        },
-    }
+    _assert_source_registration_output(result.output, registered=2, noops=0)
     assert result.apply_previews["pin_texts"] == result.output
-    assert set(result.output) == {"registered", "noops", "artifact_ids", "revisions"}
 
     store = instance.get_source_artifact_store()
     try:
@@ -279,15 +288,7 @@ def test_register_source_artifacts_rerun_is_idempotent(
     second = execute_workflow(instance, instance.load_config(), "pin_sources", {}, mode="apply")
 
     assert first.output["registered"] == 2
-    assert second.output == {
-        "registered": 0,
-        "noops": 2,
-        "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
-        "revisions": {
-            "opinion_text_op_alpha": "opinion_text_op_alpha@1",
-            "opinion_text_op_zeta": "opinion_text_op_zeta@1",
-        },
-    }
+    _assert_source_registration_output(second.output, registered=0, noops=2)
 
     store = instance.get_source_artifact_store()
     try:
@@ -325,15 +326,7 @@ def test_register_source_artifacts_metadata_drift_noop_preserves_original_metada
 
     second = execute_workflow(instance, instance.load_config(), "pin_sources", {}, mode="apply")
 
-    assert second.output == {
-        "registered": 0,
-        "noops": 2,
-        "artifact_ids": ["opinion_text_op_alpha", "opinion_text_op_zeta"],
-        "revisions": {
-            "opinion_text_op_alpha": "opinion_text_op_alpha@1",
-            "opinion_text_op_zeta": "opinion_text_op_zeta@1",
-        },
-    }
+    _assert_source_registration_output(second.output, registered=0, noops=2)
     after = _get_source_artifact(instance, "opinion_text_op_alpha")
     assert after is not None
     assert after.label == before.label

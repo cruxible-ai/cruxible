@@ -2598,6 +2598,36 @@ class TestBatchDirectWrite:
         assert receipt.operation_type == "batch_direct_write"
         assert receipt.committed is True
 
+    def test_batch_shared_evidence_accepts_citation_handles(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        registered = service_register_source_artifact(
+            initialized_instance,
+            source_content="# Batch\n\nBatch fitment evidence.\n",
+            source_artifact_id="batch_handle_source",
+        )
+        paragraph = next(
+            chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1"
+        )
+        assert paragraph.citation_handle is not None
+        payload = _batch_payload()
+        payload.shared_evidence["doc"] = SharedEvidenceInput(
+            citation_handles=[paragraph.citation_handle]
+        )
+
+        result = service_batch_direct_write(initialized_instance, payload)
+
+        assert result.relationships_added == 1
+        relationship = initialized_instance.load_graph().get_relationship(
+            "Part", "BP-BATCH", "Vehicle", "V-BATCH", "fits"
+        )
+        assert relationship is not None
+        assert relationship.metadata.evidence is not None
+        ref = relationship.metadata.evidence.evidence_refs[0]
+        assert ref.artifact_revision_id == registered.artifact_revision_id
+        assert ref.metadata["content_hash"] == paragraph.content_hash
+
     def test_pending_relationship_write_is_reviewable_not_live(
         self,
         initialized_instance: CruxibleInstance,
@@ -3881,6 +3911,47 @@ class TestAddRelationships:
         evidence_ref = rel.metadata.evidence.evidence_refs[0]
         assert evidence_ref.source == "source_artifact"
         assert evidence_ref.artifact_id == source_evidence["source_artifact_id"]
+
+    def test_relationship_evidence_guard_accepts_citation_handle_before_guard(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _evidence_guard_instance(tmp_path)
+        _seed_guarded_fitment_endpoints(instance)
+        source_path = instance.root / "fitment-handle.md"
+        source_path.write_text("# Fitment\n\nBP-1002 fits Accord.\n")
+        registered = service_register_source_artifact(instance, source_path=str(source_path))
+        paragraph = next(
+            chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1"
+        )
+        assert paragraph.citation_handle is not None
+
+        result = service_add_relationship_inputs(
+            instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-ACCORD",
+                    properties={"verified": True},
+                    citation_handles=[paragraph.citation_handle],
+                )
+            ],
+            source="test",
+            source_ref="guarded_citation_handle",
+        )
+
+        assert result.added == 1
+        rel = instance.load_graph().get_relationship(
+            "Part", "BP-1002", "Vehicle", "V-ACCORD", "fits"
+        )
+        assert rel is not None
+        assert rel.metadata.evidence is not None
+        assert rel.metadata.evidence.evidence_refs[0].metadata["content_hash"] == (
+            paragraph.content_hash
+        )
 
     def test_relationship_evidence_guard_enforces_min_count(
         self,

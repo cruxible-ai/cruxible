@@ -44,6 +44,7 @@ class SourceArtifactChunk(BaseModel):
     line_end: int
     preview: str | None = None
     label: str | None = None
+    citation_handle: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -102,6 +103,7 @@ class RegisterSourceArtifactResult(BaseModel):
 
     source_artifact_id: str
     artifact_revision_id: str
+    revision_handle: str | None = None
     revision: int = 1
     source_kind: SourceKind
     source_retention: SourceRetention
@@ -157,6 +159,9 @@ class SourceArtifactListItem(BaseModel):
     """Metadata summary for a registered source artifact."""
 
     source_artifact_id: str
+    artifact_revision_id: str | None = None
+    revision: int = 1
+    revision_handle: str | None = None
     kind: SourceKind
     retention: SourceRetention
     original_uri: str | None = None
@@ -179,6 +184,7 @@ class SourceArtifactReadChunk(BaseModel):
     line_start: int
     line_end: int
     content_hash: str
+    citation_handle: str | None = None
     text: str | None = None
 
     model_config = ConfigDict(extra="forbid")

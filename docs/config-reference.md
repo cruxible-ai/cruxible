@@ -1623,6 +1623,47 @@ Evidence requirement guards are relationship-scoped: they require
 they are dereferenceable `source_artifact` refs with chunk identity and content
 hash metadata, as produced by source artifact registration.
 
+### Registered Source Evidence and Citation Handles
+
+Relationship writes and governed group member/signal inputs accept three
+additive evidence forms: generic `evidence_refs`, explicit `source_evidence`
+locators, and `citation_handles`. Existing explicit locators are unchanged:
+
+```yaml
+source_evidence:
+  - source_artifact_id: source_manual
+    artifact_revision_id: source_manual@3
+    chunk_id: mdchunk_abc123
+```
+
+The compact form contains only a server-minted token:
+
+```yaml
+citation_handles:
+  - cite1_4f8c3a1d87be76dd3260
+```
+
+Cruxible derives handles from immutable registration data; there is no mutable
+handle registry. `cite1_...` identifies one chunk of one revision. `src1_...`
+identifies one whole revision and attaches every registered chunk from that
+revision. Registration results, source-artifact list/get results, and workflow
+`register_source_artifacts` outputs expose these handles. Re-registering changed
+content creates a new revision and therefore new handles; an old handle is
+`stale` and is refused on a new write.
+
+There is deliberately no floating/bare-artifact handle. A handle never means
+"whatever revision is current." Every accepted handle is revision-pinned, and
+the stored `EvidenceRef` includes the resolved logical artifact id, physical
+revision id, chunk locator, artifact hash, and chunk hash computed from the
+registration. Handle lowering happens before evidence guards run, so guards see
+the same canonical refs as the explicit form. Reads never auto-attach evidence;
+the caller must pass `citation_handles` on the write.
+
+Resolution fails closed with a typed failure kind: `unknown` (no registered
+target), `stale` (the target revision was superseded), or `ambiguous` (a digest
+collision matched multiple registered targets). Cruxible never drops, guesses,
+or falls back to the current revision.
+
 ### FrozenPropertyGuardCondition (`type: frozen`)
 
 | Field | Type | Required | Default | Description |
@@ -2126,6 +2167,11 @@ and `truncation_reasons`. Query steps additionally expose `result_shape`,
 `dedupe`, `relationship_state`, `policy_summary`, and the child query
 `receipt_id`. Transform steps that consume read output preserve that metadata in
 `source_metadata`.
+
+`register_source_artifacts` returns the existing `revisions` map plus
+`revision_handles` (`{artifact_id: src1_...}`) and `citation_handles`
+(`{artifact_id: {chunk_id: cite1_...}}`). Preview and apply compute the same
+tokens from the planned/registered immutable revision.
 
 Workflow graph reads are query-engine-backed. Reusable product/API surfaces
 should normally be named queries. Workflow-local collection reads can use an

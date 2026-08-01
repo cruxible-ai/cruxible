@@ -1375,6 +1375,93 @@ def test_source_artifact_relative_path_resolves_from_workspace_root(
     assert dereferenced_payload["body"] == "Workspace-local source text."
 
 
+def test_http_batch_write_accepts_discovered_citation_handle_and_unknown_fails_closed(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    docs_dir = server_project / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "citation.md").write_text("# Evidence\n\nHTTP citation evidence.\n")
+    instance_id = _init_instance(app_client, server_project)
+    registered_response = app_client.post(
+        f"/api/v1/{instance_id}/source-artifacts/register",
+        json={
+            "source_path": "docs/citation.md",
+            "source_artifact_id": "http_citation_source",
+        },
+    )
+    assert registered_response.status_code == 200
+    registered = registered_response.json()
+    paragraph = next(
+        chunk for chunk in registered["chunks"] if chunk["block_selector"] == "paragraph:1"
+    )
+    assert paragraph["citation_handle"].startswith("cite1_")
+
+    payload = {
+        "entities": [
+            {
+                "entity_type": "Part",
+                "entity_id": "BP-CITE",
+                "properties": {
+                    "part_number": "BP-CITE",
+                    "name": "Citation Pad",
+                    "category": "brakes",
+                    "price": 10.0,
+                },
+            },
+            {
+                "entity_type": "Vehicle",
+                "entity_id": "V-CITE",
+                "properties": {
+                    "vehicle_id": "V-CITE",
+                    "year": 2026,
+                    "make": "Honda",
+                    "model": "Civic",
+                },
+            },
+        ],
+        "relationships": [
+            {
+                "from_type": "Part",
+                "from_id": "BP-CITE",
+                "relationship_type": "fits",
+                "to_type": "Vehicle",
+                "to_id": "V-CITE",
+                "citation_handles": ["cite1_unknown"],
+            }
+        ],
+    }
+    unknown = app_client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={"payload": payload},
+    )
+    assert unknown.status_code == 400
+    assert unknown.json()["error_type"] == "CitationHandleResolutionError"
+    assert unknown.json()["context"]["failure_kind"] == "unknown"
+
+    payload["relationships"][0]["citation_handles"] = [paragraph["citation_handle"]]
+    applied = app_client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={"payload": payload},
+    )
+    assert applied.status_code == 200, applied.json()
+    lookup = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params={
+            "from_type": "Part",
+            "from_id": "BP-CITE",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-CITE",
+        },
+    )
+    ref = lookup.json()["metadata"]["evidence"]["evidence_refs"][0]
+    assert ref["artifact_id"] == registered["source_artifact_id"]
+    assert ref["artifact_revision_id"] == registered["artifact_revision_id"]
+    assert ref["source_record_id"] == paragraph["chunk_id"]
+    assert ref["metadata"]["content_hash"] == paragraph["content_hash"]
+
+
 def test_source_artifact_read_routes_list_paginate_and_get_text(
     app_client: TestClient,
     server_project: Path,
@@ -1425,6 +1512,8 @@ def test_source_artifact_read_routes_list_paginate_and_get_text(
     assert listed_payload["items"][0]["kind"] == "markdown"
     assert listed_payload["items"][0]["retention"] == "manifest_only"
     assert listed_payload["items"][0]["chunk_count"] > 0
+    assert listed_payload["items"][0]["artifact_revision_id"] == "source_b@1"
+    assert listed_payload["items"][0]["revision_handle"].startswith("src1_")
 
     detail = app_client.get(f"/api/v1/{instance_id}/source-artifacts/source_a")
     assert detail.status_code == 200
@@ -1432,10 +1521,12 @@ def test_source_artifact_read_routes_list_paginate_and_get_text(
     assert detail_payload["source_artifact_id"] == "source_a"
     assert detail_payload["content_available"] is True
     assert detail_payload["body_origin"] == "local_path"
+    assert detail_payload["revision_handle"].startswith("src1_")
     paragraph = next(
         chunk for chunk in detail_payload["chunks"] if chunk["block_selector"] == "paragraph:1"
     )
     assert paragraph["text"] == "Readable A text."
+    assert paragraph["citation_handle"].startswith("cite1_")
 
 
 def test_source_artifact_read_route_manifest_only_missing_file_omits_text(

@@ -218,6 +218,28 @@ class SourceArtifactNotFoundError(CoreError):
         super().__init__(f"Source artifact '{source_artifact_id}' not found")
 
 
+class CitationHandleResolutionError(CoreError):
+    """A source-evidence citation handle could not be resolved safely."""
+
+    error_code = "citation_handle_resolution_failed"
+
+    def __init__(
+        self,
+        handle: str,
+        failure_kind: str,
+        *,
+        detail: str,
+        message: str | None = None,
+    ) -> None:
+        self.handle = handle
+        self.failure_kind = failure_kind
+        self.detail = detail
+        super().__init__(
+            message
+            or f"Citation handle resolution failed ({failure_kind}) for '{handle}': {detail}"
+        )
+
+
 class RuntimeCredentialNotFoundError(CoreError):
     def __init__(self, credential_id: str):
         self.credential_id = credential_id
@@ -433,6 +455,13 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = ProcedureNotFoundError(context.get("procedure_id", "unknown"))
     elif body.error_type == "SourceArtifactNotFoundError":
         exc = SourceArtifactNotFoundError(context.get("source_artifact_id", "unknown"))
+    elif body.error_type == "CitationHandleResolutionError":
+        exc = CitationHandleResolutionError(
+            context.get("handle", "unknown"),
+            context.get("failure_kind", "unknown"),
+            detail=context.get("detail", body.message),
+            message=body.message,
+        )
     elif body.error_type == "RuntimeCredentialNotFoundError":
         exc = RuntimeCredentialNotFoundError(context.get("credential_id", "unknown"))
     elif body.error_type == "AuthenticationError":

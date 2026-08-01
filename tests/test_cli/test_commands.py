@@ -2285,6 +2285,15 @@ class TestAddEntity:
 
 
 class TestAddRelationship:
+    def test_citation_handle_flag_is_available_on_add_and_update(
+        self,
+        runner: CliRunner,
+    ) -> None:
+        for verb in ("add", "update"):
+            result = runner.invoke(cli, ["relationship", verb, "--help"])
+            assert result.exit_code == 0
+            assert "--citation-handle" in result.output
+
     def test_new(
         self,
         runner: CliRunner,

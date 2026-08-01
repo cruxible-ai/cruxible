@@ -65,6 +65,7 @@ relationships without hand-authoring a direct-write payload file.
 **Relationship Evidence Options:**
 - `--evidence-ref JSON`
 - `--source-evidence JSON`
+- `--citation-handle TOKEN`
 - `--evidence-rationale TEXT`
 
 **Output And Side Effects:**
@@ -497,6 +498,7 @@ table output groups nodes by depth.
 | `--set-json` | no | `` | text | Typed JSON relationship property assignment FIELD=JSON. |
 | `--evidence-ref` | no | `` | text | JSON evidence ref object. Repeat to attach multiple refs. |
 | `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
+| `--citation-handle` | no | `` | text | Server-minted, revision-pinned source-evidence handle. Repeat to attach multiple handles. |
 | `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
 | `--pending` | no | `False` | boolean | Create the relationship as pending review instead of live state. |
 | `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status. Only `active`/`inactive` are writable here; the terminal statuses `retracted`/`superseded` are refused on add/update — use `cruxible relationship supersede` or `cruxible relationship retract`. Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
@@ -507,7 +509,8 @@ table output groups nodes by depth.
 **Output And Side Effects:**
 - Uses the same guarded direct-write path as `batch-direct-write`.
 - Fails if the relationship tuple already exists.
-- Evidence refs and source-evidence locators are persisted as relationship evidence metadata.
+- Evidence refs, source-evidence locators, and citation handles are persisted as
+  the same canonical relationship evidence metadata.
   Direct adds are not group-reviewed accepted relationships; use `group propose`
   and `group resolve --action approve` when review/acceptance state matters.
 - JSON output is a `BatchDirectWriteResult`.
@@ -519,7 +522,7 @@ cruxible relationship add \
   roadmap_item_depends_on_roadmap_item \
   RoadmapItem ri-compact-workflow-trace-payloads \
   RoadmapItem ri-transactional-sqlite-state \
-  --source-evidence '{"source_artifact_id":"SRC-...","chunk_id":"CHK-..."}' \
+  --citation-handle cite1_4f8c3a1d87be76dd3260 \
   --evidence-rationale "Extracted from the P0 section."
 ```
 
@@ -553,6 +556,7 @@ cruxible relationship add \
 | `--set-json` | no | `` | text | Typed JSON relationship property assignment FIELD=JSON. |
 | `--evidence-ref` | no | `` | text | JSON evidence ref object. Repeat to attach multiple refs. |
 | `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
+| `--citation-handle` | no | `` | text | Server-minted, revision-pinned source-evidence handle. Repeat to attach multiple handles. |
 | `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
 | `--lifecycle-status` | no | `` | choice | Typed edge lifecycle status -- e.g. deactivate a live edge. Only `active`/`inactive` are writable here; the terminal statuses `retracted`/`superseded` are refused on add/update — use `cruxible relationship supersede` or `cruxible relationship retract`. Sets only `assertion.lifecycle`; cannot approve/reject the edge. |
 | `--lifecycle-reason` | no | `` | text | Optional reason for the lifecycle status (requires `--lifecycle-status`). |
@@ -725,9 +729,8 @@ relationships:
     evidence_rationale: Extracted from the referenced section.
 shared_evidence:
   source_section:
-    source_evidence:
-      - source_artifact_id: SRC-...
-        chunk_id: mdchunk_...
+    citation_handles:
+      - cite1_4f8c3a1d87be76dd3260
 ```
 
 **Output And Side Effects:**
@@ -741,7 +744,8 @@ shared_evidence:
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Payload file is not a JSON/YAML object.
-- Unknown shared evidence key or invalid source-evidence locator.
+- Unknown shared evidence key, invalid source-evidence locator, or an unknown,
+  stale, or ambiguous citation handle.
 
 ## cruxible feedback analyze
 
@@ -3276,9 +3280,9 @@ evidence locators.
 | `--json` | no | `False` | boolean | Output the full list contract payload as JSON. |
 
 **Output And Side Effects:**
-- Read-only. Human output renders a table with artifact id, kind, label,
-  retention, chunk count, and registration timestamp, followed by total and
-  truncated pagination status.
+- Read-only. Human output renders a table with artifact id, current revision
+  handle, kind, label, retention, chunk count, and registration timestamp,
+  followed by total and truncated pagination status.
 - With `--json`, emits the full `SourceArtifactListResult` contract payload.
 
 **Common Errors:**
@@ -3301,11 +3305,11 @@ evidence locators.
 | `--json` | no | `False` | boolean | Output the full read contract payload as JSON, including chunk text when available. |
 
 **Output And Side Effects:**
-- Read-only. Human output renders an artifact header with id, kind, label,
-  original URI, retention, and content availability; when content is unavailable,
-  the reason is shown.
-- By default, human output also renders a chunk table with chunk id, heading path,
-  block type, and line range. It does not print full chunk text; use `--json`
+- Read-only. Human output renders an artifact header with id, immutable revision
+  id and handle, kind, label, original URI, retention, and content availability;
+  when content is unavailable, the reason is shown.
+- By default, human output also renders a chunk table with chunk id, citation
+  handle, heading path, block type, and line range. It does not print full chunk text; use `--json`
   or `source dereference` when source body text is needed.
 - With `--json`, emits the full `SourceArtifactReadResult` contract payload.
 
@@ -3351,6 +3355,8 @@ cruxible source register \
 **Output And Side Effects:**
 - Persists a source artifact ID, document hash, parser version, byte count, and
   deterministic chunk IDs in `state.db`.
+- Returns a revision handle (`src1_...`) plus one chunk citation handle
+  (`cite1_...`) per chunk. These are derived, not stored in a mutable registry.
 - With `manifest_only`, Cruxible stores the manifest and local path but not a
   deep copy of the source bytes.
 - With `archive`, Cruxible also stores the source bytes so later dereference can

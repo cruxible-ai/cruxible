@@ -6,6 +6,7 @@ import pytest
 
 from cruxible_client import errors as client_errors
 from cruxible_core.errors import (
+    CitationHandleResolutionError,
     ConfigError,
     ConstraintViolationError,
     CoreError,
@@ -38,6 +39,19 @@ from cruxible_core.server.errors import (
 @pytest.mark.parametrize(
     ("error", "expected_type", "attrs"),
     [
+        (
+            CitationHandleResolutionError(
+                "cite1_stale",
+                "stale",
+                detail="the token targets superseded revision 'source@1'",
+            ),
+            client_errors.CitationHandleResolutionError,
+            {
+                "handle": "cite1_stale",
+                "failure_kind": "stale",
+                "detail": "the token targets superseded revision 'source@1'",
+            },
+        ),
         (
             ConfigError("bad config", errors=["missing relationship"]),
             client_errors.ConfigError,
@@ -171,6 +185,9 @@ def test_error_round_trip_preserves_subclass_and_context(
     if isinstance(error, CustomerCodeExecutionUnsupportedError):
         assert status == 403
         assert body.error_code == "customer_code_execution_unsupported"
+    if isinstance(error, CitationHandleResolutionError):
+        assert status == 409
+        assert body.error_code == "citation_handle_resolution_failed"
     for key, value in attrs.items():
         assert getattr(restored, key) == value
 

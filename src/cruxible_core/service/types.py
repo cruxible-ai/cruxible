@@ -161,6 +161,7 @@ class RelationshipWriteInput:
     pending: bool = False
     evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = field(default_factory=list)
     source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(default_factory=list)
+    citation_handles: Sequence[str] = field(default_factory=list)
     evidence_rationale: str | None = None
     # Typed, review-SAFE lifecycle write. Sets ONLY ``assertion.lifecycle`` on the
     # edge; structurally cannot touch ``assertion.review`` or ``group_override``
@@ -172,6 +173,7 @@ class RelationshipWriteInput:
 class SharedEvidenceInput:
     evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = field(default_factory=list)
     source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(default_factory=list)
+    citation_handles: Sequence[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1155,6 +1157,7 @@ class GroupSignalInput:
     evidence: str = ""
     evidence_refs: list[dict[str, Any]] = field(default_factory=list)
     source_evidence: list[SourceEvidenceInput | dict[str, Any]] = field(default_factory=list)
+    citation_handles: list[str] = field(default_factory=list)
     basis: dict[str, Any] | None = None
 
 
@@ -1170,6 +1173,7 @@ class GroupMemberInput:
     source_query_evidence: list[QuerySourceEvidence | dict[str, Any]] = field(default_factory=list)
     evidence_refs: list[dict[str, Any]] = field(default_factory=list)
     source_evidence: list[SourceEvidenceInput | dict[str, Any]] = field(default_factory=list)
+    citation_handles: list[str] = field(default_factory=list)
     evidence_rationale: str | None = None
 
 

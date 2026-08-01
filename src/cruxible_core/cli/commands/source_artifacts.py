@@ -86,6 +86,8 @@ def get_source_artifact(
         return
 
     click.echo(f"Source artifact: {result.source_artifact_id}")
+    click.echo(f"  Revision: {result.artifact_revision_id}")
+    click.echo(f"  Revision handle: {result.revision_handle or ''}")
     click.echo(f"  Kind: {result.kind}")
     click.echo(f"  Label: {result.label or ''}")
     click.echo(f"  Original URI: {result.original_uri or ''}")
@@ -166,11 +168,15 @@ def register_source_artifact(
         _emit_json(result.model_dump(mode="json"))
         return
     click.echo(f"Source artifact: {result.source_artifact_id}")
+    click.echo(f"  Revision: {result.artifact_revision_id}")
+    click.echo(f"  Revision handle: {result.revision_handle or ''}")
     click.echo(f"  Retention: {result.source_retention}")
     click.echo(f"  Hash: {result.content_hash}")
     click.echo(f"  Chunks: {len(result.chunks)}")
     if result.archived:
         click.echo(f"  Archive hash: {result.archive_content_hash}")
+    if result.chunks:
+        console.print(source_artifact_chunks_table(result.chunks))
 
 
 @source_group.command("dereference")

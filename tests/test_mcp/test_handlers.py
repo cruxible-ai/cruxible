@@ -86,6 +86,7 @@ def test_handle_add_relationship_preserves_evidence_fields(
                         chunk_id="CHK-1",
                     )
                 ],
+                citation_handles=["cite1_example"],
                 evidence_rationale="Accepted direct source-backed assertion.",
             )
         ],
@@ -100,6 +101,7 @@ def test_handle_add_relationship_preserves_evidence_fields(
     assert relationship.pending is True
     assert relationship.evidence_refs[0].source == "roadmap_doc"
     assert relationship.source_evidence[0].source_artifact_id == "SRC-1"
+    assert relationship.citation_handles == ["cite1_example"]
     assert relationship.evidence_rationale == "Accepted direct source-backed assertion."
 
 

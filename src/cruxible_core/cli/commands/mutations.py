@@ -390,6 +390,7 @@ def _contract_batch_payload_to_service(
                 pending=edge.pending,
                 evidence_refs=[ref.model_dump(mode="python") for ref in edge.evidence_refs],
                 source_evidence=[ref.model_dump(mode="python") for ref in edge.source_evidence],
+                citation_handles=list(edge.citation_handles),
                 evidence_rationale=edge.evidence_rationale,
                 shared_evidence_keys=list(edge.shared_evidence_keys),
                 lifecycle=relationship_lifecycle_state(edge.lifecycle),
@@ -400,6 +401,7 @@ def _contract_batch_payload_to_service(
             key: SharedEvidenceInput(
                 evidence_refs=[ref.model_dump(mode="python") for ref in evidence.evidence_refs],
                 source_evidence=[ref.model_dump(mode="python") for ref in evidence.source_evidence],
+                citation_handles=list(evidence.citation_handles),
             )
             for key, evidence in payload.shared_evidence.items()
         },
@@ -556,6 +558,7 @@ def _relationship_payload(
     *,
     evidence_refs: tuple[str, ...],
     source_evidence: tuple[str, ...],
+    citation_handles: tuple[str, ...],
     evidence_rationale: str | None,
     pending: bool = False,
     lifecycle: contracts.RelationshipLifecycleInput | None = None,
@@ -573,6 +576,7 @@ def _relationship_payload(
                 pending=pending,
                 evidence_refs=[_parse_evidence_ref(raw) for raw in evidence_refs],
                 source_evidence=[_parse_source_evidence(raw) for raw in source_evidence],
+                citation_handles=list(citation_handles),
                 evidence_rationale=evidence_rationale,
                 lifecycle=lifecycle,
             )
@@ -584,11 +588,14 @@ def _relationship_payload(
 def _validate_relationship_evidence(
     evidence_refs: tuple[str, ...],
     source_evidence: tuple[str, ...],
+    citation_handles: tuple[str, ...],
 ) -> None:
     for raw in evidence_refs:
         _parse_evidence_ref(raw)
     for raw in source_evidence:
         _parse_source_evidence(raw)
+    if any(not handle.strip() for handle in citation_handles):
+        raise click.BadParameter("--citation-handle must be non-empty")
 
 
 def _require_property_assignments(properties: Mapping[str, Any], *, command_name: str) -> None:
@@ -806,6 +813,12 @@ def update_entity_cmd(
     help="JSON source-evidence locator. Repeat to attach multiple locators.",
 )
 @click.option(
+    "--citation-handle",
+    "citation_handles",
+    multiple=True,
+    help="Server-minted source-evidence handle. Repeat to attach multiple handles.",
+)
+@click.option(
     "--evidence-rationale",
     default=None,
     help="Optional rationale for the attached relationship evidence.",
@@ -850,6 +863,7 @@ def add_relationship_cmd(
     set_json_values: tuple[str, ...],
     evidence_refs: tuple[str, ...],
     source_evidence: tuple[str, ...],
+    citation_handles: tuple[str, ...],
     evidence_rationale: str | None,
     pending: bool,
     lifecycle_status: str | None,
@@ -871,7 +885,7 @@ def add_relationship_cmd(
         to_id_option=to_id_option,
     )
     properties = _parse_property_inputs(props, set_values, set_json_values)
-    _validate_relationship_evidence(evidence_refs, source_evidence)
+    _validate_relationship_evidence(evidence_refs, source_evidence, citation_handles)
     lifecycle = _build_relationship_lifecycle_input(lifecycle_status, lifecycle_reason)
     if _relationship_exists(
         relationship_type,
@@ -895,6 +909,7 @@ def add_relationship_cmd(
             properties,
             evidence_refs=evidence_refs,
             source_evidence=source_evidence,
+            citation_handles=citation_handles,
             evidence_rationale=evidence_rationale,
             pending=pending,
             lifecycle=lifecycle,
@@ -955,6 +970,12 @@ def add_relationship_cmd(
     help="JSON source-evidence locator. Repeat to attach multiple locators.",
 )
 @click.option(
+    "--citation-handle",
+    "citation_handles",
+    multiple=True,
+    help="Server-minted source-evidence handle. Repeat to attach multiple handles.",
+)
+@click.option(
     "--evidence-rationale",
     default=None,
     help="Optional rationale for the attached relationship evidence.",
@@ -995,6 +1016,7 @@ def update_relationship_cmd(
     set_json_values: tuple[str, ...],
     evidence_refs: tuple[str, ...],
     source_evidence: tuple[str, ...],
+    citation_handles: tuple[str, ...],
     evidence_rationale: str | None,
     lifecycle_status: str | None,
     lifecycle_reason: str | None,
@@ -1025,12 +1047,20 @@ def update_relationship_cmd(
         to_id_option=to_id_option,
     )
     properties = _parse_property_inputs(props, set_values, set_json_values)
-    _validate_relationship_evidence(evidence_refs, source_evidence)
+    _validate_relationship_evidence(evidence_refs, source_evidence, citation_handles)
     lifecycle = _build_relationship_lifecycle_input(lifecycle_status, lifecycle_reason)
-    if not (properties or evidence_refs or source_evidence or evidence_rationale or lifecycle):
+    if not (
+        properties
+        or evidence_refs
+        or source_evidence
+        or citation_handles
+        or evidence_rationale
+        or lifecycle
+    ):
         raise click.UsageError(
             "update relationship requires at least one --set, --set-json, "
-            "--evidence-ref, --source-evidence, --evidence-rationale, or --lifecycle-status"
+            "--evidence-ref, --source-evidence, --citation-handle, --evidence-rationale, "
+            "or --lifecycle-status"
         )
     if not _relationship_exists(
         relationship_type,
@@ -1054,6 +1084,7 @@ def update_relationship_cmd(
             properties,
             evidence_refs=evidence_refs,
             source_evidence=source_evidence,
+            citation_handles=citation_handles,
             evidence_rationale=evidence_rationale,
             lifecycle=lifecycle,
         ),

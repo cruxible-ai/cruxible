@@ -1077,6 +1077,7 @@ def test_add_relationships_serializes_evidence_fields():
                         chunk_id="CHK-1",
                     )
                 ],
+                citation_handles=["cite1_example"],
                 evidence_rationale="Accepted direct source-backed assertion.",
             )
         ],
@@ -1120,6 +1121,7 @@ def test_add_relationships_serializes_evidence_fields():
                             "expected_content_hash": None,
                         }
                     ],
+                    "citation_handles": ["cite1_example"],
                     "evidence_rationale": "Accepted direct source-backed assertion.",
                     "lifecycle": None,
                 }

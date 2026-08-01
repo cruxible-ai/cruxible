@@ -7,6 +7,18 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **Registered source evidence now has compact, server-minted citation
+  handles.** Registration, source-artifact list/get responses, and canonical
+  `register_source_artifacts` workflow output expose stable revision and chunk
+  handles. Relationship and governed-group writes accept `citation_handles`
+  beside the unchanged explicit `source_evidence` form; Cruxible resolves them
+  to the same full revision-pinned `EvidenceRef` before mutation guards run and
+  computes artifact/chunk hashes from the registration. Handles are never
+  floating aliases: superseded handles fail as `stale`, and unknown or
+  digest-colliding handles fail as `unknown` or `ambiguous` rather than being
+  dropped or guessed. Evidence is attached only when a write explicitly passes
+  a handle.
+
 ## 0.3.0 — 2026-07-29
 
 ### Changed (BREAKING)

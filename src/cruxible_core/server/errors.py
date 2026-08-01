@@ -7,6 +7,7 @@ from typing import Any
 from cruxible_client.errors import ErrorResponse, response_to_error
 from cruxible_core.errors import (
     AuthenticationError,
+    CitationHandleResolutionError,
     ConcurrentStateDriftError,
     ConfigError,
     ConstraintViolationError,
@@ -68,6 +69,8 @@ def _status_for_error(exc: CoreError) -> int:
         return 401
     if isinstance(exc, CustomerCodeExecutionUnsupportedError):
         return 403
+    if isinstance(exc, CitationHandleResolutionError):
+        return 409 if exc.failure_kind == "stale" else 400
     if isinstance(exc, (ConfigError, DataValidationError, QueryExecutionError, IngestionError)):
         return 400
     if isinstance(
@@ -181,6 +184,10 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["procedure_id"] = exc.procedure_id
     if isinstance(exc, SourceArtifactNotFoundError):
         context["source_artifact_id"] = exc.source_artifact_id
+    if isinstance(exc, CitationHandleResolutionError):
+        context["handle"] = exc.handle
+        context["failure_kind"] = exc.failure_kind
+        context["detail"] = exc.detail
     if isinstance(exc, RuntimeCredentialNotFoundError):
         context["credential_id"] = exc.credential_id
     if isinstance(exc, InvalidContinuationError):

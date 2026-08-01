@@ -374,6 +374,26 @@ class SourceArtifactNotFoundError(CoreError):
         super().__init__(f"Source artifact '{source_artifact_id}' not found")
 
 
+class CitationHandleResolutionError(CoreError):
+    """A source-evidence citation handle could not be resolved safely."""
+
+    error_code = "citation_handle_resolution_failed"
+
+    def __init__(
+        self,
+        handle: str,
+        failure_kind: str,
+        *,
+        detail: str,
+    ) -> None:
+        self.handle = handle
+        self.failure_kind = failure_kind
+        self.detail = detail
+        super().__init__(
+            f"Citation handle resolution failed ({failure_kind}) for '{handle}': {detail}"
+        )
+
+
 class RuntimeCredentialNotFoundError(CoreError):
     """Runtime credential ID not found in the server credential store."""
 

@@ -539,7 +539,11 @@ def execute_register_source_artifacts_handler(
     ref dereferencing against whatever revision is current, which is exactly the
     silent staleness the revision pin exists to prevent.
     """
-    from cruxible_core.service.source_artifacts import service_register_source_artifact
+    from cruxible_core.service.source_artifacts import (
+        service_register_source_artifact,
+        source_artifact_chunk_handle,
+        source_artifact_revision_handle,
+    )
 
     assert compiled_step.register_source_artifacts_spec is not None
     spec = compiled_step.register_source_artifacts_spec
@@ -566,6 +570,8 @@ def execute_register_source_artifacts_handler(
     # only cite the LOGICAL artifact id, and an evidence ref that names no
     # revision dereferences against whatever revision happens to be current.
     revisions: dict[str, str] = {}
+    revision_handles: dict[str, str] = {}
+    citation_handles: dict[str, dict[str, str]] = {}
     store = context.instance.get_source_artifact_store()
 
     try:
@@ -597,6 +603,11 @@ def execute_register_source_artifacts_handler(
                         "different content digest"
                     )
                 revisions[artifact_id] = existing.artifact_revision_id
+                revision_handles[artifact_id] = source_artifact_revision_handle(existing)
+                citation_handles[artifact_id] = {
+                    chunk.chunk_id: source_artifact_chunk_handle(existing, chunk)
+                    for chunk in store.list_revision_chunks(existing.artifact_revision_id)
+                }
                 noops += 1
                 continue
 
@@ -648,6 +659,13 @@ def execute_register_source_artifacts_handler(
                 ) from exc
             planned_digests[artifact_id] = result.content_hash
             revisions[artifact_id] = result.artifact_revision_id
+            assert result.revision_handle is not None
+            revision_handles[artifact_id] = result.revision_handle
+            citation_handles[artifact_id] = {
+                chunk.chunk_id: chunk.citation_handle
+                for chunk in result.chunks
+                if chunk.citation_handle is not None
+            }
             registered += 1
     finally:
         store.close()
@@ -657,6 +675,11 @@ def execute_register_source_artifacts_handler(
         "noops": noops,
         "artifact_ids": sorted(artifact_ids),
         "revisions": dict(sorted(revisions.items())),
+        "revision_handles": dict(sorted(revision_handles.items())),
+        "citation_handles": {
+            artifact_id: dict(sorted(handles.items()))
+            for artifact_id, handles in sorted(citation_handles.items())
+        },
     }
     context.set_step_output(compiled_step, output)
     context.apply_previews[compiled_step.step_id] = output

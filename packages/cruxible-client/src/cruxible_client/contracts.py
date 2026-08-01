@@ -169,6 +169,12 @@ class RelationshipInput(BaseModel):
         default_factory=list,
         description="Locators into registered source artifacts backing this edge.",
     )
+    citation_handles: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Server-minted, revision-pinned source-evidence handles backing this edge."
+        ),
+    )
     evidence_rationale: str | None = Field(
         default=None,
         description="Free-text explanation of why the attached evidence supports the edge.",
@@ -190,6 +196,10 @@ class SharedEvidenceInput(BaseModel):
     source_evidence: list[SourceEvidenceInput] = Field(
         default_factory=list,
         description="Source-artifact locators shared by multiple relationships.",
+    )
+    citation_handles: list[str] = Field(
+        default_factory=list,
+        description="Server-minted source-evidence handles shared by multiple relationships.",
     )
 
 
@@ -466,12 +476,20 @@ class SourceArtifactChunk(BaseModel):
     line_end: int
     preview: str | None = None
     label: str | None = None
+    citation_handle: str | None = Field(
+        default=None,
+        description="Revision-pinned handle that cites exactly this registered chunk.",
+    )
 
 
 class RegisterSourceArtifactResult(BaseModel):
     source_artifact_id: str
     artifact_revision_id: str = Field(
         description="Physical id of the immutable artifact revision this registration resolved to."
+    )
+    revision_handle: str | None = Field(
+        default=None,
+        description="Stable handle for the whole immutable revision (all of its chunks).",
     )
     revision: int = Field(
         default=1,
@@ -515,6 +533,9 @@ class DereferenceSourceEvidenceResult(BaseModel):
 
 class SourceArtifactListItem(BaseModel):
     source_artifact_id: str
+    artifact_revision_id: str | None = None
+    revision: int = 1
+    revision_handle: str | None = None
     kind: SourceKind
     retention: SourceRetention
     original_uri: str | None = None
@@ -533,6 +554,7 @@ class SourceArtifactReadChunk(BaseModel):
     line_start: int
     line_end: int
     content_hash: str
+    citation_handle: str | None = None
     text: str | None = None
 
 
@@ -583,6 +605,10 @@ class SignalInput(BaseModel):
         default_factory=list,
         description="Registered source-artifact locators backing the signal.",
     )
+    citation_handles: list[str] = Field(
+        default_factory=list,
+        description="Server-minted, revision-pinned source-evidence handles backing the signal.",
+    )
     basis: SignalBucketBasis | None = Field(
         default=None,
         description="Optional structured basis explaining how the signal was bucketed.",
@@ -630,6 +656,10 @@ class MemberInput(BaseModel):
     source_evidence: list[SourceEvidenceInput] = Field(
         default_factory=list,
         description="Registered source-artifact locators for this member edge.",
+    )
+    citation_handles: list[str] = Field(
+        default_factory=list,
+        description="Server-minted, revision-pinned source-evidence handles for this member.",
     )
     evidence_rationale: str | None = Field(
         default=None,

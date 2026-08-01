@@ -2402,6 +2402,14 @@
         "$defs": {
           "BatchRelationshipInput": {
             "properties": {
+              "citation_handles": {
+                "description": "Server-minted, revision-pinned source-evidence handles backing this edge.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Citation Handles",
+                "type": "array"
+              },
               "evidence_rationale": {
                 "anyOf": [
                   {
@@ -2706,6 +2714,14 @@
           },
           "SharedEvidenceInput": {
             "properties": {
+              "citation_handles": {
+                "description": "Server-minted source-evidence handles shared by multiple relationships.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Citation Handles",
+                "type": "array"
+              },
               "evidence_refs": {
                 "description": "External provenance references shared by multiple relationships.",
                 "items": {
@@ -3205,6 +3221,20 @@
     },
     "BatchRelationshipInput": {
       "fields": {
+        "citation_handles": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "citation_handles",
+          "required": false,
+          "schema": {
+            "description": "Server-minted, revision-pinned source-evidence handles backing this edge.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Citation Handles",
+            "type": "array"
+          }
+        },
         "evidence_rationale": {
           "default": null,
           "default_json_serializable": true,
@@ -3596,6 +3626,14 @@
           }
         },
         "properties": {
+          "citation_handles": {
+            "description": "Server-minted, revision-pinned source-evidence handles backing this edge.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Citation Handles",
+            "type": "array"
+          },
           "evidence_rationale": {
             "anyOf": [
               {
@@ -6015,6 +6053,19 @@
               "chunk_id": {
                 "title": "Chunk Id",
                 "type": "string"
+              },
+              "citation_handle": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Revision-pinned handle that cites exactly this registered chunk.",
+                "title": "Citation Handle"
               },
               "content_hash": {
                 "title": "Content Hash",
@@ -14893,6 +14944,20 @@
     },
     "MemberInput": {
       "fields": {
+        "citation_handles": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "citation_handles",
+          "required": false,
+          "schema": {
+            "description": "Server-minted, revision-pinned source-evidence handles for this member.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Citation Handles",
+            "type": "array"
+          }
+        },
         "evidence_rationale": {
           "default": null,
           "default_json_serializable": true,
@@ -15186,6 +15251,14 @@
                 "default": null,
                 "description": "Optional structured basis explaining how the signal was bucketed."
               },
+              "citation_handles": {
+                "description": "Server-minted, revision-pinned source-evidence handles backing the signal.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Citation Handles",
+                "type": "array"
+              },
               "evidence": {
                 "default": "",
                 "description": "Free-text evidence or rationale for the signal.",
@@ -15336,6 +15409,14 @@
           }
         },
         "properties": {
+          "citation_handles": {
+            "description": "Server-minted, revision-pinned source-evidence handles for this member.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Citation Handles",
+            "type": "array"
+          },
           "evidence_rationale": {
             "anyOf": [
               {
@@ -25197,6 +25278,27 @@
             "type": "integer"
           }
         },
+        "revision_handle": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "revision_handle",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Stable handle for the whole immutable revision (all of its chunks).",
+            "title": "Revision Handle"
+          }
+        },
         "source_artifact_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -25269,6 +25371,19 @@
               "chunk_id": {
                 "title": "Chunk Id",
                 "type": "string"
+              },
+              "citation_handle": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Revision-pinned handle that cites exactly this registered chunk.",
+                "title": "Citation Handle"
               },
               "content_hash": {
                 "title": "Content Hash",
@@ -25416,6 +25531,19 @@
             "title": "Revision",
             "type": "integer"
           },
+          "revision_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Stable handle for the whole immutable revision (all of its chunks).",
+            "title": "Revision Handle"
+          },
           "source_artifact_id": {
             "title": "Source Artifact Id",
             "type": "string"
@@ -25471,6 +25599,20 @@
     },
     "RelationshipInput": {
       "fields": {
+        "citation_handles": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "citation_handles",
+          "required": false,
+          "schema": {
+            "description": "Server-minted, revision-pinned source-evidence handles backing this edge.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Citation Handles",
+            "type": "array"
+          }
+        },
         "evidence_rationale": {
           "default": null,
           "default_json_serializable": true,
@@ -25848,6 +25990,14 @@
           }
         },
         "properties": {
+          "citation_handles": {
+            "description": "Server-minted, revision-pinned source-evidence handles backing this edge.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Citation Handles",
+            "type": "array"
+          },
           "evidence_rationale": {
             "anyOf": [
               {
@@ -27411,6 +27561,20 @@
     },
     "SharedEvidenceInput": {
       "fields": {
+        "citation_handles": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "citation_handles",
+          "required": false,
+          "schema": {
+            "description": "Server-minted source-evidence handles shared by multiple relationships.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Citation Handles",
+            "type": "array"
+          }
+        },
         "evidence_refs": {
           "has_default": false,
           "has_default_factory": true,
@@ -27631,6 +27795,14 @@
           }
         },
         "properties": {
+          "citation_handles": {
+            "description": "Server-minted source-evidence handles shared by multiple relationships.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Citation Handles",
+            "type": "array"
+          },
           "evidence_refs": {
             "description": "External provenance references shared by multiple relationships.",
             "items": {
@@ -27787,6 +27959,20 @@
             ],
             "default": null,
             "description": "Optional structured basis explaining how the signal was bucketed."
+          }
+        },
+        "citation_handles": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "citation_handles",
+          "required": false,
+          "schema": {
+            "description": "Server-minted, revision-pinned source-evidence handles backing the signal.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Citation Handles",
+            "type": "array"
           }
         },
         "evidence": {
@@ -28115,6 +28301,14 @@
             ],
             "default": null,
             "description": "Optional structured basis explaining how the signal was bucketed."
+          },
+          "citation_handles": {
+            "description": "Server-minted, revision-pinned source-evidence handles backing the signal.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Citation Handles",
+            "type": "array"
           },
           "evidence": {
             "default": "",
@@ -28778,6 +28972,27 @@
             "type": "string"
           }
         },
+        "citation_handle": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "citation_handle",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Revision-pinned handle that cites exactly this registered chunk.",
+            "title": "Citation Handle"
+          }
+        },
         "content_hash": {
           "has_default": false,
           "has_default_factory": false,
@@ -28876,6 +29091,19 @@
             "title": "Chunk Id",
             "type": "string"
           },
+          "citation_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Revision-pinned handle that cites exactly this registered chunk.",
+            "title": "Citation Handle"
+          },
           "content_hash": {
             "title": "Content Hash",
             "type": "string"
@@ -28942,6 +29170,26 @@
     },
     "SourceArtifactListItem": {
       "fields": {
+        "artifact_revision_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_revision_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Revision Id"
+          }
+        },
         "byte_count": {
           "has_default": false,
           "has_default_factory": false,
@@ -29047,6 +29295,39 @@
             "type": "string"
           }
         },
+        "revision": {
+          "default": 1,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "revision",
+          "required": false,
+          "schema": {
+            "default": 1,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "revision_handle": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "revision_handle",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Revision Handle"
+          }
+        },
         "source_artifact_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -29060,6 +29341,18 @@
       },
       "json_schema": {
         "properties": {
+          "artifact_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Revision Id"
+          },
           "byte_count": {
             "title": "Byte Count",
             "type": "integer"
@@ -29112,6 +29405,23 @@
             ],
             "title": "Retention",
             "type": "string"
+          },
+          "revision": {
+            "default": 1,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "revision_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Revision Handle"
           },
           "source_artifact_id": {
             "title": "Source Artifact Id",
@@ -29236,6 +29546,18 @@
         "$defs": {
           "SourceArtifactListItem": {
             "properties": {
+              "artifact_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact Revision Id"
+              },
               "byte_count": {
                 "title": "Byte Count",
                 "type": "integer"
@@ -29288,6 +29610,23 @@
                 ],
                 "title": "Retention",
                 "type": "string"
+              },
+              "revision": {
+                "default": 1,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "revision_handle": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Revision Handle"
               },
               "source_artifact_id": {
                 "title": "Source Artifact Id",
@@ -29396,6 +29735,26 @@
             "type": "string"
           }
         },
+        "citation_handle": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "citation_handle",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Citation Handle"
+          }
+        },
         "content_hash": {
           "has_default": false,
           "has_default_factory": false,
@@ -29473,6 +29832,18 @@
           "chunk_id": {
             "title": "Chunk Id",
             "type": "string"
+          },
+          "citation_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Citation Handle"
           },
           "content_hash": {
             "title": "Content Hash",
@@ -29870,6 +30241,26 @@
             "type": "integer"
           }
         },
+        "revision_handle": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "revision_handle",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Revision Handle"
+          }
+        },
         "source_artifact_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -29896,6 +30287,18 @@
               "chunk_id": {
                 "title": "Chunk Id",
                 "type": "string"
+              },
+              "citation_handle": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Citation Handle"
               },
               "content_hash": {
                 "title": "Content Hash",
@@ -30128,6 +30531,18 @@
             "title": "Revision",
             "type": "integer"
           },
+          "revision_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Revision Handle"
+          },
           "source_artifact_id": {
             "title": "Source Artifact Id",
             "type": "string"
@@ -30135,13 +30550,13 @@
         },
         "required": [
           "source_artifact_id",
+          "artifact_revision_id",
           "kind",
           "retention",
           "content_hash",
           "registered_at",
           "chunk_count",
           "byte_count",
-          "artifact_revision_id",
           "parser_version",
           "content_available"
         ],
