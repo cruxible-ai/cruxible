@@ -14,7 +14,11 @@ from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.service import service_add_entities
 
-NOW = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
+# Anchors are wall-clock-relative: the service compares check_at against
+# the real clock, so pinned dates rot into due-queue membership the day
+# they pass (this file shipped with NOW = 2026-07-25 and failed a week
+# later). Relative anchors keep the past/future semantics permanently.
+NOW = datetime.now(timezone.utc).replace(microsecond=0)
 CHECK_AT = NOW - timedelta(days=1)
 EXPIRES_AT = NOW + timedelta(days=30)
 FUTURE_CHECK_AT = NOW + timedelta(days=7)
