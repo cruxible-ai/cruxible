@@ -3,7 +3,7 @@
 Get from install to your first Crux — a governed, kit-backed state model — in
 a few minutes.
 
-The recommended `0.2` shape is a local Cruxible daemon, launched with
+The recommended shape is a local Cruxible daemon, launched with
 `cruxible server start`. The daemon
 owns state; the CLI, MCP server, client SDK, GUI, and agent harness talk to it
 through Cruxible surfaces.

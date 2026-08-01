@@ -76,7 +76,7 @@ claimed.
 On an auth-enabled daemon, only the bootstrap bearer can create an instance.
 Every runtime credential minted afterwards — including `ADMIN` — is scoped to
 exactly one instance, and the bootstrap secret is consumed by its first
-claim. The practical `0.2` model: a daemon whose bootstrap has been claimed
+claim. The practical model: a daemon whose bootstrap has been claimed
 serves the instance it bootstrapped, and any `init` sent with an
 instance-scoped credential fails with `InstanceScopeError` regardless of
 permission mode. The bootstrap secret cannot help at that point; it is

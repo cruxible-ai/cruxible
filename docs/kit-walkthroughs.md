@@ -1,6 +1,6 @@
 # Kit Walkthroughs
 
-This page shows the two common authoring paths for `0.2`: create a standalone
+This page shows the two common authoring paths: create a standalone
 kit from scratch, and customize an overlay kit on top of an existing reference
 state.
 

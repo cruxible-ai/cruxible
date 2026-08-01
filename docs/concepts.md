@@ -32,7 +32,7 @@ truth.
 
 ## The Runtime Boundary
 
-The recommended `0.2` deployment shape is a local Cruxible daemon, launched with
+The recommended deployment shape is a local Cruxible daemon, launched with
 `cruxible server start`. The daemon owns state. Agents, CLI, client SDKs, and MCP
 tools call into the daemon instead of editing graph state directly.
 
