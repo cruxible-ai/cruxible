@@ -534,9 +534,7 @@ def _resolve_citation_handle_targets(
     handles: Sequence[str],
 ) -> dict[str, _CitationHandleTarget]:
     requested = dict.fromkeys(handles)
-    matches: dict[str, list[_CitationHandleTarget]] = {
-        handle: [] for handle in requested
-    }
+    matches: dict[str, list[_CitationHandleTarget]] = {handle: [] for handle in requested}
     for head in store.list_artifacts():
         for artifact in store.list_artifact_revisions(head.source_artifact_id):
             revision_handle = source_artifact_revision_handle(artifact)

@@ -171,9 +171,7 @@ class RelationshipInput(BaseModel):
     )
     citation_handles: list[str] = Field(
         default_factory=list,
-        description=(
-            "Server-minted, revision-pinned source-evidence handles backing this edge."
-        ),
+        description=("Server-minted, revision-pinned source-evidence handles backing this edge."),
     )
     evidence_rationale: str | None = Field(
         default=None,

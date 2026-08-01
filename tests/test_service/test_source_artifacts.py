@@ -260,9 +260,7 @@ def test_chunk_handle_lowers_to_byte_identical_canonical_evidence_and_receipt(
         source="test",
         source_ref="no_auto_attach",
     )
-    uncited = instance.load_graph().get_relationship(
-        "Part", "BP-1001", "Vehicle", "V-2", "fits"
-    )
+    uncited = instance.load_graph().get_relationship("Part", "BP-1001", "Vehicle", "V-2", "fits")
     assert uncited is not None
     assert uncited.metadata.evidence is None
 
