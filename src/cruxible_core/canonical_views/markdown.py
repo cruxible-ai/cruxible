@@ -70,12 +70,14 @@ def render_ontology_markdown(view: OntologyView) -> str:
         "## Entity Types",
         "",
         _markdown_table(
-            ("Entity", "Primary Key", "Properties", "Description"),
+            ("Entity", "Primary Key", "Properties", "Write Policy", "Instances", "Description"),
             [
                 (
                     item.name,
                     item.primary_key or "",
-                    str(item.property_count),
+                    _render_ontology_properties(item.properties),
+                    item.write_policy,
+                    "" if item.instance_count is None else str(item.instance_count),
                     item.description or "",
                 )
                 for item in view.entity_types
@@ -85,14 +87,25 @@ def render_ontology_markdown(view: OntologyView) -> str:
         "## Relationships",
         "",
         _markdown_table(
-            ("Relationship", "From", "To", "Mode", "Cardinality", "Instances"),
+            (
+                "Relationship",
+                "From",
+                "To",
+                "Mode",
+                "Write Policy",
+                "Cardinality",
+                "Properties",
+                "Instances",
+            ),
             [
                 (
                     item.name,
                     item.from_entity,
                     item.to_entity,
                     item.mode,
+                    item.write_policy,
                     item.cardinality,
+                    _render_ontology_properties(item.properties),
                     "" if item.instance_count is None else str(item.instance_count),
                 )
                 for item in view.relationships
@@ -101,6 +114,27 @@ def render_ontology_markdown(view: OntologyView) -> str:
     ]
     lines.extend(_render_enum_vocabularies(view.enums))
     return "\n".join(lines)
+
+
+def _render_ontology_properties(properties: dict[str, dict[str, Any]]) -> str:
+    """Render compact property contracts without repeating default string/optional flags."""
+    if not properties:
+        return "-"
+    rendered: list[str] = []
+    for name, contract in properties.items():
+        flags: list[str] = []
+        for key, value in contract.items():
+            if value is True:
+                flags.append(key)
+            elif key == "enum" and isinstance(value, list):
+                flags.append(f"enum={'|'.join(str(item) for item in value)}")
+            elif key == "json_schema":
+                flags.append("json_schema")
+            else:
+                flags.append(f"{key}={value}")
+        suffix = f" ({', '.join(flags)})" if flags else ""
+        rendered.append(f"`{name}`{suffix}")
+    return "; ".join(rendered)
 
 
 def _render_enum_vocabularies(enums: list[OntologyEnumView]) -> list[str]:

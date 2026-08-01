@@ -1341,7 +1341,7 @@ def inspect_group() -> None:
 )
 @handle_errors
 def inspect_ontology_cmd(fmt: str) -> None:
-    """Show the canonical ontology view for the current instance config."""
+    """Show compact topology and authoring contracts for the active ontology."""
     payload = _load_inspect_view("ontology")
     if fmt == "json":
         _emit_json(payload)

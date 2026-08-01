@@ -88,6 +88,21 @@ def test_service_inspect_view_returns_structured_ontology(
         "Part",
         "Vehicle",
     }
+    entities = {entity["name"]: entity for entity in result.payload["entity_types"]}
+    assert entities["Part"]["instance_count"] == 2
+    assert entities["Vehicle"]["instance_count"] == 2
+    assert entities["Part"]["properties"]["part_number"] == {"primary_key": True}
+    assert entities["Part"]["write_policy"] == "direct"
+
+    relationships = {
+        relationship["name"]: relationship for relationship in result.payload["relationships"]
+    }
+    assert relationships["fits"]["instance_count"] == 3
+    assert relationships["fits"]["properties"]["verified"] == {
+        "type": "bool",
+        "default": False,
+    }
+    assert relationships["fits"]["write_policy"] == "direct"
 
 
 def test_service_inspect_view_queries_include_result_shape_metadata(
@@ -337,6 +352,80 @@ def test_build_ontology_view_collects_shared_and_inline_enums() -> None:
     assert enums["Task.severity"].ordered is False
 
 
+def test_build_ontology_view_exposes_compact_authoring_property_contracts() -> None:
+    view = build_ontology_view(_enum_config(), entity_counts={}, relationship_counts={})
+
+    task = next(entity for entity in view.entity_types if entity.name == "Task")
+    assert task.properties == {
+        "task_id": {"primary_key": True},
+        "priority": {"enum_ref": "priority"},
+        "status": {"enum_ref": "lifecycle_status"},
+        "severity": {"enum": ["trivial", "minor", "major"]},
+    }
+    assert task.write_policy == "direct"
+    assert task.instance_count == 0
+
+    blocks = next(
+        relationship for relationship in view.relationships if relationship.name == "blocks"
+    )
+    assert blocks.properties == {"kind": {"enum_ref": "priority"}}
+    assert blocks.write_policy == "direct"
+    assert blocks.instance_count == 0
+
+
+def test_build_ontology_view_property_contracts_keep_only_non_default_constraints() -> None:
+    config = load_config_from_string(
+        """\
+version: "1.0"
+name: authoring_contracts
+runtime:
+  default_write_policy: proposal_only
+entity_types:
+  Thing:
+    write_policy: direct
+    properties:
+      thing_id: {primary_key: true}
+      title: {}
+      rank: {type: integer, required: true, indexed: true, default: 1}
+      payload:
+        type: json
+        json_schema:
+          type: object
+          required: [code]
+relationships:
+  - name: related_to
+    from: Thing
+    to: Thing
+    properties:
+      basis: {required: true}
+named_queries: {}
+constraints: []
+"""
+    )
+
+    view = build_ontology_view(config)
+
+    thing = view.entity_types[0]
+    assert thing.write_policy == "direct"
+    assert thing.properties == {
+        "thing_id": {"primary_key": True},
+        "title": {},
+        "rank": {
+            "type": "integer",
+            "required": True,
+            "indexed": True,
+            "default": 1,
+        },
+        "payload": {
+            "type": "json",
+            "json_schema": {"type": "object", "required": ["code"]},
+        },
+    }
+    relationship = view.relationships[0]
+    assert relationship.write_policy == "proposal_only"
+    assert relationship.properties == {"basis": {"required": True}}
+
+
 def test_build_ontology_view_enum_used_by_lists_every_reference() -> None:
     view = build_ontology_view(_enum_config())
 
@@ -371,6 +460,9 @@ def test_render_ontology_markdown_lists_enum_values_and_orderedness() -> None:
     assert "trivial, minor, major" in markdown
     # Ordered enums are flagged; unordered enums are not.
     assert "low_to_high" in markdown
+    assert "`task_id` (primary_key)" in markdown
+    assert "`priority` (enum_ref=priority)" in markdown
+    assert "Write Policy" in markdown
 
 
 def test_render_overview_markdown_includes_enum_vocabularies() -> None:

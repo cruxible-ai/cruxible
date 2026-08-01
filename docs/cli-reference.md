@@ -2069,7 +2069,7 @@ Text output labels an interrupted record as
 **Subcommands:**
 
 - `cruxible inspect governance` - Show the canonical governance view for the current instance.
-- `cruxible inspect ontology` - Show the canonical ontology view for the current instance config.
+- `cruxible inspect ontology` - Show compact topology and authoring contracts for the active ontology.
 - `cruxible inspect overview` - Show the generated config overview built from canonical views.
 - `cruxible inspect queries` - Show the canonical query view for the current instance config.
 - `cruxible inspect trace` - Inspect a provider execution trace by ID.
@@ -2129,7 +2129,7 @@ Text output labels an interrupted record as
 
 **Usage:** `cruxible inspect ontology [OPTIONS]`
 
-**Purpose:** Show the canonical ontology view for the current instance config.
+**Purpose:** Show compact topology and authoring contracts for the active ontology.
 
 **Options And Arguments:**
 

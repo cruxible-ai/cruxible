@@ -881,7 +881,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
     def cruxible_inspect_ontology(
         instance_id: str,
     ) -> contracts.CanonicalViewResult:
-        """Return the structured canonical ontology view for an instance."""
+        """Return compact entity, property, relationship, and write contracts."""
         return handlers.handle_inspect_view(instance_id, "ontology")
 
     @_tool
