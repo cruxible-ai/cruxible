@@ -141,6 +141,27 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     assert retired.json()["procedure"]["status"] == "retired"
 
 
+def test_invalid_procedure_definition_returns_typed_validation_error(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_procedure_instance(app_client, tmp_path / "workspace")
+    definition = _definition()
+    definition["precondition"] = {"identity_verified": True}
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={"definition": definition},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_type"] == "DataValidationError"
+    assert response.json()["message"] == "Invalid procedure definition"
+    assert response.json()["errors"] == [
+        "precondition.identity_verified: Extra inputs are not permitted"
+    ]
+
+
 def test_procedure_routes_are_part_of_the_public_openapi() -> None:
     """Flipped by the 0.3.0 surface commit: exposure is deliberate contract."""
     spec = create_app().openapi()

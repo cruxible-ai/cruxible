@@ -20,6 +20,7 @@ from cruxible_core.config.schema import schema_wire_payload
 from cruxible_core.errors import (
     AuthenticationError,
     ConfigError,
+    DataValidationError,
     InvalidContinuationError,
 )
 from cruxible_core.governance.actors import (
@@ -4150,7 +4151,16 @@ def propose_procedure(
     check_permission("cruxible_propose_procedure", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
-    parsed_definition = ProcedureDefinition.model_validate(definition)
+    try:
+        parsed_definition = ProcedureDefinition.model_validate(definition)
+    except ValidationError as exc:
+        errors = [
+            f"{'.'.join(str(part) for part in error.get('loc', ()))}: {error['msg']}"
+            if error.get("loc")
+            else str(error["msg"])
+            for error in exc.errors()
+        ]
+        raise DataValidationError("Invalid procedure definition", errors=errors) from exc
     parsed_evidence = [
         ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
         for ref in (evidence_refs or [])
