@@ -7,6 +7,21 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **Ontology inspection is authoring-complete.** The canonical ontology view
+  now exposes compact config-like entity and relationship property contracts,
+  configured write policies, and stored instance counts, so an agent can author
+  valid writes from the view alone. The request and response envelope is
+  unchanged; CLI and MCP guidance updated.
+
+- **Invalid Procedure definitions return typed validation errors.**
+  `propose_procedure` surfaces definition-shape failures as structured 400
+  responses with field-path messages on both the HTTP and MCP surfaces,
+  instead of opaque server errors.
+
+- **Unknown-provider Procedure errors list the registered providers.** The
+  rejection names the valid provider set (sorted, truncated past 40 with a
+  count), so an agent can self-correct instead of retrying blind.
+
 - **Registered source evidence now has compact, server-minted citation
   handles.** Registration, source-artifact list/get responses, and canonical
   `register_source_artifacts` workflow output expose stable revision and chunk
