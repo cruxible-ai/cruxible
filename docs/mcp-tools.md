@@ -1134,7 +1134,7 @@ source evidence before mutation guards run.
 | `entities` | yes | array |  |
 | `dry_run` | no | boolean | false | Validate (schema + mutation guards) without mutating graph state |
 
-**Returns:** Top-level fields: `entities_added`, `entities_updated`, `receipt_id`
+**Returns:** Top-level fields: `entities_added`, `entities_updated`, `warnings`, `receipt_id`. A config-declared `identity_hint` match leaves the write successful and adds `warnings[].similar_existing_entity` with the existing entity ID and matched properties. Config-declared `unique_by` and `id_pattern` violations are typed `DataValidationError` failures instead.
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1157,7 +1157,7 @@ source evidence before mutation guards run.
 | `payload` | yes | BatchDirectWritePayload | Object with `entities` (entity inputs), `relationships` (relationship inputs, each optionally carrying `citation_handles` and referencing `shared_evidence_keys`), and `shared_evidence` (map of key to shared evidence refs, source evidence, or citation handles). |
 | `dry_run` | no | boolean | Validate the payload without mutating graph state. |
 
-**Returns:** Top-level fields: `dry_run`, `valid`, `entities_added`, `entities_updated`, `relationships_added`, `relationships_updated`, `validation_errors`, `validation_warnings`, `evidence_sources_used`, `pending_conflicts`, `updated_group_backed_edges`, `receipt_id`
+**Returns:** Top-level fields: `dry_run`, `valid`, `entities_added`, `entities_updated`, `relationships_added`, `relationships_updated`, `validation_errors`, `validation_warnings`, `warnings`, `evidence_sources_used`, `pending_conflicts`, `updated_group_backed_edges`, `receipt_id`. A config-declared `identity_hint` match leaves the batch valid and adds `warnings[].similar_existing_entity`; `unique_by` and `id_pattern` remain hard typed validation failures.
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 

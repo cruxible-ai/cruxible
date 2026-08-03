@@ -399,7 +399,10 @@ class TestOutputSchema:
                     "receipt_id",
                 },
             ),
-            ("cruxible_add_entity", {"entities_added", "entities_updated", "receipt_id"}),
+            (
+                "cruxible_add_entity",
+                {"entities_added", "entities_updated", "warnings", "receipt_id"},
+            ),
             (
                 "cruxible_add_constraint",
                 {"name", "added", "config_updated", "warnings", "receipt_id"},

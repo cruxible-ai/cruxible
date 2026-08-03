@@ -7,6 +7,15 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **Entity types can declare deterministic identity keys at write time.**
+  `identity_hint` returns a structured same-type duplicate warning without
+  blocking the write, `unique_by` rejects normalized duplicates while naming
+  the existing entity ID (including identity-changing updates), and
+  `id_pattern` enforces per-type ID conventions. The shared normalization
+  case-folds, trims and collapses whitespace, and removes punctuation; direct
+  add/batch warnings surface through both HTTP and MCP results. Matching scans
+  same-type entities only and does not merge or perform semantic matching.
+
 - **Ontology inspection is authoring-complete.** The canonical ontology view
   now exposes compact config-like entity and relationship property contracts,
   configured write policies, and stored instance counts, so an agent can author

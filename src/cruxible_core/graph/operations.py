@@ -34,6 +34,10 @@ from cruxible_core.graph.assertion_state import (
     relationship_assertion_from_metadata,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.entity_identity import (
+    EntityIdentityWarning,
+    check_declared_entity_identity,
+)
 from cruxible_core.graph.provenance import (
     backfill_provenance_on_touch,
     make_provenance,
@@ -226,7 +230,7 @@ def apply_entity(
     config: CoreConfig,
     source: str,
     trusted_lifecycle_transition: bool = False,
-) -> None:
+) -> EntityIdentityWarning | None:
     """Apply a validated entity to the graph (add or update).
 
     The single entity chokepoint. Every direct entity write funnels here, so the
@@ -313,6 +317,13 @@ def apply_entity(
         trusted_lifecycle_transition=trusted_lifecycle_transition,
     )
 
+    identity_warning = check_declared_entity_identity(
+        config,
+        graph,
+        validated.entity,
+        is_update=validated.is_update,
+    )
+
     if validated.is_update:
         graph.update_entity_properties(
             validated.entity.entity_type,
@@ -328,6 +339,7 @@ def apply_entity(
             )
     else:
         graph.add_entity(validated.entity)
+    return identity_warning
 
 
 def _initial_assertion(

@@ -1446,9 +1446,21 @@ class AddRelationshipResult(BaseModel):
     receipt_id: str | None = None
 
 
+class SimilarExistingEntity(BaseModel):
+    entity_id: str
+    matched_properties: list[str]
+
+
+class EntityIdentityWarning(BaseModel):
+    entity_type: str
+    entity_id: str
+    similar_existing_entity: SimilarExistingEntity
+
+
 class AddEntityResult(BaseModel):
     entities_added: int
     entities_updated: int
+    warnings: list[EntityIdentityWarning] = Field(default_factory=list)
     receipt_id: str | None = None
 
 
@@ -1478,6 +1490,7 @@ class BatchDirectWriteResult(BaseModel):
     relationships_updated: int = 0
     validation_errors: list[str] = Field(default_factory=list)
     validation_warnings: list[str] = Field(default_factory=list)
+    warnings: list[EntityIdentityWarning] = Field(default_factory=list)
     evidence_sources_used: list[str] = Field(default_factory=list)
     pending_conflicts: list[DirectWriteGroupInteraction] = Field(default_factory=list)
     updated_group_backed_edges: list[DirectWriteGroupInteraction] = Field(default_factory=list)
