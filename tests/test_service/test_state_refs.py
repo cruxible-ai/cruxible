@@ -18,6 +18,18 @@ def test_transport_ref_passthrough() -> None:
     assert resolved.alias is None
 
 
+def test_banking_demo_catalog_alias_resolves_to_ghcr_latest() -> None:
+    resolved = resolve_state_source(state_ref="banking-crux-demo")
+
+    expected = "oci://ghcr.io/cruxible-ai/models/banking-crux-demo:latest"
+    assert resolved.source_ref == "banking-crux-demo"
+    assert resolved.pull_transport_ref == expected
+    assert resolved.tracking_transport_ref == expected
+    assert resolved.default_kit is None
+    assert resolved.alias == "banking-crux-demo"
+    assert resolved.requested_release is None
+
+
 def test_state_ref_latest_uses_tracking_ref(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "cruxible_core.kits.state_refs.get_state_catalog",

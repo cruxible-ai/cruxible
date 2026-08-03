@@ -90,6 +90,59 @@ cruxible --server-url http://127.0.0.1:8100 state create-overlay \
 `file://` refs must be absolute paths, and publish refuses a target that
 already exists — pick a new release directory per publish.
 
+### Publish the demo states to GHCR
+
+Release managers publish both a dated immutable tag and the moving `latest`
+tag. Authenticate ORAS with a GitHub token that can write packages for the
+`cruxible-ai` organization; do not put the token on the command line:
+
+```bash
+export GHCR_USERNAME=<github-username>
+read -rsp "GHCR token: " GHCR_TOKEN; echo
+printf '%s' "$GHCR_TOKEN" | oras login ghcr.io \
+  --username "$GHCR_USERNAME" \
+  --password-stdin
+unset GHCR_TOKEN
+
+export RELEASE_ID=$(date -u +%Y-%m-%d)
+```
+
+The KEV publisher fetches fresh public data, runs the canonical build, and
+uses the existing release-bundle publisher for both tags:
+
+```bash
+uv run python scripts/publish_kev_release.py \
+  --release-id "$RELEASE_ID" \
+  --transport-ref oci://ghcr.io/cruxible-ai/models/kev-reference
+```
+
+Publish the already-built banking Crux from its daemon instance with the
+normal `state publish` path. The two commands intentionally publish the same
+release bundle under the immutable and moving tags:
+
+```bash
+export CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
+export BANKING_INSTANCE_ID=<banking-crux-instance-id>
+
+cruxible --instance-id "$BANKING_INSTANCE_ID" state publish \
+  --transport-ref "oci://ghcr.io/cruxible-ai/models/banking-crux-demo:$RELEASE_ID" \
+  --state-id banking-crux-demo \
+  --release-id "$RELEASE_ID"
+
+cruxible --instance-id "$BANKING_INSTANCE_ID" state publish \
+  --transport-ref oci://ghcr.io/cruxible-ai/models/banking-crux-demo:latest \
+  --state-id banking-crux-demo \
+  --release-id "$RELEASE_ID"
+```
+
+Never reuse an immutable release tag for different state. After publishing,
+verify that both repositories expose the expected dated and `latest` tags:
+
+```bash
+oras repo tags ghcr.io/cruxible-ai/models/kev-reference
+oras repo tags ghcr.io/cruxible-ai/models/banking-crux-demo
+```
+
 The command returns a new overlay `instance_id` and locks the overlay as part
 of creation. Preview the local canonical state refresh and apply it:
 
