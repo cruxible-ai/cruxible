@@ -219,7 +219,7 @@ class FeedbackItemInput:
 class AddEntityResult:
     added: int
     updated: int
-    warnings: list[EntityIdentityWarning] = field(default_factory=list)
+    identity_warnings: list[EntityIdentityWarning] = field(default_factory=list)
     receipt_id: str | None = None
 
 
@@ -280,7 +280,7 @@ class BatchDirectWriteResult:
     relationships_updated: int = 0
     validation_errors: list[str] = field(default_factory=list)
     validation_warnings: list[str] = field(default_factory=list)
-    warnings: list[EntityIdentityWarning] = field(default_factory=list)
+    identity_warnings: list[EntityIdentityWarning] = field(default_factory=list)
     evidence_sources_used: list[str] = field(default_factory=list)
     pending_conflicts: list[DirectWriteGroupInteraction] = field(default_factory=list)
     updated_group_backed_edges: list[DirectWriteGroupInteraction] = field(default_factory=list)

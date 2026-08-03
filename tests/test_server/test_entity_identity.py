@@ -109,7 +109,7 @@ def test_identity_hint_surfaces_on_add_entity_and_batch(
         {"name": "Bluest Account", "family": "Checking"},
     )
     assert first.status_code == 200, first.text
-    assert first.json()["warnings"] == []
+    assert first.json()["identity_warnings"] == []
 
     duplicate = _add_entity(
         client,
@@ -121,7 +121,7 @@ def test_identity_hint_surfaces_on_add_entity_and_batch(
     assert duplicate.status_code == 200, duplicate.text
     duplicate_body = duplicate.json()
     assert duplicate_body["entities_added"] == 1
-    assert duplicate_body["warnings"] == [
+    assert duplicate_body["identity_warnings"] == [
         _warning("checking_bluest_account", "product_bluest_account")
     ]
     receipt = client.get(f"/api/v1/{instance_id}/receipts/{duplicate_body['receipt_id']}")
@@ -155,7 +155,20 @@ def test_identity_hint_surfaces_on_add_entity_and_batch(
     )
     assert batch.status_code == 200, batch.text
     assert batch.json()["entities_added"] == 1
-    assert batch.json()["warnings"] == [_warning("third_bluest_account", "checking_bluest_account")]
+    assert batch.json()["identity_warnings"] == [
+        _warning("third_bluest_account", "checking_bluest_account")
+    ]
+
+    update = _add_entity(
+        client,
+        instance_id,
+        "HintedAccount",
+        "checking_bluest_account",
+        {"family": "Savings"},
+    )
+    assert update.status_code == 200, update.text
+    assert update.json()["entities_updated"] == 1
+    assert update.json()["identity_warnings"] == []
 
 
 def test_unique_by_rejects_create_and_identity_update(
@@ -174,6 +187,16 @@ def test_unique_by_rejects_create_and_identity_update(
             properties,
         )
         assert response.status_code == 200, response.text
+
+    missing_component = _add_entity(
+        client,
+        instance_id,
+        "UniqueAccount",
+        "unique_incomplete",
+        {"name": "Bluest Account"},
+    )
+    assert missing_component.status_code == 200, missing_component.text
+    assert missing_component.json()["entities_added"] == 1
 
     duplicate = _add_entity(
         client,

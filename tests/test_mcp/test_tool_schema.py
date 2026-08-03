@@ -401,7 +401,30 @@ class TestOutputSchema:
             ),
             (
                 "cruxible_add_entity",
-                {"entities_added", "entities_updated", "warnings", "receipt_id"},
+                {
+                    "entities_added",
+                    "entities_updated",
+                    "identity_warnings",
+                    "receipt_id",
+                },
+            ),
+            (
+                "cruxible_batch_direct_write",
+                {
+                    "dry_run",
+                    "valid",
+                    "entities_added",
+                    "entities_updated",
+                    "relationships_added",
+                    "relationships_updated",
+                    "validation_errors",
+                    "validation_warnings",
+                    "identity_warnings",
+                    "evidence_sources_used",
+                    "pending_conflicts",
+                    "updated_group_backed_edges",
+                    "receipt_id",
+                },
             ),
             (
                 "cruxible_add_constraint",

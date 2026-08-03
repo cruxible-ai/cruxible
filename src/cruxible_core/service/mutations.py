@@ -124,7 +124,7 @@ class _PreparedBatchDirectWrite:
     relationships: list[_PreparedBatchRelationship]
     validation_errors: list[str]
     validation_warnings: list[str]
-    warnings: list[EntityIdentityWarning]
+    identity_warnings: list[EntityIdentityWarning]
     evidence_sources_used: list[str]
     interactions: _DirectWriteGroupInteractions
     contract_activations: tuple[ContractActivationIntent, ...] = ()
@@ -998,7 +998,7 @@ def _prepare_batch_direct_write(
         relationships=validated_relationships,
         validation_errors=errors,
         validation_warnings=warnings,
-        warnings=identity_warnings,
+        identity_warnings=identity_warnings,
         evidence_sources_used=evidence_sources,
         interactions=interactions,
         contract_activations=guard_evaluation.contract_activations,
@@ -1022,7 +1022,7 @@ def _batch_direct_write_result(
         relationships_updated=sum(1 for item in prepared.relationships if item.validated.is_update),
         validation_errors=list(prepared.validation_errors),
         validation_warnings=list(prepared.validation_warnings),
-        warnings=list(prepared.warnings),
+        identity_warnings=list(prepared.identity_warnings),
         evidence_sources_used=list(prepared.evidence_sources_used),
         pending_conflicts=list(prepared.interactions.pending_conflicts),
         updated_group_backed_edges=list(prepared.interactions.updated_group_backed_edges),
@@ -1353,7 +1353,7 @@ def service_add_entities(
             return AddEntityResult(
                 added=sum(1 for validated in pending if not validated.is_update),
                 updated=sum(1 for validated in pending if validated.is_update),
-                warnings=identity_warnings,
+                identity_warnings=identity_warnings,
             )
 
         if ctx.uow is not None and guard_evaluation.contract_activations:
@@ -1408,7 +1408,7 @@ def service_add_entities(
             AddEntityResult(
                 added=added,
                 updated=updated,
-                warnings=identity_warnings,
+                identity_warnings=identity_warnings,
             )
         )
 

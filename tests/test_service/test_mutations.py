@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from cruxible_core.cli.commands.mutations import _emit_batch_write_result
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import (
     ConfigError,
@@ -18,12 +19,14 @@ from cruxible_core.errors import (
 )
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.assertion_state import GroupApprovalDrift
+from cruxible_core.graph.entity_identity import EntityIdentityWarning, SimilarExistingEntity
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     BatchDirectWriteInput,
+    BatchDirectWriteResult,
     BatchRelationshipWriteInput,
     EntityWriteInput,
     FeedbackItemInput,
@@ -107,6 +110,38 @@ def _batch_payload() -> BatchDirectWriteInput:
                 evidence_refs=[{"source": "roadmap_doc", "source_record_id": "batch-section"}],
             )
         },
+    )
+
+
+def test_batch_direct_write_human_output_surfaces_identity_warning(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = BatchDirectWriteResult(
+        dry_run=False,
+        valid=True,
+        entities_added=1,
+        identity_warnings=[
+            EntityIdentityWarning(
+                entity_type="Account",
+                entity_id="checking_bluest_account",
+                similar_existing_entity=SimilarExistingEntity(
+                    entity_id="product_bluest_account",
+                    matched_properties=["name", "family"],
+                ),
+            )
+        ],
+    )
+
+    _emit_batch_write_result(
+        result,
+        action_label="Batch direct write",
+        dry_run=False,
+        output_json=False,
+    )
+
+    assert (
+        "Identity warning: Account:checking_bluest_account resembles existing entity "
+        "product_bluest_account on properties [name, family]" in capsys.readouterr().out
     )
 
 

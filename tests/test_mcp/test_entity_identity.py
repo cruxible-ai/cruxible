@@ -10,6 +10,7 @@ from typing import Any, cast
 from mcp.server.fastmcp import FastMCP
 
 from cruxible_core.mcp.server import create_server
+from cruxible_core.runtime import api
 
 IDENTITY_CONFIG = """\
 version: '1.0'
@@ -57,7 +58,7 @@ def test_add_entity_tool_surfaces_identity_hint_warning(
             }
         ],
     }
-    assert _call_tool(server, "cruxible_add_entity", first)["warnings"] == []
+    assert _call_tool(server, "cruxible_add_entity", first)["identity_warnings"] == []
 
     second = {
         "instance_id": instance_id,
@@ -72,7 +73,63 @@ def test_add_entity_tool_surfaces_identity_hint_warning(
     result = _call_tool(server, "cruxible_add_entity", second)
 
     assert result["entities_added"] == 1
-    assert result["warnings"] == [
+    assert result["identity_warnings"] == [
+        {
+            "entity_type": "Account",
+            "entity_id": "checking_bluest_account",
+            "similar_existing_entity": {
+                "entity_id": "product_bluest_account",
+                "matched_properties": ["name", "family"],
+            },
+        }
+    ]
+
+
+def test_batch_direct_write_surfaces_intra_batch_identity_warning(
+    tmp_path: Path,
+    governed_client: Any,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        governed_client,
+        "batch_direct_write",
+        api.batch_direct_write,
+        raising=False,
+    )
+    server = create_server()
+    init = _call_tool(
+        server,
+        "cruxible_init",
+        {
+            "root_dir": str(tmp_path),
+            "config_yaml": IDENTITY_CONFIG,
+        },
+    )
+
+    result = _call_tool(
+        server,
+        "cruxible_batch_direct_write",
+        {
+            "instance_id": init["instance_id"],
+            "payload": {
+                "entities": [
+                    {
+                        "entity_type": "Account",
+                        "entity_id": "product_bluest_account",
+                        "properties": {"name": "Bluest Account", "family": "Checking"},
+                    },
+                    {
+                        "entity_type": "Account",
+                        "entity_id": "checking_bluest_account",
+                        "properties": {"name": "BLUEST, ACCOUNT!", "family": "checking"},
+                    },
+                ]
+            },
+        },
+    )
+
+    assert result["entities_added"] == 2
+    assert result["identity_warnings"] == [
         {
             "entity_type": "Account",
             "entity_id": "checking_bluest_account",

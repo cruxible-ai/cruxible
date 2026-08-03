@@ -366,26 +366,47 @@ entity_types:
 ### Declared entity identity keys
 
 `identity_hint` and `unique_by` use the same deterministic normalization for
-every declared value: Unicode case-folding, leading/trailing whitespace
-removal, internal whitespace collapse, and Unicode punctuation removal. The
-declared list is one composite key: every property must be present with a string
-value before comparison. Matching never crosses entity types and performs no
-semantic, fuzzy, embedding, or LLM-based comparison.
+every declared value: Unicode NFC normalization followed by case-folding,
+leading/trailing whitespace removal, internal whitespace collapse, and Unicode
+punctuation deletion. Deletion does not insert whitespace: `Gold-Card`
+normalizes to `goldcard`, while `Gold Card` normalizes to `gold card`, so those
+values do **not** collide. The declared list is one composite key: every
+property must be present with a string value before comparison. If every
+component normalizes to an empty string, enforcement is skipped for that
+entity. Matching never crosses entity types and performs no semantic, fuzzy,
+embedding, or LLM-based comparison.
+
+Both lists must be non-empty. Although the primary-key property may be named in
+`unique_by`, its comparison value is derived from `entity_id` and then receives
+the same normalization. Including it usually makes different IDs distinct and
+therefore defeats business-key duplicate detection; it can also reject two IDs
+that differ only by case or punctuation. Prefer not to include the primary key
+unless that behavior is deliberate.
 
 `identity_hint` is advisory and intentionally runs only for creates. Direct
-`add_entity` and `batch_direct_write` results expose the warning; workflow and
-other shared entity-creation paths still pass through hard enforcement but do
-not add a new warning result contract. `unique_by` and `id_pattern` are enforced
-at the shared entity-write chokepoint for direct writes, batch writes, workflow
-applies, and other entity-creating surfaces. Matching scans the existing
-entities of the same type, so each declared-identity write is O(n) in that
-type's current entity count and adds no storage or lifecycle state.
+`add_entity` and `batch_direct_write` results expose the `identity_warnings`
+array; workflow and other shared entity-creation paths still pass through hard
+enforcement but do not add a new warning result contract. `unique_by` and
+`id_pattern` are enforced at the shared entity-write chokepoint for direct
+writes, batch writes, workflow applies, and other entity-creating surfaces.
+Reference-image apply, state pull, and snapshot restore replace graph state
+outside that chokepoint and bypass these checks by design.
+
+`id_pattern` is checked on creates, updates, and lifecycle transitions. If a
+type already contains IDs that do not conform, declaring a stricter pattern
+makes those entities un-updatable through the chokepoint, including via
+lifecycle verbs. Choose a pattern that admits every existing ID that must remain
+operable, or migrate those IDs before enabling it.
+
+Matching scans the existing entities of the same type, so each
+declared-identity write is O(n) in that type's current entity count and adds no
+storage or lifecycle state.
 
 An advisory result uses this shape (the write still succeeds):
 
 ```json
 {
-  "warnings": [
+  "identity_warnings": [
     {
       "entity_type": "Account",
       "entity_id": "checking_bluest_account",
