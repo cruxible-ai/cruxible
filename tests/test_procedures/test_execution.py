@@ -592,6 +592,7 @@ def test_run_fails_closed_when_live_provider_is_removed(
         provider_definition("missing_after_acceptance"),
     )
     config = procedure_instance.load_config()
+    config.providers["available_action"] = config.providers["exported_action"].model_copy()
     del config.providers["exported_action"]
     procedure_instance.save_config(config)
     service_lock(procedure_instance)
@@ -604,6 +605,7 @@ def test_run_fails_closed_when_live_provider_is_removed(
             actor("runner"),
         )
 
+    assert "registered providers: available_action" in str(exc_info.value)
     run = _run(procedure_instance, getattr(exc_info.value, "procedure_run_id"))
     assert run.status == "finalized"
     assert run.verdict == "refused"
