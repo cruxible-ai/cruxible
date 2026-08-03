@@ -53,9 +53,10 @@ def normalize_identity_value(value: str) -> str:
     """
     if not isinstance(value, str):
         raise TypeError("identity values must be strings")
+    normalized = unicodedata.normalize("NFC", value)
     without_punctuation = "".join(
         character
-        for character in value.casefold().strip()
+        for character in normalized.casefold().strip()
         if not unicodedata.category(character).startswith("P")
     )
     return " ".join(without_punctuation.split())
@@ -71,6 +72,8 @@ def _identity_key(
         if not isinstance(value, str):
             return None
         values.append(normalize_identity_value(value))
+    if not any(values):
+        return None
     return tuple(values)
 
 

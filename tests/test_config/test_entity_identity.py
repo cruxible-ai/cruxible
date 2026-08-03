@@ -48,6 +48,14 @@ def test_identity_key_rejects_unknown_property(field_name: str) -> None:
 
 
 @pytest.mark.parametrize("field_name", ["identity_hint", "unique_by"])
+def test_identity_key_rejects_empty_property_list(field_name: str) -> None:
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(_config(f"    {field_name}: []\n"))
+
+    assert f"{field_name} must contain at least one property" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("field_name", ["identity_hint", "unique_by"])
 def test_identity_key_rejects_non_string_property(field_name: str) -> None:
     with pytest.raises(ConfigError) as exc_info:
         load_config(_config(f"    {field_name}: [rank]\n"))

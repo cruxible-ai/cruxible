@@ -22,7 +22,11 @@ from cruxible_core.config.compact import (
     expand_compact_file_full,
     expand_compact_full,
 )
+from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import CoreConfig, ResolutionContractGuardCondition
+from cruxible_core.errors import DataValidationError
+from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.operations import apply_entity, validate_entity
 
 KIT_DIR = Path(__file__).resolve().parents[2] / "kits" / "agent-operation"
 # config.yaml is the single source of truth (compact); the loader expands it on load,
@@ -204,6 +208,43 @@ def test_entity_level_id_becomes_primary_key() -> None:
     assert props["e_id"] == {"type": "string", "primary_key": True}
     # Primary key emitted first.
     assert list(props.keys())[0] == "e_id"
+
+
+def test_compact_entity_identity_fields_load_and_enforce_on_write() -> None:
+    config = load_config(
+        _join(
+            """
+            version: "1.0"
+            name: identity_kit
+            entity_types:
+              Account:
+                id: account_id
+                identity_hint: [name, family]
+                unique_by: [name, family]
+                id_pattern: '^account_[a-z0-9_]+$'
+                properties:
+                  name: string
+                  family: string
+            relationships: []
+            """
+        )
+    )
+
+    account = config.entity_types["Account"]
+    assert account.identity_hint == ["name", "family"]
+    assert account.unique_by == ["name", "family"]
+    assert account.id_pattern == "^account_[a-z0-9_]+$"
+
+    graph = EntityGraph()
+    invalid = validate_entity(
+        config,
+        graph,
+        "Account",
+        "INVALID-ID",
+        {"name": "Bluest Account", "family": "Checking"},
+    )
+    with pytest.raises(DataValidationError, match="does not match id_pattern"):
+        apply_entity(graph, invalid, config=config, source="add_entity")
 
 
 def test_property_unknown_token_raises() -> None:

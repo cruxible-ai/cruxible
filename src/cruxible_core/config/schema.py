@@ -310,6 +310,8 @@ class EntityTypeSchema(BaseModel):
             property_names = getattr(self, field_name)
             if property_names is None:
                 continue
+            if not property_names:
+                raise ValueError(f"{field_name} must contain at least one property")
             unknown = sorted(set(property_names) - set(self.properties))
             if unknown:
                 raise ValueError(
