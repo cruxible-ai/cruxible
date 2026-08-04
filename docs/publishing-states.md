@@ -108,7 +108,8 @@ export RELEASE_ID=$(date -u +%Y-%m-%d)
 ```
 
 The KEV publisher fetches fresh public data, runs the canonical build, and
-uses the existing release-bundle publisher for both tags:
+builds **one** release bundle, which it then publishes to both the dated and
+the `latest` tag:
 
 ```bash
 uv run python scripts/publish_kev_release.py \
@@ -116,32 +117,47 @@ uv run python scripts/publish_kev_release.py \
   --transport-ref oci://ghcr.io/cruxible-ai/models/kev-reference
 ```
 
-Publish the already-built banking Crux from its daemon instance with the
-normal `state publish` path. The two commands intentionally publish the same
-release bundle under the immutable and moving tags:
+The banking Crux is published from its daemon instance with the normal
+`state publish` path, and that path must be run **exactly once per release**.
+Every `state publish` invocation takes its own fresh snapshot and builds its
+own bundle, so publishing the dated tag and `latest` with two invocations
+would put two independently captured bundles — different manifests, different
+member digests, possibly different state — behind the two tags. Publish the
+immutable dated tag, then copy that exact manifest onto `latest`:
 
 ```bash
 export CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
 export BANKING_INSTANCE_ID=<banking-crux-instance-id>
+export BANKING_REPO=ghcr.io/cruxible-ai/models/banking-crux-demo
 
 cruxible --instance-id "$BANKING_INSTANCE_ID" state publish \
-  --transport-ref "oci://ghcr.io/cruxible-ai/models/banking-crux-demo:$RELEASE_ID" \
+  --transport-ref "oci://$BANKING_REPO:$RELEASE_ID" \
   --state-id banking-crux-demo \
   --release-id "$RELEASE_ID"
 
-cruxible --instance-id "$BANKING_INSTANCE_ID" state publish \
-  --transport-ref oci://ghcr.io/cruxible-ai/models/banking-crux-demo:latest \
-  --state-id banking-crux-demo \
-  --release-id "$RELEASE_ID"
+oras cp "$BANKING_REPO:$RELEASE_ID" "$BANKING_REPO:latest"
 ```
 
+`oras cp` copies the manifest, not the state: within one repository it is a
+registry-side retag, so `latest` resolves to the same manifest digest the
+dated tag does and the two refs cannot diverge. Never re-run `state publish`
+against a dated tag that already exists, and never publish `latest` directly.
+
 Never reuse an immutable release tag for different state. After publishing,
-verify that both repositories expose the expected dated and `latest` tags:
+verify that both repositories expose the expected dated and `latest` tags,
+and that the banking tags resolve to one manifest:
 
 ```bash
 oras repo tags ghcr.io/cruxible-ai/models/kev-reference
-oras repo tags ghcr.io/cruxible-ai/models/banking-crux-demo
+oras repo tags "$BANKING_REPO"
+
+oras manifest fetch --descriptor "$BANKING_REPO:$RELEASE_ID"
+oras manifest fetch --descriptor "$BANKING_REPO:latest"
 ```
+
+The two descriptors must report the same `digest`. If they differ, `latest`
+was published separately rather than copied — re-run `oras cp` from the dated
+tag.
 
 The command returns a new overlay `instance_id` and locks the overlay as part
 of creation. Preview the local canonical state refresh and apply it:
