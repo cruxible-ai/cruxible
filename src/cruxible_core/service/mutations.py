@@ -19,6 +19,7 @@ from cruxible_core.errors import (
 from cruxible_core.governance.actors import GovernedActorContext, dump_actor_context
 from cruxible_core.graph.assertion_state import RelationshipLifecycleState
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.entity_identity import EntityIdentityWarning
 from cruxible_core.graph.evidence import EvidenceRef, RelationshipEvidence
 from cruxible_core.graph.group_drift import (
     GroupContentDrift,
@@ -123,6 +124,7 @@ class _PreparedBatchDirectWrite:
     relationships: list[_PreparedBatchRelationship]
     validation_errors: list[str]
     validation_warnings: list[str]
+    identity_warnings: list[EntityIdentityWarning]
     evidence_sources_used: list[str]
     interactions: _DirectWriteGroupInteractions
     contract_activations: tuple[ContractActivationIntent, ...] = ()
@@ -770,6 +772,7 @@ def _prepare_batch_direct_write(
     graph = EntityGraph.from_dict(deepcopy(current_graph.to_dict()))
     errors: list[str] = []
     warnings: list[str] = []
+    identity_warnings: list[EntityIdentityWarning] = []
     evidence_sources: list[str] = []
     evidence_seen: set[str] = set()
     entity_seen: set[tuple[str, str]] = set()
@@ -798,6 +801,12 @@ def _prepare_batch_direct_write(
                 entity.properties,
                 metadata=entity.metadata,
             )
+            identity_warning = apply_entity(
+                graph,
+                validated_entity,
+                config=config,
+                source=source,
+            )
         except DataValidationError as exc:
             errors.append(f"Entity {index}: {exc}")
             if builder:
@@ -813,11 +822,19 @@ def _prepare_batch_direct_write(
             validated_entity,
             actor_context=actor_context,
         )
-        apply_entity(graph, validated_entity, config=config, source=source)
+        validation_detail: dict[str, Any] = {
+            "entity_type": entity.entity_type,
+            "entity_id": entity.entity_id,
+        }
+        if identity_warning is not None:
+            identity_warnings.append(identity_warning)
+            similar = identity_warning.similar_existing_entity.to_payload()
+            entity_write_details[entity_key]["similar_existing_entity"] = similar
+            validation_detail["similar_existing_entity"] = similar
         if builder:
             builder.record_validation(
                 passed=True,
-                detail={"entity_type": entity.entity_type, "entity_id": entity.entity_id},
+                detail=validation_detail,
             )
 
     for index, relationship in enumerate(payload.relationships, start=1):
@@ -981,6 +998,7 @@ def _prepare_batch_direct_write(
         relationships=validated_relationships,
         validation_errors=errors,
         validation_warnings=warnings,
+        identity_warnings=identity_warnings,
         evidence_sources_used=evidence_sources,
         interactions=interactions,
         contract_activations=guard_evaluation.contract_activations,
@@ -1004,6 +1022,7 @@ def _batch_direct_write_result(
         relationships_updated=sum(1 for item in prepared.relationships if item.validated.is_update),
         validation_errors=list(prepared.validation_errors),
         validation_warnings=list(prepared.validation_warnings),
+        identity_warnings=list(prepared.identity_warnings),
         evidence_sources_used=list(prepared.evidence_sources_used),
         pending_conflicts=list(prepared.interactions.pending_conflicts),
         updated_group_backed_edges=list(prepared.interactions.updated_group_backed_edges),
@@ -1228,6 +1247,7 @@ def service_add_entities(
     )
     config = instance.load_config()
     current_graph = instance.load_graph()
+    graph = EntityGraph.from_dict(deepcopy(current_graph.to_dict()))
 
     with mutation_receipt(
         instance,
@@ -1246,6 +1266,8 @@ def service_add_entities(
         errors: list[str] = []
         batch_seen: set[tuple[str, str]] = set()
         pending = []
+        identity_warnings: list[EntityIdentityWarning] = []
+        identity_warning_by_key: dict[tuple[str, str], EntityIdentityWarning] = {}
 
         for i, ent in enumerate(entities, start=1):
             key = (ent.entity_type, ent.entity_id)
@@ -1267,6 +1289,12 @@ def service_add_entities(
                     ent.properties,
                     metadata=ent.metadata,
                 )
+                identity_warning = apply_entity(
+                    graph,
+                    validated,
+                    config=config,
+                    source="add_entity",
+                )
             except DataValidationError as exc:
                 errors.append(f"Entity {i}: {exc}")
                 if builder:
@@ -1275,10 +1303,20 @@ def service_add_entities(
 
             batch_seen.add(key)
             pending.append(validated)
+            validation_detail: dict[str, Any] = {
+                "entity_type": ent.entity_type,
+                "entity_id": ent.entity_id,
+            }
+            if identity_warning is not None:
+                identity_warnings.append(identity_warning)
+                identity_warning_by_key[key] = identity_warning
+                validation_detail["similar_existing_entity"] = (
+                    identity_warning.similar_existing_entity.to_payload()
+                )
             if builder:
                 builder.record_validation(
                     passed=True,
-                    detail={"entity_type": ent.entity_type, "entity_id": ent.entity_id},
+                    detail=validation_detail,
                 )
 
         if errors:
@@ -1287,9 +1325,6 @@ def service_add_entities(
                 errors=errors,
             )
 
-        graph = EntityGraph.from_dict(deepcopy(current_graph.to_dict()))
-        for validated in pending:
-            apply_entity(graph, validated, config=config, source="add_entity")
         try:
             guard_evaluation = evaluate_mutation_guards(
                 config,
@@ -1318,6 +1353,7 @@ def service_add_entities(
             return AddEntityResult(
                 added=sum(1 for validated in pending if not validated.is_update),
                 updated=sum(1 for validated in pending if validated.is_update),
+                identity_warnings=identity_warnings,
             )
 
         if ctx.uow is not None and guard_evaluation.contract_activations:
@@ -1343,6 +1379,13 @@ def service_add_entities(
                     validated,
                     actor_context=actor_context,
                 )
+                identity_warning = identity_warning_by_key.get(
+                    (validated.entity.entity_type, validated.entity.entity_id)
+                )
+                if identity_warning is not None:
+                    detail["similar_existing_entity"] = (
+                        identity_warning.similar_existing_entity.to_payload()
+                    )
                 builder.record_entity_write(
                     validated.entity.entity_type,
                     validated.entity.entity_id,
@@ -1361,7 +1404,13 @@ def service_add_entities(
             relationships=[],
             uow=ctx.uow,
         )
-        ctx.set_result(AddEntityResult(added=added, updated=updated))
+        ctx.set_result(
+            AddEntityResult(
+                added=added,
+                updated=updated,
+                identity_warnings=identity_warnings,
+            )
+        )
 
     result = ctx.result
     assert isinstance(result, AddEntityResult)

@@ -287,6 +287,9 @@ def _expand_entity_types(raw_entities: dict[str, Any]) -> dict[str, Any]:
                 "write_tier",
                 "auth_managed",
                 "constraints",
+                "identity_hint",
+                "unique_by",
+                "id_pattern",
             },
         )
 
@@ -326,6 +329,12 @@ def _expand_entity_types(raw_entities: dict[str, Any]) -> dict[str, Any]:
             entity["auth_managed"] = body["auth_managed"]
         if "constraints" in body:
             entity["constraints"] = list(body["constraints"])
+        if "identity_hint" in body:
+            entity["identity_hint"] = body["identity_hint"]
+        if "unique_by" in body:
+            entity["unique_by"] = body["unique_by"]
+        if "id_pattern" in body:
+            entity["id_pattern"] = body["id_pattern"]
         out[type_name] = entity
     return out
 

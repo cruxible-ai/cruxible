@@ -3240,6 +3240,10 @@ def _direct_write_group_interaction_to_contract(
     )
 
 
+def _entity_identity_warning_to_contract(warning: Any) -> contracts.EntityIdentityWarning:
+    return contracts.EntityIdentityWarning.model_validate(warning.to_payload())
+
+
 def add_relationships_with_provenance(
     instance_id: str,
     relationships: list[contracts.RelationshipInput],
@@ -3419,6 +3423,9 @@ def batch_direct_write(
         relationships_updated=result.relationships_updated,
         validation_errors=result.validation_errors,
         validation_warnings=result.validation_warnings,
+        identity_warnings=[
+            _entity_identity_warning_to_contract(item) for item in result.identity_warnings
+        ],
         evidence_sources_used=result.evidence_sources_used,
         pending_conflicts=[
             _direct_write_group_interaction_to_contract(item) for item in result.pending_conflicts
@@ -3474,6 +3481,9 @@ def add_entities(
     return contracts.AddEntityResult(
         entities_added=result.added,
         entities_updated=result.updated,
+        identity_warnings=[
+            _entity_identity_warning_to_contract(item) for item in result.identity_warnings
+        ],
         receipt_id=result.receipt_id,
     )
 

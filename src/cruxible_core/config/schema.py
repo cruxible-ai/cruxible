@@ -244,6 +244,12 @@ class EntityTypeSchema(BaseModel):
     description: str | None = None
     properties: dict[str, PropertySchema]
     constraints: list[str] = Field(default_factory=list)
+    identity_hint: list[str] | None = None
+    """Properties whose normalized composite value produces advisory matches."""
+    unique_by: list[str] | None = None
+    """Properties whose normalized composite value must be unique within the type."""
+    id_pattern: str | None = None
+    """Regular expression that every entity_id of this type must fully match."""
     write_policy: Literal["direct", "proposal_only", "mint_only"] | None = None
     """Per-type direct-write governance.
 
@@ -286,9 +292,36 @@ class EntityTypeSchema(BaseModel):
     def validate_write_tier(cls, value: Any) -> Any:
         return _validate_write_tier_value(value)
 
+    @field_validator("id_pattern")
+    @classmethod
+    def validate_id_pattern(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"id_pattern must be a valid regular expression: {exc}") from exc
+        return value
+
     @model_validator(mode="after")
     def apply_graph_property_defaults(self) -> EntityTypeSchema:
         self.properties = _apply_graph_property_defaults(self.properties)
+        for field_name in ("identity_hint", "unique_by"):
+            property_names = getattr(self, field_name)
+            if property_names is None:
+                continue
+            if not property_names:
+                raise ValueError(f"{field_name} must contain at least one property")
+            unknown = sorted(set(property_names) - set(self.properties))
+            if unknown:
+                raise ValueError(
+                    f"{field_name} references unknown properties: {', '.join(unknown)}"
+                )
+            non_string = [name for name in property_names if self.properties[name].type != "string"]
+            if non_string:
+                raise ValueError(
+                    f"{field_name} properties must have type 'string': {', '.join(non_string)}"
+                )
         _reject_write_tier_on_non_direct_type(self.write_tier, self.write_policy)
         return self
 
