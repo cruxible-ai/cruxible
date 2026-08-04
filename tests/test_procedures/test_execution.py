@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+import cruxible_core.service.procedures as procedure_service
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import (
     ConfigError,
@@ -29,6 +30,7 @@ from cruxible_core.service import (
     service_retire_procedure,
     service_run_procedure,
 )
+from cruxible_core.workflow.step_handlers import PROCEDURE_STEP_HANDLER_REGISTRY
 from tests.test_procedures.conftest import actor, provider_definition
 
 
@@ -397,6 +399,129 @@ def test_provider_runs_after_precondition_transaction_closes(
     assert result.output == {"value": 9}
 
 
+def test_legacy_return_reference_failure_is_typed_and_finalizes_failed_run(
+    procedure_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "legacy_return_reference",
+            "contract_in": "ProcedureInput",
+            "steps": [
+                {
+                    "id": "load_transactions",
+                    "provider": "exported_action",
+                    "input": {"value": "$input.value"},
+                    "as": "transactions",
+                }
+            ],
+            "returns": "$steps.transactions.result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+    original_compile = procedure_service.compile_procedure_definition
+
+    def compile_as_legacy_accepted(
+        instance: CruxibleInstance,
+        candidate: ProcedureDefinition,
+        input_payload: dict[str, Any] | None = None,
+    ) -> Any:
+        valid_candidate = candidate.model_copy(update={"returns": "transactions"})
+        plan = original_compile(instance, valid_candidate, input_payload)
+        return plan.model_copy(update={"returns": candidate.returns})
+
+    with monkeypatch.context() as acceptance_context:
+        acceptance_context.setattr(
+            procedure_service,
+            "compile_procedure_definition",
+            compile_as_legacy_accepted,
+        )
+        procedure_id = _accept(procedure_instance, definition)
+
+    _stub_provider(monkeypatch, lambda payload: payload)
+    expected_error = (
+        "Procedure step 'load_transactions' failed to resolve runtime reference "
+        "'$steps.transactions.result' (KeyError)"
+    )
+
+    with pytest.raises(QueryExecutionError) as exc_info:
+        service_run_procedure(
+            procedure_instance,
+            procedure_id,
+            {"value": 1},
+            actor("runner"),
+        )
+
+    assert str(exc_info.value).startswith(expected_error)
+    assert getattr(exc_info.value, "step_id") == "load_transactions"
+    assert getattr(exc_info.value, "reference") == "$steps.transactions.result"
+    run = _run(procedure_instance, getattr(exc_info.value, "procedure_run_id"))
+    assert run.status == "finalized"
+    assert run.verdict == "failed"
+    assert run.receipt_id is not None
+    receipt = _receipt(procedure_instance, run.receipt_id)
+    assert receipt.nodes[0].detail["error"] == expected_error
+    assert receipt.nodes[0].detail["error_type"] == "QueryExecutionError"
+    assert receipt.nodes[0].detail["verdict"] == "failed"
+
+
+@pytest.mark.parametrize(
+    "untyped_failure",
+    [
+        KeyError("$input.value"),
+        IndexError("runtime index failure"),
+        AttributeError("runtime attribute failure"),
+    ],
+    ids=["key-error", "index-error", "attribute-error"],
+)
+def test_untyped_step_failures_are_typed_without_fabricating_a_reference(
+    procedure_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+    untyped_failure: KeyError | IndexError | AttributeError,
+) -> None:
+    procedure_id = _accept(
+        procedure_instance,
+        provider_definition("typed_step_failure"),
+    )
+
+    def fail_step(context: Any, compiled_step: Any) -> None:
+        raise untyped_failure
+
+    monkeypatch.setitem(
+        PROCEDURE_STEP_HANDLER_REGISTRY._handlers,
+        "provider",
+        fail_step,
+    )
+    expected_error = (
+        "Procedure step 'invoke' of kind 'provider' failed during execution "
+        f"({type(untyped_failure).__name__})"
+    )
+
+    with pytest.raises(QueryExecutionError) as exc_info:
+        service_run_procedure(
+            procedure_instance,
+            procedure_id,
+            {"value": 1},
+            actor("runner"),
+        )
+
+    assert str(exc_info.value).startswith(expected_error)
+    assert "$input.value" not in str(exc_info.value)
+    assert "failed to resolve runtime reference" not in str(exc_info.value)
+    assert getattr(exc_info.value, "step_id") == "invoke"
+    assert getattr(exc_info.value, "step_kind") == "provider"
+    assert not hasattr(exc_info.value, "reference")
+    run = _run(procedure_instance, getattr(exc_info.value, "procedure_run_id"))
+    assert run.status == "finalized"
+    assert run.verdict == "failed"
+    assert run.receipt_id is not None
+    receipt = _receipt(procedure_instance, run.receipt_id)
+    assert receipt.nodes[0].detail["error"] == expected_error
+    assert receipt.nodes[0].detail["error_type"] == "QueryExecutionError"
+
+
 def test_repeat_until_satisfaction_uses_final_attempt_outputs_and_attempt_count(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
@@ -592,6 +717,7 @@ def test_run_fails_closed_when_live_provider_is_removed(
         provider_definition("missing_after_acceptance"),
     )
     config = procedure_instance.load_config()
+    config.providers["available_action"] = config.providers["exported_action"].model_copy()
     del config.providers["exported_action"]
     procedure_instance.save_config(config)
     service_lock(procedure_instance)
@@ -604,6 +730,7 @@ def test_run_fails_closed_when_live_provider_is_removed(
             actor("runner"),
         )
 
+    assert "registered providers: available_action" in str(exc_info.value)
     run = _run(procedure_instance, getattr(exc_info.value, "procedure_run_id"))
     assert run.status == "finalized"
     assert run.verdict == "refused"

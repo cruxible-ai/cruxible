@@ -86,6 +86,36 @@ There is **no** `CRUXIBLE_AGENT_MODE` env var — if older docs or skills mentio
 it, they are stale. The real knobs are `CRUXIBLE_MODE` and the
 `refuse_direct_writes` policy above.
 
+## Deterministic identity signals on write surfaces
+
+Entity types may declare three deterministic same-type identity controls:
+
+- `identity_hint: [property, ...]` lets a create succeed but adds a structured
+  `identity_warnings[].similar_existing_entity` result naming the reusable
+  entity ID and the matched properties. Inspect this array after
+  `cruxible_add_entity` and `cruxible_batch_direct_write`; do not create more
+  relationships on the new ID until you have decided whether to reuse the
+  named entity.
+- `unique_by: [property, ...]` rejects a normalized duplicate with
+  `DataValidationError` (HTTP 400) and names the existing entity ID. Reuse that
+  ID or deliberately change the declared identity properties; retrying with a
+  third ID cannot succeed.
+- `id_pattern: 'regex'` rejects IDs that do not fully match the type's declared
+  convention and names the required pattern. It also applies to updates and
+  lifecycle transitions, so choose a pattern that admits any pre-existing IDs
+  that must remain updatable.
+
+`identity_hint` and `unique_by` NFC-normalize, case-fold, trim/collapse
+whitespace, and delete Unicode punctuation before exact composite-key
+comparison. Punctuation deletion does not add a space: `Gold-Card` becomes
+`goldcard`, while `Gold Card` becomes `gold card`, so they do not collide. They
+do not perform fuzzy or semantic matching, never compare across entity types,
+and never merge entities automatically. Avoid putting the primary-key property
+in `unique_by`: its derived `entity_id` value is normalized too and usually
+defeats duplicate detection on the remaining business fields. Reference-image
+apply, state pull, and snapshot restore bypass the shared write chokepoint by
+design. See [Declared entity identity keys](config-reference.md#declared-entity-identity-keys).
+
 ## Core Responsibilities
 
 The agent should:

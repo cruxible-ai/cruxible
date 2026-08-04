@@ -950,6 +950,10 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         Each entity needs: entity_type, entity_id.
         Optional properties and metadata dicts. Re-submitting an existing
         entity merges properties and metadata.
+        A config-declared identity_hint match keeps the write successful and
+        returns a structured identity_warnings entry naming the existing
+        entity_id. unique_by and id_pattern declarations are hard validation
+        constraints.
         Use for entities from free text or external sources when CSV ingestion
         is not available.
         """
@@ -1058,6 +1062,9 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
         Set dry_run=true to validate entity properties, relationship endpoints,
         relationship properties, evidence locators, duplicate IDs, and missing
         shared evidence keys without mutating graph state.
+        Config-declared identity_hint matches appear in the successful result's
+        structured identity_warnings; unique_by and id_pattern violations are
+        rejected.
         """
         return handlers.handle_batch_direct_write(
             instance_id,

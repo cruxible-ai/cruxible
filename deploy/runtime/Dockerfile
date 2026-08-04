@@ -13,6 +13,8 @@ COPY packages/cruxible-client ./packages/cruxible-client
 
 RUN uv sync --frozen --no-dev --extra server --no-editable
 
+FROM ghcr.io/oras-project/oras:v1.3.2 AS oras
+
 FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -37,9 +39,11 @@ RUN groupadd --system cruxible \
 WORKDIR /app
 
 COPY --from=builder --chown=cruxible:cruxible /app/.venv /app/.venv
+COPY --from=oras --chown=root:root /bin/oras /usr/local/bin/oras
 COPY --chown=root:root deploy/runtime/entrypoint.sh /usr/local/bin/cruxible-runtime-entrypoint
 
-RUN chmod 0755 /usr/local/bin/cruxible-runtime-entrypoint
+RUN chmod 0755 /usr/local/bin/cruxible-runtime-entrypoint /usr/local/bin/oras \
+    && oras version
 
 USER cruxible
 

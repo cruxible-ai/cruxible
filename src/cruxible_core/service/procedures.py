@@ -69,6 +69,17 @@ _PERMISSION_BY_TIER = {
     "admin": PermissionMode.ADMIN,
 }
 _READ_REVISION_STATE_KEY = "read_revision"
+_MAX_REGISTERED_PROVIDERS_IN_ERROR = 40
+
+
+def _format_registered_providers(config: CoreConfig) -> str:
+    provider_names = sorted(config.providers)
+    if not provider_names:
+        return "none"
+    if len(provider_names) > _MAX_REGISTERED_PROVIDERS_IN_ERROR:
+        shown = ", ".join(provider_names[:_MAX_REGISTERED_PROVIDERS_IN_ERROR])
+        return f"{shown}, ... ({len(provider_names)} total; first 40 shown)"
+    return ", ".join(provider_names)
 
 
 def validate_procedure_definition_against_config(
@@ -88,7 +99,8 @@ def validate_procedure_definition_against_config(
         provider = config.providers.get(provider_name)
         if provider is None:
             raise ConfigError(
-                f"Procedure '{definition.name}' references unknown provider '{provider_name}'"
+                f"Procedure '{definition.name}' references unknown provider '{provider_name}' "
+                f"(registered providers: {_format_registered_providers(config)})"
             )
         if provider.procedure_access == "disabled":
             raise ConfigError(

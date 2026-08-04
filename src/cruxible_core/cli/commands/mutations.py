@@ -354,6 +354,7 @@ def _batch_direct_write_result_payload(result: Any) -> dict[str, Any]:
         "relationships_updated": result.relationships_updated,
         "validation_errors": list(result.validation_errors),
         "validation_warnings": list(result.validation_warnings),
+        "identity_warnings": [warning.to_payload() for warning in result.identity_warnings],
         "evidence_sources_used": list(result.evidence_sources_used),
         "pending_conflicts": [
             _direct_write_group_interaction_payload(item) for item in result.pending_conflicts
@@ -438,6 +439,15 @@ def _emit_batch_write_result(
         click.echo("  Evidence sources: " + ", ".join(result_payload["evidence_sources_used"]))
     for warning in result_payload["validation_warnings"]:
         click.secho(f"  Warning: {warning}", fg="yellow")
+    for warning in result_payload["identity_warnings"]:
+        similar = warning["similar_existing_entity"]
+        matched_properties = ", ".join(similar["matched_properties"])
+        click.secho(
+            f"  Identity warning: {warning['entity_type']}:{warning['entity_id']} "
+            f"resembles existing entity {similar['entity_id']} on "
+            f"properties [{matched_properties}]",
+            fg="yellow",
+        )
     for error in result_payload["validation_errors"]:
         click.secho(f"  Error: {error}", fg="red")
     if result_payload["receipt_id"]:

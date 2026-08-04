@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+import cruxible_core.service.procedures as procedure_service
 from cruxible_core.mcp.handlers import reset_client_cache
+from cruxible_core.procedure.types import ProcedureDefinition
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.server.app import create_app
@@ -139,6 +142,112 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     )
     assert retired.status_code == 200, retired.text
     assert retired.json()["procedure"]["status"] == "retired"
+
+
+def test_invalid_procedure_definition_returns_typed_validation_error(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_procedure_instance(app_client, tmp_path / "workspace")
+    definition = _definition()
+    definition["precondition"] = {"identity_verified": True}
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={"definition": definition},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_type"] == "DataValidationError"
+    assert response.json()["message"] == "Invalid procedure definition"
+    assert response.json()["errors"] == [
+        "precondition.identity_verified: Extra inputs are not permitted"
+    ]
+
+
+def test_procedure_runtime_reference_failure_is_typed_and_audited(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_id = _init_procedure_instance(app_client, tmp_path / "workspace")
+    definition = _definition()
+    steps = definition["steps"]
+    assert isinstance(steps, list)
+    step = steps[0]
+    assert isinstance(step, dict)
+    step["as"] = "transactions"
+    definition["returns"] = "$steps.transactions.result"
+    original_compile = procedure_service.compile_procedure_definition
+
+    def compile_as_legacy_accepted(
+        instance: Any,
+        candidate: ProcedureDefinition,
+        input_payload: dict[str, Any] | None = None,
+    ) -> Any:
+        valid_candidate = candidate.model_copy(update={"returns": "transactions"})
+        plan = original_compile(instance, valid_candidate, input_payload)
+        return plan.model_copy(update={"returns": candidate.returns})
+
+    with monkeypatch.context() as acceptance_context:
+        acceptance_context.setattr(
+            procedure_service,
+            "compile_procedure_definition",
+            compile_as_legacy_accepted,
+        )
+        proposed = app_client.post(
+            f"/api/v1/{instance_id}/procedures/propose",
+            json={
+                "definition": definition,
+                "actor_context": actor("http-proposer").model_dump(mode="json"),
+            },
+        )
+        assert proposed.status_code == 200, proposed.text
+        procedure_id = proposed.json()["procedure"]["procedure_id"]
+        accepted = app_client.post(
+            f"/api/v1/{instance_id}/procedures/{procedure_id}/resolve",
+            json={"action": "accept", "expected_version": 1},
+        )
+        assert accepted.status_code == 200, accepted.text
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/procedures/{procedure_id}/run",
+        json={
+            "input_payload": {"value": 1},
+            "actor_context": actor("http-runner").model_dump(mode="json"),
+        },
+    )
+
+    expected_message = (
+        "Procedure step 'shape' failed to resolve runtime reference "
+        "'$steps.transactions.result' (KeyError)"
+    )
+    assert response.status_code == 400
+    payload = response.json()
+    receipt_id = payload["mutation_receipt_id"]
+    assert isinstance(receipt_id, str)
+    assert payload == {
+        "error_type": "QueryExecutionError",
+        "message": expected_message,
+        "error_code": None,
+        "errors": [],
+        "context": {},
+        "mutation_receipt_id": receipt_id,
+    }
+
+    runs = app_client.get(f"/api/v1/{instance_id}/procedures/{procedure_id}/runs")
+    assert runs.status_code == 200, runs.text
+    run = runs.json()["items"][0]
+    assert run["status"] == "finalized"
+    assert run["verdict"] == "failed"
+    assert run["receipt_id"] == receipt_id
+
+    receipt_response = app_client.get(f"/api/v1/{instance_id}/receipts/{receipt_id}")
+    assert receipt_response.status_code == 200, receipt_response.text
+    root_detail = receipt_response.json()["nodes"][0]["detail"]
+    assert root_detail["error"] == expected_message
+    assert root_detail["error_type"] == "QueryExecutionError"
+    assert root_detail["verdict"] == "failed"
 
 
 def test_procedure_routes_are_part_of_the_public_openapi() -> None:

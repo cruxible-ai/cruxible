@@ -35,7 +35,7 @@ from cruxible_core.workflow.proposals import (
     map_signal_batch,
     signal_mapping_snapshot,
 )
-from cruxible_core.workflow.refs import resolve_value
+from cruxible_core.workflow.refs import resolve_value, runtime_reference_from_error
 from cruxible_core.workflow.step_helpers import SOURCE_METADATA_KEY, resolve_step_items
 from cruxible_core.workflow.transforms import (
     aggregate_items,
@@ -48,6 +48,41 @@ from cruxible_core.workflow.types import CompiledPlanStep, EntitySet, Relationsh
 
 VALID_STEP_KINDS: frozenset[str] = frozenset(str(kind) for kind in get_args(StepKind))
 PROCEDURE_STEP_KINDS: frozenset[str] = VALID_STEP_KINDS | {"repeat"}
+
+
+def procedure_runtime_reference_error(
+    step_id: str,
+    reference: str,
+    cause: BaseException,
+) -> QueryExecutionError:
+    """Build the typed, step-scoped error used by procedure runtime guards."""
+    exc = QueryExecutionError(
+        f"Procedure step '{step_id}' failed to resolve runtime reference "
+        f"'{reference}' ({type(cause).__name__})"
+    )
+    setattr(exc, "step_id", step_id)
+    setattr(exc, "reference", reference)
+    return exc
+
+
+def procedure_step_execution_error(
+    step_id: str,
+    step_kind: str,
+    cause: BaseException,
+) -> QueryExecutionError:
+    """Build the typed, step-scoped error for an untyped handler failure.
+
+    The failure escaped a handler without naming a workflow reference, so no
+    reference is reported: guessing one misdiagnoses engine or provider bugs
+    as faults in the Procedure definition.
+    """
+    exc = QueryExecutionError(
+        f"Procedure step '{step_id}' of kind '{step_kind}' failed during execution "
+        f"({type(cause).__name__})"
+    )
+    setattr(exc, "step_id", step_id)
+    setattr(exc, "step_kind", step_kind)
+    return exc
 
 
 class WorkflowStepHandler(Protocol):
@@ -98,8 +133,28 @@ class WorkflowStepRegistry:
         context: WorkflowExecutionContext,
         compiled_step: CompiledPlanStep,
     ) -> None:
-        handler = self._handlers[compiled_step.kind]
-        handler(context, compiled_step)
+        try:
+            handler = self._handlers[compiled_step.kind]
+            handler(context, compiled_step)
+        except QueryExecutionError as exc:
+            if context.procedure_budget is None:
+                raise
+            reference = runtime_reference_from_error(exc)
+            if reference is None:
+                raise
+            raise procedure_runtime_reference_error(
+                compiled_step.step_id,
+                reference,
+                exc,
+            ) from exc
+        except (KeyError, IndexError, AttributeError) as exc:
+            if context.procedure_budget is None:
+                raise
+            raise procedure_step_execution_error(
+                compiled_step.step_id,
+                compiled_step.kind,
+                exc,
+            ) from exc
 
 
 def execute_query_handler(

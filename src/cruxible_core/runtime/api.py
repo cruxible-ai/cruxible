@@ -20,6 +20,7 @@ from cruxible_core.config.schema import schema_wire_payload
 from cruxible_core.errors import (
     AuthenticationError,
     ConfigError,
+    DataValidationError,
     InvalidContinuationError,
 )
 from cruxible_core.governance.actors import (
@@ -3239,6 +3240,10 @@ def _direct_write_group_interaction_to_contract(
     )
 
 
+def _entity_identity_warning_to_contract(warning: Any) -> contracts.EntityIdentityWarning:
+    return contracts.EntityIdentityWarning.model_validate(warning.to_payload())
+
+
 def add_relationships_with_provenance(
     instance_id: str,
     relationships: list[contracts.RelationshipInput],
@@ -3418,6 +3423,9 @@ def batch_direct_write(
         relationships_updated=result.relationships_updated,
         validation_errors=result.validation_errors,
         validation_warnings=result.validation_warnings,
+        identity_warnings=[
+            _entity_identity_warning_to_contract(item) for item in result.identity_warnings
+        ],
         evidence_sources_used=result.evidence_sources_used,
         pending_conflicts=[
             _direct_write_group_interaction_to_contract(item) for item in result.pending_conflicts
@@ -3473,6 +3481,9 @@ def add_entities(
     return contracts.AddEntityResult(
         entities_added=result.added,
         entities_updated=result.updated,
+        identity_warnings=[
+            _entity_identity_warning_to_contract(item) for item in result.identity_warnings
+        ],
         receipt_id=result.receipt_id,
     )
 
@@ -4150,7 +4161,16 @@ def propose_procedure(
     check_permission("cruxible_propose_procedure", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
-    parsed_definition = ProcedureDefinition.model_validate(definition)
+    try:
+        parsed_definition = ProcedureDefinition.model_validate(definition)
+    except ValidationError as exc:
+        errors = [
+            f"{'.'.join(str(part) for part in error.get('loc', ()))}: {error['msg']}"
+            if error.get("loc")
+            else str(error["msg"])
+            for error in exc.errors()
+        ]
+        raise DataValidationError("Invalid procedure definition", errors=errors) from exc
     parsed_evidence = [
         ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
         for ref in (evidence_refs or [])

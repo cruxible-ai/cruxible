@@ -7,6 +7,49 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## [0.3.1] - 2026-08-05
+
+- **Entity types can declare deterministic identity keys at write time.**
+  `identity_hint` returns a structured same-type duplicate warning without
+  blocking the write, `unique_by` rejects normalized duplicates while naming
+  the existing entity ID (including identity-changing updates), and
+  `id_pattern` enforces per-type ID conventions. The shared normalization
+  NFC-normalizes, case-folds, trims and collapses whitespace, and deletes
+  punctuation; direct add/batch `identity_warnings` surface through both HTTP
+  and MCP results. Matching scans same-type entities only and does not merge or
+  perform semantic matching.
+
+- **Ontology inspection is authoring-complete.** The canonical ontology view
+  now exposes compact config-like entity and relationship property contracts,
+  configured write policies, and stored instance counts, so an agent can author
+  valid writes from the view alone. The request and response envelope is
+  unchanged; CLI and MCP guidance updated.
+
+- **Invalid Procedure definitions return typed validation errors.**
+  `propose_procedure` surfaces definition-shape failures as structured 400
+  responses with field-path messages on both the HTTP and MCP surfaces,
+  instead of opaque server errors.
+
+- **Unknown-provider Procedure errors list the registered providers.** The
+  rejection names the valid provider set (sorted, truncated past 40 with a
+  count), so an agent can self-correct instead of retrying blind.
+
+- **Procedure runtime reference failures are typed and auditable.** Accepted
+  definitions that cannot resolve a step reference now return a structured 400
+  `QueryExecutionError` naming the failing step and reference, while atomically
+  finalizing the procedure run as `failed` with its failure receipt. Failures
+  that escape a step handler without an identified reference are typed the same
+  way but name only the step id and kind — no reference is guessed. Procedure
+  previews also reject `returns` values that are not produced output aliases.
+
+- **Demo states publish to GHCR as immutable OCI bundles.** The hosted
+  runtime image packages ORAS 1.3.2, the state-ref catalog gains the
+  `banking-crux-demo` alias, and the publication recipes publish one release
+  bundle under a dated immutable tag and retag that exact manifest to
+  `latest` via `oras cp`, so the two references can never diverge. Recipes
+  document digest-equality verification and the never-republish-a-dated-tag
+  rule.
+
 - **Registered source evidence now has compact, server-minted citation
   handles.** Registration, source-artifact list/get responses, and canonical
   `register_source_artifacts` workflow output expose stable revision and chunk
@@ -485,7 +528,7 @@ the project's own state instance.
   content leaving no trace on the edge at all. Detection and stamping moved to a
   shared `graph/group_drift.py` that both write paths use.
 
-  RULING (Robert, 2026-07-25) on the marker's semantics, applied to both sites:
+  RULING (maintainer, 2026-07-25) on the marker's semantics, applied to both sites:
   `group_approval_drift` reflects divergence RIGHT NOW. It is recomputed against
   the approved content on every write and DROPPED when the content fully matches
   the approval again; a partial revert lists only the properties that still
@@ -563,8 +606,8 @@ the project's own state instance.
 
 ### Documented
 
-- **Under auth-on, every credentialed actor derives to `agent`** (Robert,
-  2026-07-25). A runtime credential is a `service_account`, so there is no way to
+- **Under auth-on, every credentialed actor derives to `agent`** (maintainer
+  ruling, 2026-07-25). A runtime credential is a `service_account`, so there is no way to
   be a human on an auth-on daemon today — and that is not an exemption: an actor
   deriving to `agent` owes a `reason_code` wherever a feedback or outcome profile
   requires one of non-human writers. Human-typed credentials (established at mint

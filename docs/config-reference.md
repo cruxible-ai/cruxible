@@ -337,17 +337,17 @@ A dict keyed by type name. Each value defines the entity's properties.
 
 ```yaml
 entity_types:
-  Vehicle:
-    description: "A specific vehicle (year + make + model + trim)"
+  Account:
+    description: "A customer account"
+    identity_hint: [name, family]
+    unique_by: [routing_number, account_number]
+    id_pattern: '^account_[a-z0-9_]+$'
     properties:
-      vehicle_id: {primary_key: true}
-      year:
-        type: int
-        indexed: true
-      make: {indexed: true}
-      model: {indexed: true}
-      trim: {}
-      engine: {}
+      account_id: {primary_key: true}
+      name: {}
+      family: {}
+      routing_number: {}
+      account_number: {}
 ```
 
 ### EntityTypeSchema
@@ -357,8 +357,67 @@ entity_types:
 | `description` | string | no | `null` | Human-readable description of this entity type |
 | `properties` | dict | **yes** | — | Property definitions (see below) |
 | `constraints` | list[string] | no | `[]` | Constraint names that apply to this entity type |
+| `identity_hint` | list[string] | no | `null` | Advisory composite identity key. A create whose normalized values match an existing entity of the same type succeeds and returns a structured `similar_existing_entity` warning. Every name must reference a string property declared on the type. |
+| `unique_by` | list[string] | no | `null` | Hard composite identity key. A create whose normalized values match an existing entity of the same type is rejected; an update is re-checked when it changes the normalized key, excluding the entity being updated. Every name must reference a string property declared on the type. |
+| `id_pattern` | string | no | `null` | Regular expression that the complete `entity_id` must match. Invalid regular expressions fail config load; write violations return `DataValidationError` (HTTP 400) naming the pattern. |
 | `write_policy` | string | no | `null` | `"direct"`, `"proposal_only"`, or `"mint_only"`. Governs direct entity adds for this type — see [Direct-Write Governance](#direct-write-governance-refuse_direct_writes). `"mint_only"` is stricter than `"proposal_only"`: writable only by the internal `token_mint` source, refusing all other sources including `workflow_apply` / `group_resolve` (a config wiring a `mint_only` type into a workflow `make_entities` step is rejected at load). `null` inherits `runtime.default_write_policy`. |
 | `write_tier` | string | no | `null` | `"governed_write"` or `"graph_write"`. Minimum permission tier allowed to direct-write this type — see [Config-Declared Write Tiers](#config-declared-write-tiers-write_tier). `null` keeps the default `graph_write` requirement. Rejected together with an explicit `proposal_only`/`mint_only` `write_policy`. |
+
+### Declared entity identity keys
+
+`identity_hint` and `unique_by` use the same deterministic normalization for
+every declared value: Unicode NFC normalization followed by case-folding,
+leading/trailing whitespace removal, internal whitespace collapse, and Unicode
+punctuation deletion. Deletion does not insert whitespace: `Gold-Card`
+normalizes to `goldcard`, while `Gold Card` normalizes to `gold card`, so those
+values do **not** collide. The declared list is one composite key: every
+property must be present with a string value before comparison. If every
+component normalizes to an empty string, enforcement is skipped for that
+entity. Matching never crosses entity types and performs no semantic, fuzzy,
+embedding, or LLM-based comparison.
+
+Both lists must be non-empty. Although the primary-key property may be named in
+`unique_by`, its comparison value is derived from `entity_id` and then receives
+the same normalization. Including it usually makes different IDs distinct and
+therefore defeats business-key duplicate detection; it can also reject two IDs
+that differ only by case or punctuation. Prefer not to include the primary key
+unless that behavior is deliberate.
+
+`identity_hint` is advisory and intentionally runs only for creates. Direct
+`add_entity` and `batch_direct_write` results expose the `identity_warnings`
+array; workflow and other shared entity-creation paths still pass through hard
+enforcement but do not add a new warning result contract. `unique_by` and
+`id_pattern` are enforced at the shared entity-write chokepoint for direct
+writes, batch writes, workflow applies, and other entity-creating surfaces.
+Reference-image apply, state pull, and snapshot restore replace graph state
+outside that chokepoint and bypass these checks by design.
+
+`id_pattern` is checked on creates, updates, and lifecycle transitions. If a
+type already contains IDs that do not conform, declaring a stricter pattern
+makes those entities un-updatable through the chokepoint, including via
+lifecycle verbs. Choose a pattern that admits every existing ID that must remain
+operable, or migrate those IDs before enabling it.
+
+Matching scans the existing entities of the same type, so each
+declared-identity write is O(n) in that type's current entity count and adds no
+storage or lifecycle state.
+
+An advisory result uses this shape (the write still succeeds):
+
+```json
+{
+  "identity_warnings": [
+    {
+      "entity_type": "Account",
+      "entity_id": "checking_bluest_account",
+      "similar_existing_entity": {
+        "entity_id": "product_bluest_account",
+        "matched_properties": ["name", "family"]
+      }
+    }
+  ]
+}
+```
 
 ### PropertySchema
 
