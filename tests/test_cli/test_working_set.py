@@ -750,8 +750,18 @@ class TestCatalog:
             "procedure_id": procedure_id,
             "definition": {
                 "name": f"proc_{procedure_id}",
-                "steps": [{"id": "eligible", "assert_exists": {"ref": "$input.value"}}],
-                "returns": "eligible",
+                "steps": [
+                    {"id": "guard", "assert_exists": {"ref": "$input.value"}},
+                    {
+                        "id": "eligible",
+                        "shape_items": {
+                            "items": [{"value": "$input.value"}],
+                            "fields": {"value": "$item.value"},
+                        },
+                        "as": "verdict",
+                    },
+                ],
+                "returns": "verdict",
                 "precondition": {"entity_type": "Task", "condition": {"status": "ready"}},
                 "budget": {"wall_clock_s": 60, "max_provider_calls": 0},
             },
@@ -851,8 +861,18 @@ class TestCatalog:
             {
                 "name": "part_eligibility",
                 "description": "Check one part is orderable.",
-                "steps": [{"id": "eligible", "assert_exists": {"ref": "$input.value"}}],
-                "returns": "eligible",
+                "steps": [
+                    {"id": "guard", "assert_exists": {"ref": "$input.value"}},
+                    {
+                        "id": "eligible",
+                        "shape_items": {
+                            "items": [{"value": "$input.value"}],
+                            "fields": {"value": "$item.value"},
+                        },
+                        "as": "verdict",
+                    },
+                ],
+                "returns": "verdict",
                 "precondition": {"entity_type": "Part", "condition": {"category": "brakes"}},
                 "budget": {"wall_clock_s": 60, "max_provider_calls": 0},
             }
