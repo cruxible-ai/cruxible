@@ -568,6 +568,19 @@
             "type": "integer"
           }
         },
+        "identity_warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "identity_warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/EntityIdentityWarning"
+            },
+            "title": "Identity Warnings",
+            "type": "array"
+          }
+        },
         "receipt_id": {
           "default": null,
           "default_json_serializable": true,
@@ -590,6 +603,51 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "EntityIdentityWarning": {
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "similar_existing_entity": {
+                "$ref": "#/$defs/SimilarExistingEntity"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id",
+              "similar_existing_entity"
+            ],
+            "title": "EntityIdentityWarning",
+            "type": "object"
+          },
+          "SimilarExistingEntity": {
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "matched_properties": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Matched Properties",
+                "type": "array"
+              }
+            },
+            "required": [
+              "entity_id",
+              "matched_properties"
+            ],
+            "title": "SimilarExistingEntity",
+            "type": "object"
+          }
+        },
         "properties": {
           "entities_added": {
             "title": "Entities Added",
@@ -598,6 +656,13 @@
           "entities_updated": {
             "title": "Entities Updated",
             "type": "integer"
+          },
+          "identity_warnings": {
+            "items": {
+              "$ref": "#/$defs/EntityIdentityWarning"
+            },
+            "title": "Identity Warnings",
+            "type": "array"
           },
           "receipt_id": {
             "anyOf": [
@@ -2920,6 +2985,19 @@
             "type": "array"
           }
         },
+        "identity_warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "identity_warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/EntityIdentityWarning"
+            },
+            "title": "Identity Warnings",
+            "type": "array"
+          }
+        },
         "pending_conflicts": {
           "has_default": false,
           "has_default_factory": true,
@@ -3128,6 +3206,49 @@
             ],
             "title": "DirectWriteGroupInteraction",
             "type": "object"
+          },
+          "EntityIdentityWarning": {
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "similar_existing_entity": {
+                "$ref": "#/$defs/SimilarExistingEntity"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id",
+              "similar_existing_entity"
+            ],
+            "title": "EntityIdentityWarning",
+            "type": "object"
+          },
+          "SimilarExistingEntity": {
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "matched_properties": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Matched Properties",
+                "type": "array"
+              }
+            },
+            "required": [
+              "entity_id",
+              "matched_properties"
+            ],
+            "title": "SimilarExistingEntity",
+            "type": "object"
           }
         },
         "properties": {
@@ -3150,6 +3271,13 @@
               "type": "string"
             },
             "title": "Evidence Sources Used",
+            "type": "array"
+          },
+          "identity_warnings": {
+            "items": {
+              "$ref": "#/$defs/EntityIdentityWarning"
+            },
+            "title": "Identity Warnings",
             "type": "array"
           },
           "pending_conflicts": {
@@ -7234,6 +7362,89 @@
       },
       "required_fields": [
         "entity_type"
+      ]
+    },
+    "EntityIdentityWarning": {
+      "fields": {
+        "entity_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_id",
+          "required": true,
+          "schema": {
+            "title": "Entity Id",
+            "type": "string"
+          }
+        },
+        "entity_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_type",
+          "required": true,
+          "schema": {
+            "title": "Entity Type",
+            "type": "string"
+          }
+        },
+        "similar_existing_entity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "similar_existing_entity",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/SimilarExistingEntity"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "SimilarExistingEntity": {
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "matched_properties": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Matched Properties",
+                "type": "array"
+              }
+            },
+            "required": [
+              "entity_id",
+              "matched_properties"
+            ],
+            "title": "SimilarExistingEntity",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "similar_existing_entity": {
+            "$ref": "#/$defs/SimilarExistingEntity"
+          }
+        },
+        "required": [
+          "entity_type",
+          "entity_id",
+          "similar_existing_entity"
+        ],
+        "title": "EntityIdentityWarning",
+        "type": "object"
+      },
+      "required_fields": [
+        "entity_id",
+        "entity_type",
+        "similar_existing_entity"
       ]
     },
     "EntityInput": {
@@ -28366,6 +28577,58 @@
       "required_fields": [
         "signal",
         "signal_source"
+      ]
+    },
+    "SimilarExistingEntity": {
+      "fields": {
+        "entity_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_id",
+          "required": true,
+          "schema": {
+            "title": "Entity Id",
+            "type": "string"
+          }
+        },
+        "matched_properties": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "matched_properties",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Properties",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "matched_properties": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Properties",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entity_id",
+          "matched_properties"
+        ],
+        "title": "SimilarExistingEntity",
+        "type": "object"
+      },
+      "required_fields": [
+        "entity_id",
+        "matched_properties"
       ]
     },
     "SnapshotCreateResult": {
