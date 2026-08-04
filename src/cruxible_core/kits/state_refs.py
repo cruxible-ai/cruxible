@@ -34,6 +34,11 @@ class ResolvedStateSource:
 
 
 STATE_CATALOG: dict[str, StateCatalogEntry] = {
+    "banking-crux-demo": StateCatalogEntry(
+        alias="banking-crux-demo",
+        base_transport_ref="oci://ghcr.io/cruxible-ai/models/banking-crux-demo",
+        description="Published banking Crux demo state",
+    ),
     "kev-reference": StateCatalogEntry(
         alias="kev-reference",
         base_transport_ref="oci://ghcr.io/cruxible-ai/models/kev-reference",

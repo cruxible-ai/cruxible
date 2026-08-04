@@ -81,6 +81,15 @@ def test_hosted_runtime_image_builds_starts_and_runs_non_root(
         _docker(["rm", "-f", container_name], check=False, timeout=30)
 
 
+def test_hosted_runtime_image_includes_oras(runtime_image: str) -> None:
+    completed = _docker(
+        ["run", "--rm", "--entrypoint", "oras", runtime_image, "version"],
+        timeout=30,
+    )
+
+    assert "Version:        1.3.2" in completed.stdout
+
+
 def test_hosted_runtime_image_requires_external_state_mount(runtime_image: str) -> None:
     completed = _docker(
         [
