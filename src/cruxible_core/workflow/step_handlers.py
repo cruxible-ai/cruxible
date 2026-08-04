@@ -35,7 +35,7 @@ from cruxible_core.workflow.proposals import (
     map_signal_batch,
     signal_mapping_snapshot,
 )
-from cruxible_core.workflow.refs import resolve_value
+from cruxible_core.workflow.refs import resolve_value, runtime_reference_from_error
 from cruxible_core.workflow.step_helpers import SOURCE_METADATA_KEY, resolve_step_items
 from cruxible_core.workflow.transforms import (
     aggregate_items,
@@ -48,6 +48,62 @@ from cruxible_core.workflow.types import CompiledPlanStep, EntitySet, Relationsh
 
 VALID_STEP_KINDS: frozenset[str] = frozenset(str(kind) for kind in get_args(StepKind))
 PROCEDURE_STEP_KINDS: frozenset[str] = VALID_STEP_KINDS | {"repeat"}
+
+
+def procedure_runtime_reference_error(
+    step_id: str,
+    reference: str,
+    cause: BaseException,
+) -> QueryExecutionError:
+    """Build the typed, step-scoped error used by procedure runtime guards."""
+    exc = QueryExecutionError(
+        f"Procedure step '{step_id}' failed to resolve runtime reference "
+        f"'{reference}' ({type(cause).__name__})"
+    )
+    setattr(exc, "step_id", step_id)
+    setattr(exc, "reference", reference)
+    return exc
+
+
+def _runtime_reference_for_low_level_failure(
+    compiled_step: CompiledPlanStep,
+    exc: KeyError | IndexError | AttributeError,
+) -> str:
+    """Choose the most specific declared ref for an untyped handler failure."""
+    missing = exc.args[0] if exc.args else None
+    if isinstance(missing, str) and missing.startswith("$"):
+        return missing
+
+    references = _workflow_references(
+        compiled_step.model_dump(
+            mode="python",
+            exclude_none=True,
+            exclude={"params_preview", "input_preview"},
+        )
+    )
+    if isinstance(missing, str):
+        matching = [
+            reference
+            for reference in references
+            if reference.endswith(f".{missing}") or f"[{missing}]" in reference
+        ]
+        if matching:
+            return matching[0]
+    if references:
+        return references[0]
+    if isinstance(missing, str) and missing:
+        return f"$steps.{missing}"
+    return f"<{compiled_step.kind}>"
+
+
+def _workflow_references(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.startswith("$") else []
+    if isinstance(value, dict):
+        return [reference for item in value.values() for reference in _workflow_references(item)]
+    if isinstance(value, list):
+        return [reference for item in value for reference in _workflow_references(item)]
+    return []
 
 
 class WorkflowStepHandler(Protocol):
@@ -98,8 +154,29 @@ class WorkflowStepRegistry:
         context: WorkflowExecutionContext,
         compiled_step: CompiledPlanStep,
     ) -> None:
-        handler = self._handlers[compiled_step.kind]
-        handler(context, compiled_step)
+        try:
+            handler = self._handlers[compiled_step.kind]
+            handler(context, compiled_step)
+        except QueryExecutionError as exc:
+            if context.procedure_budget is None:
+                raise
+            reference = runtime_reference_from_error(exc)
+            if reference is None:
+                raise
+            raise procedure_runtime_reference_error(
+                compiled_step.step_id,
+                reference,
+                exc,
+            ) from exc
+        except (KeyError, IndexError, AttributeError) as exc:
+            if context.procedure_budget is None:
+                raise
+            reference = _runtime_reference_for_low_level_failure(compiled_step, exc)
+            raise procedure_runtime_reference_error(
+                compiled_step.step_id,
+                reference,
+                exc,
+            ) from exc
 
 
 def execute_query_handler(
