@@ -37,6 +37,18 @@ from cruxible_core.workflow.types import (
 )
 
 LOCK_FILE_NAME = "cruxible.lock.yaml"
+_PROCEDURE_OUTPUT_STEP_KINDS = frozenset(
+    {
+        "query",
+        "provider",
+        "repeat",
+        "shape_items",
+        "join_items",
+        "filter_items",
+        "aggregate_items",
+        "dedupe_items",
+    }
+)
 
 # Env toggle that lets kit:// provider refs resolve against the kit directory
 # itself instead of an installed kit cache. Kit-root lock generation always
@@ -686,6 +698,18 @@ def compile_plan_definition(
                 assert_spec=step.assert_spec,
             )
         )
+
+    if input_payload is None and definition_label == "Procedure":
+        produced_outputs = {
+            step.as_name or step.step_id
+            for step in compiled_steps
+            if step.kind in _PROCEDURE_OUTPUT_STEP_KINDS
+        }
+        if workflow.returns not in produced_outputs:
+            raise ConfigError(
+                f"Procedure '{workflow_name}' returns alias '{workflow.returns}' "
+                "not produced by any output step"
+            )
 
     return CompiledPlan(
         workflow=workflow_name,

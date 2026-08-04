@@ -22,6 +22,12 @@ the project's own state instance.
   rejection names the valid provider set (sorted, truncated past 40 with a
   count), so an agent can self-correct instead of retrying blind.
 
+- **Procedure runtime reference failures are typed and auditable.** Accepted
+  definitions that cannot resolve a step reference now return a structured 400
+  `QueryExecutionError` naming the failing step and reference, while atomically
+  finalizing the procedure run as `failed` with its failure receipt. Procedure
+  previews also reject `returns` values that are not produced output aliases.
+
 - **Registered source evidence now has compact, server-minted citation
   handles.** Registration, source-artifact list/get responses, and canonical
   `register_source_artifacts` workflow output expose stable revision and chunk
