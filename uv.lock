@@ -476,7 +476,7 @@ dev = [
 
 [[package]]
 name = "cruxible-client"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "packages/cruxible-client" }
 dependencies = [
     { name = "httpx" },
