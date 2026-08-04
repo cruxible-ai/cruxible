@@ -65,45 +65,24 @@ def procedure_runtime_reference_error(
     return exc
 
 
-def _runtime_reference_for_low_level_failure(
-    compiled_step: CompiledPlanStep,
-    exc: KeyError | IndexError | AttributeError,
-) -> str:
-    """Choose the most specific declared ref for an untyped handler failure."""
-    missing = exc.args[0] if exc.args else None
-    if isinstance(missing, str) and missing.startswith("$"):
-        return missing
+def procedure_step_execution_error(
+    step_id: str,
+    step_kind: str,
+    cause: BaseException,
+) -> QueryExecutionError:
+    """Build the typed, step-scoped error for an untyped handler failure.
 
-    references = _workflow_references(
-        compiled_step.model_dump(
-            mode="python",
-            exclude_none=True,
-            exclude={"params_preview", "input_preview"},
-        )
+    The failure escaped a handler without naming a workflow reference, so no
+    reference is reported: guessing one misdiagnoses engine or provider bugs
+    as faults in the Procedure definition.
+    """
+    exc = QueryExecutionError(
+        f"Procedure step '{step_id}' of kind '{step_kind}' failed during execution "
+        f"({type(cause).__name__})"
     )
-    if isinstance(missing, str):
-        matching = [
-            reference
-            for reference in references
-            if reference.endswith(f".{missing}") or f"[{missing}]" in reference
-        ]
-        if matching:
-            return matching[0]
-    if references:
-        return references[0]
-    if isinstance(missing, str) and missing:
-        return f"$steps.{missing}"
-    return f"<{compiled_step.kind}>"
-
-
-def _workflow_references(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value] if value.startswith("$") else []
-    if isinstance(value, dict):
-        return [reference for item in value.values() for reference in _workflow_references(item)]
-    if isinstance(value, list):
-        return [reference for item in value for reference in _workflow_references(item)]
-    return []
+    setattr(exc, "step_id", step_id)
+    setattr(exc, "step_kind", step_kind)
+    return exc
 
 
 class WorkflowStepHandler(Protocol):
@@ -171,10 +150,9 @@ class WorkflowStepRegistry:
         except (KeyError, IndexError, AttributeError) as exc:
             if context.procedure_budget is None:
                 raise
-            reference = _runtime_reference_for_low_level_failure(compiled_step, exc)
-            raise procedure_runtime_reference_error(
+            raise procedure_step_execution_error(
                 compiled_step.step_id,
-                reference,
+                compiled_step.kind,
                 exc,
             ) from exc
 

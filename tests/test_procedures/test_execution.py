@@ -476,7 +476,7 @@ def test_legacy_return_reference_failure_is_typed_and_finalizes_failed_run(
     ],
     ids=["key-error", "index-error", "attribute-error"],
 )
-def test_untyped_step_failures_are_wrapped_with_step_and_reference_context(
+def test_untyped_step_failures_are_typed_without_fabricating_a_reference(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
     untyped_failure: KeyError | IndexError | AttributeError,
@@ -495,7 +495,7 @@ def test_untyped_step_failures_are_wrapped_with_step_and_reference_context(
         fail_step,
     )
     expected_error = (
-        "Procedure step 'invoke' failed to resolve runtime reference '$input.value' "
+        "Procedure step 'invoke' of kind 'provider' failed during execution "
         f"({type(untyped_failure).__name__})"
     )
 
@@ -508,6 +508,11 @@ def test_untyped_step_failures_are_wrapped_with_step_and_reference_context(
         )
 
     assert str(exc_info.value).startswith(expected_error)
+    assert "$input.value" not in str(exc_info.value)
+    assert "failed to resolve runtime reference" not in str(exc_info.value)
+    assert getattr(exc_info.value, "step_id") == "invoke"
+    assert getattr(exc_info.value, "step_kind") == "provider"
+    assert not hasattr(exc_info.value, "reference")
     run = _run(procedure_instance, getattr(exc_info.value, "procedure_run_id"))
     assert run.status == "finalized"
     assert run.verdict == "failed"

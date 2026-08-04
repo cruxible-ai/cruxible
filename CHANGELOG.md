@@ -25,7 +25,9 @@ the project's own state instance.
 - **Procedure runtime reference failures are typed and auditable.** Accepted
   definitions that cannot resolve a step reference now return a structured 400
   `QueryExecutionError` naming the failing step and reference, while atomically
-  finalizing the procedure run as `failed` with its failure receipt. Procedure
+  finalizing the procedure run as `failed` with its failure receipt. Failures
+  that escape a step handler without an identified reference are typed the same
+  way but name only the step id and kind — no reference is guessed. Procedure
   previews also reject `returns` values that are not produced output aliases.
 
 - **Registered source evidence now has compact, server-minted citation
