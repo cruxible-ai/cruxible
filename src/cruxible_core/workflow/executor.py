@@ -28,6 +28,7 @@ from cruxible_core.workflow.execution_context import (
 from cruxible_core.workflow.step_handlers import (
     DEFAULT_STEP_HANDLER_REGISTRY,
     PROCEDURE_STEP_HANDLER_REGISTRY,
+    procedure_runtime_reference_error,
 )
 from cruxible_core.workflow.step_helpers import extract_read_metadata
 from cruxible_core.workflow.tracing import persist_receipt as persist_workflow_receipt
@@ -286,7 +287,7 @@ def execute_procedure_plan(
             PROCEDURE_STEP_HANDLER_REGISTRY.execute(context, compiled_step)
         context.check_procedure_wall_clock()
 
-        output = context.step_outputs[context.plan.returns]
+        output = _resolve_procedure_output(context)
         output = _validate_procedure_output_contract(
             config,
             definition.name,
@@ -336,6 +337,27 @@ def execute_procedure_plan(
         alias_step_ids=context.alias_step_ids,
         step_trace_ids=context.step_trace_ids,
     )
+
+
+def _resolve_procedure_output(context: WorkflowExecutionContext) -> Any:
+    """Resolve the declared return key without leaking low-level container errors."""
+    reference = context.plan.returns
+    try:
+        return context.step_outputs[reference]
+    except (KeyError, IndexError, AttributeError) as exc:
+        step_id = _procedure_return_step_id(context, reference)
+        raise procedure_runtime_reference_error(step_id, reference, exc) from exc
+
+
+def _procedure_return_step_id(
+    context: WorkflowExecutionContext,
+    reference: str,
+) -> str:
+    """Map a return alias or legacy ``$steps`` ref to its concrete step id."""
+    alias = reference
+    if reference.startswith("$steps."):
+        alias = reference[len("$steps.") :].split(".", 1)[0].split("[", 1)[0]
+    return context.alias_step_ids.get(alias, alias)
 
 
 def _validate_workflow_output_contract(

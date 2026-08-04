@@ -9,6 +9,7 @@ from typing import Any
 from cruxible_core.errors import ConfigError, QueryExecutionError
 
 _SEGMENT_RE = re.compile(r"([^\.\[\]]+)|\[(\d+)\]")
+_RUNTIME_REFERENCE_ATTR = "_cruxible_workflow_reference"
 
 
 def preview_value(
@@ -125,17 +126,24 @@ def resolve_value(
         if value == "$item":
             if allow_item and item_payload is not None:
                 return item_payload
-            raise QueryExecutionError(f"Unsupported workflow reference '{value}'")
+            raise _runtime_reference_error(
+                value,
+                f"Unsupported workflow reference '{value}'",
+            )
         if value.startswith("$item."):
             if allow_item and item_payload is not None:
                 return _extract_path(item_payload, value[len("$item.") :], value)
-            raise QueryExecutionError(f"Unsupported workflow reference '{value}'")
+            raise _runtime_reference_error(
+                value,
+                f"Unsupported workflow reference '{value}'",
+            )
         if value.startswith("$steps."):
             ref = value[len("$steps.") :]
             alias, _, remainder = ref.partition(".")
             if alias not in step_outputs:
-                raise QueryExecutionError(
-                    f"Unknown workflow step alias '{alias}' in reference '{value}'"
+                raise _runtime_reference_error(
+                    value,
+                    f"Unknown workflow step alias '{alias}' in reference '{value}'",
                 )
             target = step_outputs[alias]
             if not remainder:
@@ -174,21 +182,37 @@ def _extract_path(root: Any, path: str, original_ref: str) -> Any:
         key, index = match.groups()
         if key is not None:
             if not isinstance(current, dict) or key not in current:
-                raise QueryExecutionError(
-                    f"Reference '{original_ref}' could not resolve path '{path}'"
+                raise _runtime_reference_error(
+                    original_ref,
+                    f"Reference '{original_ref}' could not resolve path '{path}'",
                 )
             current = current[key]
             continue
         assert index is not None
         if not isinstance(current, list):
-            raise QueryExecutionError(
-                f"Reference '{original_ref}' expected a list before '[{index}]'"
+            raise _runtime_reference_error(
+                original_ref,
+                f"Reference '{original_ref}' expected a list before '[{index}]'",
             )
         idx = int(index)
         try:
             current = current[idx]
         except IndexError as exc:
-            raise QueryExecutionError(
-                f"Reference '{original_ref}' index [{idx}] is out of range"
+            raise _runtime_reference_error(
+                original_ref,
+                f"Reference '{original_ref}' index [{idx}] is out of range",
             ) from exc
     return current
+
+
+def runtime_reference_from_error(exc: BaseException) -> str | None:
+    """Return the workflow reference attached to a typed resolution failure."""
+    reference = getattr(exc, _RUNTIME_REFERENCE_ATTR, None)
+    return reference if isinstance(reference, str) else None
+
+
+def _runtime_reference_error(reference: str, message: str) -> QueryExecutionError:
+    """Build a typed resolution error while retaining its exact source ref."""
+    exc = QueryExecutionError(message)
+    setattr(exc, _RUNTIME_REFERENCE_ATTR, reference)
+    return exc
