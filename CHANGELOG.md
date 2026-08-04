@@ -7,6 +7,8 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## [0.3.1] - 2026-08-05
+
 - **Entity types can declare deterministic identity keys at write time.**
   `identity_hint` returns a structured same-type duplicate warning without
   blocking the write, `unique_by` rejects normalized duplicates while naming
