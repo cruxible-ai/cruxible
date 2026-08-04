@@ -40,6 +40,14 @@ the project's own state instance.
   way but name only the step id and kind — no reference is guessed. Procedure
   previews also reject `returns` values that are not produced output aliases.
 
+- **Demo states publish to GHCR as immutable OCI bundles.** The hosted
+  runtime image packages ORAS 1.3.2, the state-ref catalog gains the
+  `banking-crux-demo` alias, and the publication recipes publish one release
+  bundle under a dated immutable tag and retag that exact manifest to
+  `latest` via `oras cp`, so the two references can never diverge. Recipes
+  document digest-equality verification and the never-republish-a-dated-tag
+  rule.
+
 - **Registered source evidence now has compact, server-minted citation
   handles.** Registration, source-artifact list/get responses, and canonical
   `register_source_artifacts` workflow output expose stable revision and chunk
