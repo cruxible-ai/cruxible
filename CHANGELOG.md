@@ -526,7 +526,7 @@ the project's own state instance.
   content leaving no trace on the edge at all. Detection and stamping moved to a
   shared `graph/group_drift.py` that both write paths use.
 
-  RULING (Robert, 2026-07-25) on the marker's semantics, applied to both sites:
+  RULING (maintainer, 2026-07-25) on the marker's semantics, applied to both sites:
   `group_approval_drift` reflects divergence RIGHT NOW. It is recomputed against
   the approved content on every write and DROPPED when the content fully matches
   the approval again; a partial revert lists only the properties that still
@@ -604,8 +604,8 @@ the project's own state instance.
 
 ### Documented
 
-- **Under auth-on, every credentialed actor derives to `agent`** (Robert,
-  2026-07-25). A runtime credential is a `service_account`, so there is no way to
+- **Under auth-on, every credentialed actor derives to `agent`** (maintainer
+  ruling, 2026-07-25). A runtime credential is a `service_account`, so there is no way to
   be a human on an auth-on daemon today — and that is not an exemption: an actor
   deriving to `agent` owes a `reason_code` wherever a feedback or outcome profile
   requires one of non-human writers. Human-typed credentials (established at mint
