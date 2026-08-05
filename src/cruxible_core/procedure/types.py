@@ -238,6 +238,13 @@ class ProcedureDefinition(BaseModel):
             refusals.append(
                 f"expanded provider-call ceiling is {MAX_PROCEDURE_EXPANDED_PROVIDER_CALLS}"
             )
+        if self.budget.max_provider_calls < expansion.expanded_provider_calls:
+            # An under-provisioned ceiling is a statically unrunnable definition:
+            # the run would abort mid-flight on the budget guard every time. Keep
+            # this a refusal, not an authoring warning.
+            refusals.append(
+                "budget.max_provider_calls must be at least the expanded provider-call count"
+            )
         if refusals:
             counts = (
                 f"computed total_steps={expansion.total_steps}, "
@@ -310,11 +317,37 @@ class ProcedureRecord(BaseModel):
 
 
 class ProcedureContractFieldSchema(BaseModel):
-    """Resolved construction hint for one procedure input field."""
+    """Resolved construction hint for one procedure input field.
+
+    ``required`` answers the only question a caller building an invocation has:
+    must I supply this key? A field carrying a ``default`` is therefore *not*
+    required -- contract validation fills the default before it ever checks
+    whether the field was optional.
+    """
 
     name: str
     type: PropertyType
     required: bool
+    default: Any | None = None
+    enum: list[Any] | None = None
+    enum_ref: str | None = None
+    description: str | None = None
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ProcedureContractSchema(BaseModel):
+    """Resolved ``contract_in`` shape one invocation payload must satisfy.
+
+    ``allow_extra`` is part of the shape, not decoration: it is the only thing
+    separating ``cruxible.EmptyInput`` (no fields, nothing else accepted) from
+    ``cruxible.JsonObject`` (no declared fields, any object accepted). Without
+    it both render as an empty field list and a caller cannot tell whether the
+    procedure takes arbitrary input or none at all.
+    """
+
+    fields: list[ProcedureContractFieldSchema]
+    allow_extra: bool
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -323,7 +356,7 @@ class ProcedureGetResult(BaseModel):
     """One procedure record plus its currently resolved input field schema."""
 
     procedure: ProcedureRecord
-    contract_in_schema: list[ProcedureContractFieldSchema] | None
+    contract_in_schema: ProcedureContractSchema | None
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -447,6 +480,7 @@ __all__ = [
     "ProcedureBudgetSpent",
     "ProcedureDefinition",
     "ProcedureContractFieldSchema",
+    "ProcedureContractSchema",
     "ProcedureEvidenceArtifact",
     "ProcedureExecutionResult",
     "ProcedureGetResult",

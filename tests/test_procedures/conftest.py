@@ -43,6 +43,11 @@ contracts:
     fields:
       value:
         type: int
+  OpenProcedureInput:
+    fields:
+      value:
+        type: int
+    allow_extra: true
 
 providers:
   exported_action:

@@ -4233,7 +4233,7 @@ def get_procedure(instance_id: str, procedure_id: str) -> dict[str, Any]:
         "contract_in_schema": (
             None
             if result.contract_in_schema is None
-            else [field.model_dump(mode="json") for field in result.contract_in_schema]
+            else result.contract_in_schema.model_dump(mode="json", exclude_none=True)
         ),
     }
 

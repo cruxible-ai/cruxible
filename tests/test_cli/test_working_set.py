@@ -861,6 +861,10 @@ class TestCatalog:
             {
                 "name": "part_eligibility",
                 "description": "Check one part is orderable.",
+                # The steps read $input.value, so contract_in must declare it:
+                # under the default cruxible.EmptyInput they can never resolve,
+                # and the authoring lint refuses the proposal.
+                "contract_in": {"fields": {"value": {"type": "string"}}},
                 "steps": [
                     {"id": "guard", "assert_exists": {"ref": "$input.value"}},
                     {

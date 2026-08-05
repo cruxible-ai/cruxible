@@ -123,16 +123,14 @@ def _transition_warnings(result: Any) -> list[str]:
     return []
 
 
-def _contract_in_schema(result: Any) -> list[dict[str, Any]] | None:
+def _contract_in_schema(result: Any) -> dict[str, Any] | None:
     if isinstance(result, ProcedureGetResult):
         if result.contract_in_schema is None:
             return None
-        return [field.model_dump(mode="json") for field in result.contract_in_schema]
+        return result.contract_in_schema.model_dump(mode="json", exclude_none=True)
     if isinstance(result, dict):
         value = result.get("contract_in_schema")
-        if value is None:
-            return None
-        if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+        if isinstance(value, dict):
             return value
     return None
 
@@ -283,12 +281,36 @@ def procedure_show(procedure_id: str, output_json: bool) -> None:
         )
         return
     _echo_procedure(procedure)
+    _echo_contract_in_schema(_contract_in_schema(result))
     click.echo("  Definition:")
     click.echo(
         yaml.safe_dump(
             procedure.definition.model_dump(mode="json", by_alias=True, exclude_none=True)
         )
     )
+
+
+def _echo_contract_in_schema(schema: dict[str, Any] | None) -> None:
+    """Print the resolved input shape a caller must satisfy to run this procedure."""
+    if schema is None:
+        click.echo("  Input schema: unresolved (contract_in is not defined in the active config)")
+        return
+    fields = schema.get("fields") or []
+    allow_extra = bool(schema.get("allow_extra"))
+    if not fields:
+        click.echo(
+            "  Input: any JSON object" if allow_extra else "  Input: none (empty payload)",
+        )
+        return
+    click.echo("  Input schema:")
+    for field in fields:
+        parts = [str(field.get("type"))]
+        parts.append("required" if field.get("required") else "optional")
+        if field.get("default") is not None:
+            parts.append(f"default={field['default']!r}")
+        click.echo(f"    {field.get('name')} ({', '.join(parts)})")
+    if allow_extra:
+        click.echo("    (extra fields accepted)")
 
 
 @procedure_group.command("resolve")

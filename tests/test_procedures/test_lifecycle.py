@@ -81,9 +81,11 @@ def test_propose_and_accept_pin_definition_config_and_lock_digests(
         proposed.procedure.procedure_id,
     )
     assert details.procedure == accepted.procedure
-    assert [field.model_dump() for field in details.contract_in_schema or []] == [
-        {"name": "value", "type": "int", "required": True}
-    ]
+    assert details.contract_in_schema is not None
+    assert details.contract_in_schema.model_dump(exclude_none=True) == {
+        "fields": [{"name": "value", "type": "int", "required": True}],
+        "allow_extra": False,
+    }
 
 
 def test_proposal_refuses_unknown_precondition_entity_type_with_receipt(
@@ -178,7 +180,7 @@ def test_proposal_returns_non_blocking_authoring_warnings(
             ],
             "returns": "result",
             "precondition": {},
-            "budget": {"wall_clock_s": 30, "max_provider_calls": 0},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 3},
             "declared_tier": "graph_write",
         }
     )
@@ -195,8 +197,293 @@ def test_proposal_returns_non_blocking_authoring_warnings(
         "side-effecting provider 'exported_action'",
         "step 'invoke' input value at 'input.metadata' is a stringified JSON object; "
         "pass the object directly",
-        "budget.max_provider_calls (0) does not match the expanded provider-call count (1)",
+        "budget.max_provider_calls (3) exceeds the expanded provider-call count (1); "
+        "the extra headroom is unreachable",
     ]
+
+
+def test_proposal_blocks_input_reference_missing_from_repeat_nested_step(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "retry_with_bad_nested_reference",
+            "contract_in": "ProcedureInput",
+            "steps": [
+                {
+                    "id": "retry",
+                    "repeat": {
+                        "max_attempts": 2,
+                        "until": {
+                            "left": "$steps.attempt_result",
+                            "op": "eq",
+                            "right": 1,
+                            "message": "done",
+                        },
+                        "steps": [
+                            {
+                                "id": "nested_invoke",
+                                "provider": "exported_action",
+                                "input": {"value": "$input.transactions_arguments"},
+                                "as": "attempt_result",
+                            }
+                        ],
+                    },
+                    "as": "attempts",
+                }
+            ],
+            "returns": "attempts",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 2},
+            "declared_tier": "graph_write",
+        }
+    )
+
+    with pytest.raises(ConfigError) as exc_info:
+        service_propose_procedure(
+            procedure_instance,
+            definition,
+            actor_context=actor("proposer"),
+        )
+
+    message = str(exc_info.value)
+    assert "step 'nested_invoke'" in message
+    assert "'$input.transactions_arguments'" in message
+    assert "value (int, required)" in message
+
+
+def test_allow_extra_contract_permits_undeclared_input_references(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """``allow_extra`` contracts accept keys they never declared, so the lint stands down."""
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "open_contract_procedure",
+            "contract_in": "OpenProcedureInput",
+            "steps": [
+                {
+                    "id": "invoke",
+                    "provider": "exported_action",
+                    "input": {"value": "$input.undeclared_but_permitted"},
+                    "as": "result",
+                }
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+
+    proposed = service_propose_procedure(
+        procedure_instance,
+        definition,
+        actor_context=actor("proposer"),
+    )
+
+    assert proposed.procedure.status == "pending"
+    # 'value' is declared but unconsumed; the unused-field warning is suppressed
+    # because an allow_extra contract cannot say which keys the payload carries.
+    assert proposed.warnings == []
+
+
+def test_builtin_json_object_contract_permits_undeclared_input_references(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "json_object_procedure",
+            "contract_in": "cruxible.JsonObject",
+            "steps": [
+                {
+                    "id": "invoke",
+                    "provider": "exported_action",
+                    "input": {"value": "$input.anything_at_all"},
+                    "as": "result",
+                }
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+
+    proposed = service_propose_procedure(
+        procedure_instance,
+        definition,
+        actor_context=actor("proposer"),
+    )
+
+    assert proposed.warnings == []
+    details = service_get_procedure_details(
+        procedure_instance,
+        proposed.procedure.procedure_id,
+    )
+    assert details.contract_in_schema is not None
+    assert details.contract_in_schema.model_dump(exclude_none=True) == {
+        "fields": [],
+        "allow_extra": True,
+    }
+
+
+def test_empty_input_and_json_object_schemas_are_distinguishable(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """Both declare no fields; only ``allow_extra`` says whether input is accepted."""
+
+    def _propose(name: str, contract_in: str) -> str:
+        definition = ProcedureDefinition.model_validate(
+            {
+                "name": name,
+                "contract_in": contract_in,
+                "steps": [
+                    {
+                        "id": "invoke",
+                        "provider": "exported_action",
+                        "input": {"value": 1},
+                        "as": "result",
+                    }
+                ],
+                "returns": "result",
+                "precondition": {},
+                "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+                "declared_tier": "graph_write",
+            }
+        )
+        return service_propose_procedure(
+            procedure_instance,
+            definition,
+            actor_context=actor("proposer"),
+        ).procedure.procedure_id
+
+    empty_id = _propose("empty_input_procedure", "cruxible.EmptyInput")
+    json_id = _propose("json_object_input_procedure", "cruxible.JsonObject")
+
+    empty = service_get_procedure_details(procedure_instance, empty_id).contract_in_schema
+    json_object = service_get_procedure_details(procedure_instance, json_id).contract_in_schema
+    assert empty is not None and json_object is not None
+    assert empty.fields == [] and json_object.fields == []
+    assert empty.allow_extra is False
+    assert json_object.allow_extra is True
+    assert empty != json_object
+
+
+def test_contract_in_schema_reports_defaulted_field_as_not_required(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "defaulted_input_procedure",
+            "contract_in": {
+                "fields": {
+                    "value": {"type": "int"},
+                    "mode": {
+                        "type": "string",
+                        "default": "fast",
+                        "enum": ["fast", "slow"],
+                        "description": "Execution mode",
+                    },
+                }
+            },
+            "steps": [
+                {
+                    "id": "invoke",
+                    "provider": "exported_action",
+                    "input": {"value": "$input.value", "mode": "$input.mode"},
+                    "as": "result",
+                }
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+    proposed = service_propose_procedure(
+        procedure_instance,
+        definition,
+        actor_context=actor("proposer"),
+    )
+
+    schema = service_get_procedure_details(
+        procedure_instance,
+        proposed.procedure.procedure_id,
+    ).contract_in_schema
+
+    assert schema is not None
+    assert schema.model_dump(exclude_none=True) == {
+        "fields": [
+            {
+                "name": "mode",
+                "type": "string",
+                # Contract validation fills the default before it checks
+                # optionality, so the caller never has to supply this key.
+                "required": False,
+                "default": "fast",
+                "enum": ["fast", "slow"],
+                "description": "Execution mode",
+            },
+            {"name": "value", "type": "int", "required": True},
+        ],
+        "allow_extra": False,
+    }
+
+
+def test_contract_in_schema_is_none_when_contract_no_longer_resolves(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    definition = provider_definition("unresolvable_contract_procedure").model_copy(
+        update={"contract_in": "ContractRemovedFromConfig"}
+    )
+    record = ProcedureRecord(
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition),
+        proposed_actor_context=actor("proposer"),
+    )
+    with procedure_instance.write_transaction() as uow:
+        uow.procedures.save_procedure(record)
+
+    details = service_get_procedure_details(procedure_instance, record.procedure_id)
+
+    assert details.procedure.procedure_id == record.procedure_id
+    assert details.contract_in_schema is None
+
+
+def test_acceptance_blocks_a_pending_proposal_that_predates_the_authoring_lint(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """Proposals stored before the lint shipped are caught at accept, not silently accepted."""
+    definition = provider_definition("legacy_pending_bad_reference")
+    definition = definition.model_copy(
+        update={
+            "steps": [
+                definition.steps[0].model_copy(
+                    update={"input": {"value": "$input.transactions_arguments"}}
+                )
+            ]
+        }
+    )
+    # Persist directly: propose itself now refuses this definition, so the only
+    # way such a record exists is that it predates the lint.
+    record = ProcedureRecord(
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition),
+        proposed_actor_context=actor("proposer"),
+    )
+    with procedure_instance.write_transaction() as uow:
+        uow.procedures.save_procedure(record)
+
+    with pytest.raises(ConfigError) as exc_info:
+        service_accept_procedure(
+            procedure_instance,
+            record.procedure_id,
+            expected_version=1,
+            actor_context=actor("reviewer"),
+        )
+
+    assert "'$input.transactions_arguments'" in str(exc_info.value)
+    assert service_get_procedure(procedure_instance, record.procedure_id).status == "pending"
 
 
 def test_acceptance_refuses_precondition_entity_type_removed_after_proposal(

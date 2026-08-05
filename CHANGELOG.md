@@ -11,15 +11,21 @@ the project's own state instance.
   library.** Definition-time authoring lint now blocks a step reference such as
   `$input.transactions_arguments` when `contract_in` does not declare that
   field, naming the step, reference, and the contract's typed required/optional
-  fields. This deliberately changes `propose_procedure` behavior:
-  statically-wrong definitions that were previously accepted are now refused.
-  The existing produced-alias check still blocks invalid `returns`. Non-blocking
-  proposal warnings flag declared-but-unused inputs, read-implying names backed
-  by side-effecting providers, stringified JSON-object step inputs, and
-  `max_provider_calls` values that differ from the expanded provider-call
-  count. `get_procedure` now returns the resolved input field schema needed to
-  construct a valid invocation, and run-time contract refusals are covered by
-  the same typed required/optional schema echo.
+  fields. A contract that sets `allow_extra` (including the built-in
+  `cruxible.JsonObject`) accepts undeclared references, since the payload may
+  legitimately carry them. This deliberately changes `propose_procedure`
+  behavior: statically-wrong definitions that were previously accepted are now
+  refused. The same lint also runs at accept time, so a proposal that was left
+  pending before this change can now fail on `resolve --action accept` and must
+  be fixed and re-proposed. The existing produced-alias check still blocks
+  invalid `returns`. Non-blocking proposal warnings flag declared-but-unused
+  inputs, read-implying names backed by side-effecting providers, stringified
+  JSON-object step inputs, and `max_provider_calls` headroom above the expanded
+  provider-call count. `get_procedure` now returns `contract_in_schema` — the
+  resolved input field shape, including per-field defaults, enums, and
+  descriptions plus the contract's `allow_extra` flag — needed to construct a
+  valid invocation, and run-time contract refusals are covered by the same typed
+  required/optional schema echo.
 
 - **A Procedure author can withdraw their own pending proposal.** `withdraw`
   moves a pending definition to the new terminal `withdrawn` status through the

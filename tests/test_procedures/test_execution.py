@@ -454,7 +454,9 @@ def test_legacy_return_reference_failure_is_typed_and_finalizes_failed_run(
             "declared_tier": "graph_write",
         }
     )
-    original_compile = procedure_service.compile_procedure_definition
+    # Both propose and accept compile through this one seam, so patching it is
+    # what lets a definition the current rules refuse reach a live status.
+    original_compile = procedure_service._compile_procedure_definition
 
     def compile_as_legacy_accepted(
         instance: CruxibleInstance,
@@ -462,13 +464,13 @@ def test_legacy_return_reference_failure_is_typed_and_finalizes_failed_run(
         input_payload: dict[str, Any] | None = None,
     ) -> Any:
         valid_candidate = candidate.model_copy(update={"returns": "transactions"})
-        plan = original_compile(instance, valid_candidate, input_payload)
-        return plan.model_copy(update={"returns": candidate.returns})
+        plan, warnings = original_compile(instance, valid_candidate, input_payload)
+        return plan.model_copy(update={"returns": candidate.returns}), warnings
 
     with monkeypatch.context() as acceptance_context:
         acceptance_context.setattr(
             procedure_service,
-            "compile_procedure_definition",
+            "_compile_procedure_definition",
             compile_as_legacy_accepted,
         )
         procedure_id = _accept(procedure_instance, definition)

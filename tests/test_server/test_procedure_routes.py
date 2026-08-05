@@ -96,9 +96,10 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     assert listed.json()["read_revision"] is not None
     assert shown.status_code == 200, shown.text
     assert shown.json()["procedure"]["procedure_id"] == procedure_id
-    assert shown.json()["contract_in_schema"] == [
-        {"name": "value", "type": "int", "required": True}
-    ]
+    assert shown.json()["contract_in_schema"] == {
+        "fields": [{"name": "value", "type": "int", "required": True}],
+        "allow_extra": False,
+    }
 
     # accept enforces reviewer independence, so an HTTP caller may not name the
     # reviewer itself; the request is attributed to the local operator instead.
@@ -297,7 +298,8 @@ def test_procedure_proposal_authoring_lint_is_typed_and_surfaces_warnings(
 
     assert proposed.status_code == 200, proposed.text
     assert proposed.json()["warnings"] == [
-        "budget.max_provider_calls (2) does not match the expanded provider-call count (0)"
+        "budget.max_provider_calls (2) exceeds the expanded provider-call count (0); "
+        "the extra headroom is unreachable"
     ]
 
 
@@ -314,7 +316,9 @@ def test_procedure_runtime_reference_failure_is_typed_and_audited(
     assert isinstance(step, dict)
     step["as"] = "transactions"
     definition["returns"] = "$steps.transactions.result"
-    original_compile = procedure_service.compile_procedure_definition
+    # Both propose and accept compile through this one seam, so patching it is
+    # what lets a definition the current rules refuse reach a live status.
+    original_compile = procedure_service._compile_procedure_definition
 
     def compile_as_legacy_accepted(
         instance: Any,
@@ -322,13 +326,13 @@ def test_procedure_runtime_reference_failure_is_typed_and_audited(
         input_payload: dict[str, Any] | None = None,
     ) -> Any:
         valid_candidate = candidate.model_copy(update={"returns": "transactions"})
-        plan = original_compile(instance, valid_candidate, input_payload)
-        return plan.model_copy(update={"returns": candidate.returns})
+        plan, warnings = original_compile(instance, valid_candidate, input_payload)
+        return plan.model_copy(update={"returns": candidate.returns}), warnings
 
     with monkeypatch.context() as acceptance_context:
         acceptance_context.setattr(
             procedure_service,
-            "compile_procedure_definition",
+            "_compile_procedure_definition",
             compile_as_legacy_accepted,
         )
         proposed = app_client.post(

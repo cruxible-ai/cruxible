@@ -1768,7 +1768,7 @@ never activated has nothing to resolve and simply expires.
 | `supersedes_procedure_id` | no | string or null | Immutable procedure being replaced. |
 | `evidence_refs` | no | array or null | Distillation evidence refs. |
 
-**Returns:** The pending procedure record and transition receipt ID.
+**Returns:** The pending procedure record, transition receipt ID, and `warnings`: non-blocking authoring lint findings (declared-but-unused `contract_in` fields, read-implying names backed by side-effecting providers, stringified JSON-object step inputs, and provider-call budget headroom the run can never reach). Statically impossible definitions are refused rather than warned about.
 
 **Side Effects:** Persists a pending procedure and receipt.
 
@@ -1795,7 +1795,7 @@ never activated has nothing to resolve and simply expires.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need one procedure's definition, budget, precondition, and lifecycle.
+**Purpose:** Use when you need one procedure's definition, resolved input field schema, budget, precondition, and lifecycle.
 
 **Arguments:**
 
@@ -1804,7 +1804,7 @@ never activated has nothing to resolve and simply expires.
 | `instance_id` | yes | string | Governed instance ID. |
 | `procedure_id` | yes | string | Procedure ID. |
 
-**Returns:** A `procedure` object envelope.
+**Returns:** A `procedure` object envelope plus `contract_in_schema`, the `contract_in` shape resolved against the active config: `fields` (each with `name`, `type`, `required`, and any `default`, `enum`, `enum_ref`, `description`) and `allow_extra`. A field carrying a default is reported as not required. `contract_in_schema` is null when the definition's `contract_in` no longer resolves in the active config.
 
 **Side Effects:** Read-only.
 

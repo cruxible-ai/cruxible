@@ -66,6 +66,7 @@ def test_procedure_read_commands_use_envelopes_and_surface_started_tombstone(
 
     listed = runner.invoke(cli, ["procedure", "list", "--status", "pending", "--json"])
     shown = runner.invoke(cli, ["procedure", "show", procedure_id, "--json"])
+    shown_text = runner.invoke(cli, ["procedure", "show", procedure_id])
     runs_json = runner.invoke(cli, ["procedure", "runs", procedure_id, "--json"])
     runs_text = runner.invoke(cli, ["procedure", "runs", procedure_id])
 
@@ -84,9 +85,14 @@ def test_procedure_read_commands_use_envelopes_and_surface_started_tombstone(
     assert shown.exit_code == 0, shown.output
     shown_payload = json.loads(shown.output)
     assert shown_payload["procedure"]["procedure_id"] == procedure_id
-    assert shown_payload["contract_in_schema"] == [
-        {"name": "value", "type": "int", "required": True}
-    ]
+    assert shown_payload["contract_in_schema"] == {
+        "fields": [{"name": "value", "type": "int", "required": True}],
+        "allow_extra": False,
+    }
+
+    assert shown_text.exit_code == 0, shown_text.output
+    assert "Input schema:" in shown_text.output
+    assert "value (int, required)" in shown_text.output
 
     assert runs_json.exit_code == 0, runs_json.output
     run_payload = json.loads(runs_json.output)

@@ -9,7 +9,7 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, NoReturn
 
-from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.schema import CoreConfig, WorkflowStepSchema
 from cruxible_core.errors import (
     ConfigError,
     CoreError,
@@ -28,12 +28,14 @@ from cruxible_core.procedure.types import (
     PROCEDURE_EVIDENCE_HEAD_BYTES,
     ProcedureBudgetSpent,
     ProcedureContractFieldSchema,
+    ProcedureContractSchema,
     ProcedureDefinition,
     ProcedureEvidenceArtifact,
     ProcedureExecutionResult,
     ProcedureGetResult,
     ProcedurePrecondition,
     ProcedureRecord,
+    ProcedureRepeatStepSchema,
     ProcedureRun,
     ProcedureRunStatus,
     ProcedureRunVerdict,
@@ -231,7 +233,12 @@ def lint_procedure_definition_authoring(
         if field_name is None:
             continue
         consumed_fields.add(field_name)
-        if field_name not in contract.fields:
+        if field_name not in contract.fields and not contract.allow_extra:
+            # An ``allow_extra`` contract (built-in ``cruxible.JsonObject``, or
+            # any config contract that opts in) accepts keys it never declared,
+            # so an undeclared reference is not statically impossible there --
+            # the payload may legitimately carry it. Only a closed contract can
+            # prove the reference can never resolve.
             contract_name = contract_reference_label(definition.contract_in)
             raise ConfigError(
                 f"Procedure '{definition.name}' step '{step_id}' input reference "
@@ -239,10 +246,12 @@ def lint_procedure_definition_authoring(
                 f"contract '{contract_name}' declares: {declared_fields(contract)}"
             )
 
-    warnings = [
-        f"contract_in field '{field_name}' is declared but not consumed by any procedure step"
-        for field_name in sorted(set(contract.fields) - consumed_fields)
-    ]
+    warnings: list[str] = []
+    if not contract.allow_extra:
+        warnings.extend(
+            f"contract_in field '{field_name}' is declared but not consumed by any procedure step"
+            for field_name in sorted(set(contract.fields) - consumed_fields)
+        )
 
     read_implying_name = definition.name.lower().startswith(_READ_IMPLYING_PROCEDURE_PREFIXES)
     for step in _procedure_workflow_steps(definition):
@@ -256,23 +265,26 @@ def lint_procedure_definition_authoring(
             warnings.extend(_stringified_object_input_warnings(step.id, step.input))
 
     provider_call_count = definition.static_expansion().expanded_provider_calls
-    if definition.budget.max_provider_calls != provider_call_count:
+    if definition.budget.max_provider_calls > provider_call_count:
+        # Under-provisioning is refused by ``ProcedureDefinition`` itself, so the
+        # only mismatch that can reach here is slack above the static maximum --
+        # headroom the run can never reach, which quietly disarms the ceiling as
+        # a review signal.
         warnings.append(
             "budget.max_provider_calls "
-            f"({definition.budget.max_provider_calls}) does not match the expanded "
-            f"provider-call count ({provider_call_count})"
+            f"({definition.budget.max_provider_calls}) exceeds the expanded "
+            f"provider-call count ({provider_call_count}); the extra headroom is unreachable"
         )
     return warnings
 
 
-def _procedure_workflow_steps(definition: ProcedureDefinition) -> list[Any]:
-    steps: list[Any] = []
+def _procedure_workflow_steps(definition: ProcedureDefinition) -> list[WorkflowStepSchema]:
+    steps: list[WorkflowStepSchema] = []
     for step in definition.steps:
-        repeat = getattr(step, "repeat", None)
-        if repeat is None:
-            steps.append(step)
+        if isinstance(step, ProcedureRepeatStepSchema):
+            steps.extend(step.repeat.steps)
         else:
-            steps.extend(repeat.steps)
+            steps.append(step)
     return steps
 
 
@@ -382,11 +394,9 @@ def service_propose_procedure(
                 )
 
         try:
-            warnings = lint_procedure_definition_authoring(
-                definition,
-                instance.load_config(),
-            )
-            plan = compile_procedure_definition(instance, definition)
+            # One compile, one lint: the compile helper already runs the
+            # authoring lint and hands back its warnings.
+            plan, warnings = _compile_procedure_definition(instance, definition)
         except ConfigError as exc:
             ctx.builder.record_validation(
                 passed=False,
@@ -574,21 +584,29 @@ def service_get_procedure_details(
     """Read a procedure with the active config's resolved input field schema."""
     procedure = service_get_procedure(instance, procedure_id)
     contract = resolve_contract(instance.load_config(), procedure.definition.contract_in)
-    contract_in_schema = (
-        None
-        if contract is None
-        else [
-            ProcedureContractFieldSchema(
-                name=field_name,
-                type=field_schema.type,
-                required=not field_schema.optional,
-            )
-            for field_name, field_schema in sorted(contract.fields.items())
-        ]
-    )
+    if contract is None:
+        return ProcedureGetResult(procedure=procedure, contract_in_schema=None)
     return ProcedureGetResult(
         procedure=procedure,
-        contract_in_schema=contract_in_schema,
+        contract_in_schema=ProcedureContractSchema(
+            fields=[
+                ProcedureContractFieldSchema(
+                    name=field_name,
+                    # A defaulted field is filled in by contract validation
+                    # before the optional check runs, so the caller never has to
+                    # supply it -- reporting it as required would be a lie the
+                    # caller would obey.
+                    required=not field_schema.optional and field_schema.default is None,
+                    type=field_schema.type,
+                    default=field_schema.default,
+                    enum=field_schema.enum,
+                    enum_ref=field_schema.enum_ref,
+                    description=field_schema.description,
+                )
+                for field_name, field_schema in sorted(contract.fields.items())
+            ],
+            allow_extra=contract.allow_extra,
+        ),
     )
 
 
