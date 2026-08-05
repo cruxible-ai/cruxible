@@ -9,6 +9,15 @@ tag on the configured git remote emits a notice and exits successfully. Once
 the tag exists, every manifest asset is required to answer an HTTP HEAD request
 with status 200. Remote lookup failures are errors, not evidence that the tag
 is absent.
+
+Tag existence and asset availability are NOT simultaneous. Pushing main and its
+release tag together starts this job and the tag-triggered publish workflow at
+the same moment: the tag is visible to ``git ls-remote`` immediately, while the
+bundles only appear once publish's ``gh release upload`` finishes. A single HEAD
+therefore races the upload (observed: a 404 four seconds ahead of it). Each URL
+is retried with linear backoff so the check waits out that window instead of
+failing the push, and only a URL still unavailable after the whole budget is a
+real failure.
 """
 
 from __future__ import annotations
@@ -18,6 +27,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,6 +36,10 @@ from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_MANIFEST_PATH = _REPO_ROOT / "src" / "cruxible_core" / "kit_distribution" / "manifest.json"
+# 5 attempts with a 10s base delay sleeps 10+20+30+40 = 100s of backoff, so an
+# asset has roughly two minutes to appear before the check calls it missing.
+_DEFAULT_ATTEMPTS = 5
+_DEFAULT_RETRY_DELAY = 10.0
 
 
 def remote_tag_exists(remote: str, tag: str, timeout: float) -> bool:
@@ -98,22 +112,47 @@ def _head_status(url: str, timeout: float) -> int:
         return response.status
 
 
-def check_asset_urls(assets: list[tuple[str, str]], timeout: float) -> list[str]:
-    """Return one failure per URL that does not resolve to HTTP 200."""
+def check_asset_urls(
+    assets: list[tuple[str, str]],
+    timeout: float,
+    *,
+    attempts: int = _DEFAULT_ATTEMPTS,
+    retry_delay: float = _DEFAULT_RETRY_DELAY,
+) -> list[str]:
+    """Return one failure per URL that does not resolve to HTTP 200.
+
+    Each URL gets up to *attempts* tries with linear backoff between them, so a
+    bundle that is still uploading is waited for rather than reported missing.
+    Only the last attempt's outcome is reported, and no sleep follows it.
+    """
     failures: list[str] = []
     for kit_id, url in assets:
-        try:
-            status = _head_status(url, timeout)
-        except urllib.error.HTTPError as exc:
-            status = exc.code
-        except (OSError, urllib.error.URLError) as exc:
-            failures.append(f"{kit_id}: HEAD {url} failed: {exc}")
-            continue
+        failure: str | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                status = _head_status(url, timeout)
+            except urllib.error.HTTPError as exc:
+                status = exc.code
+                failure = f"{kit_id}: HEAD {url} returned HTTP {status}, expected 200"
+            except (OSError, urllib.error.URLError) as exc:
+                status = None
+                failure = f"{kit_id}: HEAD {url} failed: {exc}"
+            else:
+                if status == 200:
+                    failure = None
+                    print(f"ok {kit_id} <- {url} (HTTP 200)")
+                    break
+                failure = f"{kit_id}: HEAD {url} returned HTTP {status}, expected 200"
 
-        if status != 200:
-            failures.append(f"{kit_id}: HEAD {url} returned HTTP {status}, expected 200")
-        else:
-            print(f"ok {kit_id} <- {url} (HTTP 200)")
+            if attempt < attempts:
+                delay = retry_delay * attempt
+                print(
+                    f"retry {kit_id} in {delay:g}s "
+                    f"(attempt {attempt}/{attempts} unavailable): {failure}"
+                )
+                time.sleep(delay)
+        if failure is not None:
+            failures.append(f"{failure} after {attempts} attempt(s)")
     return failures
 
 
@@ -128,10 +167,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest-path", type=Path, default=_DEFAULT_MANIFEST_PATH)
     parser.add_argument("--remote", default="origin")
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument(
+        "--attempts",
+        type=int,
+        default=_DEFAULT_ATTEMPTS,
+        help="HEAD attempts per asset before it counts as unavailable.",
+    )
+    parser.add_argument(
+        "--retry-delay",
+        type=float,
+        default=_DEFAULT_RETRY_DELAY,
+        help="Base backoff seconds; attempt N waits N * this before retrying.",
+    )
     args = parser.parse_args(argv)
 
     if args.timeout <= 0:
         parser.error("--timeout must be greater than zero")
+    if args.attempts < 1:
+        parser.error("--attempts must be at least one")
+    if args.retry_delay < 0:
+        parser.error("--retry-delay must not be negative")
 
     try:
         version, assets = _load_manifest(args.manifest_path)
@@ -141,7 +196,12 @@ def main(argv: list[str] | None = None) -> int:
                 f"{tag} does not exist on remote {args.remote!r}; skipping release asset URL checks"
             )
             return 0
-        failures = check_asset_urls(assets, args.timeout)
+        failures = check_asset_urls(
+            assets,
+            args.timeout,
+            attempts=args.attempts,
+            retry_delay=args.retry_delay,
+        )
     except (RuntimeError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
