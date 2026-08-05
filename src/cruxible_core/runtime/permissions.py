@@ -228,6 +228,13 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_state_health": PermissionMode.READ_ONLY,
     "cruxible_list_source_artifacts": PermissionMode.READ_ONLY,
     "cruxible_get_source_artifact": PermissionMode.READ_ONLY,
+    # Compute-slot binding ledger, READ side only. The bind/rebind/retire verbs
+    # are governed service calls with no HTTP or MCP surface in this phase, so
+    # there is deliberately no write permission here to gate a route that does
+    # not exist -- adding one before the surface would claim a ceiling nothing
+    # enforces.
+    "cruxible_list_slot_bindings": PermissionMode.READ_ONLY,
+    "cruxible_slot_binding_history": PermissionMode.READ_ONLY,
     # Adjudicating a claim (feedback accept / reject / correct). See
     # FEEDBACK_ACTION_PERMISSIONS below: the feedback TOOLS sit at
     # GOVERNED_WRITE, but the adjudication ACTIONS they carry are GRAPH_WRITE.

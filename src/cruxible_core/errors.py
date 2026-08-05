@@ -29,6 +29,12 @@ errors (runtime data), making it easy to catch by category.
     ├── GroupNotFoundError (group store lookup)
     ├── ProcedureNotFoundError (procedure store lookup)
     ├── SourceArtifactNotFoundError (source artifact store lookup)
+    ├── BindingNotFoundError (compute-slot binding ledger lookup)
+    ├── SlotAlreadyBoundError (slot already carries an active binding)
+    ├── SlotBindingRefusedError (provider does not satisfy the slot interface)
+    │   ├── BindingContractMismatchError (contracts differ; carries near matches)
+    │   ├── BindingBillingModeRefusedError (billing mode outside the allowed set)
+    │   └── BindingConsentRequiredError (third-party bind without recorded consent)
     ├── RuntimeCredentialNotFoundError (server credential store lookup)
     ├── AuthenticationError (HTTP/API credential failure)
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
@@ -42,6 +48,8 @@ errors (runtime data), making it easy to catch by category.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from cruxible_client._error_base import (
     ConcurrentStateDriftError as _ConcurrentStateDriftError,
@@ -411,6 +419,154 @@ class SourceArtifactNotFoundError(CoreError):
     def __init__(self, source_artifact_id: str):
         self.source_artifact_id = source_artifact_id
         super().__init__(f"Source artifact '{source_artifact_id}' not found")
+
+
+class BindingNotFoundError(CoreError):
+    """No binding ledger row for the requested slot, install, or binding ID.
+
+    Distinct from an unbound slot being an ordinary empty read: run-start
+    resolution asks for a binding it needs, so "this install never bound this
+    slot" is the answer to a question that had to have one.
+    """
+
+    error_code = "binding_not_found"
+
+    def __init__(
+        self,
+        *,
+        install_id: str | None = None,
+        slot_name: str | None = None,
+        binding_id: str | None = None,
+    ) -> None:
+        self.install_id = install_id
+        self.slot_name = slot_name
+        self.binding_id = binding_id
+        if binding_id is not None:
+            message = f"Binding '{binding_id}' not found"
+        else:
+            message = (
+                f"no active binding for slot '{slot_name}' on install '{install_id}'; "
+                "bind the slot to a provider before running a procedure that names it"
+            )
+        super().__init__(message)
+
+
+class SlotAlreadyBoundError(CoreError):
+    """The slot already carries an active binding on this install.
+
+    Binding twice is not a rebind: a rebind is an explicit, receipted revision
+    of the SAME ledger row, and routing it through create would leave two active
+    rows racing to be the one run-start resolves. The database refuses the
+    second row regardless (partial unique index); this error is what that
+    refusal looks like when the service sees it first.
+    """
+
+    error_code = "slot_already_bound"
+
+    def __init__(
+        self,
+        *,
+        install_id: str,
+        slot_name: str,
+        binding_id: str | None = None,
+        provider_name: str | None = None,
+    ) -> None:
+        self.install_id = install_id
+        self.slot_name = slot_name
+        self.binding_id = binding_id
+        self.provider_name = provider_name
+        bound_to = f" to provider '{provider_name}'" if provider_name else ""
+        super().__init__(
+            f"slot '{slot_name}' on install '{install_id}' is already bound{bound_to}; "
+            "use rebind to move it to another provider, or retire the binding first"
+        )
+
+
+class SlotBindingRefusedError(CoreError):
+    """Base for a refused bind/rebind: the provider does not satisfy the slot."""
+
+    error_code = "slot_binding_refused"
+
+
+class BindingContractMismatchError(SlotBindingRefusedError):
+    """The provider's declared contracts are not the slot interface.
+
+    Equality, not compatibility: the slot interface names a contract in and a
+    contract out, and a provider satisfies it only by declaring exactly those.
+    A provider that "nearly" fits is reported as a NEAR MATCH with every reason
+    it failed, because the operator's next action is choosing a different
+    provider and they need the whole list to choose from once.
+    """
+
+    error_code = "binding_contract_mismatch"
+
+    def __init__(
+        self,
+        *,
+        install_id: str,
+        slot_name: str,
+        report_text: str,
+        near_matches: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.install_id = install_id
+        self.slot_name = slot_name
+        self.report_text = report_text
+        self.near_matches = near_matches or []
+        super().__init__(report_text)
+
+
+class BindingBillingModeRefusedError(SlotBindingRefusedError):
+    """The provider's billing mode is outside the slot's allowed set."""
+
+    error_code = "binding_billing_mode_refused"
+
+    def __init__(
+        self,
+        *,
+        install_id: str,
+        slot_name: str,
+        provider_name: str,
+        billing_mode: str,
+        allowed_billing_modes: list[str],
+    ) -> None:
+        self.install_id = install_id
+        self.slot_name = slot_name
+        self.provider_name = provider_name
+        self.billing_mode = billing_mode
+        self.allowed_billing_modes = allowed_billing_modes
+        super().__init__(
+            f"provider '{provider_name}' declares billing_mode '{billing_mode}', which "
+            f"slot '{slot_name}' does not allow; allowed values: "
+            f"{', '.join(allowed_billing_modes)}"
+        )
+
+
+class BindingConsentRequiredError(SlotBindingRefusedError):
+    """A third-party provider was bound without recorded operator consent.
+
+    The consent is recorded ON the binding with the actor who gave it and when,
+    because that is the record an audit asks for later: not "the config said
+    third parties were fine" but "this operator accepted this provider for this
+    slot at this time".
+    """
+
+    error_code = "binding_consent_required"
+
+    def __init__(
+        self,
+        *,
+        install_id: str,
+        slot_name: str,
+        provider_name: str,
+    ) -> None:
+        self.install_id = install_id
+        self.slot_name = slot_name
+        self.provider_name = provider_name
+        super().__init__(
+            f"slot '{slot_name}' requires recorded third-party consent to bind "
+            f"provider '{provider_name}'; pass third_party_consent=True with an actor "
+            "context, so the consenting actor and timestamp are recorded on the binding"
+        )
 
 
 class CitationHandleResolutionError(CoreError):

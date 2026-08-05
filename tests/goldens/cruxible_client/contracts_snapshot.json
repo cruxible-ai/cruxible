@@ -28631,6 +28631,1418 @@
         "matched_properties"
       ]
     },
+    "SlotBindingHistoryResult": {
+      "fields": {
+        "binding_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "binding_id",
+          "required": true,
+          "schema": {
+            "title": "Binding Id",
+            "type": "string"
+          }
+        },
+        "items": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "items",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/SlotBindingRevisionItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "SlotBindingRevisionItem": {
+            "description": "One revision in a binding's history, as it stood at that revision.",
+            "properties": {
+              "actor_context": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Actor Context"
+              },
+              "billing_mode": {
+                "title": "Billing Mode",
+                "type": "string"
+              },
+              "binding_id": {
+                "title": "Binding Id",
+                "type": "string"
+              },
+              "change_kind": {
+                "title": "Change Kind",
+                "type": "string"
+              },
+              "consent_actor_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Consent Actor Id"
+              },
+              "consent_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Consent At"
+              },
+              "consent_org_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Consent Org Id"
+              },
+              "contract_in": {
+                "title": "Contract In",
+                "type": "string"
+              },
+              "contract_out": {
+                "title": "Contract Out",
+                "type": "string"
+              },
+              "install_id": {
+                "title": "Install Id",
+                "type": "string"
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Note"
+              },
+              "provider_name": {
+                "title": "Provider Name",
+                "type": "string"
+              },
+              "receipt_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Receipt Id"
+              },
+              "recorded_at": {
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "revision": {
+                "title": "Revision",
+                "type": "integer"
+              },
+              "slot_name": {
+                "title": "Slot Name",
+                "type": "string"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "third_party_consent": {
+                "default": false,
+                "title": "Third Party Consent",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "binding_id",
+              "revision",
+              "change_kind",
+              "install_id",
+              "slot_name",
+              "provider_name",
+              "contract_in",
+              "contract_out",
+              "billing_mode",
+              "status",
+              "recorded_at"
+            ],
+            "title": "SlotBindingRevisionItem",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "binding_id": {
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/$defs/SlotBindingRevisionItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total",
+          "binding_id"
+        ],
+        "title": "SlotBindingHistoryResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "binding_id",
+        "total"
+      ]
+    },
+    "SlotBindingItem": {
+      "fields": {
+        "actor_context": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "actor_context",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Actor Context"
+          }
+        },
+        "billing_mode": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "billing_mode",
+          "required": true,
+          "schema": {
+            "title": "Billing Mode",
+            "type": "string"
+          }
+        },
+        "binding_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "binding_id",
+          "required": true,
+          "schema": {
+            "title": "Binding Id",
+            "type": "string"
+          }
+        },
+        "bound_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "bound_at",
+          "required": true,
+          "schema": {
+            "title": "Bound At",
+            "type": "string"
+          }
+        },
+        "consent_actor_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "consent_actor_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent Actor Id"
+          }
+        },
+        "consent_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "consent_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent At"
+          }
+        },
+        "consent_org_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "consent_org_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent Org Id"
+          }
+        },
+        "contract_in": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contract_in",
+          "required": true,
+          "schema": {
+            "title": "Contract In",
+            "type": "string"
+          }
+        },
+        "contract_out": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contract_out",
+          "required": true,
+          "schema": {
+            "title": "Contract Out",
+            "type": "string"
+          }
+        },
+        "install_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "install_id",
+          "required": true,
+          "schema": {
+            "title": "Install Id",
+            "type": "string"
+          }
+        },
+        "provider_name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider_name",
+          "required": true,
+          "schema": {
+            "title": "Provider Name",
+            "type": "string"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "retired_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "retired_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retired At"
+          }
+        },
+        "revision": {
+          "default": 1,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "revision",
+          "required": false,
+          "schema": {
+            "default": 1,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "slot_name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "slot_name",
+          "required": true,
+          "schema": {
+            "title": "Slot Name",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "third_party_consent": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "third_party_consent",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Third Party Consent",
+            "type": "boolean"
+          }
+        },
+        "updated_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "updated_at",
+          "required": true,
+          "schema": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "One compute-slot binding: which provider this install resolved a slot to.\n\n``contract_in``/``contract_out`` are the SLOT INTERFACE the binding was\nvalidated against — what the pinned procedures expect — not the provider's\nrestatement of it. ``revision`` counts every governed change to this\nbinding, so a run receipt naming a binding id AND revision states exactly\nwhat it ran on, even after a later rebind.",
+        "properties": {
+          "actor_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Actor Context"
+          },
+          "billing_mode": {
+            "title": "Billing Mode",
+            "type": "string"
+          },
+          "binding_id": {
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "bound_at": {
+            "title": "Bound At",
+            "type": "string"
+          },
+          "consent_actor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent Actor Id"
+          },
+          "consent_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent At"
+          },
+          "consent_org_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent Org Id"
+          },
+          "contract_in": {
+            "title": "Contract In",
+            "type": "string"
+          },
+          "contract_out": {
+            "title": "Contract Out",
+            "type": "string"
+          },
+          "install_id": {
+            "title": "Install Id",
+            "type": "string"
+          },
+          "provider_name": {
+            "title": "Provider Name",
+            "type": "string"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
+          "retired_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retired At"
+          },
+          "revision": {
+            "default": 1,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "slot_name": {
+            "title": "Slot Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "third_party_consent": {
+            "default": false,
+            "title": "Third Party Consent",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_id",
+          "install_id",
+          "slot_name",
+          "provider_name",
+          "contract_in",
+          "contract_out",
+          "billing_mode",
+          "status",
+          "bound_at",
+          "updated_at"
+        ],
+        "title": "SlotBindingItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "billing_mode",
+        "binding_id",
+        "bound_at",
+        "contract_in",
+        "contract_out",
+        "install_id",
+        "provider_name",
+        "slot_name",
+        "status",
+        "updated_at"
+      ]
+    },
+    "SlotBindingListResult": {
+      "fields": {
+        "items": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "items",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/SlotBindingItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "read_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "SlotBindingItem": {
+            "description": "One compute-slot binding: which provider this install resolved a slot to.\n\n``contract_in``/``contract_out`` are the SLOT INTERFACE the binding was\nvalidated against — what the pinned procedures expect — not the provider's\nrestatement of it. ``revision`` counts every governed change to this\nbinding, so a run receipt naming a binding id AND revision states exactly\nwhat it ran on, even after a later rebind.",
+            "properties": {
+              "actor_context": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Actor Context"
+              },
+              "billing_mode": {
+                "title": "Billing Mode",
+                "type": "string"
+              },
+              "binding_id": {
+                "title": "Binding Id",
+                "type": "string"
+              },
+              "bound_at": {
+                "title": "Bound At",
+                "type": "string"
+              },
+              "consent_actor_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Consent Actor Id"
+              },
+              "consent_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Consent At"
+              },
+              "consent_org_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Consent Org Id"
+              },
+              "contract_in": {
+                "title": "Contract In",
+                "type": "string"
+              },
+              "contract_out": {
+                "title": "Contract Out",
+                "type": "string"
+              },
+              "install_id": {
+                "title": "Install Id",
+                "type": "string"
+              },
+              "provider_name": {
+                "title": "Provider Name",
+                "type": "string"
+              },
+              "receipt_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Receipt Id"
+              },
+              "retired_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Retired At"
+              },
+              "revision": {
+                "default": 1,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "slot_name": {
+                "title": "Slot Name",
+                "type": "string"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "third_party_consent": {
+                "default": false,
+                "title": "Third Party Consent",
+                "type": "boolean"
+              },
+              "updated_at": {
+                "title": "Updated At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "binding_id",
+              "install_id",
+              "slot_name",
+              "provider_name",
+              "contract_in",
+              "contract_out",
+              "billing_mode",
+              "status",
+              "bound_at",
+              "updated_at"
+            ],
+            "title": "SlotBindingItem",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/SlotBindingItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "read_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Read Revision"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total"
+        ],
+        "title": "SlotBindingListResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "total"
+      ]
+    },
+    "SlotBindingRevisionItem": {
+      "fields": {
+        "actor_context": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "actor_context",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Actor Context"
+          }
+        },
+        "billing_mode": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "billing_mode",
+          "required": true,
+          "schema": {
+            "title": "Billing Mode",
+            "type": "string"
+          }
+        },
+        "binding_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "binding_id",
+          "required": true,
+          "schema": {
+            "title": "Binding Id",
+            "type": "string"
+          }
+        },
+        "change_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "change_kind",
+          "required": true,
+          "schema": {
+            "title": "Change Kind",
+            "type": "string"
+          }
+        },
+        "consent_actor_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "consent_actor_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent Actor Id"
+          }
+        },
+        "consent_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "consent_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent At"
+          }
+        },
+        "consent_org_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "consent_org_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent Org Id"
+          }
+        },
+        "contract_in": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contract_in",
+          "required": true,
+          "schema": {
+            "title": "Contract In",
+            "type": "string"
+          }
+        },
+        "contract_out": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contract_out",
+          "required": true,
+          "schema": {
+            "title": "Contract Out",
+            "type": "string"
+          }
+        },
+        "install_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "install_id",
+          "required": true,
+          "schema": {
+            "title": "Install Id",
+            "type": "string"
+          }
+        },
+        "note": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "note",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          }
+        },
+        "provider_name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider_name",
+          "required": true,
+          "schema": {
+            "title": "Provider Name",
+            "type": "string"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "recorded_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "recorded_at",
+          "required": true,
+          "schema": {
+            "title": "Recorded At",
+            "type": "string"
+          }
+        },
+        "revision": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "revision",
+          "required": true,
+          "schema": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "slot_name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "slot_name",
+          "required": true,
+          "schema": {
+            "title": "Slot Name",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "third_party_consent": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "third_party_consent",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Third Party Consent",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "One revision in a binding's history, as it stood at that revision.",
+        "properties": {
+          "actor_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Actor Context"
+          },
+          "billing_mode": {
+            "title": "Billing Mode",
+            "type": "string"
+          },
+          "binding_id": {
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "change_kind": {
+            "title": "Change Kind",
+            "type": "string"
+          },
+          "consent_actor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent Actor Id"
+          },
+          "consent_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent At"
+          },
+          "consent_org_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent Org Id"
+          },
+          "contract_in": {
+            "title": "Contract In",
+            "type": "string"
+          },
+          "contract_out": {
+            "title": "Contract Out",
+            "type": "string"
+          },
+          "install_id": {
+            "title": "Install Id",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          },
+          "provider_name": {
+            "title": "Provider Name",
+            "type": "string"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
+          "recorded_at": {
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "slot_name": {
+            "title": "Slot Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "third_party_consent": {
+            "default": false,
+            "title": "Third Party Consent",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "binding_id",
+          "revision",
+          "change_kind",
+          "install_id",
+          "slot_name",
+          "provider_name",
+          "contract_in",
+          "contract_out",
+          "billing_mode",
+          "status",
+          "recorded_at"
+        ],
+        "title": "SlotBindingRevisionItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "billing_mode",
+        "binding_id",
+        "change_kind",
+        "contract_in",
+        "contract_out",
+        "install_id",
+        "provider_name",
+        "recorded_at",
+        "revision",
+        "slot_name",
+        "status"
+      ]
+    },
     "SnapshotCreateResult": {
       "fields": {
         "receipt_id": {

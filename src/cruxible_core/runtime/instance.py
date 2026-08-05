@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_core import __version__
 from cruxible_core.attestation.store import AttestationStore
+from cruxible_core.bindings.store import BindingStore
 from cruxible_core.config.loader import load_config, save_config
 from cruxible_core.config.provenance import (
     ConfigProvenanceMetadata,
@@ -763,6 +764,20 @@ class CruxibleInstance(InstanceProtocol):
             return self._active_uow.resolution_contracts
         self._ensure_state_initialized()
         return ResolutionContractStore(self._state_db_path())
+
+    def get_bindings_store(self) -> BindingStore:
+        """Get or create the compute-slot binding ledger store.
+
+        Run-start slot resolution and every binding write must see the ACTIVE
+        unit of work when there is one: a bind's uniqueness check and the row it
+        writes have to be one transaction, or two callers can both observe an
+        unbound slot and both write it. Outside a unit of work this opens its
+        own connection for reads, and the caller closes it.
+        """
+        if self._active_uow is not None:
+            return self._active_uow.bindings
+        self._ensure_state_initialized()
+        return BindingStore(self._state_db_path())
 
     def get_source_artifact_store(self) -> SQLiteSourceArtifactStore:
         """Get or create the source artifact SQLite store."""

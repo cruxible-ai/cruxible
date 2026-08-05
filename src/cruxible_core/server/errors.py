@@ -7,6 +7,7 @@ from typing import Any
 from cruxible_client.errors import ErrorResponse, response_to_error
 from cruxible_core.errors import (
     AuthenticationError,
+    BindingNotFoundError,
     CitationHandleResolutionError,
     ConcurrentStateDriftError,
     ConfigError,
@@ -35,6 +36,8 @@ from cruxible_core.errors import (
     RelationshipAmbiguityError,
     RelationshipNotFoundError,
     RuntimeCredentialNotFoundError,
+    SlotAlreadyBoundError,
+    SlotBindingRefusedError,
     SourceArtifactNotFoundError,
     StaleContinuationError,
     TerminalLifecycleWriteRefusedError,
@@ -72,7 +75,19 @@ def _status_for_error(exc: CoreError) -> int:
         return 403
     if isinstance(exc, CitationHandleResolutionError):
         return 409 if exc.failure_kind == "stale" else 400
-    if isinstance(exc, (ConfigError, DataValidationError, QueryExecutionError, IngestionError)):
+    if isinstance(
+        exc,
+        (
+            ConfigError,
+            DataValidationError,
+            QueryExecutionError,
+            IngestionError,
+            SlotBindingRefusedError,
+        ),
+    ):
+        # A refused bind is a bad REQUEST, not a denied tier: the caller offered
+        # a provider that does not fit the slot, and the fix is a different
+        # provider (or recorded consent), never a higher permission mode.
         return 400
     if isinstance(
         exc,
@@ -101,6 +116,7 @@ def _status_for_error(exc: CoreError) -> int:
             ProcedureNotFoundError,
             SourceArtifactNotFoundError,
             RuntimeCredentialNotFoundError,
+            BindingNotFoundError,
         ),
     ):
         return 404
@@ -111,6 +127,7 @@ def _status_for_error(exc: CoreError) -> int:
             StaleContinuationError,
             PendingEdgeWriteRefusedError,
             ConcurrentStateDriftError,
+            SlotAlreadyBoundError,
         ),
     ):
         # 409: a pending-edge refusal is a STATE conflict, not a policy or tier
@@ -190,6 +207,27 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["required_mode"] = exc.required_mode
     if isinstance(exc, SourceArtifactNotFoundError):
         context["source_artifact_id"] = exc.source_artifact_id
+    if isinstance(exc, BindingNotFoundError):
+        context["install_id"] = exc.install_id
+        context["slot_name"] = exc.slot_name
+        context["binding_id"] = exc.binding_id
+    if isinstance(exc, SlotAlreadyBoundError):
+        context["install_id"] = exc.install_id
+        context["slot_name"] = exc.slot_name
+        context["binding_id"] = exc.binding_id
+        context["provider_name"] = exc.provider_name
+    if isinstance(exc, SlotBindingRefusedError):
+        context["install_id"] = getattr(exc, "install_id", None)
+        context["slot_name"] = getattr(exc, "slot_name", None)
+        near_matches = getattr(exc, "near_matches", None)
+        if near_matches:
+            # The ranked report is the whole value of the refusal; dropping it
+            # at the HTTP boundary would leave the caller the message text and
+            # nothing machine-readable to choose a provider from.
+            context["near_matches"] = near_matches
+        allowed = getattr(exc, "allowed_billing_modes", None)
+        if allowed:
+            context["allowed_billing_modes"] = allowed
     if isinstance(exc, CitationHandleResolutionError):
         context["handle"] = exc.handle
         context["failure_kind"] = exc.failure_kind

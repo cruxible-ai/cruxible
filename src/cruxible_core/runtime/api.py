@@ -135,6 +135,7 @@ from cruxible_core.service import (
     service_list_queries,
     service_list_resolution_contracts,
     service_list_resolutions,
+    service_list_slot_bindings,
     service_list_snapshots,
     service_list_source_artifacts,
     service_list_traces,
@@ -167,6 +168,7 @@ from cruxible_core.service import (
     service_sample,
     service_schema,
     service_server_info,
+    service_slot_binding_history,
     service_state_diff,
     service_state_diff_artifact,
     service_state_health,
@@ -4479,6 +4481,54 @@ def get_source_artifact(
         source_artifact_id=source_artifact_id,
     )
     return contracts.SourceArtifactReadResult.model_validate(result.model_dump(mode="json"))
+
+
+def list_slot_bindings(
+    instance_id: str,
+    *,
+    install_id: str | None = None,
+    slot_name: str | None = None,
+    status: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> contracts.SlotBindingListResult:
+    """List compute-slot bindings recorded for this instance.
+
+    Read-only. Binding WRITES (bind/rebind/retire) are governed service verbs
+    and have no HTTP or MCP surface yet — exposing the ledger for inspection is
+    what the deployment record is for; exposing the verbs is a separate
+    permission decision.
+    """
+    check_permission("cruxible_list_slot_bindings", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_list_slot_bindings(
+        instance,
+        install_id=install_id,
+        slot_name=slot_name,
+        status=cast(Any, status),
+        limit=limit,
+        offset=offset,
+    )
+    return contracts.SlotBindingListResult.model_validate(result.model_dump(mode="json"))
+
+
+def get_slot_binding_history(
+    instance_id: str,
+    binding_id: str,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> contracts.SlotBindingHistoryResult:
+    """Return every revision of one binding, oldest first."""
+    check_permission("cruxible_slot_binding_history", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_slot_binding_history(
+        instance,
+        binding_id=binding_id,
+        limit=limit,
+        offset=offset,
+    )
+    return contracts.SlotBindingHistoryResult.model_validate(result.model_dump(mode="json"))
 
 
 def register_source_artifact(
