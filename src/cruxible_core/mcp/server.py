@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import sys
 import time
+from collections.abc import Callable
 from importlib import metadata
 from typing import Any
 
@@ -247,31 +248,44 @@ def _serialized_mcp_response_bytes(result: Any, *, converted: bool) -> int:
     )
 
 
+def _error_response_bytes(exc: BaseException) -> int:
+    """Count what the caller will see rendered for a failed tool call."""
+    return len(str(exc).encode("utf-8")) if isinstance(exc, Exception) else 0
+
+
 def _record_mcp_boundary(
     name: str,
-    arguments: dict[str, Any],
+    arguments: Any,
     *,
     local_mode: bool,
-    response_bytes: int,
+    response_bytes: Callable[[], int],
     duration_ms: float,
     error: bool,
 ) -> None:
-    if not local_mode:
-        return
-    instance_id = arguments.get("instance_id")
-    if not isinstance(instance_id, str) or not instance_id:
-        return
+    """Record one tool call, absorbing every failure inside the capture itself.
+
+    The WHOLE body is guarded, not just the store write, and the byte count is
+    deferred into this guard rather than computed at the call site: ``arguments``
+    is caller-supplied and need not be a mapping, and the byte helpers walk tool
+    output and exception objects whose ``__str__`` and attributes are not ours.
+    A capture that raises must never change the result the caller receives.
+    """
     try:
+        if not local_mode:
+            return
+        instance_id = arguments.get("instance_id") if isinstance(arguments, dict) else None
+        if not isinstance(instance_id, str) or not instance_id:
+            return
         instance = handlers.get_manager().get(instance_id)
+        record_boundary(
+            instance,
+            name,
+            response_bytes=response_bytes(),
+            duration_ms=duration_ms,
+            error=error,
+        )
     except Exception:
         return
-    record_boundary(
-        instance,
-        name,
-        response_bytes=response_bytes,
-        duration_ms=duration_ms,
-        error=error,
-    )
 
 
 def _install_tool_curation(
@@ -368,12 +382,15 @@ def _install_tool_curation(
                 context=context,
                 convert_result=convert_result,
             )
-        except BaseException as exc:
+        except BaseException as raised:
+            # Bound to a plain local: ``except ... as`` names are deleted when
+            # the block exits, which a deferred byte count must not depend on.
+            failure = raised
             _record_mcp_boundary(
                 name,
                 arguments,
                 local_mode=telemetry_local,
-                response_bytes=(len(str(exc).encode("utf-8")) if isinstance(exc, Exception) else 0),
+                response_bytes=lambda: _error_response_bytes(failure),
                 duration_ms=(time.perf_counter_ns() - started) / 1_000_000,
                 error=True,
             )
@@ -382,7 +399,7 @@ def _install_tool_curation(
             name,
             arguments,
             local_mode=telemetry_local,
-            response_bytes=_serialized_mcp_response_bytes(result, converted=convert_result),
+            response_bytes=lambda: _serialized_mcp_response_bytes(result, converted=convert_result),
             duration_ms=(time.perf_counter_ns() - started) / 1_000_000,
             error=False,
         )

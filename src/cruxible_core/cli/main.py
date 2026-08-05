@@ -175,68 +175,103 @@ def _active_transport_label(exc: httpx.TransportError) -> str:
     return "configured Cruxible server"
 
 
+LONG_RUNNING_MARKER = "_cruxible_long_running"
+
+
+def long_running_command(f: Any) -> Any:
+    """Mark a command whose callback owns the process for its whole lifetime.
+
+    ``handle_errors`` normally collects boundary events and proxies
+    stdout/stderr for the duration of the callback, both of which assume the
+    callback returns promptly. For a callback that returns only as the process
+    shuts down — ``cruxible server start`` hosts uvicorn in-process — those
+    assumptions invert into bugs: every served request would append to an event
+    list nobody drains, shutdown would replay the whole list as a write storm
+    carrying the daemon's entire wall time as each duration, each request would
+    be counted twice (the HTTP middleware already counted it), and structlog
+    would bind the counting stream proxy for the process lifetime. Marked
+    commands opt out of collection AND of the stream proxies entirely; their
+    traffic is counted at the surface that actually serves it.
+
+    Apply this BELOW ``@handle_errors`` so the marker is set on the callback
+    before ``handle_errors`` wraps it.
+    """
+    setattr(f, LONG_RUNNING_MARKER, True)
+    return f
+
+
 def handle_errors(f: Any) -> Any:
     """Decorator that catches any Cruxible error and prints a friendly message.
 
     Core errors subclass the client base, so the client hierarchy is the
     single catch surface for local and remote failures.
     """
+    long_running = bool(getattr(f, LONG_RUNNING_MARKER, False))
+
+    def run_with_error_handling(*args: Any, **kwargs: Any) -> Any:
+        try:
+            ctx = click.get_current_context(silent=True)
+            if ctx is not None:
+                target_mode = MUTATING_COMMAND_TARGETS.get(_command_path(ctx))
+                if target_mode is not None and target_mode != "manual":
+                    # Runtime import avoids the main <-> commands import cycle.
+                    from cruxible_core.cli.commands._common import _echo_write_target
+
+                    _echo_write_target(target_mode, kwargs)
+            return f(*args, **kwargs)
+        except Exception as exc:
+            # Error packages and HTTP transport support stay off the import path
+            # until a command actually fails. Core errors share the client base,
+            # so this remains one catch surface for local and remote execution.
+            from cruxible_client.errors import CoreError as ClientCoreError
+            from cruxible_client.errors import ServerUnreachableError
+
+            if isinstance(exc, ServerUnreachableError):
+                # Transport failures already render as a friendly single line;
+                # the class-name prefix would only add noise.
+                click.secho(f"Error: {exc}", fg="red", err=True)
+                sys.exit(1)
+            if isinstance(exc, ClientCoreError):
+                click.secho(
+                    f"Error: {exc.__class__.__name__}: {exc}",
+                    fg="red",
+                    err=True,
+                )
+                sys.exit(1)
+
+            import httpx
+
+            if isinstance(exc, httpx.TransportError):
+                click.secho(
+                    "Error: could not reach Cruxible server at "
+                    f"{_active_transport_label(exc)}: {exc}",
+                    fg="red",
+                    err=True,
+                )
+                sys.exit(1)
+            raise
 
     @functools.wraps(f)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if long_running:
+            return run_with_error_handling(*args, **kwargs)
+
+        ctx = click.get_current_context(silent=True)
+        command_path = _command_path(ctx) if ctx is not None else ()
         stdout = _CountingTextIO(sys.stdout)
         stderr = _CountingTextIO(sys.stderr)
         command_failed = False
         with collect_cli_boundaries() as collector:
             try:
                 with redirect_stdout(stdout), redirect_stderr(stderr):
-                    try:
-                        ctx = click.get_current_context(silent=True)
-                        if ctx is not None:
-                            target_mode = MUTATING_COMMAND_TARGETS.get(_command_path(ctx))
-                            if target_mode is not None and target_mode != "manual":
-                                # Runtime import avoids the main <-> commands import cycle.
-                                from cruxible_core.cli.commands._common import _echo_write_target
-
-                                _echo_write_target(target_mode, kwargs)
-                        return f(*args, **kwargs)
-                    except Exception as exc:
-                        # Error packages and HTTP transport support stay off the import path
-                        # until a command actually fails. Core errors share the client base,
-                        # so this remains one catch surface for local and remote execution.
-                        from cruxible_client.errors import CoreError as ClientCoreError
-                        from cruxible_client.errors import ServerUnreachableError
-
-                        if isinstance(exc, ServerUnreachableError):
-                            # Transport failures already render as a friendly single line;
-                            # the class-name prefix would only add noise.
-                            click.secho(f"Error: {exc}", fg="red", err=True)
-                            sys.exit(1)
-                        if isinstance(exc, ClientCoreError):
-                            click.secho(
-                                f"Error: {exc.__class__.__name__}: {exc}",
-                                fg="red",
-                                err=True,
-                            )
-                            sys.exit(1)
-
-                        import httpx
-
-                        if isinstance(exc, httpx.TransportError):
-                            click.secho(
-                                "Error: could not reach Cruxible server at "
-                                f"{_active_transport_label(exc)}: {exc}",
-                                fg="red",
-                                err=True,
-                            )
-                            sys.exit(1)
-                        raise
+                    return run_with_error_handling(*args, **kwargs)
             except BaseException:
                 command_failed = True
                 raise
             finally:
                 finish_cli_boundaries(
                     collector,
+                    command_path=command_path,
                     response_bytes=stdout.byte_count + stderr.byte_count,
                     command_failed=command_failed,
                 )

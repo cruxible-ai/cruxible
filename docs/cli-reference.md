@@ -3462,6 +3462,46 @@ cruxible source dereference \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
+## cruxible telemetry
+
+**Usage:** `cruxible telemetry [OPTIONS]`
+
+**Purpose:** Inspect aggregate traffic crossing core-owned surfaces.
+
+**Subcommands:**
+
+- `cruxible telemetry summary` - Show per-surface call, error, payload-byte, and duration counters.
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible telemetry summary
+
+**Usage:** `cruxible telemetry summary [OPTIONS]`
+
+**Purpose:** Show per-surface call, error, payload-byte, and duration counters.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Prints the earliest recorded timestamp, then one line per surface with call count, error count, total response bytes, and total/maximum duration in milliseconds.
+- Surface names carry their boundary: an HTTP route name (`stats`), an MCP tool name (`cruxible_stats`), a locally invoked service verb (`service_stats`), or a whole CLI command (`cli:stats`). A CLI command's emitted bytes and wall time belong to its `cli:` row; each service verb keeps its own measured duration.
+- Counters are aggregated in memory and written by a background flusher; this read flushes the instance first, so it never lags the calls it summarizes.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
 ## cruxible test
 
 **Usage:** `cruxible test [OPTIONS]`

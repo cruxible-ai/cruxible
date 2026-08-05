@@ -29,7 +29,7 @@ from cruxible_core.cli.commands._common import (
     _get_client,
     _root_ctx_obj,
 )
-from cruxible_core.cli.main import handle_errors
+from cruxible_core.cli.main import handle_errors, long_running_command
 from cruxible_core.runtime.permissions import PERMISSION_MODE_NAMES
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
@@ -171,6 +171,7 @@ def server_group() -> None:
     help="Write an auto-generated runtime bootstrap secret to this file with mode 0600.",
 )
 @handle_errors
+@long_running_command
 def server_start_cmd(
     host: str | None,
     port: int | None,

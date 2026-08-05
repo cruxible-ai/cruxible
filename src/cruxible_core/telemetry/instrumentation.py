@@ -4,13 +4,23 @@ from __future__ import annotations
 
 import contextvars
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, TypeVar, cast
 
 CallableT = TypeVar("CallableT", bound=Callable[..., Any])
+
+# Prefix distinguishing a whole-CLI-command surface row from the service verbs
+# it invoked: ``cli:stats``, ``cli:telemetry summary``.
+CLI_SURFACE_PREFIX = "cli:"
+
+# A CLI command normally invokes one service verb, and a handful at most. The
+# cap exists so a command that does NOT terminate promptly cannot turn this list
+# into an unbounded leak; such a command should instead opt out of collection
+# entirely (see ``long_running_command`` in ``cli/main.py``).
+MAX_CLI_BOUNDARY_EVENTS = 512
 
 
 @dataclass
@@ -29,7 +39,15 @@ class CliBoundaryCollector:
 
     events: list[CliBoundaryEvent] = field(default_factory=list)
     depth: int = 0
+    dropped_events: int = 0
     started_ns: int = field(default_factory=time.perf_counter_ns)
+
+    def add(self, event: CliBoundaryEvent) -> None:
+        """Append within the hard cap, counting anything past it as dropped."""
+        if len(self.events) >= MAX_CLI_BOUNDARY_EVENTS:
+            self.dropped_events += 1
+            return
+        self.events.append(event)
 
 
 _CLI_COLLECTOR: contextvars.ContextVar[CliBoundaryCollector | None] = contextvars.ContextVar(
@@ -72,7 +90,7 @@ def instrument_cli_service(function: CallableT) -> CallableT:
             if outermost:
                 instance = _instance_argument(args, kwargs)
                 if instance is not None:
-                    collector.events.append(
+                    collector.add(
                         CliBoundaryEvent(
                             instance=instance,
                             surface_name=function.__name__,
@@ -87,26 +105,43 @@ def instrument_cli_service(function: CallableT) -> CallableT:
 def finish_cli_boundaries(
     collector: CliBoundaryCollector,
     *,
+    command_path: Sequence[str],
     response_bytes: int,
     command_failed: bool,
 ) -> None:
     """Persist collected calls after stdout/stderr emission has completed.
 
-    A CLI command normally invokes one service verb. When a command invokes
-    several sequential verbs, only the final verb owns the combined rendered
-    response; earlier calls still receive count/duration observations with zero
-    response bytes.
+    Two distinct surfaces, because they measure two distinct things:
+
+    - each service verb keeps ITS OWN measured duration and contributes zero
+      response bytes. A command may invoke several verbs, and the rendered
+      output belongs to none of them individually; assigning the whole
+      command's wall time and every emitted byte to whichever verb happened to
+      run last made that verb's counters describe the command, not the verb.
+    - the emitted bytes and the command's wall time are recorded once under a
+      ``cli:<command path>`` row, which is the surface that actually owns them.
+
+    The command row is attributed to the last instance a verb touched: one CLI
+    command addresses one instance, and were a future command to span several,
+    the per-verb rows would still attribute each verb correctly.
     """
-    final_index = len(collector.events) - 1
-    cli_duration_ms = (time.perf_counter_ns() - collector.started_ns) / 1_000_000
-    for index, event in enumerate(collector.events):
+    for event in collector.events:
         record_boundary(
             event.instance,
             event.surface_name,
-            response_bytes=response_bytes if index == final_index else 0,
-            duration_ms=cli_duration_ms if index == final_index else event.duration_ms,
-            error=event.error or (command_failed and index == final_index),
+            response_bytes=0,
+            duration_ms=event.duration_ms,
+            error=event.error,
         )
+    if not collector.events or not command_path:
+        return
+    record_boundary(
+        collector.events[-1].instance,
+        CLI_SURFACE_PREFIX + " ".join(command_path),
+        response_bytes=response_bytes,
+        duration_ms=(time.perf_counter_ns() - collector.started_ns) / 1_000_000,
+        error=command_failed,
+    )
 
 
 def record_boundary(
@@ -137,6 +172,8 @@ def _instance_argument(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any | N
 
 
 __all__ = [
+    "CLI_SURFACE_PREFIX",
+    "MAX_CLI_BOUNDARY_EVENTS",
     "CliBoundaryCollector",
     "collect_cli_boundaries",
     "finish_cli_boundaries",

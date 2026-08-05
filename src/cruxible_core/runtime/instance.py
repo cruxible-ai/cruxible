@@ -50,7 +50,7 @@ from cruxible_core.storage.sqlite import (
     SQLiteStorageBackend,
     SQLiteUnitOfWork,
 )
-from cruxible_core.telemetry.store import SQLiteTelemetryStore
+from cruxible_core.telemetry.buffer import telemetry_buffer
 from cruxible_core.telemetry.types import BoundaryTelemetrySummary
 from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import (
@@ -342,9 +342,13 @@ class CruxibleInstance(InstanceProtocol):
         duration_ms: float,
         error: bool,
     ) -> None:
-        """Best-effort aggregate recording that never waits on a busy state DB."""
-        SQLiteTelemetryStore.record_best_effort(
-            self._state_db_path(),
+        """Merge one observation in memory; the flusher writes it off-path.
+
+        Called from the event loop (HTTP, MCP) and from the CLI foreground, so
+        it does no I/O and takes no DB lock: an observation costs one dict
+        update. See ``cruxible_core.telemetry.buffer``.
+        """
+        telemetry_buffer(self._state_db_path()).add(
             surface_name,
             response_bytes=response_bytes,
             duration_ms=duration_ms,
@@ -352,8 +356,14 @@ class CruxibleInstance(InstanceProtocol):
         )
 
     def get_boundary_telemetry_summary(self) -> BoundaryTelemetrySummary:
-        """Read this instance's aggregate boundary counters."""
+        """Read this instance's aggregate boundary counters.
+
+        Flushes this instance's own buffer first — and before opening the read
+        connection, so the two never contend — so a summary reflects calls made
+        since the last periodic flush rather than lagging it.
+        """
         self._ensure_state_initialized()
+        telemetry_buffer(self._state_db_path()).flush()
         with self._storage_backend().telemetry_repository() as telemetry:
             return telemetry.summary()
 

@@ -1,9 +1,28 @@
-"""Typed boundary-telemetry read models."""
+"""Typed boundary-telemetry read models and the in-memory accumulator."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+
+
+@dataclass
+class BoundaryAggregate:
+    """One surface's observations accumulated in memory between flushes.
+
+    Deliberately mutable and unfrozen: this is the accumulator merged on the
+    request path, where allocating a replacement per observation is precisely
+    the cost the in-memory buffer exists to avoid. ``first_recorded_at`` is
+    stamped by the observation that created the aggregate, so a flushed row
+    dates from when the traffic happened, not from when it reached SQLite.
+    """
+
+    first_recorded_at: str
+    call_count: int = 0
+    error_count: int = 0
+    total_response_bytes: int = 0
+    total_duration_ms: float = 0.0
+    max_duration_ms: float = 0.0
 
 
 @dataclass(frozen=True)
