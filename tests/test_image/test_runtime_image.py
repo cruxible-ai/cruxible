@@ -20,12 +20,27 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_DOCKERFILE = REPO_ROOT / "deploy" / "runtime" / "Dockerfile"
 RUNTIME_STATE_DIR = "/var/lib/cruxible/server"
 BOOTSTRAP_ENV = "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=bootstrap-secret"
+# Set to an already-pulled image reference (normally digest-pinned) to run this
+# suite against a published image instead of a locally built one. The publish
+# workflow uses it to check the artifact it just pushed to GHCR.
+RUNTIME_IMAGE_REF_ENV = "CRUXIBLE_RUNTIME_IMAGE_REF"
 pytestmark = pytest.mark.docker
 
 
 @pytest.fixture(scope="module")
 def runtime_image() -> Iterator[str]:
     _require_docker()
+
+    supplied_ref = os.environ.get(RUNTIME_IMAGE_REF_ENV, "").strip()
+    if supplied_ref:
+        # The supplied image is the artifact under test, so it is neither built
+        # nor removed here. It must already be in the local image store: pulling
+        # from inside the tests would let the registry answer for a reference
+        # the caller never verified.
+        _require_local_image(supplied_ref)
+        yield supplied_ref
+        return
+
     suffix = uuid.uuid4().hex[:12]
     image_tag = f"cruxible-core-runtime:test-{suffix}"
 
@@ -238,6 +253,16 @@ def _require_docker() -> None:
     completed = _docker(["info"], check=False, timeout=30)
     if completed.returncode != 0:
         pytest.skip("docker daemon is not available")
+
+
+def _require_local_image(image_ref: str) -> None:
+    completed = _docker(["image", "inspect", image_ref], check=False, timeout=60)
+    if completed.returncode != 0:
+        raise AssertionError(
+            f"{RUNTIME_IMAGE_REF_ENV}={image_ref} is not present in the local image "
+            "store; pull that exact reference before running this suite\n"
+            f"stderr:\n{completed.stderr}"
+        )
 
 
 def _docker(
