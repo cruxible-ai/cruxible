@@ -88,9 +88,11 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
                     "runs": 8,
                     "succeeded": 0,
                     "failed": 0,
-                    "refused": 8,
+                    "refused": 6,
+                    "budget_exceeded": 2,
+                    "in_flight": 0,
                     "last_succeeded_at": None,
-                    "top_refusal_reason": None,
+                    "top_refusal_reason": "precondition_unsatisfied",
                     "linked_outcomes": None,
                 },
             }
@@ -166,7 +168,8 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
         "run",
         "runs",
     ]
-    assert listed.items[0]["track_record"]["refused"] == 8
+    assert listed.items[0]["track_record"]["budget_exceeded"] == 2
+    assert listed.items[0]["track_record"]["top_refusal_reason"] == "precondition_unsatisfied"
     assert shown["procedure"]["track_record"]["linked_outcomes"] is None
     withdraw_call = next(payload for name, payload in calls if name == "withdraw")
     assert withdraw_call[2] == {"expected_version": 1, "reason": None}

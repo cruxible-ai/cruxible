@@ -8,11 +8,25 @@ tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
 - **Procedure reads show their run-ledger track record.** List and detail
-  surfaces now attach aggregate run, success, failure, and refusal counts plus
-  the latest successful completion, so dead procedures are visible before an
-  agent chooses one. The summary is computed once for a whole list page;
-  refusal reasons and linked outcomes remain reserved as null until their
-  source data can be aggregated without receipt-by-receipt parsing.
+  surfaces now attach a `track_record` block, so dead procedures are visible
+  before an agent chooses one. Its verdict buckets are exhaustive — `succeeded`,
+  `failed`, `refused`, `budget_exceeded`, and `in_flight` for started but
+  unfinalized runs always sum to `runs` — so a procedure that exhausts its
+  budget on every invocation reads differently from one whose invocations are
+  still running. The block also carries `last_succeeded_at` and
+  `top_refusal_reason`, the most frequent refusal classification. The summary is
+  computed once for a whole list page. `linked_outcomes` remains reserved as
+  null.
+
+- **Refused procedure runs record why they were refused.** A `refused` run now
+  persists a `refusal_reason` classification (`procedure_not_live`,
+  `definition_digest_changed`, `tier_not_permitted`, `preflight_refused`,
+  `precondition_evaluation_failed`, or `precondition_unsatisfied`) alongside its
+  receipt, and procedure reads report the most frequent one. Existing instances
+  gain the column on first open through storage migration
+  `0005_procedure_refusal_reason`; runs refused before the upgrade keep a null
+  reason and are excluded from the most-frequent count rather than being lumped
+  into an "unknown" bucket that would outvote every reason observed since.
 
 - **A Procedure author can withdraw their own pending proposal.** `withdraw`
   moves a pending definition to the new terminal `withdrawn` status through the

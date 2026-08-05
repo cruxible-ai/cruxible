@@ -201,6 +201,7 @@ _UNIFIED_STATE_MIGRATION = "0001_unified_sqlite_state"
 SNAPSHOT_SCHEMA_MIGRATION = "0002_snapshot_tables"
 READ_REVISION_MIGRATION = "0003_read_revision"
 CLAIM_IDENTITY_MIGRATION = "0004_claim_identity"
+PROCEDURE_REFUSAL_REASON_MIGRATION = "0005_procedure_refusal_reason"
 
 # Every migration ``_initialize_connection`` knows how to apply. The steady-state
 # pre-check compares against this set to decide whether it needs the write lock
@@ -212,6 +213,7 @@ _ALL_STORAGE_MIGRATIONS = frozenset(
         SNAPSHOT_SCHEMA_MIGRATION,
         READ_REVISION_MIGRATION,
         CLAIM_IDENTITY_MIGRATION,
+        PROCEDURE_REFUSAL_REASON_MIGRATION,
     }
 )
 
@@ -1284,10 +1286,11 @@ class SQLiteStorageBackend:
         """Cheap, lock-free "is this database already at this version?" check.
 
         Deliberately reads only what the upgrade path WRITES: every migration
-        id it stamps, plus the one column whose presence proves the 0004 table
-        rebuild actually ran (the migration row alone would be satisfied by a
-        half-applied rebuild that a torn write left behind, and the column alone
-        would be satisfied by a fresh-schema database that never stamped).
+        id it stamps, plus the columns whose presence proves the 0004 table
+        rebuild and the 0005 column add actually ran (the migration row alone
+        would be satisfied by a half-applied rebuild that a torn write left
+        behind, and the column alone would be satisfied by a fresh-schema
+        database that never stamped).
 
         Any missing table (a brand-new file has no ``storage_migrations``)
         answers "not current" rather than raising -- absence is exactly the
@@ -1303,7 +1306,10 @@ class SQLiteStorageBackend:
         if not applied.issuperset(_ALL_STORAGE_MIGRATIONS):
             return False
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(graph_relationships)")}
-        return "claim_id" in columns
+        if "claim_id" not in columns:
+            return False
+        run_columns = {row["name"] for row in conn.execute("PRAGMA table_info(procedure_runs)")}
+        return "refusal_reason" in run_columns
 
     @staticmethod
     def mark_migration_on_connection(conn: sqlite3.Connection, migration_id: str) -> None:
@@ -1383,6 +1389,30 @@ class SQLiteStorageBackend:
         if not self.has_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION):
             self._migrate_claim_identity(conn)
             self.mark_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION)
+        if not self.has_migration_on_connection(conn, PROCEDURE_REFUSAL_REASON_MIGRATION):
+            self._migrate_procedure_refusal_reason(conn)
+            self.mark_migration_on_connection(conn, PROCEDURE_REFUSAL_REASON_MIGRATION)
+
+    @staticmethod
+    def _migrate_procedure_refusal_reason(conn: sqlite3.Connection) -> None:
+        """Add ``procedure_runs.refusal_reason`` (migration 0005).
+
+        A pure additive column, so no table rebuild: ``CREATE TABLE IF NOT
+        EXISTS`` above is a no-op on an existing table and would otherwise leave
+        an upgraded instance permanently without the column. The track-record
+        covering index comes from the store's own schema script, which the same
+        initialization pass already re-ran.
+
+        Rows finalized before this point keep NULL. That is the honest answer,
+        not a gap to backfill: the refusal bucket is derived at the moment of
+        refusal from the branch that refused, and reconstructing it from the
+        historical receipt text would be classification-by-string-match on
+        messages nobody promised to keep stable.
+        """
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(procedure_runs)")}
+        if "refusal_reason" in columns:
+            return
+        conn.execute("ALTER TABLE procedure_runs ADD COLUMN refusal_reason TEXT")
 
     @staticmethod
     def _migrate_claim_identity(conn: sqlite3.Connection) -> None:

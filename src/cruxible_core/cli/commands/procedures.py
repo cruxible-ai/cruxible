@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import click
 import yaml
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
@@ -27,6 +27,7 @@ from cruxible_core.procedure.types import (
     ProcedureRun,
     ProcedureStatus,
     ProcedureTransitionResult,
+    procedure_record_from_payload,
 )
 from cruxible_core.service import (
     service_accept_procedure,
@@ -93,12 +94,17 @@ def _parse_run_input(raw: str) -> dict[str, Any]:
 
 
 def _procedure_from_result(result: Any) -> ProcedureRecord:
+    """Unwrap a procedure from any local service result or daemon envelope.
+
+    The local paths return models (a record, or a transition result wrapping
+    one) and every daemon path returns a JSON envelope; there is no third
+    shape, so anything else is a genuine surface mismatch, not a case to
+    normalize.
+    """
     if isinstance(result, ProcedureRecord):
         return result
     if isinstance(result, ProcedureTransitionResult):
         return result.procedure
-    if isinstance(result, BaseModel):
-        result = result.model_dump(mode="python")
     if not isinstance(result, dict) or not isinstance(result.get("procedure"), dict):
         raise click.ClickException("Procedure response is missing its procedure record")
     return _procedure_from_payload(result["procedure"])
@@ -118,14 +124,12 @@ def _procedure_items(result: Any) -> list[ProcedureRecord]:
 
 
 def _procedure_from_payload(payload: Any) -> ProcedureRecord:
-    if isinstance(payload, ProcedureRecord):
-        return payload
-    if isinstance(payload, BaseModel):
-        payload = payload.model_dump(mode="python")
-    if not isinstance(payload, dict):
-        raise click.ClickException("Procedure response contains an invalid procedure record")
-    record_type = ProcedureReadRecord if "track_record" in payload else ProcedureRecord
-    return record_type.model_validate(payload)
+    try:
+        return procedure_record_from_payload(payload)
+    except (TypeError, ValidationError) as exc:
+        raise click.ClickException(
+            f"Procedure response contains an invalid procedure record: {exc}"
+        ) from exc
 
 
 def _run_items(result: Any) -> list[ProcedureRun]:
@@ -154,7 +158,9 @@ def _echo_procedure(procedure: ProcedureRecord) -> None:
         click.echo(
             "  Track record: "
             f"runs={track_record.runs}, succeeded={track_record.succeeded}, "
-            f"failed={track_record.failed}, refused={track_record.refused}"
+            f"failed={track_record.failed}, refused={track_record.refused}, "
+            f"budget_exceeded={track_record.budget_exceeded}, "
+            f"in_flight={track_record.in_flight}"
         )
         click.echo(
             f"    last_succeeded_at={last_succeeded_at}, "
@@ -163,10 +169,7 @@ def _echo_procedure(procedure: ProcedureRecord) -> None:
 
 
 def _procedure_payload(procedure: ProcedureRecord) -> dict[str, Any]:
-    payload = procedure.model_dump(mode="json", by_alias=True, exclude_none=True)
-    if isinstance(procedure, ProcedureReadRecord):
-        payload["track_record"] = procedure.track_record.model_dump(mode="json")
-    return payload
+    return procedure.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
 @procedure_group.command("propose")

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         ProcedureBudgetSpent,
         ProcedureEvidenceArtifact,
         ProcedureRecord,
+        ProcedureRefusalReason,
         ProcedureRun,
         ProcedureRunVerdict,
         ProcedureStatus,
@@ -450,6 +451,7 @@ class ProcedureStoreProtocol(ABC):
         budget_spent: ProcedureBudgetSpent,
         receipt_id: str,
         finalized_at: str,
+        refusal_reason: ProcedureRefusalReason | None = None,
     ) -> bool: ...
     @abstractmethod
     def get_run(self, run_id: str) -> ProcedureRun | None: ...

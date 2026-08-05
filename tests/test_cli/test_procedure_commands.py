@@ -87,13 +87,18 @@ def test_procedure_read_commands_use_envelopes_and_surface_started_tombstone(
         "succeeded": 0,
         "failed": 0,
         "refused": 0,
+        "budget_exceeded": 0,
+        "in_flight": 1,
         "last_succeeded_at": None,
         "top_refusal_reason": None,
         "linked_outcomes": None,
     }
     assert list_payload["items"][0]["track_record"] == expected_track_record
     assert listed_text.exit_code == 0, listed_text.output
-    assert "Track record: runs=1, succeeded=0, failed=0, refused=0" in listed_text.output
+    assert (
+        "Track record: runs=1, succeeded=0, failed=0, refused=0, "
+        "budget_exceeded=0, in_flight=1" in listed_text.output
+    )
 
     assert shown.exit_code == 0, shown.output
     shown_payload = json.loads(shown.output)["procedure"]

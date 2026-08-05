@@ -37,7 +37,6 @@ from cruxible_core.kit_defaults import get_default_base_kit
 from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.procedure.types import (
     ProcedureDefinition,
-    ProcedureReadRecord,
     ProcedureRecord,
     ProcedureStatus,
     ProcedureTransitionResult,
@@ -3819,10 +3818,7 @@ def get_relationship_lineage(
 
 
 def _procedure_record_payload(procedure: ProcedureRecord) -> dict[str, Any]:
-    payload = procedure.model_dump(mode="json", by_alias=True, exclude_none=True)
-    if isinstance(procedure, ProcedureReadRecord):
-        payload["track_record"] = procedure.track_record.model_dump(mode="json")
-    return payload
+    return procedure.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
 def _procedure_transition_payload(result: ProcedureTransitionResult) -> dict[str, Any]:
