@@ -30,12 +30,14 @@ from cruxible_core.procedure.types import (
     ProcedureEvidenceArtifact,
     ProcedureExecutionResult,
     ProcedurePrecondition,
+    ProcedureReadRecord,
     ProcedureRecord,
     ProcedureRun,
     ProcedureRunStatus,
     ProcedureRunVerdict,
     ProcedureStatus,
     ProcedureTier,
+    ProcedureTrackRecord,
     ProcedureTransitionResult,
     compute_procedure_definition_digest,
 )
@@ -403,11 +405,13 @@ def service_retire_procedure(
 def service_get_procedure(
     instance: InstanceProtocol,
     procedure_id: str,
-) -> ProcedureRecord:
+) -> ProcedureReadRecord:
     """Read one procedure record."""
     store = instance.get_procedure_store()
     try:
-        return _get_procedure(store, procedure_id)
+        procedure = _get_procedure(store, procedure_id)
+        track_records = store.get_run_track_records([procedure_id])
+        return _procedure_read_record(procedure, track_records.get(procedure_id))
     finally:
         store.close()
 
@@ -430,17 +434,35 @@ def service_list_procedures(
             limit=limit,
             offset=offset,
         )
+        track_records = store.get_run_track_records([procedure.procedure_id for procedure in items])
+        read_items = [
+            _procedure_read_record(
+                procedure,
+                track_records.get(procedure.procedure_id),
+            )
+            for procedure in items
+        ]
         total = store.count_procedures(name=name, status=status)
         return ListResult(
-            items=items,
+            items=read_items,
             total=total,
             limit=limit,
             offset=offset,
-            truncated=list_truncated(total=total, offset=offset, returned=len(items)),
+            truncated=list_truncated(total=total, offset=offset, returned=len(read_items)),
             read_revision=instance.get_read_revision(),
         )
     finally:
         store.close()
+
+
+def _procedure_read_record(
+    procedure: ProcedureRecord,
+    track_record: ProcedureTrackRecord | None,
+) -> ProcedureReadRecord:
+    return ProcedureReadRecord.model_construct(
+        **procedure.__dict__,
+        track_record=track_record or ProcedureTrackRecord(),
+    )
 
 
 def service_list_procedure_runs(

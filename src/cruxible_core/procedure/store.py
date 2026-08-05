@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from cruxible_core.procedure.types import (
     ProcedureRun,
     ProcedureRunVerdict,
     ProcedureStatus,
+    ProcedureTrackRecord,
     compute_procedure_definition_digest,
 )
 from cruxible_core.sqlite_ddl import execute_schema_script
@@ -381,6 +383,41 @@ class ProcedureStore(ProcedureStoreProtocol):
             tuple(params),
         ).fetchone()
         return int(row["count"]) if row is not None else 0
+
+    def get_run_track_records(
+        self,
+        procedure_ids: Sequence[str],
+    ) -> dict[str, ProcedureTrackRecord]:
+        """Aggregate run-ledger summaries for a procedure page in one query."""
+        unique_ids = tuple(dict.fromkeys(procedure_ids))
+        if not unique_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in unique_ids)
+        rows = self._conn.execute(
+            "SELECT procedure_id, COUNT(*) AS runs, "
+            "SUM(CASE WHEN verdict = 'succeeded' THEN 1 ELSE 0 END) AS succeeded, "
+            "SUM(CASE WHEN verdict = 'failed' THEN 1 ELSE 0 END) AS failed, "
+            "SUM(CASE WHEN verdict = 'refused' THEN 1 ELSE 0 END) AS refused, "
+            "MAX(CASE WHEN verdict = 'succeeded' THEN finalized_at END) "
+            "AS last_succeeded_at "
+            f"FROM procedure_runs WHERE procedure_id IN ({placeholders}) "
+            "GROUP BY procedure_id",
+            unique_ids,
+        ).fetchall()
+        return {
+            str(row["procedure_id"]): ProcedureTrackRecord(
+                runs=int(row["runs"]),
+                succeeded=int(row["succeeded"]),
+                failed=int(row["failed"]),
+                refused=int(row["refused"]),
+                last_succeeded_at=row["last_succeeded_at"],
+                # Refusal reasons live in receipt JSON, not procedure_runs. Deriving
+                # a mode would require per-run JSON reads and defeat this cheap grouped query.
+                top_refusal_reason=None,
+                linked_outcomes=None,
+            )
+            for row in rows
+        }
 
     def save_evidence_artifact(self, artifact: ProcedureEvidenceArtifact) -> str:
         """Persist digest-addressed typed JSON content without committing."""

@@ -92,9 +92,20 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     shown = app_client.get(f"/api/v1/{instance_id}/procedures/{procedure_id}")
     assert listed.status_code == 200, listed.text
     assert listed.json()["items"][0]["procedure_id"] == procedure_id
+    empty_track_record = {
+        "runs": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "refused": 0,
+        "last_succeeded_at": None,
+        "top_refusal_reason": None,
+        "linked_outcomes": None,
+    }
+    assert listed.json()["items"][0]["track_record"] == empty_track_record
     assert listed.json()["read_revision"] is not None
     assert shown.status_code == 200, shown.text
     assert shown.json()["procedure"]["procedure_id"] == procedure_id
+    assert shown.json()["procedure"]["track_record"] == empty_track_record
 
     # accept enforces reviewer independence, so an HTTP caller may not name the
     # reviewer itself; the request is attributed to the local operator instead.
@@ -126,6 +137,20 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     assert executed.status_code == 200, executed.text
     assert executed.json()["run"]["status"] == "finalized"
     assert executed.json()["run"]["verdict"] == "succeeded"
+
+    tracked_list = app_client.get(f"/api/v1/{instance_id}/procedures")
+    tracked_show = app_client.get(f"/api/v1/{instance_id}/procedures/{procedure_id}")
+    expected_track_record = {
+        "runs": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "refused": 0,
+        "last_succeeded_at": executed.json()["run"]["finalized_at"],
+        "top_refusal_reason": None,
+        "linked_outcomes": None,
+    }
+    assert tracked_list.json()["items"][0]["track_record"] == expected_track_record
+    assert tracked_show.json()["procedure"]["track_record"] == expected_track_record
 
     runs = app_client.get(f"/api/v1/{instance_id}/procedures/{procedure_id}/runs")
     assert runs.status_code == 200, runs.text

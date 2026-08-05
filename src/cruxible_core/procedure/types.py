@@ -312,6 +312,26 @@ class ProcedureRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ProcedureTrackRecord(BaseModel):
+    """Run-ledger summary attached to procedure read records."""
+
+    runs: int = Field(default=0, ge=0)
+    succeeded: int = Field(default=0, ge=0)
+    failed: int = Field(default=0, ge=0)
+    refused: int = Field(default=0, ge=0)
+    last_succeeded_at: datetime | None = None
+    top_refusal_reason: str | None = None
+    linked_outcomes: None = None
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ProcedureReadRecord(ProcedureRecord):
+    """Procedure definition and governance state with its run-ledger summary."""
+
+    track_record: ProcedureTrackRecord = Field(default_factory=ProcedureTrackRecord)
+
+
 class ProcedureBudgetSpent(BaseModel):
     """Budget accounting persisted for one procedure invocation."""
 

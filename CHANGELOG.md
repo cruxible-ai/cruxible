@@ -7,6 +7,13 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **Procedure reads show their run-ledger track record.** List and detail
+  surfaces now attach aggregate run, success, failure, and refusal counts plus
+  the latest successful completion, so dead procedures are visible before an
+  agent chooses one. The summary is computed once for a whole list page;
+  refusal reasons and linked outcomes remain reserved as null until their
+  source data can be aggregated without receipt-by-receipt parsing.
+
 - **A Procedure author can withdraw their own pending proposal.** `withdraw`
   moves a pending definition to the new terminal `withdrawn` status through the
   same receipted transition as accept/reject, at the proposing
