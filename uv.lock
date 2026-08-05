@@ -466,7 +466,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=24.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.20" },
 ]
-provides-extras = ["mcp", "server", "pdf", "dev"]
+provides-extras = ["mcp", "pdf", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
