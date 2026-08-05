@@ -82,6 +82,22 @@ def _format_registered_providers(config: CoreConfig) -> str:
     return ", ".join(provider_names)
 
 
+def _format_valid_tiers() -> str:
+    """List the accepted ``declared_tier`` values, weakest first."""
+    return ", ".join(sorted(_TIER_RANK, key=lambda tier: _TIER_RANK[tier]))
+
+
+def _tiers_at_or_above(tier: ProcedureTier) -> str:
+    """List the ``declared_tier`` values that satisfy an effective tier floor."""
+    floor = _TIER_RANK[tier]
+    return ", ".join(
+        sorted(
+            (name for name, rank in _TIER_RANK.items() if rank >= floor),
+            key=lambda name: _TIER_RANK[name],
+        )
+    )
+
+
 def validate_procedure_definition_against_config(
     definition: ProcedureDefinition,
     config: CoreConfig,
@@ -95,6 +111,10 @@ def validate_procedure_definition_against_config(
         )
 
     effective_tier: ProcedureTier = "governed_write"
+    # Which provider forced the floor. Without it the tier refusal names a tier
+    # the author never wrote down and leaves them to bisect the provider list to
+    # find the one that raised it.
+    tier_source: str | None = None
     for provider_name in sorted(definition.referenced_providers()):
         provider = config.providers.get(provider_name)
         if provider is None:
@@ -115,11 +135,19 @@ def validate_procedure_definition_against_config(
         provider_tier = _provider_tier(provider.procedure_access)
         if _TIER_RANK[provider_tier] > _TIER_RANK[effective_tier]:
             effective_tier = provider_tier
+            tier_source = provider_name
 
     if _TIER_RANK[definition.declared_tier] < _TIER_RANK[effective_tier]:
+        forced_by = (
+            f" required by provider '{tier_source}' "
+            f"(procedure_access '{config.providers[tier_source].procedure_access}')"
+            if tier_source is not None
+            else ""
+        )
         raise ConfigError(
             f"Procedure '{definition.name}' declares tier '{definition.declared_tier}' "
-            f"below its effective provider tier '{effective_tier}'"
+            f"below its effective provider tier '{effective_tier}'{forced_by}; "
+            f"set declared_tier to one of: {_tiers_at_or_above(effective_tier)}"
         )
     return definition.declared_tier
 
@@ -1302,7 +1330,9 @@ def _provider_tier(access: str) -> ProcedureTier:
         return "graph_write"
     if access == "admin":
         return "admin"
-    raise ConfigError(f"Unsupported procedure_access '{access}'")
+    raise ConfigError(
+        f"Unsupported procedure_access '{access}'; valid values: disabled, {_format_valid_tiers()}"
+    )
 
 
 def _validate_list_page(*, limit: int, offset: int) -> None:

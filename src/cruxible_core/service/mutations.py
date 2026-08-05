@@ -84,6 +84,20 @@ from cruxible_core.service.types import (
 )
 from cruxible_core.temporal import format_datetime, utc_now
 
+BATCH_MISSING_ENDPOINT_HINT = "create the entity first or include it in the same batch"
+"""Recovery appended to a batch direct-write dangling-endpoint rejection.
+
+A batch carries entities AND relationships, so a missing endpoint has two
+recoveries the caller can act on without another failed round trip: write the
+entity in a prior call, or add it to this batch's ``entities``.
+"""
+
+ADD_RELATIONSHIP_MISSING_ENDPOINT_HINT = (
+    "create the entity first, or use cruxible_batch_direct_write "
+    "to write the entity and the relationship in one call"
+)
+"""Recovery for a relationship-only write, which cannot carry the entity itself."""
+
 _DIRECT_WRITE_CONFLICTS_KEY = "direct_write_conflicts"
 _DIRECT_WRITE_CONFLICT_SUMMARY_KEY = "direct_write_conflict_summary"
 _DIRECT_WRITE_CONFLICT_REVIEW_HINT = "live_state_changed_since_proposal"
@@ -876,6 +890,7 @@ def _prepare_batch_direct_write(
                 edge.to_type,
                 edge.to_id,
                 edge.properties,
+                missing_endpoint_hint=BATCH_MISSING_ENDPOINT_HINT,
             )
         except DataValidationError as exc:
             errors.append(f"Relationship {index}: {exc}")
@@ -1555,6 +1570,7 @@ def service_add_relationships(
                     edge.to_type,
                     edge.to_id,
                     edge.properties,
+                    missing_endpoint_hint=ADD_RELATIONSHIP_MISSING_ENDPOINT_HINT,
                 )
             except DataValidationError as exc:
                 errors.append(f"Edge {i}: {exc}")

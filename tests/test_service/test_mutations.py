@@ -2821,6 +2821,38 @@ class TestBatchDirectWrite:
         graph = initialized_instance.load_graph()
         assert graph.get_entity("Vehicle", "V-BATCH") is None
 
+    def test_dangling_endpoint_rejection_names_the_recovery(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        """A batch carries entities too, so the recovery is actionable in-place.
+
+        Reporting only that the endpoint is absent leaves the caller to guess
+        whether the entity must pre-exist; a batch accepts it alongside the
+        relationship, and the rejection says so.
+        """
+        payload = BatchDirectWriteInput(
+            entities=[],
+            relationships=[
+                BatchRelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-ABSENT",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-ABSENT",
+                )
+            ],
+        )
+
+        _assert_batch_validation_error_parity(
+            initialized_instance,
+            payload,
+            expected_error=(
+                "entity Part:BP-ABSENT not found; create the entity first "
+                "or include it in the same batch"
+            ),
+        )
+
 
 class TestDirectWriteGroupInteractions:
     def test_add_relationships_reports_pending_group_conflict_and_receipt_detail(

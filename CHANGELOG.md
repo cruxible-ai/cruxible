@@ -7,6 +7,22 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **Rejected writes now teach the caller how to fix them.** Four authoring
+  error classes became self-correcting, each measured as wasted retries in an
+  agent benchmark run:
+  - Datetime rejections (`observed_at` and every other typed temporal field)
+    echo the accepted format with a copyable example, on both the HTTP request
+    validation path and the runtime API argument checks.
+  - Contract rejections naming an unexpected or missing field also list the
+    contract's declared fields with type and required/optional (sorted,
+    truncated past 40 with a count), so procedure and workflow inputs can be
+    fixed in one edit.
+  - Dangling-endpoint rejections name the recovery available at the entry
+    point that raised them: a batch direct write can carry the entity, an
+    attestation cannot.
+  - Procedure tier refusals name the provider whose `procedure_access` forced
+    the effective tier, and list the `declared_tier` values that clear it.
+
 ## [0.3.1] - 2026-08-05
 
 - **Entity types can declare deterministic identity keys at write time.**

@@ -4,6 +4,26 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+ISO_8601_FORMAT_HINT = "expected ISO 8601 datetime or date, e.g. 2026-08-05T14:30:00Z or 2026-08-05"
+"""Self-correcting format guidance echoed by every datetime rejection.
+
+A rejection that only says the value was invalid teaches nothing: the caller
+resubmits another guess in the same wrong shape. Every datetime validation
+surface (HTTP request validation, runtime API argument checks) appends this
+hint so one failed call carries both the accepted format and a copyable
+example.
+"""
+
+_MAX_ECHOED_VALUE_CHARS = 60
+
+
+def describe_rejected_datetime(value: object) -> str:
+    """Render a bounded echo of the value a datetime check rejected."""
+    text = str(value)
+    if len(text) > _MAX_ECHOED_VALUE_CHARS:
+        text = f"{text[:_MAX_ECHOED_VALUE_CHARS]}..."
+    return repr(text)
+
 
 def utc_now() -> datetime:
     """Return a timezone-aware UTC datetime."""
@@ -69,6 +89,8 @@ def is_effective(
 
 
 __all__ = [
+    "ISO_8601_FORMAT_HINT",
+    "describe_rejected_datetime",
     "ensure_utc",
     "format_datetime",
     "is_effective",

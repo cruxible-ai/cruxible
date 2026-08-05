@@ -363,12 +363,20 @@ def test_provider_export_and_declared_tier_are_revalidated_at_proposal(
     low_tier = provider_definition("low_tier").model_copy(
         update={"declared_tier": "governed_write"}
     )
-    with pytest.raises(ConfigError, match="below its effective provider tier"):
+    with pytest.raises(ConfigError, match="below its effective provider tier") as tier_exc:
         service_propose_procedure(
             procedure_instance,
             low_tier,
             actor_context=actor("proposer"),
         )
+    # The floor is not visible in the definition the author wrote: it comes from
+    # a provider's procedure_access. Naming the provider that raised it, and the
+    # tiers that clear it, makes the refusal fixable in one edit instead of by
+    # bisecting the referenced provider list.
+    tier_message = str(tier_exc.value)
+    assert "required by provider 'exported_action'" in tier_message
+    assert "procedure_access 'graph_write'" in tier_message
+    assert "set declared_tier to one of: graph_write, admin" in tier_message
 
 
 def test_acceptance_recompiles_and_refuses_a_provider_deexported_after_proposal(
