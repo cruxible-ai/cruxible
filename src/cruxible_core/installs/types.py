@@ -14,6 +14,16 @@ phase behind instead of an unattributable half-applied config::
                    ▼
               rolling_back ──► rolled_back             (terminal: undone)
 
+    phase                ownership of its (kind, name) claims
+    ------------------   ------------------------------------
+    preparing            HELD
+    pending_acceptance   HELD
+    active               HELD
+    failed               HELD  — failing is not undoing; the objects it
+                                 already wrote are still its to take back
+    rolling_back         HELD  — cleanup in flight
+    rolled_back          RELEASED, in the same transaction as the phase change
+
 ``active`` and ``rolled_back`` are terminal in phase 1. Uninstall (which would
 move an ``active`` install onward) is phase 2 work and deliberately has no
 transition here yet — an install ledger that cannot say what it has NOT built
@@ -80,14 +90,30 @@ Enforcement reads THIS map rather than re-deriving the rules per call site, so
 TERMINAL_INSTALL_PHASES: frozenset[InstallPhase] = frozenset({"active", "rolled_back"})
 
 OWNERSHIP_HOLDING_PHASES: frozenset[InstallPhase] = frozenset(
-    {"preparing", "pending_acceptance", "active"}
+    {"preparing", "pending_acceptance", "active", "failed", "rolling_back"}
 )
 """Phases in which an install's ownership claims are still live.
 
-A ``failed``/``rolling_back``/``rolled_back`` install has released (or is
-releasing) its names, so it must not block a fresh install of the same
-artifact. ``preparing`` DOES hold its claims: two concurrent installs racing
-for the same contract name is exactly the collision the check exists to catch.
+``rolled_back`` is the ONLY phase that releases, and it releases in the same
+transaction that commits it. Everything before it holds, including the two
+phases that look like giving up:
+
+* ``preparing`` holds because two concurrent installs racing for the same
+  contract name is exactly the collision the check exists to catch.
+* ``failed`` holds because failing is not undoing. An install that fails out of
+  ``pending_acceptance`` may already have written config and procedure objects,
+  and it still has to traverse ``rolling_back`` to take them back. Releasing at
+  ``failed`` would let a fresh install claim those names, and the first
+  install's rollback would then remove or overwrite objects the second one now
+  owns.
+* ``rolling_back`` holds for the same reason, more obviously: the cleanup is in
+  flight.
+
+The cost is that a name is not reusable until the failed install is *actually*
+rolled back. That is the intended price: an install that mutated nothing still
+walks a no-op ``rolling_back``/``rolled_back`` before its names free, which
+makes "these names are free" mean "nobody is still holding cleanup for them"
+rather than "nobody intends to finish".
 """
 
 

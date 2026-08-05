@@ -127,11 +127,42 @@ def test_an_installs_own_internal_references_never_block_it(
     assert service_uninstall_preconditions(instance, record.install_id).blocked is False
 
 
-def test_a_failed_referencing_install_stops_blocking(instance: CruxibleInstance) -> None:
+@pytest.mark.parametrize("path", [("failed",), ("failed", "rolling_back")])
+def test_a_referencing_install_under_cleanup_still_blocks(
+    instance: CruxibleInstance,
+    path: tuple[str, ...],
+) -> None:
+    """A failed consumer still holds its claims, so its reference still counts.
+
+    Its rollback has to be able to find the object it references; letting the
+    provider be removed first is the same race the ownership hold prevents.
+    """
+    provider_id, consumer_id = _provider_and_consumer(instance)
+    _activate(instance, provider_id)
+    for phase in path:
+        service_advance_install_phase(
+            instance,
+            consumer_id,
+            to_phase=phase,  # type: ignore[arg-type]
+            actor_context=actor(),
+        )
+
+    report = service_uninstall_preconditions(instance, provider_id)
+    assert report.blocked is True
+    assert report.blockers[0].referencing_install_phase == path[-1]
+
+
+def test_a_rolled_back_referencing_install_stops_blocking(instance: CruxibleInstance) -> None:
     """A dependency held by an install that released its names is not a dependency."""
     provider_id, consumer_id = _provider_and_consumer(instance)
     _activate(instance, provider_id)
-    service_advance_install_phase(instance, consumer_id, to_phase="failed", actor_context=actor())
+    for phase in ("failed", "rolling_back", "rolled_back"):
+        service_advance_install_phase(
+            instance,
+            consumer_id,
+            to_phase=phase,  # type: ignore[arg-type]
+            actor_context=actor(),
+        )
 
     assert service_uninstall_preconditions(instance, provider_id).blocked is False
 

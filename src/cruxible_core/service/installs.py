@@ -430,8 +430,10 @@ def service_install_owning_object(
     """Return the install that owns (kind, name), or None if nothing does.
 
     None is the honest answer for BOTH "no install ever installed this" and
-    "the install that did has failed or rolled back". Neither is an install
-    that can be asked to give the name up.
+    "the install that did has finished rolling back". Neither is an install
+    that can be asked to give the name up. A merely ``failed`` install IS
+    returned: it still owes the rollback that removes the object, so it is
+    exactly who owns it.
     """
     store = instance.get_install_ledger_store()
     collision = store.find_live_owner(object_kind=object_kind, object_name=object_name)

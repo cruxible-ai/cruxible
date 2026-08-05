@@ -415,6 +415,15 @@ preparing ──► pending_acceptance ──► active        (terminal: instal
           rolling_back ──► rolled_back             (terminal: undone)
 ```
 
+| Phase | Holds its ownership claims? |
+|---|---|
+| `preparing` | yes |
+| `pending_acceptance` | yes |
+| `active` | yes |
+| `failed` | yes — failing is not undoing |
+| `rolling_back` | yes — cleanup in flight |
+| `rolled_back` | **no**, released in the same transaction |
+
 Every advance is receipted and appended to the install's phase history, in the
 same transaction as the phase change. An illegal advance is refused with a
 typed error naming the phase the install is **actually** in and the phases that
@@ -435,10 +444,21 @@ owns.
 
 One live owner per `(kind, name)` is a database guarantee, not a service
 convention: two installs racing for the same contract name cannot both leave a
-claim behind. An install that reaches `failed`, `rolling_back`, or
-`rolled_back` **releases** its names in the same transaction as the phase
-change, so re-installing after a failure is never blocked by the attempt that
-failed.
+claim behind.
+
+An install **releases** its names only when it reaches `rolled_back`, in the
+same transaction as that phase change. A `failed` install keeps them, because
+failing is not undoing: an install that failed out of `pending_acceptance` may
+already have written config and procedure objects, and it still has to traverse
+`rolling_back` to take them back. If the names freed at `failed`, a fresh
+install could claim them and the first install's rollback would then remove or
+overwrite objects the second one now owns.
+
+The cost is deliberate: an install that mutated nothing still walks a no-op
+`rolling_back` → `rolled_back` before its names are reusable. The ledger cannot
+tell the two failures apart, so it charges the harmless one a rollback rather
+than letting the harmful one race. "This name is free" therefore means "nobody
+still owes cleanup on it", not "nobody intends to finish".
 
 ### Customized objects
 

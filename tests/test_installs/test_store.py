@@ -67,15 +67,41 @@ def test_one_live_owner_per_object_is_a_database_guarantee(
         store.save_owned_object(_owned("inst-b"))
 
 
+@pytest.mark.parametrize("phase", ["failed", "rolling_back"])
+def test_a_claim_under_cleanup_still_blocks_at_the_database_level(
+    store: InstallLedgerStore,
+    phase: str,
+) -> None:
+    """The index, not the service, is what stops a claim while cleanup is owed."""
+    _install(store, "inst-a")
+    _install(store, "inst-b")
+    store.save_owned_object(_owned("inst-a"))
+    store.set_install_phase(
+        "inst-a",
+        phase=phase,  # type: ignore[arg-type]
+        updated_at=NOW,
+        failure_reason="x",
+        receipt_id=None,
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.save_owned_object(_owned("inst-b"))
+
+
 def test_a_released_claim_frees_the_name_at_the_database_level(
     store: InstallLedgerStore,
 ) -> None:
     _install(store, "inst-a")
     _install(store, "inst-b")
     store.save_owned_object(_owned("inst-a"))
-    store.set_install_phase(
-        "inst-a", phase="failed", updated_at=NOW, failure_reason="x", receipt_id=None
-    )
+    for phase in ("failed", "rolling_back", "rolled_back"):
+        store.set_install_phase(
+            "inst-a",
+            phase=phase,  # type: ignore[arg-type]
+            updated_at=NOW,
+            failure_reason="x",
+            receipt_id=None,
+        )
 
     store.save_owned_object(_owned("inst-b"))
     owner = store.find_live_owner(object_kind="named_query", object_name="pub.a.q")

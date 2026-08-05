@@ -104,10 +104,11 @@ CREATE TABLE IF NOT EXISTS install_owned_objects (
 CREATE INDEX IF NOT EXISTS idx_install_owned_objects_name
     ON install_owned_objects(object_kind, object_name);
 
--- One LIVE owner per (kind, name). Installs that failed or rolled back have
--- released their names (ownership_held cleared in the same transaction as the
--- phase change), so re-installing after a failure is not blocked by the corpse
--- of the attempt that failed.
+-- One LIVE owner per (kind, name). Only a ROLLED_BACK install has released its
+-- names (ownership_held cleared in the same transaction as the phase change).
+-- A failed or rolling-back install still holds them: it may already have
+-- written those objects and has to traverse rollback to take them back, so a
+-- fresh install must not be able to claim them out from under the cleanup.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_install_owned_objects_live_owner
     ON install_owned_objects(object_kind, object_name)
     WHERE ownership_held = 1;
@@ -174,9 +175,12 @@ class InstallLedgerStore(InstallLedgerStoreProtocol):
     ) -> None:
         """Move one install to *phase*, releasing its names when it stops holding them.
 
-        Legality is the service's job, not this one's. The ownership release is
-        NOT: it must be atomic with the phase change or the unique index would
-        keep refusing a re-install of an artifact whose install already failed.
+        In practice that means: released on the commit that reaches
+        ``rolled_back``, held in every other phase. Legality is the service's
+        job, not this one's. The ownership release is NOT: it must be atomic
+        with the phase change, or the unique index would keep refusing a
+        re-install of an artifact whose previous attempt has finished rolling
+        back.
         """
         self._conn.execute(
             "UPDATE installs SET phase = ?, updated_at = ?, failure_reason = ?, "

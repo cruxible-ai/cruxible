@@ -227,24 +227,53 @@ def test_the_same_name_under_a_different_kind_is_not_a_collision(
     assert len(service_objects_owned_by_install(instance, second.install_id)) == 1
 
 
-@pytest.mark.parametrize(
-    "path",
-    [("failed",), ("failed", "rolling_back"), ("failed", "rolling_back", "rolled_back")],
-)
-def test_a_failed_install_releases_its_names(
-    instance: CruxibleInstance,
-    path: tuple[str, ...],
-) -> None:
-    """Re-installing after a failure must not be blocked by the failed attempt."""
-    first = create_install(instance, artifact_id="a", install_id="inst-a")
-    _own(instance, first.install_id)
+def _walk(instance: CruxibleInstance, install_id: str, path: tuple[str, ...]) -> None:
     for step in path:
         service_advance_install_phase(
             instance,
-            first.install_id,
+            install_id,
             to_phase=step,
             actor_context=actor(),  # type: ignore[arg-type]
         )
+
+
+@pytest.mark.parametrize("path", [("failed",), ("failed", "rolling_back")])
+def test_a_failing_install_holds_its_names_until_it_is_rolled_back(
+    instance: CruxibleInstance,
+    path: tuple[str, ...],
+) -> None:
+    """Failing is not undoing.
+
+    An install that fails may already have written the objects it claimed, and
+    it still has to traverse rollback to take them back. If the name freed at
+    ``failed``, a second install could claim it and the first install's rollback
+    would then remove or overwrite an object the second one now owns.
+    """
+    first = create_install(instance, artifact_id="a", install_id="inst-a")
+    _own(instance, first.install_id)
+    _walk(instance, first.install_id, path)
+
+    collision = service_check_ownership_collision(
+        instance, object_kind="named_query", object_name="pub.kev.triage_queue"
+    )
+    assert collision is not None
+    assert collision.owning_install_id == "inst-a"
+    assert collision.owning_install_phase == path[-1]
+
+    second = create_install(instance, artifact_id="a", install_id="inst-b")
+    with pytest.raises(InstallOwnershipCollisionError) as excinfo:
+        _own(instance, second.install_id, installed_digest="sha256:other")
+
+    assert excinfo.value.owning_install_id == "inst-a"
+    assert excinfo.value.owning_install_phase == path[-1]
+    assert service_objects_owned_by_install(instance, second.install_id) == []
+
+
+def test_a_rolled_back_install_frees_its_names(instance: CruxibleInstance) -> None:
+    """Re-installing after a completed rollback must not be blocked."""
+    first = create_install(instance, artifact_id="a", install_id="inst-a")
+    _own(instance, first.install_id)
+    _walk(instance, first.install_id, ("failed", "rolling_back", "rolled_back"))
 
     assert (
         service_check_ownership_collision(
@@ -256,6 +285,28 @@ def test_a_failed_install_releases_its_names(
     second = create_install(instance, artifact_id="a", install_id="inst-b")
     owned = _own(instance, second.install_id)
     assert owned.install_id == "inst-b"
+
+
+def test_an_install_that_mutated_nothing_still_walks_rollback_before_its_names_free(
+    instance: CruxibleInstance,
+) -> None:
+    """The price of holding through ``failed``, pinned deliberately.
+
+    Nothing distinguishes "failed having written objects" from "failed having
+    written none" — the ledger cannot know — so the no-mutation case pays a
+    no-op rollback rather than the mutating case racing.
+    """
+    first = create_install(instance, artifact_id="a", install_id="inst-a")
+    _own(instance, first.install_id)
+    _walk(instance, first.install_id, ("failed",))
+    second = create_install(instance, artifact_id="a", install_id="inst-b")
+
+    with pytest.raises(InstallOwnershipCollisionError):
+        _own(instance, second.install_id)
+
+    _walk(instance, first.install_id, ("rolling_back", "rolled_back"))
+
+    assert _own(instance, second.install_id).install_id == "inst-b"
 
 
 def test_an_active_install_keeps_holding_its_names(instance: CruxibleInstance) -> None:
@@ -306,14 +357,31 @@ def test_install_owning_object_returns_the_owning_record(
     assert owner.artifact.artifact_id == "kev-triage"
 
 
-def test_install_owning_object_is_none_once_the_owner_failed(
+def test_install_owning_object_still_names_a_failed_owner(
+    instance: CruxibleInstance,
+) -> None:
+    """ "Who owns this name" must not go blank the moment an install fails.
+
+    The failed install is precisely who has to clean the object up.
+    """
+    record = create_install(instance, install_id="inst-a")
+    _own(instance, record.install_id)
+    _walk(instance, record.install_id, ("failed",))
+
+    owner = service_install_owning_object(
+        instance, object_kind="named_query", object_name="pub.kev.triage_queue"
+    )
+    assert owner is not None
+    assert owner.install_id == "inst-a"
+    assert owner.phase == "failed"
+
+
+def test_install_owning_object_is_none_once_the_owner_rolled_back(
     instance: CruxibleInstance,
 ) -> None:
     record = create_install(instance)
     _own(instance, record.install_id)
-    service_advance_install_phase(
-        instance, record.install_id, to_phase="failed", actor_context=actor()
-    )
+    _walk(instance, record.install_id, ("failed", "rolling_back", "rolled_back"))
 
     assert (
         service_install_owning_object(

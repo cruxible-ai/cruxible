@@ -15,8 +15,12 @@ the project's own state instance.
   `rolling_back` → `rolled_back`). Every write is receipted, phase history is
   append-only, illegal transitions are refused with a typed error naming the
   phase the install is actually in, and one live owner per object name is a
-  database guarantee — a failed or rolled-back install releases its names, so
-  re-installing after a failure is never blocked by the attempt that failed.
+  database guarantee. An install holds its names until it reaches
+  `rolled_back`, and releases them in that same transaction: a `failed` install
+  may already have written objects and still has to roll them back, so freeing
+  its names earlier would let a fresh install claim objects the first
+  install's rollback is about to remove. An install that mutated nothing pays a
+  no-op rollback before its names are reusable.
   Composition ownership previously tracked only the upstream/local split, which
   could not support selective uninstall, dependency-blocked removal, or
   customer-edit-preserving updates. Read-only HTTP routes list installs and
