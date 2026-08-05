@@ -248,6 +248,14 @@ class ResolveProcedureRequest(BaseModel):
     actor_context: contracts.GovernedActorContext | None = None
 
 
+class WithdrawProcedureRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    # Optional by design: withdrawal is the author's own retraction, not a
+    # reviewer's verdict, so it owes no reason. Reject still requires one.
+    reason: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
+
+
 class RetireProcedureRequest(BaseModel):
     expected_version: int = Field(ge=1)
     reason: str = Field(min_length=1)

@@ -96,6 +96,7 @@ from cruxible_core.service.procedures import (
     service_reject_procedure,
     service_retire_procedure,
     service_run_procedure,
+    service_withdraw_procedure,
     validate_procedure_definition_against_config,
 )
 from cruxible_core.service.queries import (
@@ -428,6 +429,7 @@ __all__ = [
     "service_reject_procedure",
     "service_retire_procedure",
     "service_run_procedure",
+    "service_withdraw_procedure",
     "validate_procedure_definition_against_config",
     # Attestations
     "attach_corroboration_summaries",

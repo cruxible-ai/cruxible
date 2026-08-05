@@ -399,23 +399,28 @@ def test_acceptance_recompiles_and_refuses_a_provider_deexported_after_proposal(
     )
 
 
-def test_proposer_may_reject_own_proposal_as_withdrawal(
+def test_proposer_rejecting_own_proposal_still_records_a_reject_not_a_withdrawal(
     procedure_instance: CruxibleInstance,
 ) -> None:
+    """``reject`` stays a reviewer verdict even when the proposer issues it.
+
+    ``withdraw`` is the author's own retraction and lands in ``withdrawn``;
+    nothing collapses the two, so a record still says which one happened.
+    """
     proposed = service_propose_procedure(
         procedure_instance,
-        provider_definition("withdraw_me"),
+        provider_definition("reject_my_own"),
         actor_context=actor("proposer"),
     )
-    withdrawn = service_reject_procedure(
+    rejected = service_reject_procedure(
         procedure_instance,
         proposed.procedure.procedure_id,
         expected_version=1,
-        reason="withdrawing my own proposal",
+        reason="rejecting my own proposal",
         actor_context=actor("proposer"),
     )
-    assert withdrawn.procedure.status == "rejected"
-    assert withdrawn.procedure.reason == "withdrawing my own proposal"
+    assert rejected.procedure.status == "rejected"
+    assert rejected.procedure.reason == "rejecting my own proposal"
 
 
 def test_acceptance_refuses_second_live_procedure_with_same_name(

@@ -14,6 +14,7 @@ PROCEDURE_TOOLS = {
     "cruxible_list_procedures",
     "cruxible_get_procedure",
     "cruxible_resolve_procedure",
+    "cruxible_withdraw_procedure",
     "cruxible_retire_procedure",
     "cruxible_run_procedure",
     "cruxible_list_procedure_runs",
@@ -29,9 +30,18 @@ def test_procedure_tools_are_registered_once_with_expected_schemas() -> None:
     ]
     status = tools["cruxible_list_procedures"].inputSchema["properties"]["status"]
     status_values = next(item["enum"] for item in status["anyOf"] if "enum" in item)
-    assert status_values == ["pending", "live", "rejected", "retired"]
+    assert status_values == ["pending", "live", "rejected", "retired", "withdrawn"]
     action = tools["cruxible_resolve_procedure"].inputSchema["properties"]["action"]
     assert action["enum"] == ["accept", "reject"]
+    # Withdraw is its own verb, not a resolve action: it is the author's own
+    # retraction rather than a reviewer verdict, so its reason stays optional.
+    withdraw_schema = tools["cruxible_withdraw_procedure"].inputSchema
+    assert set(withdraw_schema["required"]) == {
+        "instance_id",
+        "procedure_id",
+        "expected_version",
+    }
+    assert "reason" in withdraw_schema["properties"]
     assert set(tools["cruxible_list_procedures"].outputSchema["properties"]) == {
         "items",
         "total",
@@ -57,6 +67,10 @@ def test_procedure_permission_map_matches_stage_c_tiers() -> None:
     assert TOOL_PERMISSIONS["cruxible_run_procedure"] == PermissionMode.GOVERNED_WRITE
     assert TOOL_PERMISSIONS["cruxible_resolve_procedure"] == PermissionMode.GRAPH_WRITE
     assert TOOL_PERMISSIONS["cruxible_retire_procedure"] == PermissionMode.GRAPH_WRITE
+    # Withdrawing YOUR OWN proposal is the retraction half of proposing it, so
+    # it sits at the proposing tier; the service refuses a non-author below
+    # GRAPH_WRITE inside the receipted transition.
+    assert TOOL_PERMISSIONS["cruxible_withdraw_procedure"] == PermissionMode.GOVERNED_WRITE
     assert TOOL_PERMISSIONS["cruxible_list_procedures"] == PermissionMode.READ_ONLY
     assert TOOL_PERMISSIONS["cruxible_get_procedure"] == PermissionMode.READ_ONLY
     assert TOOL_PERMISSIONS["cruxible_list_procedure_runs"] == PermissionMode.READ_ONLY
@@ -90,6 +104,10 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
             calls.append(("resolve", (instance_id, procedure_id, kwargs)))
             return {"action": kwargs["action"], "procedure": {}, "receipt_id": "RCP-2"}
 
+        def withdraw_procedure(self, instance_id, procedure_id, **kwargs):
+            calls.append(("withdraw", (instance_id, procedure_id, kwargs)))
+            return {"action": "withdraw", "procedure": {}, "receipt_id": "RCP-4"}
+
         def retire_procedure(self, instance_id, procedure_id, **kwargs):
             calls.append(("retire", (instance_id, procedure_id, kwargs)))
             return {"action": "retire", "procedure": {}, "receipt_id": "RCP-3"}
@@ -113,6 +131,7 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
         action="accept",
         expected_version=1,
     )
+    handlers.handle_withdraw_procedure("inst_1", "PRC-1", expected_version=1)
     handlers.handle_retire_procedure(
         "inst_1",
         "PRC-1",
@@ -127,7 +146,10 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
         "list",
         "get",
         "resolve",
+        "withdraw",
         "retire",
         "run",
         "runs",
     ]
+    withdraw_call = next(payload for name, payload in calls if name == "withdraw")
+    assert withdraw_call[2] == {"expected_version": 1, "reason": None}

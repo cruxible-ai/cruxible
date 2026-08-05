@@ -1723,6 +1723,7 @@ Workflows are designed; procedures are learned.
 - `cruxible procedure list` - List definitions and lifecycle state.
 - `cruxible procedure show` - Show one definition and lifecycle record.
 - `cruxible procedure resolve` - Accept or reject a pending definition.
+- `cruxible procedure withdraw` - Retract your own pending proposal.
 - `cruxible procedure retire` - Retire a live definition.
 - `cruxible procedure run` - Execute a live definition.
 - `cruxible procedure runs` - List invocation records.
@@ -1755,7 +1756,7 @@ Workflows are designed; procedures are learned.
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
-| `--status` | no |  | choice | Filter by `pending`, `live`, `rejected`, or `retired`. |
+| `--status` | no |  | choice | Filter by `pending`, `live`, `rejected`, `retired`, or `withdrawn`. |
 | `--limit` | no | `100` | integer | Maximum definitions to return. |
 | `--offset` | no | `0` | integer | Definitions to skip. |
 | `--json` | no | `False` | boolean | Emit the standard list envelope. |
@@ -1793,6 +1794,28 @@ The JSON result contains `items`, `total`, `limit`, `offset`, `truncated`, and
 
 Acceptance requires an independently identified reviewer. This command requires
 daemon transport and `graph_write`.
+
+## cruxible procedure withdraw
+
+**Usage:** `cruxible procedure withdraw [OPTIONS] PROCEDURE_ID`
+
+**Purpose:** Withdraw your own pending proposal, freeing its name to re-propose.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROCEDURE_ID` | yes |  | argument | Procedure ID. |
+| `--expected-version` | yes |  | integer | Optimistic lifecycle version. |
+| `--reason` | no |  | text | Optional note on why it was withdrawn. |
+
+The author's counterpart to `resolve --action reject`: withdrawal is a
+retraction, not a reviewer verdict, so it needs no reason and lands the
+definition in `withdrawn` rather than `rejected`. The proposing actor may
+withdraw at their own `governed_write` tier; withdrawing someone else's pending
+proposal requires `graph_write`. A withdrawn definition is not live, so its name
+is immediately available for a fresh proposal. This command requires daemon
+transport.
 
 ## cruxible procedure retire
 

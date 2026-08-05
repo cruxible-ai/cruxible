@@ -15,6 +15,7 @@ from cruxible_core.errors import (
     PermissionDeniedError,
     ProcedureBudgetExceededError,
     ProcedureNotFoundError,
+    ProcedureWithdrawalRefusedError,
     QueryExecutionError,
 )
 from cruxible_core.governance.actors import GovernedActorContext
@@ -70,6 +71,21 @@ _PERMISSION_BY_TIER = {
 }
 _READ_REVISION_STATE_KEY = "read_revision"
 _MAX_REGISTERED_PROVIDERS_IN_ERROR = 40
+
+WITHDRAW_NON_AUTHOR_PERMISSION = PermissionMode.GRAPH_WRITE
+"""Tier required to withdraw a proposal the actor did not author.
+
+Withdrawing someone else's pending proposal is a review act -- it decides that
+proposal's fate without its author -- so it carries the tier ``accept`` and
+``reject`` carry. The author's own retraction does not: it stays at the
+proposing tier, which is the whole point of the verb.
+"""
+
+_PENDING_TERMINAL_STATUS: dict[str, ProcedureStatus] = {
+    "accept": "live",
+    "reject": "rejected",
+    "withdraw": "withdrawn",
+}
 
 
 def _format_registered_providers(config: CoreConfig) -> str:
@@ -171,10 +187,19 @@ def service_propose_procedure(
         if supersedes_procedure_id is not None:
             superseded = _get_procedure(ctx.uow.procedures, supersedes_procedure_id)
             if superseded.status != "live":
+                # An author who changed their mind about their own PENDING
+                # proposal used to dead-end here and route around it by
+                # proposing a renamed variant, polluting the namespace. Name the
+                # verb that actually resolves it.
+                remedy = (
+                    "; the author may withdraw the pending proposal and re-propose"
+                    if superseded.status == "pending"
+                    else ""
+                )
                 _refuse(
                     ctx.builder,
                     f"superseded procedure '{supersedes_procedure_id}' must be live; "
-                    f"found '{superseded.status}'",
+                    f"found '{superseded.status}'{remedy}",
                 )
             if superseded.definition.name != definition.name:
                 _refuse(
@@ -246,6 +271,40 @@ def service_reject_procedure(
         instance,
         procedure_id,
         action="reject",
+        expected_version=expected_version,
+        actor_context=actor_context,
+        reason=reason,
+    )
+
+
+def service_withdraw_procedure(
+    instance: InstanceProtocol,
+    procedure_id: str,
+    *,
+    expected_version: int | None,
+    reason: str | None = None,
+    actor_context: GovernedActorContext | None,
+) -> ProcedureTransitionResult:
+    """Retract one pending proposal as its author (or as a reviewer).
+
+    The author's counterpart to ``reject``. ``reject`` is a reviewer's verdict on
+    someone else's proposal and requires a reason; ``withdraw`` is the proposing
+    actor taking their own proposal back, so the reason is optional and the
+    terminal status is ``withdrawn`` rather than ``rejected`` -- the record says
+    which of the two happened.
+
+    A withdrawn proposal is not live, so the one-live-definition-per-name law is
+    untouched and the name is immediately free for a fresh proposal. That is the
+    point: before this verb existed, an author who changed their mind mid-review
+    could neither supersede their own pending proposal (supersede requires a LIVE
+    target) nor reject it without claiming a reviewer's verdict, so agents
+    invented ``_v2`` name variants instead and then broke their own name-based
+    lookups.
+    """
+    return _transition_pending_procedure(
+        instance,
+        procedure_id,
+        action="withdraw",
         expected_version=expected_version,
         actor_context=actor_context,
         reason=reason,
@@ -1058,7 +1117,7 @@ def _transition_pending_procedure(
     instance: InstanceProtocol,
     procedure_id: str,
     *,
-    action: Literal["accept", "reject"],
+    action: Literal["accept", "reject", "withdraw"],
     expected_version: int | None,
     actor_context: GovernedActorContext | None,
     reason: str | None,
@@ -1076,7 +1135,15 @@ def _transition_pending_procedure(
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None
-        reviewer = _require_actor(actor_context, role="reviewer", builder=ctx.builder)
+        if action == "withdraw":
+            resolving_actor = _require_actor(
+                actor_context,
+                role="withdrawing author",
+                builder=ctx.builder,
+                rationale="cannot prove the withdrawal is the proposal's own author",
+            )
+        else:
+            resolving_actor = _require_actor(actor_context, role="reviewer", builder=ctx.builder)
         procedure = _get_procedure(ctx.uow.procedures, procedure_id, builder=ctx.builder)
         _validate_status_and_version(
             procedure,
@@ -1085,10 +1152,16 @@ def _transition_pending_procedure(
             builder=ctx.builder,
         )
         if action == "accept":
-            _validate_reviewer_independence(procedure, reviewer, builder=ctx.builder)
+            _validate_reviewer_independence(procedure, resolving_actor, builder=ctx.builder)
+        withdrawn_by: Literal["author", "reviewer"] | None = None
+        if action == "withdraw":
+            withdrawn_by = _authorize_withdrawal(procedure, resolving_actor, builder=ctx.builder)
         normalized_reason = None
         if action == "reject":
             normalized_reason = _require_reason(reason, action="reject", builder=ctx.builder)
+        elif action == "withdraw":
+            # Optional: an author retracting their own proposal owes no verdict.
+            normalized_reason = (reason or "").strip() or None
 
         current_digest = compute_procedure_definition_digest(procedure.definition)
         if current_digest != procedure.definition_digest:
@@ -1131,40 +1204,45 @@ def _transition_pending_procedure(
         updated = ctx.uow.procedures.transition_procedure(
             procedure_id,
             from_status="pending",
-            to_status="live" if action == "accept" else "rejected",
+            to_status=_PENDING_TERMINAL_STATUS[action],
             expected_version=procedure.version,
-            resolved_actor_context=reviewer,
+            resolved_actor_context=resolving_actor,
             resolved_at=format_datetime(now),
             reason=normalized_reason,
             acceptance_config_digest=config_digest,
             acceptance_lock_digest=lock_digest,
         )
         if not updated:
-            _refuse(ctx.builder, "procedure changed during review")
+            _refuse(
+                ctx.builder,
+                "procedure changed during withdrawal"
+                if action == "withdraw"
+                else "procedure changed during review",
+            )
 
         if action == "accept" and procedure.supersedes_procedure_id is not None:
             _retire_superseded_procedure(
                 ctx.uow.procedures,
                 procedure.supersedes_procedure_id,
                 replacement_id=procedure_id,
-                actor_context=reviewer,
+                actor_context=resolving_actor,
                 builder=ctx.builder,
             )
 
         transitioned = _get_procedure(ctx.uow.procedures, procedure_id)
-        ctx.builder.record_validation(
-            passed=True,
-            detail={
-                "action": action,
-                "procedure_id": procedure_id,
-                "from_version": procedure.version,
-                "to_version": transitioned.version,
-                "definition_digest": procedure.definition_digest,
-                "acceptance_config_digest": config_digest,
-                "acceptance_lock_digest": lock_digest,
-                "reason": normalized_reason,
-            },
-        )
+        detail: dict[str, Any] = {
+            "action": action,
+            "procedure_id": procedure_id,
+            "from_version": procedure.version,
+            "to_version": transitioned.version,
+            "definition_digest": procedure.definition_digest,
+            "acceptance_config_digest": config_digest,
+            "acceptance_lock_digest": lock_digest,
+            "reason": normalized_reason,
+        }
+        if withdrawn_by is not None:
+            detail["withdrawn_by"] = withdrawn_by
+        ctx.builder.record_validation(passed=True, detail=detail)
         result = ProcedureTransitionResult(action=action, procedure=transitioned)
         ctx.set_result(result)
     return result
@@ -1224,14 +1302,59 @@ def _require_actor(
     *,
     role: str,
     builder: ReceiptBuilder,
+    rationale: str = "cannot prove reviewer independence",
 ) -> GovernedActorContext:
     if actor_context is None:
         _refuse(
             builder,
-            f"procedure {role} actor context is required; missing/null attribution "
-            "cannot prove reviewer independence",
+            f"procedure {role} actor context is required; missing/null attribution {rationale}",
         )
     return actor_context
+
+
+def _authorize_withdrawal(
+    procedure: ProcedureRecord,
+    actor: GovernedActorContext,
+    *,
+    builder: ReceiptBuilder,
+) -> Literal["author", "reviewer"]:
+    """Admit the proposal's own author, or anyone holding the reviewer tier.
+
+    Identity comes from the proposal's recorded ``proposed_actor_context`` -- the
+    attribution written when the proposal was created -- compared on the same
+    ``(org_id, actor_id)`` pair reviewer independence uses. A proposal with no
+    recorded author cannot be matched by anyone, so only the reviewer tier can
+    retract it.
+    """
+    proposer = procedure.proposed_actor_context
+    if proposer is not None and (proposer.org_id, proposer.actor_id) == (
+        actor.org_id,
+        actor.actor_id,
+    ):
+        return "author"
+
+    current_mode = get_current_mode()
+    if current_mode >= WITHDRAW_NON_AUTHOR_PERMISSION:
+        return "reviewer"
+
+    author_label = (
+        f"actor '{proposer.actor_id}' in org '{proposer.org_id}'"
+        if proposer is not None
+        else "an unattributed author"
+    )
+    reason = (
+        f"procedure '{procedure.procedure_id}' may be withdrawn only by its proposing author "
+        f"({author_label}) at their own tier, or by a reviewer holding "
+        f"{WITHDRAW_NON_AUTHOR_PERMISSION.name}; actor '{actor.actor_id}' in org "
+        f"'{actor.org_id}' is neither (current mode {current_mode.name})"
+    )
+    builder.record_validation(passed=False, detail={"action": "withdraw", "reason": reason})
+    raise ProcedureWithdrawalRefusedError(
+        procedure.procedure_id,
+        current_mode=current_mode.name,
+        required_mode=WITHDRAW_NON_AUTHOR_PERMISSION.name,
+        message=reason,
+    )
 
 
 def _validate_reviewer_independence(
@@ -1321,5 +1444,6 @@ __all__ = [
     "service_propose_procedure",
     "service_reject_procedure",
     "service_retire_procedure",
+    "service_withdraw_procedure",
     "validate_procedure_definition_against_config",
 ]

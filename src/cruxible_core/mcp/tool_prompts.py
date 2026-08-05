@@ -277,6 +277,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_resolve_procedure": (
         "Use when an independent reviewer needs to accept or reject a pending procedure."
     ),
+    "cruxible_withdraw_procedure": (
+        "Use when you changed your mind about a procedure YOU proposed and it is "
+        "still pending: withdraw it instead of proposing a renamed variant. The "
+        "name is immediately free to re-propose."
+    ),
     "cruxible_retire_procedure": (
         "Use when a reviewer needs to retire a live immutable procedure."
     ),

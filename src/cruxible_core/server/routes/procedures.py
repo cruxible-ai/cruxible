@@ -14,6 +14,7 @@ from cruxible_core.server.request_models import (
     ResolveProcedureRequest,
     RetireProcedureRequest,
     RunProcedureRequest,
+    WithdrawProcedureRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
 
@@ -76,6 +77,24 @@ async def resolve_procedure(
         resolve_server_instance_id(instance_id),
         procedure_id,
         action=req.action,
+        expected_version=req.expected_version,
+        reason=req.reason,
+        actor_context=req.actor_context,
+    )
+
+
+@router.post(
+    "/{instance_id}/procedures/{procedure_id}/withdraw",
+    response_model=dict[str, Any],
+)
+async def withdraw_procedure(
+    instance_id: str,
+    procedure_id: str,
+    req: WithdrawProcedureRequest,
+) -> dict[str, Any]:
+    return api.withdraw_procedure(
+        resolve_server_instance_id(instance_id),
+        procedure_id,
         expected_version=req.expected_version,
         reason=req.reason,
         actor_context=req.actor_context,

@@ -333,6 +333,32 @@ class TerminalLifecycleWriteRefusedError(CoreError):
         )
 
 
+class ProcedureWithdrawalRefusedError(CoreError):
+    """Withdraw refused: the actor is neither the proposal's author nor a reviewer."""
+
+    error_code = "procedure_withdrawal_refused"
+
+    def __init__(
+        self,
+        procedure_id: str,
+        *,
+        current_mode: str,
+        required_mode: str,
+        message: str | None = None,
+    ):
+        self.procedure_id = procedure_id
+        self.current_mode = current_mode
+        self.required_mode = required_mode
+        super().__init__(
+            message
+            or (
+                f"procedure '{procedure_id}' may be withdrawn only by its proposing author "
+                f"at their own tier, or by a reviewer holding {required_mode}; "
+                f"the current actor is neither (current mode {current_mode})"
+            )
+        )
+
+
 class PendingEdgeWriteRefusedError(CoreError):
     """A non-pending write was refused because the target edge is still PENDING."""
 
@@ -453,6 +479,13 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = GroupNotFoundError(context.get("group_id", "unknown"))
     elif body.error_type == "ProcedureNotFoundError":
         exc = ProcedureNotFoundError(context.get("procedure_id", "unknown"))
+    elif body.error_type == "ProcedureWithdrawalRefusedError":
+        exc = ProcedureWithdrawalRefusedError(
+            context.get("procedure_id", "unknown"),
+            current_mode=context.get("current_mode", "unknown"),
+            required_mode=context.get("required_mode", "unknown"),
+            message=body.message,
+        )
     elif body.error_type == "SourceArtifactNotFoundError":
         exc = SourceArtifactNotFoundError(context.get("source_artifact_id", "unknown"))
     elif body.error_type == "CitationHandleResolutionError":

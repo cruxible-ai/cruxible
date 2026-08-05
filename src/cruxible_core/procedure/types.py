@@ -21,7 +21,10 @@ from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.temporal import utc_now
 
-ProcedureStatus = Literal["pending", "live", "rejected", "retired"]
+ProcedureStatus = Literal["pending", "live", "rejected", "retired", "withdrawn"]
+"""Lifecycle states. ``withdrawn`` is the author's own retraction of a pending
+proposal, kept distinct from the reviewer verdict ``rejected`` so the record
+says which one happened. Neither is live, so neither holds a name."""
 ProcedureTier = Literal["governed_write", "graph_write", "admin"]
 ProcedureRunStatus = Literal["started", "finalized"]
 ProcedureRunVerdict = Literal["succeeded", "failed", "refused", "budget_exceeded"]
@@ -345,7 +348,7 @@ class ProcedureRun(BaseModel):
 class ProcedureTransitionResult(BaseModel):
     """Service result for one receipted procedure lifecycle transition."""
 
-    action: Literal["propose", "accept", "reject", "retire"]
+    action: Literal["propose", "accept", "reject", "retire", "withdraw"]
     procedure: ProcedureRecord
     receipt_id: str | None = None
 

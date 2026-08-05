@@ -305,6 +305,45 @@ class ProcedureRepeatExhaustedError(QueryExecutionError):
         )
 
 
+class ProcedureWithdrawalRefusedError(CoreError):
+    """Withdraw refused: the actor is neither the proposal's author nor a reviewer.
+
+    Withdrawal is the AUTHOR's retraction of their own pending proposal, so it
+    sits at the proposing tier rather than the review tier: an agent that
+    changed its mind about a definition it just proposed does not need a
+    reviewer to unblock it. Anyone else reaching for the same verb is
+    adjudicating someone else's proposal, which is the review act, so it
+    carries the reviewer tier that ``accept``/``reject`` require.
+
+    Distinct from :class:`PermissionDeniedError` on purpose: the refusal is not
+    "this verb needs a higher tier" (the author is admitted at their own), it is
+    "this verb needs the author OR the reviewer tier, and you are neither". The
+    message names both halves of that rule and the identity it compared.
+    """
+
+    error_code = "procedure_withdrawal_refused"
+
+    def __init__(
+        self,
+        procedure_id: str,
+        *,
+        current_mode: str,
+        required_mode: str,
+        message: str | None = None,
+    ):
+        self.procedure_id = procedure_id
+        self.current_mode = current_mode
+        self.required_mode = required_mode
+        super().__init__(
+            message
+            or (
+                f"procedure '{procedure_id}' may be withdrawn only by its proposing author "
+                f"at their own tier, or by a reviewer holding {required_mode}; "
+                f"the current actor is neither (current mode {current_mode})"
+            )
+        )
+
+
 class OwnershipError(CoreError):
     """Write rejected because the target type is upstream-owned in a overlay instance."""
 

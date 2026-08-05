@@ -176,10 +176,25 @@ external services, model calls, and domain policy.
 Workflows are designed; procedures are learned.
 
 Procedures are state-held, agent-proposable compositions of operator-exported
-actions. Their lifecycle is `pending → live`, `pending → rejected`, or
-`live → retired`; promotion requires an independently identified reviewer, and
-a live definition is immutable. Propose a replacement with a `supersedes` link
-instead of editing one in place.
+actions. Their lifecycle is `pending → live`, `pending → rejected`,
+`pending → withdrawn`, or `live → retired`; promotion requires an independently
+identified reviewer, and a live definition is immutable. Propose a replacement
+with a `supersedes` link instead of editing one in place.
+
+`rejected` and `withdrawn` are deliberately distinct. `rejected` is a reviewer's
+verdict on someone else's proposal and requires a reason. `withdrawn` is the
+proposing actor retracting its own pending proposal — no reviewer, no required
+reason, at the proposing tier:
+
+```bash
+cruxible procedure withdraw <procedure-id> --expected-version 1
+```
+
+Supersede only targets a *live* definition, so an author who changed their mind
+before review has nothing to supersede; withdrawing is the move, not proposing a
+renamed variant. A withdrawn definition is not live, so the one-live-per-name
+law is untouched and the name is immediately free to re-propose. Withdrawing a
+proposal you did not author is a review act and requires the reviewer tier.
 
 Every definition has an explicit precondition. Use `{}` for always eligible, or
 use `{entity_type, condition}` where `condition` is a property-equality mapping

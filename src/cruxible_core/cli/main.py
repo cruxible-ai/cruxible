@@ -959,6 +959,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "procedure_resolve",
                 "Accept or reject one pending procedure.",
             ),
+            "withdraw": _command(
+                "procedures",
+                "procedure_withdraw",
+                "Withdraw your own pending proposal, freeing its name to re-propose.",
+            ),
             "retire": _command("procedures", "procedure_retire", "Retire one live procedure."),
             "run": _command(
                 "procedures",
