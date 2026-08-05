@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from mcp.server.fastmcp import FastMCP
 
+from cruxible_core.config.loader import load_config_from_string
 from cruxible_core.config.schema import ContractSchema, CoreConfig, PropertySchema
 from cruxible_core.mcp.kit_surface import (
     KIT_SURFACE_CONFIG_ENV,
@@ -24,12 +26,14 @@ from cruxible_core.mcp.kit_surface import (
     resolve_kit_surface,
     summarize_kit_surface,
 )
+from cruxible_core.mcp.server import create_server
 from cruxible_core.mcp.tool_prompts import (
     KIT_FACTS_BY_TOOL,
     TOOL_DESCRIPTIONS,
     tool_description,
 )
 from cruxible_core.mcp.tools import register_tools
+from cruxible_core.server.config import ServerSettings
 
 BANKING_CONFIG = """
 name: banking_supervision
@@ -72,10 +76,39 @@ contracts:
 """
 
 
+LOCAL_MODE = ServerSettings()
+REMOTE_MODE = ServerSettings(server_url="https://daemon.example/api")
+
+
 def _banking_config(tmp_path: Path) -> Path:
     path = tmp_path / "banking.yaml"
     path.write_text(BANKING_CONFIG)
     return path
+
+
+def _register_one_local_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stand a single local instance registry record in front of the fallback.
+
+    The fallback reaches for these two module-level factories at call time, so
+    patching them is the seam that says "this host has exactly one instance"
+    without standing up its storage.
+    """
+    from cruxible_core.runtime import instance_manager
+    from cruxible_core.server import registry
+
+    config = load_config_from_string(BANKING_CONFIG)
+    record = SimpleNamespace(instance_id="inst_local_only")
+    instance = SimpleNamespace(load_config=lambda: config)
+    monkeypatch.setattr(
+        registry,
+        "get_registry",
+        lambda: SimpleNamespace(list_instances=lambda: [record]),
+    )
+    monkeypatch.setattr(
+        instance_manager,
+        "get_manager",
+        lambda: SimpleNamespace(get=lambda instance_id: instance),
+    )
 
 
 def _surface(**overrides: object) -> KitSurface:
@@ -140,7 +173,7 @@ class TestSurfaceResolution:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(KIT_SURFACE_CONFIG_ENV, str(_banking_config(tmp_path)))
-        surface = resolve_kit_surface()
+        surface = resolve_kit_surface(settings=LOCAL_MODE)
         assert surface is not None
         assert surface.config_name == "banking_supervision"
         assert surface.named_queries == ("counterparty_exposure", "high_risk_accounts")
@@ -154,7 +187,7 @@ class TestSurfaceResolution:
     ) -> None:
         """A description is never worth failing server creation over."""
         monkeypatch.setenv(KIT_SURFACE_CONFIG_ENV, str(tmp_path / "absent.yaml"))
-        assert resolve_kit_surface() is None
+        assert resolve_kit_surface(settings=LOCAL_MODE) is None
 
     def test_an_invalid_config_degrades_to_no_surface(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -162,7 +195,54 @@ class TestSurfaceResolution:
         broken = tmp_path / "broken.yaml"
         broken.write_text("name: [unclosed\n")
         monkeypatch.setenv(KIT_SURFACE_CONFIG_ENV, str(broken))
-        assert resolve_kit_surface() is None
+        assert resolve_kit_surface(settings=LOCAL_MODE) is None
+
+    def test_local_mode_describes_the_sole_local_instance(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _register_one_local_instance(monkeypatch)
+        surface = resolve_kit_surface(settings=LOCAL_MODE)
+        assert surface is not None
+        assert surface.config_name == "banking_supervision"
+
+    def test_remote_mode_never_describes_an_unrelated_local_instance(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A remote daemon's kit is not whatever kit happens to live on this host.
+
+        The local registry describes instances THIS process would serve. Under a
+        remote transport it serves none of them, so borrowing the sole local
+        record would advertise named queries and contracts the daemon does not
+        have — a wrong answer, where silence is a correct one.
+        """
+        _register_one_local_instance(monkeypatch)
+
+        assert resolve_kit_surface(settings=REMOTE_MODE) is None
+
+        for name, reviewed in TOOL_DESCRIPTIONS.items():
+            described = tool_description(
+                name, kit_surface=resolve_kit_surface(settings=REMOTE_MODE)
+            )
+            assert described == reviewed, name
+            assert "banking_supervision" not in described, name
+
+    def test_a_unix_socket_transport_is_remote_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _register_one_local_instance(monkeypatch)
+        socket_mode = ServerSettings(server_socket="/run/cruxible/daemon.sock")
+        assert resolve_kit_surface(settings=socket_mode) is None
+
+    def test_an_explicit_config_still_wins_in_remote_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The one way a remote topology describes its kit is by saying so."""
+        _register_one_local_instance(monkeypatch)
+        other = tmp_path / "other.yaml"
+        other.write_text(BANKING_CONFIG.replace("name: banking_supervision", "name: served_kit"))
+        monkeypatch.setenv(KIT_SURFACE_CONFIG_ENV, str(other))
+
+        surface = resolve_kit_surface(settings=REMOTE_MODE)
+        assert surface is not None
+        assert surface.config_name == "served_kit"
 
     def test_summarize_reads_every_declared_fact(self) -> None:
         config = CoreConfig(
@@ -207,6 +287,44 @@ class TestDescriptionInjection:
 
     def test_every_mapped_tool_is_a_real_tool(self) -> None:
         assert set(KIT_FACTS_BY_TOOL) <= set(TOOL_DESCRIPTIONS)
+
+
+class TestServedSurfaceMatchesTheTransport:
+    def test_a_remote_server_advertises_no_local_kit_facts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End to end: the bug was visible on the wire, so assert it there."""
+        _register_one_local_instance(monkeypatch)
+        monkeypatch.setenv("CRUXIBLE_SERVER_URL", "https://daemon.example/api")
+
+        tools = asyncio.run(create_server().list_tools())
+
+        assert tools
+        for tool in tools:
+            assert "banking_supervision" not in (tool.description or ""), tool.name
+
+    def test_a_local_server_still_advertises_the_sole_local_kit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _register_one_local_instance(monkeypatch)
+
+        tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
+
+        assert "banking_supervision" in (tools["cruxible_query"].description or "")
+
+    def test_an_unresolvable_transport_advertises_no_local_kit_facts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both transports set is remote intent, even though it resolves to neither."""
+        _register_one_local_instance(monkeypatch)
+        monkeypatch.setenv("CRUXIBLE_SERVER_URL", "https://daemon.example/api")
+        monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", "/run/cruxible/daemon.sock")
+
+        tools = asyncio.run(create_server().list_tools())
+
+        assert tools
+        for tool in tools:
+            assert "banking_supervision" not in (tool.description or ""), tool.name
 
 
 class TestSchemasAreKitInvariant:

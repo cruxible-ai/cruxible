@@ -29,8 +29,11 @@ the project's own state instance.
   the authoring vocabulary from the tool surface instead of prompt
   enumeration. Lists are truncated with a total. Tool schemas do not vary by
   kit. The kit is resolved from local state only — `CRUXIBLE_MCP_KIT_CONFIG`,
-  otherwise the sole registered local instance — so `tools/list` still answers
-  with no reachable daemon, falling back to the static descriptions.
+  otherwise the sole registered local instance and only in local mode — so
+  `tools/list` still answers with no reachable daemon, falling back to the
+  static descriptions. A server pointed at a remote daemon describes only what
+  `CRUXIBLE_MCP_KIT_CONFIG` names, never a local instance that merely shares
+  the host.
 
 ## [0.3.1] - 2026-08-05
 

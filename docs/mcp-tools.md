@@ -48,7 +48,7 @@ Where the loaded kit answers a question a tool leaves open, the served descripti
 
 The **Purpose** lines documented below are the reviewed static descriptions; kit facts are appended to them and are never part of a tool's SCHEMA, which does not vary by kit. Long lists are truncated with a total.
 
-The kit is resolved from local state only, so `tools/list` keeps answering when no daemon is reachable: the config named by `CRUXIBLE_MCP_KIT_CONFIG`, otherwise the sole locally registered instance. With no local instance, more than one, or an unreadable config, the static descriptions are served unchanged.
+The kit is resolved from local state only, so `tools/list` keeps answering when no daemon is reachable: the config named by `CRUXIBLE_MCP_KIT_CONFIG`, otherwise — **in local mode only** — the sole locally registered instance. A server pointed at a remote daemon (`CRUXIBLE_SERVER_URL` or `CRUXIBLE_SERVER_SOCKET`) describes only what `CRUXIBLE_MCP_KIT_CONFIG` names: a local registry record on that host belongs to some unrelated instance and says nothing about the kit the daemon serves. With no local instance, more than one, a remote transport and no explicit config, or an unreadable config, the static descriptions are served unchanged.
 
 ## Working-Set Capture
 

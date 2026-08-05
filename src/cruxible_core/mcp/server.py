@@ -347,7 +347,11 @@ def create_server() -> FastMCP:
     # Resolved from LOCAL state only (see mcp.kit_surface): tools/list must keep
     # answering on a host with no reachable daemon, so a self-describing
     # description is never bought with a network dependency at listing time.
-    kit_surface = resolve_kit_surface()
+    # The resolved transport is threaded in because the sole-local-instance
+    # fallback only describes the SERVED kit in local mode. A transport that
+    # failed to resolve is remote intent this process cannot classify, so it is
+    # treated as remote too: static descriptions, never a local guess.
+    kit_surface = None if transport_error else resolve_kit_surface(settings=settings)
     registered = register_tools(
         server,
         offload_sync_calls=settings.enabled,

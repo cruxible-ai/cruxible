@@ -15,6 +15,10 @@ Two hard boundaries:
   instance registry) and never contacts the daemon: ``tools/list`` must answer
   on a host with no reachable daemon, and a description is not worth breaking
   that. Every failure degrades to the static description rather than raising.
+- **Only the kit actually served.** The local-instance fallback is confined to
+  local mode. A remote-transport process describes nothing unless it is told
+  explicitly what to describe, because the local registry on its host says
+  nothing about the daemon it talks to.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from pathlib import Path
 from typing import Mapping
 
 from cruxible_core.config.schema import ContractSchema, CoreConfig
+from cruxible_core.server.config import ServerSettings
 
 KIT_SURFACE_CONFIG_ENV = "CRUXIBLE_MCP_KIT_CONFIG"
 """Explicit config path to describe, for topologies with no local instance."""
@@ -66,18 +71,36 @@ def summarize_kit_surface(config: CoreConfig) -> KitSurface:
     )
 
 
-def resolve_kit_surface(environ: Mapping[str, str] | None = None) -> KitSurface | None:
+def resolve_kit_surface(
+    *,
+    settings: ServerSettings,
+    environ: Mapping[str, str] | None = None,
+) -> KitSurface | None:
     """Resolve the loaded kit's surface from local state, or None.
 
-    Explicit configuration wins so a remote-daemon topology can still describe
-    the kit it serves. Otherwise a SOLE local instance is described: with more
-    than one there is no "the" kit, and guessing would put another instance's
-    vocabulary in front of the agent.
+    Explicit configuration wins in every mode, so a remote-daemon topology can
+    still describe the kit it serves.
+
+    Without it, the fallback is only sound in LOCAL mode, and *settings* is
+    required rather than re-derived from the environment so a caller cannot
+    resolve one transport and describe another. This process's local instance
+    registry describes instances this process would serve itself; when
+    ``settings.enabled`` the served state lives on another host, and any local
+    record here belongs to an unrelated instance that happens to share the
+    machine. Advertising its named queries and contracts would be worse than
+    silence: the agent would be handed a vocabulary the daemon does not have.
+    Remote mode therefore degrades to the static descriptions.
+
+    Even in local mode only a SOLE instance is described: with more than one
+    there is no "the" kit, and guessing would put another instance's vocabulary
+    in front of the agent.
     """
     env = os.environ if environ is None else environ
     configured = (env.get(KIT_SURFACE_CONFIG_ENV) or "").strip()
     if configured:
         return _surface_from_config_path(Path(configured).expanduser())
+    if settings.enabled:
+        return None
     return _surface_from_sole_local_instance()
 
 
