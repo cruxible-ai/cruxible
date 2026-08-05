@@ -22,6 +22,22 @@ the project's own state instance.
   `cruxible_withdraw_procedure` MCP tool, and
   `POST /procedures/{procedure_id}/withdraw`.
 
+- **`cruxible batch-direct-write` shows identity warnings again.** The command
+  printed neither a dry-run's nor an applied write's `identity_hint` matches in
+  its human output, so a batch duplicating an existing entity's declared
+  identity looked clean at the terminal while the `--json`, HTTP and MCP
+  results all carried the warning. The command now uses the shared result
+  emitter, and the preview surfaces the same warnings the apply would.
+
+- **The empty `server` extra is gone.** `fastapi`/`uvicorn` moved into the base
+  dependencies some releases ago, leaving `cruxible[server]` an extra that
+  installed nothing; the runtime Dockerfile still asked for it. Nothing about
+  what gets installed changes — `pip install cruxible` has shipped the daemon
+  either way — but `pip install "cruxible[server]"` now warns that the extra
+  does not exist instead of silently resolving. Drop the `[server]` suffix.
+  Whether the server stack should move back out of the base install is a 0.4
+  packaging decision and is deliberately not attempted here.
+
 ## [0.3.1] - 2026-08-05
 
 - **Entity types can declare deterministic identity keys at write time.**

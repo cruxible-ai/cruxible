@@ -3456,6 +3456,89 @@ shared_evidence: {}
     assert "Notice: 1 group-backed edge update(s) detected." in result.output
 
 
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_batch_direct_write_human_output_surfaces_identity_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+    dry_run: bool,
+) -> None:
+    """Regression: this command inlined its own emitter and dropped the warnings.
+
+    The service computes identity_warnings identically for a preview and an
+    apply - both go through _prepare_batch_direct_write - so the human output
+    must show them for both, matching the --json and HTTP results.
+    """
+
+    class StubClient:
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                entities_added=1,
+                identity_warnings=[
+                    contracts.EntityIdentityWarning(
+                        entity_type="HintedAccount",
+                        entity_id="checking_bluest_account",
+                        similar_existing_entity=contracts.SimilarExistingEntity(
+                            entity_id="product_bluest_account",
+                            matched_properties=["name", "family"],
+                        ),
+                    )
+                ],
+                receipt_id=None if dry_run else "RCP-batch",
+            )
+
+    payload_file = tmp_path / "batch.yaml"
+    payload_file.write_text(
+        """
+entities:
+  - entity_type: HintedAccount
+    entity_id: checking_bluest_account
+    properties:
+      name: Bluest Account
+      family: Checking
+relationships: []
+shared_evidence: {}
+"""
+    )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    command = [
+        "--server-url",
+        "http://server",
+        "--instance-id",
+        "inst_123",
+        "batch-direct-write",
+        "--payload-file",
+        str(payload_file),
+    ]
+    if dry_run:
+        command.append("--dry-run")
+    result = runner.invoke(cli, command)
+
+    assert result.exit_code == 0, result.output
+    expected_action = "validated" if dry_run else "applied"
+    assert f"Batch direct write {expected_action}." in result.output
+    assert (
+        "Identity warning: HintedAccount:checking_bluest_account resembles existing entity "
+        "product_bluest_account on properties [name, family]" in result.output
+    )
+
+    json_result = runner.invoke(cli, [*command, "--json"])
+    assert json_result.exit_code == 0, json_result.output
+    assert json.loads(json_result.stdout)["identity_warnings"] == [
+        {
+            "entity_type": "HintedAccount",
+            "entity_id": "checking_bluest_account",
+            "similar_existing_entity": {
+                "entity_id": "product_bluest_account",
+                "matched_properties": ["name", "family"],
+            },
+        }
+    ]
+
+
 def test_batch_direct_write_json_includes_group_interaction_fields(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,

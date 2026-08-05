@@ -147,12 +147,79 @@ def test_non_200_and_request_errors_fail(
 
     monkeypatch.setattr(script, "_head_status", fake_head)
 
-    assert script.main(["--manifest-path", str(manifest_path)]) == 1
+    assert script.main(["--manifest-path", str(manifest_path), "--attempts", "1"]) == 1
     err = capsys.readouterr().err
     assert "alpha: HEAD" in err
     assert "returned HTTP 404, expected 200" in err
     assert "beta: HEAD" in err
     assert "failed: <urlopen error offline>" in err
+
+
+def test_asset_404_is_retried_until_the_upload_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The publish race: the tag is visible before `gh release upload` finishes."""
+    script = _load_script()
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(manifest_path)
+    monkeypatch.setattr(script, "remote_tag_exists", lambda *_args: True)
+    slept: list[float] = []
+    monkeypatch.setattr(script.time, "sleep", slept.append)
+    calls: dict[str, int] = {}
+
+    def fake_head(url: str, _timeout: float) -> int:
+        calls[url] = calls.get(url, 0) + 1
+        if "alpha" in url and calls[url] < 3:
+            raise urllib.error.HTTPError(url, 404, "not found", {}, None)
+        return 200
+
+    monkeypatch.setattr(script, "_head_status", fake_head)
+
+    assert script.main(["--manifest-path", str(manifest_path), "--retry-delay", "2"]) == 0
+    # Linear backoff between attempts only: 2s after attempt 1, 4s after attempt 2.
+    assert slept == [2.0, 4.0]
+    out = capsys.readouterr().out
+    assert "retry alpha in 2s (attempt 1/5 unavailable)" in out
+    assert "all kit release asset URLs are available for v0.2.8" in out
+
+
+def test_asset_missing_after_every_attempt_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    script = _load_script()
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(manifest_path)
+    monkeypatch.setattr(script, "remote_tag_exists", lambda *_args: True)
+    slept: list[float] = []
+    monkeypatch.setattr(script.time, "sleep", slept.append)
+    attempts = 0
+
+    def fake_head(url: str, _timeout: float) -> int:
+        nonlocal attempts
+        attempts += 1
+        raise urllib.error.HTTPError(url, 404, "not found", {}, None)
+
+    monkeypatch.setattr(script, "_head_status", fake_head)
+
+    assert (
+        script.main(
+            ["--manifest-path", str(manifest_path), "--attempts", "3", "--retry-delay", "1"]
+        )
+        == 1
+    )
+    assert attempts == 6  # two assets x three attempts
+    assert slept == [1.0, 2.0, 1.0, 2.0]
+    err = capsys.readouterr().err
+    assert "returned HTTP 404, expected 200 after 3 attempt(s)" in err
+
+
+def test_default_retry_budget_spans_about_two_minutes() -> None:
+    script = _load_script()
+    backoff = sum(
+        script._DEFAULT_RETRY_DELAY * attempt for attempt in range(1, script._DEFAULT_ATTEMPTS)
+    )
+    assert script._DEFAULT_ATTEMPTS == 5
+    assert backoff == 100.0
 
 
 def test_remote_lookup_failure_is_not_treated_as_missing_tag(

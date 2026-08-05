@@ -11,7 +11,9 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 COPY packages/cruxible-client ./packages/cruxible-client
 
-RUN uv sync --frozen --no-dev --extra server --no-editable
+# No --extra server: fastapi/uvicorn are base dependencies, so the default
+# install already carries everything the daemon runs on.
+RUN uv sync --frozen --no-dev --no-editable
 
 FROM ghcr.io/oras-project/oras:v1.3.2 AS oras
 

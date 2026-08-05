@@ -45,9 +45,10 @@ dependencies = [
 # <2: mcp 2.0.0 removed the bundled mcp.server.fastmcp the tools are built
 # on; the SDK-2.0 migration is tracked separately (wi-mcp-sdk-2-migration).
 mcp = ["mcp>=1.0,<2"]
-# The daemon ships in the default install; kept as an empty alias so
-# `pip install "cruxible[server]"` from older docs keeps working.
-server = []
+# There is deliberately no `server` extra: fastapi/uvicorn are base
+# dependencies, so the daemon ships in the default install. Whether that stack
+# should move back out of base deps is a 0.4 packaging question, not something
+# an empty extra can express.
 # Layout-aware PDF parsing (the pdf_to_markdown docling backend) pulls the
 # docling ML stack (~1GB incl. torch); opt in when you need it.
 pdf = ["docling>=2.0"]
