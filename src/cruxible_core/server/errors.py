@@ -19,6 +19,10 @@ from cruxible_core.errors import (
     EntityTypeNotFoundError,
     GroupNotFoundError,
     IngestionError,
+    InstallNotFoundError,
+    InstallOwnershipCollisionError,
+    InstallPhaseRequirementError,
+    InstallPhaseTransitionError,
     InstanceNotFoundError,
     InstanceScopeError,
     InvalidContinuationError,
@@ -99,6 +103,7 @@ def _status_for_error(exc: CoreError) -> int:
             ProcedureNotFoundError,
             SourceArtifactNotFoundError,
             RuntimeCredentialNotFoundError,
+            InstallNotFoundError,
         ),
     ):
         return 404
@@ -109,6 +114,12 @@ def _status_for_error(exc: CoreError) -> int:
             StaleContinuationError,
             PendingEdgeWriteRefusedError,
             ConcurrentStateDriftError,
+            # An install refusal is a STATE conflict, not a policy denial: the
+            # same advance succeeds once the install reaches the phase it needs,
+            # and the same name installs once its current owner releases it.
+            InstallPhaseTransitionError,
+            InstallPhaseRequirementError,
+            InstallOwnershipCollisionError,
         ),
     ):
         # 409: a pending-edge refusal is a STATE conflict, not a policy or tier
@@ -184,6 +195,23 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["procedure_id"] = exc.procedure_id
     if isinstance(exc, SourceArtifactNotFoundError):
         context["source_artifact_id"] = exc.source_artifact_id
+    if isinstance(exc, InstallNotFoundError):
+        context["install_id"] = exc.install_id
+    if isinstance(exc, InstallPhaseTransitionError):
+        context["install_id"] = exc.install_id
+        context["actual_phase"] = exc.actual_phase
+        context["requested_phase"] = exc.requested_phase
+        context["legal_phases"] = exc.legal_phases
+    if isinstance(exc, InstallPhaseRequirementError):
+        context["install_id"] = exc.install_id
+        context["operation"] = exc.operation
+        context["actual_phase"] = exc.actual_phase
+        context["required_phases"] = exc.required_phases
+    if isinstance(exc, InstallOwnershipCollisionError):
+        context["object_kind"] = exc.object_kind
+        context["object_name"] = exc.object_name
+        context["owning_install_id"] = exc.owning_install_id
+        context["owning_install_phase"] = exc.owning_install_phase
     if isinstance(exc, CitationHandleResolutionError):
         context["handle"] = exc.handle
         context["failure_kind"] = exc.failure_kind

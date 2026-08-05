@@ -32,6 +32,7 @@ from cruxible_core.graph.provenance import (
     SOURCE_REF_ADD_RELATIONSHIP,
     SOURCE_REF_BATCH_DIRECT_WRITE,
 )
+from cruxible_core.installs.types import INSTALL_PHASES
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kit_defaults import get_default_base_kit
 from cruxible_core.primitives import canonical_json, new_id
@@ -112,6 +113,7 @@ from cruxible_core.service import (
     service_get_entity_change_history,
     service_get_feedback_profile,
     service_get_group,
+    service_get_install,
     service_get_outcome_profile,
     service_get_procedure,
     service_get_receipt,
@@ -130,6 +132,7 @@ from cruxible_core.service import (
     service_list_decision_events,
     service_list_decision_records,
     service_list_groups,
+    service_list_installs,
     service_list_procedure_runs,
     service_list_procedures,
     service_list_queries,
@@ -4136,6 +4139,55 @@ def _outcome_list_result(result: Any) -> contracts.ListResult:
         offset=result.offset,
         truncated=result.truncated,
         read_revision=result.read_revision,
+    )
+
+
+def list_installs(
+    instance_id: str,
+    *,
+    phase: str | None = None,
+    artifact_id: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.ListResult:
+    """List install-ledger records newest-first."""
+    check_permission("cruxible_list_installs", instance_id=instance_id)
+    if phase is not None and phase not in INSTALL_PHASES:
+        # An unknown phase would otherwise filter to zero rows and read as
+        # "nothing installed" — the one answer a caller must never be given by
+        # a typo.
+        raise ConfigError(
+            f"unknown install phase '{phase}'; valid phases: {', '.join(INSTALL_PHASES)}"
+        )
+    result = service_list_installs(
+        get_manager().get(instance_id),
+        phase=cast(Any, phase),
+        artifact_id=artifact_id,
+        limit=limit,
+        offset=offset,
+    )
+    return contracts.ListResult(
+        items=result.items,
+        total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        truncated=result.truncated,
+        read_revision=result.read_revision,
+    )
+
+
+def get_install(instance_id: str, install_id: str) -> contracts.InstallDetailResult:
+    """Return one install with its owned objects and full phase history."""
+    check_permission("cruxible_get_install", instance_id=instance_id)
+    detail = service_get_install(get_manager().get(instance_id), install_id)
+    return contracts.InstallDetailResult(
+        install=detail.install.model_dump(mode="json", exclude_none=True),
+        owned_objects=[
+            owned.model_dump(mode="json", exclude_none=True) for owned in detail.owned_objects
+        ],
+        phase_history=[
+            event.model_dump(mode="json", exclude_none=True) for event in detail.phase_history
+        ],
     )
 
 

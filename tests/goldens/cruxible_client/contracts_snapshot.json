@@ -12591,6 +12591,83 @@
         "found"
       ]
     },
+    "InstallDetailResult": {
+      "fields": {
+        "install": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "install",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Install",
+            "type": "object"
+          }
+        },
+        "owned_objects": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "owned_objects",
+          "required": false,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Owned Objects",
+            "type": "array"
+          }
+        },
+        "phase_history": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "phase_history",
+          "required": false,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Phase History",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "One install ledger record with its owned objects and phase history.\n\nThe three payloads stay open dicts on purpose: the install ledger's write\nsurface is service-internal until the installer ships, so pinning its field\nshapes into the frozen client contract now would freeze a record whose\nconsumers do not exist yet.",
+        "properties": {
+          "install": {
+            "additionalProperties": true,
+            "title": "Install",
+            "type": "object"
+          },
+          "owned_objects": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Owned Objects",
+            "type": "array"
+          },
+          "phase_history": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Phase History",
+            "type": "array"
+          }
+        },
+        "required": [
+          "install"
+        ],
+        "title": "InstallDetailResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "install"
+      ]
+    },
     "InstanceBackupManifest": {
       "fields": {
         "artifacts": {

@@ -7,6 +7,25 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **Installed config objects now have an authoritative owner.** A new install
+  ledger in `state.db` records which installed artifact (kind, id, version,
+  digest) owns which contract, named query, procedure, or enum, together with
+  the content digest it installed and the phase the install reached
+  (`preparing` → `pending_acceptance` → `active`, plus `failed` →
+  `rolling_back` → `rolled_back`). Every write is receipted, phase history is
+  append-only, illegal transitions are refused with a typed error naming the
+  phase the install is actually in, and one live owner per object name is a
+  database guarantee — a failed or rolled-back install releases its names, so
+  re-installing after a failure is never blocked by the attempt that failed.
+  Composition ownership previously tracked only the upstream/local split, which
+  could not support selective uninstall, dependency-blocked removal, or
+  customer-edit-preserving updates. Read-only HTTP routes list installs and
+  return one install with its owned objects and phase history; the uninstall
+  precondition check reports declared blockers and states, in its own payload,
+  the reference sources it cannot see. The write surface stays service-internal
+  and there is no MCP tool: the installer that drives the sequence is not built
+  yet.
+
 ## [0.3.1] - 2026-08-05
 
 - **Entity types can declare deterministic identity keys at write time.**
