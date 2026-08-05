@@ -341,3 +341,23 @@ def test_procedure_routes_are_part_of_the_public_openapi() -> None:
     """Flipped by the 0.3.0 surface commit: exposure is deliberate contract."""
     spec = create_app().openapi()
     assert any("/procedures" in path for path in spec["paths"])
+
+
+def test_invalid_declared_tier_rejection_lists_the_valid_tiers(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    """A tier typo must not cost a round trip to learn the accepted values."""
+    instance_id = _init_procedure_instance(app_client, tmp_path / "workspace")
+    definition = _definition()
+    definition["declared_tier"] = "read_only"
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={"definition": definition},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["errors"] == [
+        "declared_tier: Input should be 'governed_write', 'graph_write' or 'admin'"
+    ]

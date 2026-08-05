@@ -37,6 +37,33 @@ the project's own state instance.
   does not exist instead of silently resolving. Drop the `[server]` suffix.
   Whether the server stack should move back out of the base install is a 0.4
   packaging decision and is deliberately not attempted here.
+- **Rejected writes now teach the caller how to fix them.** Four authoring
+  error classes became self-correcting, each measured as wasted retries in an
+  agent benchmark run:
+  - Datetime rejections (`observed_at` and every other typed temporal field)
+    echo the accepted format with a copyable example, on both the HTTP request
+    validation path and the runtime API argument checks.
+  - Contract rejections naming an unexpected or missing field also list the
+    contract's declared fields with type and required/optional (sorted,
+    truncated past 40 with a count), so procedure and workflow inputs can be
+    fixed in one edit.
+  - Dangling-endpoint rejections name the recovery available at the entry
+    point that raised them: a batch direct write can carry the entity, an
+    attestation cannot.
+  - Procedure tier refusals name the provider whose `procedure_access` forced
+    the effective tier, and list the `declared_tier` values that clear it.
+
+- **MCP tool descriptions describe the loaded kit.** Query tools name the
+  config's named queries; workflow and procedure tools name its registered
+  providers and contracts (with a short field preview), so an agent discovers
+  the authoring vocabulary from the tool surface instead of prompt
+  enumeration. Lists are truncated with a total. Tool schemas do not vary by
+  kit. The kit is resolved from local state only — `CRUXIBLE_MCP_KIT_CONFIG`,
+  otherwise the sole registered local instance and only in local mode — so
+  `tools/list` still answers with no reachable daemon, falling back to the
+  static descriptions. A server pointed at a remote daemon describes only what
+  `CRUXIBLE_MCP_KIT_CONFIG` names, never a local instance that merely shares
+  the host.
 
 ## [0.3.1] - 2026-08-05
 

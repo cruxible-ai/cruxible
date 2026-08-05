@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request
@@ -51,6 +53,7 @@ from cruxible_core.server.routes.source_artifacts import router as source_artifa
 from cruxible_core.server.routes.state import router as state_router
 from cruxible_core.server.routes.workflows import router as workflows_router
 from cruxible_core.storage import StorageDatabaseError, StorageIntegrityError
+from cruxible_core.temporal import ISO_8601_FORMAT_HINT
 
 UI_STATIC_DIR = Path(__file__).resolve().parents[1] / "ui_static"
 
@@ -62,6 +65,22 @@ _log = structlog.get_logger("cruxible.server.app")
 # instead. See wi-daemon-network-security-hardening (#5).
 _DB_CONSTRAINT_MESSAGE = "database constraint violation"
 _DB_ERROR_MESSAGE = "database error"
+
+# Pydantic tags every datetime/date failure with a type starting "datetime" or
+# "date" (datetime_parsing, datetime_type, date_from_datetime_parsing, ...).
+# Its own message names WHAT went wrong ("invalid character in year") but never
+# what a good value looks like, so callers resubmit the same malformed shape.
+_TEMPORAL_ERROR_TYPE_PREFIXES = ("datetime", "date")
+
+
+def _format_request_validation_error(error: Mapping[str, Any]) -> str:
+    """Render one pydantic request-validation error, self-correcting when temporal."""
+    location = ".".join(str(part) for part in (error.get("loc") or ()))
+    message = str(error.get("msg", "invalid"))
+    error_type = str(error.get("type", ""))
+    if error_type.startswith(_TEMPORAL_ERROR_TYPE_PREFIXES):
+        message = f"{message} ({ISO_8601_FORMAT_HINT})"
+    return f"{location}: {message}"
 
 
 def create_app() -> FastAPI:
@@ -80,10 +99,7 @@ def create_app() -> FastAPI:
     async def request_validation_error_handler(
         _request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        errors = [
-            f"{'.'.join(str(part) for part in err.get('loc', ()))}: {err.get('msg', 'invalid')}"
-            for err in exc.errors()
-        ]
+        errors = [_format_request_validation_error(err) for err in exc.errors()]
         body = ErrorResponse(
             error_type="RequestValidationError",
             message="Request validation failed",

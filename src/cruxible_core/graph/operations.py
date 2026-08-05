@@ -119,14 +119,22 @@ def validate_relationship(
     to_type: str,
     to_id: str,
     properties: dict[str, Any] | None = None,
+    *,
+    missing_endpoint_hint: str | None = None,
 ) -> ValidatedRelationship:
     """Validate a relationship against config and graph state.
 
     Handles property schema checks, direction checks, and endpoint existence checks.
 
+    ``missing_endpoint_hint`` is appended to a dangling-endpoint rejection so
+    the caller learns the RECOVERY, not only the fact. Callers pass the recovery
+    that their own entry point actually offers (a batch can carry the entity;
+    an attestation cannot).
+
     Raises DataValidationError on failure.
     """
     props = dict(properties) if properties else {}
+    endpoint_suffix = f"; {missing_endpoint_hint}" if missing_endpoint_hint else ""
 
     # Validate relationship type exists in config
     rel_schema = config.get_relationship(relationship)
@@ -149,11 +157,11 @@ def validate_relationship(
 
     # Validate source entity exists
     if graph.get_entity(from_type, from_id) is None:
-        raise DataValidationError(f"entity {from_type}:{from_id} not found")
+        raise DataValidationError(f"entity {from_type}:{from_id} not found{endpoint_suffix}")
 
     # Validate target entity exists
     if graph.get_entity(to_type, to_id) is None:
-        raise DataValidationError(f"entity {to_type}:{to_id} not found")
+        raise DataValidationError(f"entity {to_type}:{to_id} not found{endpoint_suffix}")
 
     existing_rel = graph.get_relationship(from_type, from_id, to_type, to_id, relationship)
     is_update = existing_rel is not None

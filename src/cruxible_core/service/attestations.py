@@ -46,6 +46,17 @@ from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.service.types import ListResult, list_truncated
 from cruxible_core.temporal import ensure_utc, format_datetime, utc_now
 
+ATTESTATION_MISSING_ENDPOINT_HINT = (
+    "create the entity first (cruxible_add_entity or cruxible_batch_direct_write), "
+    "then attest to the claim"
+)
+"""Recovery appended when an attestation names an endpoint the graph lacks.
+
+An attestation carries no entities of its own, so the only recovery is to write
+the endpoint before attesting; the rejection names that instead of leaving the
+caller to rediscover it.
+"""
+
 
 def _replay_divergences(
     original: AttestationRecord,
@@ -611,6 +622,7 @@ def _create_pending_claim(
         to_type,
         to_id,
         properties,
+        missing_endpoint_hint=ATTESTATION_MISSING_ENDPOINT_HINT,
     )
     if validated.is_update:
         existing = _resolve_claim(graph, claim_key)

@@ -16,6 +16,34 @@ from cruxible_core.config.schema import (
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.workflow.step_helpers import SOURCE_METADATA_KEY
 
+MAX_DECLARED_FIELDS_IN_ERROR = 40
+"""Cap on field names echoed by one contract rejection.
+
+Mirrors the registered-provider cap in ``service.procedures``: a wide contract
+must still teach its shape without turning one rejection into an unbounded
+dump.
+"""
+
+
+def declared_fields(contract: ContractSchema) -> str:
+    """Render a contract's declared fields as ``name (type, required|optional)``."""
+    entries = [
+        f"{field_name} ({field_schema.type}, {'optional' if field_schema.optional else 'required'})"
+        for field_name, field_schema in sorted(contract.fields.items())
+    ]
+    if not entries:
+        return (
+            "no fields (any object accepted)" if contract.allow_extra else "no fields (empty input)"
+        )
+    suffix = " plus extra fields" if contract.allow_extra else ""
+    if len(entries) > MAX_DECLARED_FIELDS_IN_ERROR:
+        shown = ", ".join(entries[:MAX_DECLARED_FIELDS_IN_ERROR])
+        return (
+            f"{shown}, ... ({len(entries)} total; "
+            f"first {MAX_DECLARED_FIELDS_IN_ERROR} shown){suffix}"
+        )
+    return f"{', '.join(entries)}{suffix}"
+
 
 def validate_contract_payload(
     config: CoreConfig,
@@ -45,6 +73,7 @@ def validate_contract_payload(
     required_missing: list[str] = []
     errors: list[str] = []
     normalized: dict[str, Any] = {}
+    shape_errors = False
 
     for field_name, field_schema in contract.fields.items():
         if field_name not in validation_payload:
@@ -89,20 +118,30 @@ def validate_contract_payload(
     else:
         for field_name in extra:
             errors.append(f"unexpected field '{field_name}'")
+            shape_errors = True
 
     if not validation_payload and required_missing:
         missing = ", ".join(f"'{field_name}'" for field_name in required_missing)
         message = f"{subject} failed contract '{contract_name}': empty input payload provided"
         message = f"{message}; required fields: {missing}"
+        message = f"{message}; contract '{contract_name}' declares: {declared_fields(contract)}"
         if empty_payload_hint:
             message = f"{message}. {empty_payload_hint}"
         raise error_factory(message)
 
     for field_name in required_missing:
         errors.append(f"missing required field '{field_name}'")
+        shape_errors = True
 
     if errors:
-        raise error_factory(f"{subject} failed contract '{contract_name}': {'; '.join(errors)}")
+        message = f"{subject} failed contract '{contract_name}': {'; '.join(errors)}"
+        if shape_errors:
+            # A field-shape rejection ("unexpected field 'x'" / "missing
+            # required field 'y'") is the caller guessing at the contract. Echo
+            # what the contract actually declares so the next call is informed
+            # rather than another guess.
+            message = f"{message}; contract '{contract_name}' declares: {declared_fields(contract)}"
+        raise error_factory(message)
 
     return normalized
 

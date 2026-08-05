@@ -29,6 +29,7 @@ from cruxible_core.deprecation import (
     attach_mcp_deprecations,
 )
 from cruxible_core.mcp import handlers
+from cruxible_core.mcp.kit_surface import KitSurface
 from cruxible_core.mcp.tool_prompts import tool_description
 
 
@@ -74,12 +75,19 @@ def _result_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     return {"result": payload}
 
 
-def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list[str]:
+def register_tools(
+    server: FastMCP,
+    *,
+    offload_sync_calls: bool = False,
+    kit_surface: KitSurface | None = None,
+) -> list[str]:
     """Register all cruxible tools on the FastMCP server.
 
     Args:
         server: FastMCP server receiving the registrations.
         offload_sync_calls: Run synchronous handlers outside the protocol event loop.
+        kit_surface: Loaded config vocabulary named in the descriptions of the
+            tools that need it. Descriptions only — schemas never vary by kit.
 
     Returns:
         List of registered tool names (for permission validation).
@@ -98,7 +106,9 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
                 return await asyncio.to_thread(fn, *args, **kwargs)
 
             registered_fn = run_in_worker
-        server.tool(description=tool_description(fn.__name__))(registered_fn)
+        server.tool(description=tool_description(fn.__name__, kit_surface=kit_surface))(
+            registered_fn
+        )
         registered.append(fn.__name__)
         return fn
 

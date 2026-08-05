@@ -203,7 +203,13 @@ from cruxible_core.service.types import (
 from cruxible_core.service.types import (
     InspectNeighborhoodResult as ServiceInspectNeighborhoodResult,
 )
-from cruxible_core.temporal import format_datetime, parse_datetime, utc_now
+from cruxible_core.temporal import (
+    ISO_8601_FORMAT_HINT,
+    describe_rejected_datetime,
+    format_datetime,
+    parse_datetime,
+    utc_now,
+)
 from cruxible_core.workflow.compiler import compute_lock_config_digest
 
 logger = logging.getLogger(__name__)
@@ -3844,12 +3850,7 @@ def attest(
     """Record one attributed observation against a tuple-first claim."""
     check_permission("cruxible_attest", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
-    try:
-        parsed_observed_at = parse_datetime(observed_at)
-    except ValueError as exc:
-        raise ConfigError("observed_at must be an ISO-8601 datetime") from exc
-    if parsed_observed_at is None:
-        raise ConfigError("observed_at is required")
+    parsed_observed_at = _require_datetime(observed_at, field="observed_at")
     parsed_evidence = [
         ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
         for ref in evidence_refs
@@ -4141,12 +4142,21 @@ def _outcome_list_result(result: Any) -> contracts.ListResult:
 
 
 def _require_datetime(value: str | datetime, *, field: str) -> datetime:
+    """Parse a required datetime argument, echoing the format on rejection.
+
+    The rejection is the caller's only feedback channel, so it carries the
+    accepted format AND a copyable example: a message that only says the value
+    was invalid buys another malformed retry in the same shape.
+    """
     try:
         parsed = parse_datetime(value)
     except ValueError as exc:
-        raise ConfigError(f"{field} must be an ISO-8601 datetime") from exc
+        raise ConfigError(
+            f"{field} is not a valid datetime: {ISO_8601_FORMAT_HINT} "
+            f"(received {describe_rejected_datetime(value)})"
+        ) from exc
     if parsed is None:
-        raise ConfigError(f"{field} is required")
+        raise ConfigError(f"{field} is required: {ISO_8601_FORMAT_HINT}")
     return parsed
 
 

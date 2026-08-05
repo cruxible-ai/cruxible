@@ -789,3 +789,32 @@ class TestAttestingAdvancesReadRevision:
         result = _attest(attestation_instance, "support", properties={"severity": "high"})
         assert result.created_claim is True
         assert attestation_instance.get_read_revision() > before
+
+
+def test_support_on_an_absent_endpoint_names_the_recovery(
+    attestation_instance: CruxibleInstance,
+) -> None:
+    """An attestation carries no entities, so the recovery is a prior write.
+
+    A 'support' stance mints the claim, which means a missing endpoint is a
+    routine first-contact failure. The rejection names the tools that create the
+    endpoint instead of leaving the caller to rediscover them.
+    """
+    with pytest.raises(ConfigError) as exc:
+        service_attest(
+            attestation_instance,
+            relationship_type="protected_by",
+            from_type="Service",
+            from_id="svc-absent",
+            to_type="Control",
+            to_id="ctl-absent",
+            stance="support",
+            evidence_refs=[evidence()],
+            observed_at=OBSERVED_AT,
+            actor_context=actor("observer"),
+            properties={},
+        )
+    message = str(exc.value)
+    assert "entity Service:svc-absent not found" in message
+    assert "create the entity first" in message
+    assert "cruxible_add_entity" in message

@@ -95,6 +95,78 @@ class TestContractValidation:
                 error_factory=ConfigError,
             )
 
+    def test_field_shape_rejections_echo_the_declared_contract(self) -> None:
+        """A shape rejection is the caller guessing; echo what the contract declares.
+
+        Naming only the offending field leaves the next attempt a guess too, so
+        an unexpected/missing-field rejection carries every declared field with
+        its type and whether it is required.
+        """
+        config = _base_config(
+            contracts={
+                "Input": ContractSchema(
+                    fields={
+                        "account_id": PropertySchema(type="string"),
+                        "amount": PropertySchema(type="float"),
+                        "memo": PropertySchema(type="string", optional=True),
+                    }
+                )
+            }
+        )
+
+        for payload in ({"account_id": "A-1", "amount": 1.0, "acct": "A-1"}, {"account_id": "A-1"}):
+            with pytest.raises(ConfigError) as exc:
+                validate_contract_payload(
+                    config,
+                    "Input",
+                    payload,
+                    subject="Procedure 'flag_transfer' input",
+                    error_factory=ConfigError,
+                )
+            message = str(exc.value)
+            assert "contract 'Input' declares: " in message
+            assert "account_id (string, required)" in message
+            assert "amount (float, required)" in message
+            assert "memo (string, optional)" in message
+
+    def test_value_level_rejections_stay_terse(self) -> None:
+        """A bad VALUE is not a shape guess, so the field list would be noise."""
+        config = _base_config(
+            contracts={"Input": ContractSchema(fields={"amount": PropertySchema(type="float")})}
+        )
+
+        with pytest.raises(ConfigError) as exc:
+            validate_contract_payload(
+                config,
+                "Input",
+                {"amount": "not-a-number"},
+                subject="Workflow input",
+                error_factory=ConfigError,
+            )
+        assert "declares: " not in str(exc.value)
+
+    def test_declared_field_echo_is_bounded(self) -> None:
+        config = _base_config(
+            contracts={
+                "Input": ContractSchema(
+                    fields={
+                        f"field_{index:03d}": PropertySchema(type="string") for index in range(60)
+                    }
+                )
+            }
+        )
+
+        with pytest.raises(ConfigError) as exc:
+            validate_contract_payload(
+                config,
+                "Input",
+                {f"field_{index:03d}": "x" for index in range(60)} | {"stray": "x"},
+                subject="Workflow input",
+                error_factory=ConfigError,
+            )
+        assert "(60 total; first 40 shown)" in str(exc.value)
+        assert "field_040 (string, required)" not in str(exc.value)
+
     def test_accepts_builtin_json_object_contract(self) -> None:
         config = _base_config()
 
