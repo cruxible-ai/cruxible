@@ -13,6 +13,7 @@ from cruxible_core.instance_protocol import (
     DecisionStoreProtocol,
     FeedbackStoreProtocol,
     GroupStoreProtocol,
+    InstallLedgerStoreProtocol,
     ProcedureStoreProtocol,
     ReceiptStoreProtocol,
     ResolutionContractStoreProtocol,
@@ -60,6 +61,7 @@ class UnitOfWorkProtocol(Protocol):
     resolution_contracts: ResolutionContractStoreProtocol
     decisions: DecisionStoreProtocol
     source_artifacts: SourceArtifactStoreProtocol
+    installs: InstallLedgerStoreProtocol
 
     def register_after_commit(self, callback: Any) -> None: ...
     def register_after_rollback(self, callback: Any) -> None: ...

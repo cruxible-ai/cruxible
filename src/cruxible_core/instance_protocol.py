@@ -30,6 +30,14 @@ if TYPE_CHECKING:
     from cruxible_core.graph.entity_graph import EntityGraph
     from cruxible_core.graph.types import EntityInstance, RelationshipInstance
     from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
+    from cruxible_core.installs.types import (
+        InstallPhase,
+        InstallPhaseEvent,
+        InstallRecord,
+        OwnedObject,
+        OwnedObjectKind,
+        OwnershipCollision,
+    )
     from cruxible_core.procedure.types import (
         ProcedureBudgetSpent,
         ProcedureEvidenceArtifact,
@@ -632,6 +640,84 @@ class ResolutionContractStoreProtocol(ABC):
     def close(self) -> None: ...
 
 
+class InstallLedgerStoreProtocol(ABC):
+    """Interface for install records, phase history, and owned-object claims."""
+
+    @abstractmethod
+    def save_install(self, install: InstallRecord) -> str: ...
+    @abstractmethod
+    def get_install(self, install_id: str) -> InstallRecord | None: ...
+    @abstractmethod
+    def set_install_phase(
+        self,
+        install_id: str,
+        *,
+        phase: InstallPhase,
+        updated_at: str,
+        failure_reason: str | None,
+        receipt_id: str | None,
+    ) -> None: ...
+    @abstractmethod
+    def list_installs(
+        self,
+        *,
+        phase: InstallPhase | None = None,
+        artifact_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[InstallRecord]: ...
+    @abstractmethod
+    def count_installs(
+        self,
+        *,
+        phase: InstallPhase | None = None,
+        artifact_id: str | None = None,
+    ) -> int: ...
+    @abstractmethod
+    def append_phase_event(self, event: InstallPhaseEvent) -> str: ...
+    @abstractmethod
+    def next_phase_sequence(self, install_id: str) -> int: ...
+    @abstractmethod
+    def list_phase_events(self, install_id: str) -> list[InstallPhaseEvent]: ...
+    @abstractmethod
+    def save_owned_object(self, owned: OwnedObject, *, ownership_held: bool = True) -> None: ...
+    @abstractmethod
+    def set_owned_object_customization(
+        self,
+        install_id: str,
+        *,
+        object_kind: OwnedObjectKind,
+        object_name: str,
+        customized: bool,
+        current_digest: str,
+    ) -> None: ...
+    @abstractmethod
+    def get_owned_object(
+        self,
+        install_id: str,
+        *,
+        object_kind: OwnedObjectKind,
+        object_name: str,
+    ) -> OwnedObject | None: ...
+    @abstractmethod
+    def list_owned_objects(self, install_id: str) -> list[OwnedObject]: ...
+    @abstractmethod
+    def find_live_owner(
+        self,
+        *,
+        object_kind: OwnedObjectKind,
+        object_name: str,
+    ) -> OwnershipCollision | None: ...
+    @abstractmethod
+    def list_referencing_objects(
+        self,
+        *,
+        exclude_install_id: str,
+    ) -> list[tuple[OwnedObject, InstallPhase]]: ...
+    @abstractmethod
+    def close(self) -> None: ...
+
+
 class InstanceProtocol(ABC):
     """Interface for a cruxible instance."""
 
@@ -778,5 +864,7 @@ class InstanceProtocol(ABC):
     def get_attestation_store(self) -> AttestationStoreProtocol: ...
     @abstractmethod
     def get_resolution_contract_store(self) -> ResolutionContractStoreProtocol: ...
+    @abstractmethod
+    def get_install_ledger_store(self) -> InstallLedgerStoreProtocol: ...
     @abstractmethod
     def get_source_artifact_store(self) -> SourceArtifactStoreProtocol: ...

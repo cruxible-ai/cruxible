@@ -21,6 +21,7 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.legacy_identity import dump_legacy_identity_map
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.store import GroupStore
+from cruxible_core.installs.store import InstallLedgerStore
 from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.receipt.store import SQLiteReceiptStore
@@ -201,6 +202,7 @@ _UNIFIED_STATE_MIGRATION = "0001_unified_sqlite_state"
 SNAPSHOT_SCHEMA_MIGRATION = "0002_snapshot_tables"
 READ_REVISION_MIGRATION = "0003_read_revision"
 CLAIM_IDENTITY_MIGRATION = "0004_claim_identity"
+INSTALL_LEDGER_MIGRATION = "0005_install_ledger"
 
 # Every migration ``_initialize_connection`` knows how to apply. The steady-state
 # pre-check compares against this set to decide whether it needs the write lock
@@ -212,6 +214,7 @@ _ALL_STORAGE_MIGRATIONS = frozenset(
         SNAPSHOT_SCHEMA_MIGRATION,
         READ_REVISION_MIGRATION,
         CLAIM_IDENTITY_MIGRATION,
+        INSTALL_LEDGER_MIGRATION,
     }
 )
 
@@ -1112,6 +1115,11 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
             connection=self._conn,
             initialize_schema=False,
         )
+        self.installs = InstallLedgerStore(
+            self.db_path,
+            connection=self._conn,
+            initialize_schema=False,
+        )
         self._entered = False
         self._started_transaction = False
         self._after_commit: list[Any] = []
@@ -1362,6 +1370,7 @@ class SQLiteStorageBackend:
         ResolutionContractStore(self.db_path, connection=conn)
         DecisionStore(self.db_path, connection=conn)
         SQLiteSourceArtifactStore(self.db_path, connection=conn)
+        InstallLedgerStore(self.db_path, connection=conn)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):
             row = conn.execute(
                 "SELECT migration_id FROM storage_migrations WHERE migration_id = ?",
@@ -1383,6 +1392,12 @@ class SQLiteStorageBackend:
         if not self.has_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION):
             self._migrate_claim_identity(conn)
             self.mark_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION)
+        if not self.has_migration_on_connection(conn, INSTALL_LEDGER_MIGRATION):
+            # Purely additive: the three install-ledger tables are created by
+            # the store constructor above (CREATE TABLE IF NOT EXISTS), so an
+            # existing database needs no data rewrite -- only the stamp that
+            # records the schema is now present.
+            self.mark_migration_on_connection(conn, INSTALL_LEDGER_MIGRATION)
 
     @staticmethod
     def _migrate_claim_identity(conn: sqlite3.Connection) -> None:

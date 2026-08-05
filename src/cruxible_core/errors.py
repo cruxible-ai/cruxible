@@ -29,6 +29,10 @@ errors (runtime data), making it easy to catch by category.
     ├── GroupNotFoundError (group store lookup)
     ├── ProcedureNotFoundError (procedure store lookup)
     ├── SourceArtifactNotFoundError (source artifact store lookup)
+    ├── InstallNotFoundError (install ledger lookup)
+    ├── InstallPhaseTransitionError (illegal install phase advance)
+    ├── InstallPhaseRequirementError (install op attempted from the wrong phase)
+    ├── InstallOwnershipCollisionError (object name already owned by an install)
     ├── RuntimeCredentialNotFoundError (server credential store lookup)
     ├── AuthenticationError (HTTP/API credential failure)
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
@@ -42,6 +46,8 @@ errors (runtime data), making it easy to catch by category.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 from cruxible_client._error_base import (
     ConcurrentStateDriftError as _ConcurrentStateDriftError,
@@ -372,6 +378,94 @@ class SourceArtifactNotFoundError(CoreError):
     def __init__(self, source_artifact_id: str):
         self.source_artifact_id = source_artifact_id
         super().__init__(f"Source artifact '{source_artifact_id}' not found")
+
+
+class InstallNotFoundError(CoreError):
+    """Install ID not found in the install ledger."""
+
+    def __init__(self, install_id: str):
+        self.install_id = install_id
+        super().__init__(f"Install '{install_id}' not found")
+
+
+class InstallPhaseTransitionError(CoreError):
+    """Refused install phase transition.
+
+    The message names the phase the install is ACTUALLY in, not the phase the
+    caller assumed. An installer resuming after a crash has no other way to
+    learn where it got to, and a bare "invalid transition" would send it
+    guessing — so the actual phase and its legal successors both ride on the
+    exception and in the message.
+    """
+
+    error_code = "install_phase_transition_refused"
+
+    def __init__(
+        self,
+        install_id: str,
+        actual_phase: str,
+        requested_phase: str,
+        legal_phases: Sequence[str],
+    ):
+        self.install_id = install_id
+        self.actual_phase = actual_phase
+        self.requested_phase = requested_phase
+        self.legal_phases = list(legal_phases)
+        allowed = ", ".join(self.legal_phases) if self.legal_phases else "none (terminal phase)"
+        super().__init__(
+            f"Install '{install_id}' is in phase '{actual_phase}' and cannot move to "
+            f"'{requested_phase}'; legal next phases: {allowed}"
+        )
+
+
+class InstallPhaseRequirementError(CoreError):
+    """An install operation was attempted from a phase that does not permit it.
+
+    Distinct from :class:`InstallPhaseTransitionError`, which is about MOVING
+    between phases. This one is about an operation (claiming ownership, say)
+    that is only legal while the install sits in a particular phase.
+    """
+
+    error_code = "install_phase_requirement_unmet"
+
+    def __init__(
+        self,
+        install_id: str,
+        operation: str,
+        actual_phase: str,
+        required_phases: Sequence[str],
+    ):
+        self.install_id = install_id
+        self.operation = operation
+        self.actual_phase = actual_phase
+        self.required_phases = list(required_phases)
+        required = " or ".join(f"'{phase}'" for phase in self.required_phases)
+        super().__init__(
+            f"Install '{install_id}' is in phase '{actual_phase}'; {operation} requires "
+            f"phase {required}"
+        )
+
+
+class InstallOwnershipCollisionError(CoreError):
+    """An installable object name is already claimed by another live install."""
+
+    error_code = "install_ownership_collision"
+
+    def __init__(
+        self,
+        object_kind: str,
+        object_name: str,
+        owning_install_id: str,
+        owning_install_phase: str,
+    ):
+        self.object_kind = object_kind
+        self.object_name = object_name
+        self.owning_install_id = owning_install_id
+        self.owning_install_phase = owning_install_phase
+        super().__init__(
+            f"{object_kind} '{object_name}' is already owned by install "
+            f"'{owning_install_id}' (phase '{owning_install_phase}')"
+        )
 
 
 class CitationHandleResolutionError(CoreError):
