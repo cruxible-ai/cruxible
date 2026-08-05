@@ -7,6 +7,13 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **`cruxible batch-direct-write` shows identity warnings again.** The command
+  printed neither a dry-run's nor an applied write's `identity_hint` matches in
+  its human output, so a batch duplicating an existing entity's declared
+  identity looked clean at the terminal while the `--json`, HTTP and MCP
+  results all carried the warning. The command now uses the shared result
+  emitter, and the preview surfaces the same warnings the apply would.
+
 ## [0.3.1] - 2026-08-05
 
 - **Entity types can declare deterministic identity keys at write time.**

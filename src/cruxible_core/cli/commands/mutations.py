@@ -1147,34 +1147,16 @@ def batch_direct_write_cmd(
         allow_local=False,
         command_name="batch-direct-write",
     )
-    result_payload = _batch_direct_write_result_payload(result)
-    if output_json:
-        _emit_json(result_payload)
-        return
-    action = "validated" if dry_run else "applied"
-    if result_payload["valid"]:
-        click.echo(f"Batch direct write {action}.")
-    else:
-        click.echo(f"Batch direct write {action} with validation errors.")
-    click.echo(
-        "  Entities: "
-        f"{result_payload['entities_added']} added, "
-        f"{result_payload['entities_updated']} updated"
+    # One emitter for every command that returns a BatchDirectWriteResult. This
+    # command used to inline its own copy, which silently fell behind when
+    # identity_warnings were added to the shared one - the CLI dropped them on
+    # both dry-run and apply while the HTTP and MCP results carried them.
+    _emit_batch_write_result(
+        result,
+        action_label="Batch direct write",
+        dry_run=dry_run,
+        output_json=output_json,
     )
-    click.echo(
-        "  Relationships: "
-        f"{result_payload['relationships_added']} added, "
-        f"{result_payload['relationships_updated']} updated"
-    )
-    if result_payload["evidence_sources_used"]:
-        click.echo("  Evidence sources: " + ", ".join(result_payload["evidence_sources_used"]))
-    for warning in result_payload["validation_warnings"]:
-        click.secho(f"  Warning: {warning}", fg="yellow")
-    for error in result_payload["validation_errors"]:
-        click.secho(f"  Error: {error}", fg="red")
-    if result_payload["receipt_id"]:
-        click.echo(f"  Receipt: {result_payload['receipt_id']}")
-    _emit_direct_write_group_notices(result_payload, prefix="  ")
 
 
 @click.command("add-constraint")

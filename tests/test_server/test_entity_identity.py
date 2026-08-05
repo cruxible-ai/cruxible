@@ -171,6 +171,97 @@ def test_identity_hint_surfaces_on_add_entity_and_batch(
     assert update.json()["identity_warnings"] == []
 
 
+def test_identity_hint_surfaces_on_dry_run_previews(
+    identity_client: tuple[TestClient, str],
+) -> None:
+    """A preview scans identity exactly like an apply; it just writes nothing.
+
+    Dry run and apply share one prepare step, so the warning an agent would get
+    at apply time is available before it commits. Asserted here because a CLI
+    emitter once dropped these from human output and the gap read as a missing
+    scan.
+    """
+    client, instance_id = identity_client
+    seed = _add_entity(
+        client,
+        instance_id,
+        "HintedAccount",
+        "product_bluest_account",
+        {"name": "Bluest Account", "family": "Checking"},
+    )
+    assert seed.status_code == 200, seed.text
+
+    duplicate_properties = {"name": "  BLUEST,   ACCOUNT! ", "family": "checking"}
+    single = client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "dry_run": True,
+            "entities": [
+                {
+                    "entity_type": "HintedAccount",
+                    "entity_id": "checking_bluest_account",
+                    "properties": duplicate_properties,
+                }
+            ],
+        },
+    )
+    assert single.status_code == 200, single.text
+    # AddEntityResult carries no dry_run flag; the preview is proved not to have
+    # written by the apply below still counting as an add.
+    assert single.json()["receipt_id"] is None
+    assert single.json()["identity_warnings"] == [
+        _warning("checking_bluest_account", "product_bluest_account")
+    ]
+
+    batch = client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={
+            "dry_run": True,
+            "payload": {
+                "entities": [
+                    {
+                        "entity_type": "HintedAccount",
+                        "entity_id": "checking_bluest_account",
+                        "properties": duplicate_properties,
+                    }
+                ]
+            },
+        },
+    )
+    assert batch.status_code == 200, batch.text
+    batch_body = batch.json()
+    assert batch_body["dry_run"] is True
+    assert batch_body["valid"] is True
+    assert batch_body["receipt_id"] is None
+    assert batch_body["identity_warnings"] == [
+        _warning("checking_bluest_account", "product_bluest_account")
+    ]
+
+    # The previews warned without writing: the duplicate is still absent, so a
+    # later apply is the first write of that id and warns again rather than
+    # reading as an update, which skips the advisory scan.
+    applied = client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={
+            "payload": {
+                "entities": [
+                    {
+                        "entity_type": "HintedAccount",
+                        "entity_id": "checking_bluest_account",
+                        "properties": duplicate_properties,
+                    }
+                ]
+            }
+        },
+    )
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["entities_added"] == 1
+    assert applied.json()["entities_updated"] == 0
+    assert applied.json()["identity_warnings"] == [
+        _warning("checking_bluest_account", "product_bluest_account")
+    ]
+
+
 def test_unique_by_rejects_create_and_identity_update(
     identity_client: tuple[TestClient, str],
 ) -> None:
