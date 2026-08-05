@@ -13,46 +13,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The tag names the GitHub release that the packaged kit manifest points
+      # at, so tag, package version, client version, the core dependency pin on
+      # the client, the manifest version and the manifest base_url must all
+      # agree before anything publishes. The check lives in a script (stdlib
+      # only, so it runs on this bare checkout) rather than inline here, because
+      # scripts/ci_parity.sh runs the same script pre-push: 0.3.1 tagged with
+      # the client still at 0.3.0 and only this gate caught it.
       - name: Verify package versions are locked
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import tomllib
-          from pathlib import Path
-
-          root = tomllib.loads(Path("pyproject.toml").read_text())
-          client = tomllib.loads(Path("packages/cruxible-client/pyproject.toml").read_text())
-          core_version = root["project"]["version"]
-          client_version = client["project"]["version"]
-          expected = f"cruxible-client=={client_version}"
-          dependencies = root["project"]["dependencies"]
-
-          if core_version != client_version:
-              raise SystemExit(
-                  f"Version mismatch: cruxible={core_version} cruxible-client={client_version}"
-              )
-          if expected not in dependencies:
-              raise SystemExit(f"Missing exact dependency pin: {expected}")
-
-          # The tag names the GitHub release that the packaged kit manifest
-          # points at, so tag, package version, manifest version, and the
-          # manifest base_url must all agree before anything publishes.
-          tag = os.environ["GITHUB_REF_NAME"]
-          manifest = json.loads(
-              Path("src/cruxible_core/kit_distribution/manifest.json").read_text()
-          )
-          if tag != f"v{core_version}":
-              raise SystemExit(f"Tag {tag} does not match package version {core_version}")
-          if manifest["version"] != core_version:
-              raise SystemExit(
-                  f"Kit manifest version {manifest['version']} does not match {core_version}"
-              )
-          if f"/releases/download/{tag}/" not in manifest["base_url"]:
-              raise SystemExit(
-                  f"Kit manifest base_url {manifest['base_url']} does not point at {tag}"
-              )
-          PY
+        run: python scripts/check_version_lockstep.py --tag "$GITHUB_REF_NAME"
 
   # PyPI pending publishers must have distinct configurations, so the two
   # packages publish from separate jobs: cruxible-client under the
