@@ -7,6 +7,19 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **The hosted runtime image has a repeatable GHCR publish pipeline.** A
+  dispatchable workflow builds `deploy/runtime/Dockerfile` from a named
+  reviewed commit — refusing to continue unless the checkout is exactly that
+  SHA — and pushes it under the immutable tag
+  `runtime-<version>-<sha12>` with OCI source, revision, version, and created
+  labels. `latest` is never published or moved: an already-published tag is
+  reused rather than rebuilt, only an explicit registry "absent" authorizes a
+  push, and a tag whose image was built from a different revision fails the
+  job. The run summary and job outputs carry the image digest, and a
+  post-push job pulls that digest and runs the runtime image suite against
+  the published artifact via the new `CRUXIBLE_RUNTIME_IMAGE_REF` test
+  override. Deployments pin the digest, not the tag.
+
 ## [0.3.1] - 2026-08-05
 
 - **Entity types can declare deterministic identity keys at write time.**
