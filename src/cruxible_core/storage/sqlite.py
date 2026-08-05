@@ -202,7 +202,7 @@ _UNIFIED_STATE_MIGRATION = "0001_unified_sqlite_state"
 SNAPSHOT_SCHEMA_MIGRATION = "0002_snapshot_tables"
 READ_REVISION_MIGRATION = "0003_read_revision"
 CLAIM_IDENTITY_MIGRATION = "0004_claim_identity"
-BOUNDARY_TELEMETRY_MIGRATION = "0005_boundary_telemetry"
+BOUNDARY_TELEMETRY_MIGRATION = "0006_boundary_telemetry"
 
 # Every migration ``_initialize_connection`` knows how to apply. The steady-state
 # pre-check compares against this set to decide whether it needs the write lock
