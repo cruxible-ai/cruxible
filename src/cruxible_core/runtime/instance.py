@@ -50,6 +50,8 @@ from cruxible_core.storage.sqlite import (
     SQLiteStorageBackend,
     SQLiteUnitOfWork,
 )
+from cruxible_core.telemetry.store import SQLiteTelemetryStore
+from cruxible_core.telemetry.types import BoundaryTelemetrySummary
 from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import (
     LOCK_FILE_NAME,
@@ -331,6 +333,29 @@ class CruxibleInstance(InstanceProtocol):
         """
         value = self._get_snapshot_state(_READ_REVISION_STATE_KEY)
         return int(value) if isinstance(value, int) else 0
+
+    def record_boundary_telemetry(
+        self,
+        surface_name: str,
+        *,
+        response_bytes: int,
+        duration_ms: float,
+        error: bool,
+    ) -> None:
+        """Best-effort aggregate recording that never waits on a busy state DB."""
+        SQLiteTelemetryStore.record_best_effort(
+            self._state_db_path(),
+            surface_name,
+            response_bytes=response_bytes,
+            duration_ms=duration_ms,
+            error=error,
+        )
+
+    def get_boundary_telemetry_summary(self) -> BoundaryTelemetrySummary:
+        """Read this instance's aggregate boundary counters."""
+        self._ensure_state_initialized()
+        with self._storage_backend().telemetry_repository() as telemetry:
+            return telemetry.summary()
 
     def get_upstream_metadata(self) -> UpstreamMetadata | None:
         """Return typed upstream metadata for release-backed overlay instances."""

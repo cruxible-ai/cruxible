@@ -996,6 +996,13 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/stats")
         return self._parse_model(response, contracts.StatsResult)
 
+    def telemetry_summary(
+        self,
+        instance_id: str,
+    ) -> contracts.BoundaryTelemetrySummaryResult:
+        response = self._client.get(f"/api/v1/{instance_id}/telemetry/summary")
+        return self._parse_model(response, contracts.BoundaryTelemetrySummaryResult)
+
     def inspect_entity(
         self,
         instance_id: str,

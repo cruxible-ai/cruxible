@@ -226,6 +226,7 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     # Read-only state-health surface: exposed over HTTP (GET /state/health) and
     # the CLI (`cruxible state health`), but deliberately NOT an MCP tool.
     "cruxible_state_health": PermissionMode.READ_ONLY,
+    "cruxible_telemetry_summary": PermissionMode.READ_ONLY,
     "cruxible_list_source_artifacts": PermissionMode.READ_ONLY,
     "cruxible_get_source_artifact": PermissionMode.READ_ONLY,
     # Adjudicating a claim (feedback accept / reject / correct). See

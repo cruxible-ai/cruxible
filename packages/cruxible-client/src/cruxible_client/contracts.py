@@ -1561,6 +1561,20 @@ class StatsResult(BaseModel):
     read_revision: int | None = None
 
 
+class BoundaryTelemetryCounter(BaseModel):
+    surface_name: str
+    call_count: int
+    error_count: int
+    total_response_bytes: int
+    total_duration_ms: float
+    max_duration_ms: float
+
+
+class BoundaryTelemetrySummaryResult(BaseModel):
+    earliest_recorded_at: datetime | None = None
+    counters: list[BoundaryTelemetryCounter] = Field(default_factory=list)
+
+
 class ServerInfoResult(BaseModel):
     server_required: bool
     state_dir: str

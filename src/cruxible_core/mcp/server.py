@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import sys
+import time
 from importlib import metadata
 from typing import Any
 
@@ -16,6 +17,7 @@ from mcp.types import Tool as MCPTool
 
 from cruxible_core import __version__
 from cruxible_core.errors import ConfigError
+from cruxible_core.mcp import handlers
 from cruxible_core.mcp.curation import (
     ToolCuration,
     advertised_tool_names,
@@ -30,6 +32,7 @@ from cruxible_core.mcp.permissions import (
 )
 from cruxible_core.mcp.tools import register_tools
 from cruxible_core.server.config import ServerSettings, resolve_server_settings
+from cruxible_core.telemetry.instrumentation import record_boundary
 
 BASE_INSTRUCTIONS = """\
 # cruxible-core
@@ -230,12 +233,54 @@ def _registered_tool_names(server: FastMCP) -> set[str]:
     return {tool.name for tool in manager.list_tools()}
 
 
+def _serialized_mcp_response_bytes(result: Any, *, converted: bool) -> int:
+    """Count FastMCP's already-rendered text payload without re-serializing it."""
+    if not converted:
+        return 0
+    content = result[0] if isinstance(result, tuple) and len(result) == 2 else result
+    if not isinstance(content, (list, tuple)):
+        return 0
+    return sum(
+        len(block.text.encode("utf-8"))
+        for block in content
+        if isinstance(block, mcp_types.TextContent)
+    )
+
+
+def _record_mcp_boundary(
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    local_mode: bool,
+    response_bytes: int,
+    duration_ms: float,
+    error: bool,
+) -> None:
+    if not local_mode:
+        return
+    instance_id = arguments.get("instance_id")
+    if not isinstance(instance_id, str) or not instance_id:
+        return
+    try:
+        instance = handlers.get_manager().get(instance_id)
+    except Exception:
+        return
+    record_boundary(
+        instance,
+        name,
+        response_bytes=response_bytes,
+        duration_ms=duration_ms,
+        error=error,
+    )
+
+
 def _install_tool_curation(
     server: FastMCP,
     advertised: set[str],
     *,
     mode: PermissionMode,
     curation: ToolCuration,
+    telemetry_local: bool,
 ) -> None:
     """Enforce curation at BOTH MCP protocol seams: tools/list and tools/call.
 
@@ -306,21 +351,42 @@ def _install_tool_curation(
         context: Any | None = None,
         convert_result: bool = False,
     ) -> Any:
-        if name not in advertised and manager.get_tool(name) is not None:
-            raise ToolError(
-                _uncurated_tool_message(
-                    name,
-                    mode=mode,
-                    curation=curation,
-                    advertised=advertised,
+        started = time.perf_counter_ns()
+        try:
+            if name not in advertised and manager.get_tool(name) is not None:
+                raise ToolError(
+                    _uncurated_tool_message(
+                        name,
+                        mode=mode,
+                        curation=curation,
+                        advertised=advertised,
+                    )
                 )
+            result = await inner_call_tool(
+                name,
+                arguments,
+                context=context,
+                convert_result=convert_result,
             )
-        return await inner_call_tool(
+        except BaseException as exc:
+            _record_mcp_boundary(
+                name,
+                arguments,
+                local_mode=telemetry_local,
+                response_bytes=(len(str(exc).encode("utf-8")) if isinstance(exc, Exception) else 0),
+                duration_ms=(time.perf_counter_ns() - started) / 1_000_000,
+                error=True,
+            )
+            raise
+        _record_mcp_boundary(
             name,
             arguments,
-            context=context,
-            convert_result=convert_result,
+            local_mode=telemetry_local,
+            response_bytes=_serialized_mcp_response_bytes(result, converted=convert_result),
+            duration_ms=(time.perf_counter_ns() - started) / 1_000_000,
+            error=False,
         )
+        return result
 
     curated_call_tool._cruxible_curated = True  # type: ignore[attr-defined]
     manager.call_tool = curated_call_tool
@@ -370,7 +436,13 @@ def create_server() -> FastMCP:
         advertised=advertised,
         transport_error=transport_error,
     )
-    _install_tool_curation(server, advertised, mode=mode, curation=curation)
+    _install_tool_curation(
+        server,
+        advertised,
+        mode=mode,
+        curation=curation,
+        telemetry_local=not settings.enabled and transport_error is None,
+    )
     # NOTE: Runtime FastMCP parity check is in main(), not here.
     # create_server() must remain safe for async embedders.
     return server

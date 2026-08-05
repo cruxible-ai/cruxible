@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from cruxible_core.snapshot.types import StateSnapshot, UpstreamMetadata
     from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
     from cruxible_core.storage.protocols import UnitOfWorkProtocol
+    from cruxible_core.telemetry.types import BoundaryTelemetrySummary
 
 
 class ReceiptStoreProtocol(ABC):
@@ -690,6 +691,23 @@ class InstanceProtocol(ABC):
     def get_head_snapshot_id(self) -> str | None: ...
     @abstractmethod
     def get_read_revision(self) -> int: ...
+
+    def record_boundary_telemetry(
+        self,
+        surface_name: str,
+        *,
+        response_bytes: int,
+        duration_ms: float,
+        error: bool,
+    ) -> None:
+        """Best-effort boundary observation hook for telemetry-aware instances."""
+        return None
+
+    def get_boundary_telemetry_summary(self) -> BoundaryTelemetrySummary:
+        """Return boundary counters when supported by the instance backend."""
+        from cruxible_core.telemetry.types import BoundaryTelemetrySummary
+
+        return BoundaryTelemetrySummary(earliest_recorded_at=None)
 
     def get_instance_state(self, key: str) -> Any | None:
         """Read a raw ``instance_state`` value, or None when unsupported.

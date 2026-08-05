@@ -6,17 +6,43 @@ import functools
 import importlib
 import os
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TextIO
 
 import click
 
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
+from cruxible_core.telemetry.instrumentation import (
+    collect_cli_boundaries,
+    finish_cli_boundaries,
+)
 
 if TYPE_CHECKING:
     import httpx
+
+
+class _CountingTextIO:
+    """Transparent text-stream proxy that counts the bytes Click already emits."""
+
+    def __init__(self, wrapped: TextIO) -> None:
+        self._wrapped = wrapped
+        self.byte_count = 0
+
+    def write(self, value: str) -> int:
+        encoding = self._wrapped.encoding or "utf-8"
+        errors = self._wrapped.errors or "strict"
+        self.byte_count += len(value.encode(encoding, errors=errors))
+        return self._wrapped.write(value)
+
+    def flush(self) -> None:
+        self._wrapped.flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped, name)
+
 
 # Authoritative CLI inventory for commands that write authoritative state or
 # write an artifact from a selected instance. ``handle_errors`` consults this
@@ -158,47 +184,62 @@ def handle_errors(f: Any) -> Any:
 
     @functools.wraps(f)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            ctx = click.get_current_context(silent=True)
-            if ctx is not None:
-                target_mode = MUTATING_COMMAND_TARGETS.get(_command_path(ctx))
-                if target_mode is not None and target_mode != "manual":
-                    # Runtime import avoids the main <-> commands import cycle.
-                    from cruxible_core.cli.commands._common import _echo_write_target
+        stdout = _CountingTextIO(sys.stdout)
+        stderr = _CountingTextIO(sys.stderr)
+        command_failed = False
+        with collect_cli_boundaries() as collector:
+            try:
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    try:
+                        ctx = click.get_current_context(silent=True)
+                        if ctx is not None:
+                            target_mode = MUTATING_COMMAND_TARGETS.get(_command_path(ctx))
+                            if target_mode is not None and target_mode != "manual":
+                                # Runtime import avoids the main <-> commands import cycle.
+                                from cruxible_core.cli.commands._common import _echo_write_target
 
-                    _echo_write_target(target_mode, kwargs)
-            return f(*args, **kwargs)
-        except Exception as exc:
-            # Error packages and HTTP transport support stay off the import path
-            # until a command actually fails. Core errors share the client base,
-            # so this remains one catch surface for local and remote execution.
-            from cruxible_client.errors import CoreError as ClientCoreError
-            from cruxible_client.errors import ServerUnreachableError
+                                _echo_write_target(target_mode, kwargs)
+                        return f(*args, **kwargs)
+                    except Exception as exc:
+                        # Error packages and HTTP transport support stay off the import path
+                        # until a command actually fails. Core errors share the client base,
+                        # so this remains one catch surface for local and remote execution.
+                        from cruxible_client.errors import CoreError as ClientCoreError
+                        from cruxible_client.errors import ServerUnreachableError
 
-            if isinstance(exc, ServerUnreachableError):
-                # Transport failures already render as a friendly single line;
-                # the class-name prefix would only add noise.
-                click.secho(f"Error: {exc}", fg="red", err=True)
-                sys.exit(1)
-            if isinstance(exc, ClientCoreError):
-                click.secho(
-                    f"Error: {exc.__class__.__name__}: {exc}",
-                    fg="red",
-                    err=True,
+                        if isinstance(exc, ServerUnreachableError):
+                            # Transport failures already render as a friendly single line;
+                            # the class-name prefix would only add noise.
+                            click.secho(f"Error: {exc}", fg="red", err=True)
+                            sys.exit(1)
+                        if isinstance(exc, ClientCoreError):
+                            click.secho(
+                                f"Error: {exc.__class__.__name__}: {exc}",
+                                fg="red",
+                                err=True,
+                            )
+                            sys.exit(1)
+
+                        import httpx
+
+                        if isinstance(exc, httpx.TransportError):
+                            click.secho(
+                                "Error: could not reach Cruxible server at "
+                                f"{_active_transport_label(exc)}: {exc}",
+                                fg="red",
+                                err=True,
+                            )
+                            sys.exit(1)
+                        raise
+            except BaseException:
+                command_failed = True
+                raise
+            finally:
+                finish_cli_boundaries(
+                    collector,
+                    response_bytes=stdout.byte_count + stderr.byte_count,
+                    command_failed=command_failed,
                 )
-                sys.exit(1)
-
-            import httpx
-
-            if isinstance(exc, httpx.TransportError):
-                click.secho(
-                    "Error: could not reach Cruxible server at "
-                    f"{_active_transport_label(exc)}: {exc}",
-                    fg="red",
-                    err=True,
-                )
-                sys.exit(1)
-            raise
 
     return wrapper
 
@@ -602,6 +643,18 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "schema": _command("reads", "schema", "Display the config schema for this instance."),
     "stats": _command(
         "read_stats", "stats_cmd", "Display entity and relationship counts for this instance."
+    ),
+    "telemetry": _group(
+        "Inspect aggregate traffic crossing core-owned surfaces.",
+        {
+            "summary": _command(
+                "telemetry",
+                "telemetry_summary_cmd",
+                "Show per-surface call, error, payload-byte, and duration counters.",
+            ),
+        },
+        module="telemetry",
+        attr="telemetry_group",
     ),
     "sample": _command("reads", "sample", "Show a sample of entities of a given type."),
     "evaluate": _command(

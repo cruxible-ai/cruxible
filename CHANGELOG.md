@@ -7,6 +7,15 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **Core boundary traffic is measurable per instance.** MCP tools, HTTP routes,
+  and locally invoked CLI service verbs now add call, error, serialized-response-byte,
+  and total/maximum duration counters to one aggregate SQLite row per surface,
+  without storing per-call events. `cruxible telemetry summary` and
+  `GET /api/v1/{instance_id}/telemetry/summary` expose the counters and their
+  earliest recorded timestamp at the read-only tier. Recording is best-effort:
+  a busy or unavailable telemetry store drops the observation without changing
+  the underlying request result.
+
 - **A Procedure author can withdraw their own pending proposal.** `withdraw`
   moves a pending definition to the new terminal `withdrawn` status through the
   same receipted transition as accept/reject, at the proposing

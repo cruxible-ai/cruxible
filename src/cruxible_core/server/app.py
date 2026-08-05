@@ -51,7 +51,9 @@ from cruxible_core.server.routes.runtime_credentials import (
 from cruxible_core.server.routes.snapshots import router as snapshots_router
 from cruxible_core.server.routes.source_artifacts import router as source_artifacts_router
 from cruxible_core.server.routes.state import router as state_router
+from cruxible_core.server.routes.telemetry import router as telemetry_router
 from cruxible_core.server.routes.workflows import router as workflows_router
+from cruxible_core.server.telemetry import boundary_telemetry_middleware
 from cruxible_core.storage import StorageDatabaseError, StorageIntegrityError
 from cruxible_core.temporal import ISO_8601_FORMAT_HINT
 
@@ -88,6 +90,7 @@ def create_app() -> FastAPI:
     get_registry()
     app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES)
     app.middleware("http")(token_auth_middleware)
+    app.middleware("http")(boundary_telemetry_middleware)
 
     @app.exception_handler(CoreError)
     async def core_error_handler(request: Request, exc: CoreError) -> JSONResponse:
@@ -191,6 +194,7 @@ def create_app() -> FastAPI:
     app.include_router(instances_router)
     app.include_router(hosted_instances_router)
     app.include_router(state_router)
+    app.include_router(telemetry_router)
     app.include_router(queries_router)
     app.include_router(runtime_credentials_router)
     app.include_router(decision_records_router)
