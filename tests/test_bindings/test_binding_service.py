@@ -311,6 +311,79 @@ class TestThirdPartyConsent:
         assert rebound.binding.consent_actor_id is None
         assert rebound.binding.consent_at is None
 
+    def test_consent_does_not_ride_along_to_a_different_vendor(
+        self,
+        instance: CruxibleInstance,
+        actor: GovernedActorContext,
+    ) -> None:
+        """On a slot that does not DEMAND consent, nothing else would catch it."""
+        slot = SlotInterface(
+            slot_name="summarize",
+            contract_in="doc.v1",
+            contract_out="summary.v1",
+        )
+        first = ProviderDescriptor(
+            provider_name="vendor-a",
+            contract_in="doc.v1",
+            contract_out="summary.v1",
+            billing_mode="metered",
+            third_party=True,
+        )
+        service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=slot,
+            provider=first,
+            third_party_consent=True,
+            actor_context=actor,
+        )
+        rebound = service_rebind_slot(
+            instance,
+            install_id=INSTALL,
+            slot=slot,
+            provider=first.model_copy(update={"provider_name": "vendor-b"}),
+            actor_context=actor,
+        )
+        assert rebound.binding.provider_name == "vendor-b"
+        assert rebound.binding.third_party_consent is False
+        assert rebound.binding.consent_actor_id is None
+
+    def test_consent_survives_a_rebind_that_keeps_the_same_vendor(
+        self,
+        instance: CruxibleInstance,
+        actor: GovernedActorContext,
+    ) -> None:
+        slot = SlotInterface(
+            slot_name="summarize",
+            contract_in="doc.v1",
+            contract_out="summary.v1",
+        )
+        vendor = ProviderDescriptor(
+            provider_name="vendor-a",
+            contract_in="doc.v1",
+            contract_out="summary.v1",
+            billing_mode="metered",
+            third_party=True,
+        )
+        service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=slot,
+            provider=vendor,
+            third_party_consent=True,
+            actor_context=actor,
+        )
+        rebound = service_rebind_slot(
+            instance,
+            install_id=INSTALL,
+            slot=slot,
+            provider=vendor.model_copy(update={"billing_mode": "included"}),
+            actor_context=actor,
+        )
+        assert rebound.binding.billing_mode == "included"
+        assert rebound.binding.third_party_consent is True
+        assert rebound.binding.consent_actor_id == "agent-alpha"
+
 
 class TestRebind:
     def test_rebind_bumps_the_revision_and_keeps_the_binding_id(

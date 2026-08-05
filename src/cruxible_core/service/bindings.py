@@ -647,6 +647,15 @@ def _validate_page(*, limit: int | None, offset: int) -> None:
         raise ConfigError("limit must be >= 0")
 
 
+_NO_CONSENT: dict[str, Any] = {
+    "third_party_consent": False,
+    "consent_actor_id": None,
+    "consent_org_id": None,
+    "consent_at": None,
+}
+"""The cleared consent stamp. A revision either names who consented, or names nobody."""
+
+
 def _consent_fields(
     *,
     provider: ProviderDescriptor,
@@ -657,27 +666,27 @@ def _consent_fields(
 ) -> dict[str, Any]:
     """Consent stamps for a binding revision.
 
-    Consent is recorded only when it MEANS something: a third-party provider on
-    a slot that demands it. Binding a first-party provider clears any consent
-    carried from a previous revision rather than letting it ride along, because
-    a stale consent stamp on a revision that did not need consent reads as an
-    approval that was never given for this provider.
+    CONSENT NEVER OUTLIVES THE PROVIDER IT WAS GIVEN FOR. It is recorded only
+    when it means something -- a third-party provider, consented to by a named
+    actor at a named time -- and it is cleared whenever a revision moves to a
+    provider consent was not given for, including a first-party one. Carrying a
+    stamp across a provider change would record an approval of a vendor nobody
+    approved; on a slot that does not DEMAND consent, that is exactly the silent
+    case where nothing else would catch it.
     """
     if not provider.third_party:
-        return {
-            "third_party_consent": False,
-            "consent_actor_id": None,
-            "consent_org_id": None,
-            "consent_at": None,
-        }
+        return dict(_NO_CONSENT)
     if not third_party_consent:
-        # Only reachable when the slot does not demand consent; keep whatever
-        # the previous revision recorded rather than inventing an approval.
+        # Reachable only when the slot does not demand consent. Keep the stamp
+        # if (and only if) this is the same provider it was given for; a
+        # different vendor starts unconsented rather than inheriting.
+        if previous is None or previous.provider_name != provider.provider_name:
+            return dict(_NO_CONSENT)
         return {
-            "third_party_consent": False if previous is None else previous.third_party_consent,
-            "consent_actor_id": None if previous is None else previous.consent_actor_id,
-            "consent_org_id": None if previous is None else previous.consent_org_id,
-            "consent_at": None if previous is None else previous.consent_at,
+            "third_party_consent": previous.third_party_consent,
+            "consent_actor_id": previous.consent_actor_id,
+            "consent_org_id": previous.consent_org_id,
+            "consent_at": previous.consent_at,
         }
     return {
         "third_party_consent": True,
