@@ -36,6 +36,20 @@ Set `CRUXIBLE_MCP_TOOLS` or `CRUXIBLE_MCP_TOOL_ALLOWLIST` to a comma-separated l
 
 Tool descriptions are written for non-coding MCP clients. Each description starts with when to use the tool, uses kit-user vocabulary, and avoids implementation details that do not help with tool choice.
 
+## Self-Describing Tool Descriptions
+
+Where the loaded kit answers a question a tool leaves open, the served description also names it, so an agent can discover the config's vocabulary from the tool surface instead of being told it out of band:
+
+| Tool | Kit facts appended |
+| --- | --- |
+| `cruxible_query`, `cruxible_list_queries`, `cruxible_describe_query` | Named query names |
+| `cruxible_lock_workflow`, `cruxible_plan_workflow` | Registered provider names |
+| `cruxible_run_workflow`, `cruxible_propose_procedure` | Registered provider names and contract names with a short field preview |
+
+The **Purpose** lines documented below are the reviewed static descriptions; kit facts are appended to them and are never part of a tool's SCHEMA, which does not vary by kit. Long lists are truncated with a total.
+
+The kit is resolved from local state only, so `tools/list` keeps answering when no daemon is reachable: the config named by `CRUXIBLE_MCP_KIT_CONFIG`, otherwise the sole locally registered instance. With no local instance, more than one, or an unreadable config, the static descriptions are served unchanged.
+
 ## Working-Set Capture
 
 Set `CRUXIBLE_WORKING_SET_DIR` to a directory path to opt the MCP server into agent-local working-set capture: entity/edge-shaped results returned by the read tools (`cruxible_query`, `cruxible_query_inline`, `cruxible_get_entity`, `cruxible_inspect_entity`, `cruxible_list`, `cruxible_sample`, `cruxible_get_relationship`) are ALSO recorded as revision-stamped working-set records rooted at that directory — the same record format, dedupe, and credential-scoped instance keys as the CLI's `--ws` capture (see the `cruxible ws` section of `docs/cli-reference.md`). Capture happens in the MCP server process, which is a client co-located with the agent; the daemon stays blind to it, and tool results are never changed by it.

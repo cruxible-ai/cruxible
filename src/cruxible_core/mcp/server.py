@@ -21,6 +21,7 @@ from cruxible_core.mcp.curation import (
     advertised_tool_names,
     resolve_tool_curation,
 )
+from cruxible_core.mcp.kit_surface import resolve_kit_surface
 from cruxible_core.mcp.permissions import (
     TOOL_PERMISSIONS,
     PermissionMode,
@@ -343,7 +344,15 @@ def create_server() -> FastMCP:
         name=f"cruxible v{__version__}",
         instructions="",
     )
-    registered = register_tools(server, offload_sync_calls=settings.enabled)
+    # Resolved from LOCAL state only (see mcp.kit_surface): tools/list must keep
+    # answering on a host with no reachable daemon, so a self-describing
+    # description is never bought with a network dependency at listing time.
+    kit_surface = resolve_kit_surface()
+    registered = register_tools(
+        server,
+        offload_sync_calls=settings.enabled,
+        kit_surface=kit_surface,
+    )
     validate_tool_permissions(registered)
     curation = resolve_tool_curation()
     advertised = advertised_tool_names(

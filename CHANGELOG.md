@@ -23,6 +23,15 @@ the project's own state instance.
   - Procedure tier refusals name the provider whose `procedure_access` forced
     the effective tier, and list the `declared_tier` values that clear it.
 
+- **MCP tool descriptions describe the loaded kit.** Query tools name the
+  config's named queries; workflow and procedure tools name its registered
+  providers and contracts (with a short field preview), so an agent discovers
+  the authoring vocabulary from the tool surface instead of prompt
+  enumeration. Lists are truncated with a total. Tool schemas do not vary by
+  kit. The kit is resolved from local state only — `CRUXIBLE_MCP_KIT_CONFIG`,
+  otherwise the sole registered local instance — so `tools/list` still answers
+  with no reachable daemon, falling back to the static descriptions.
+
 ## [0.3.1] - 2026-08-05
 
 - **Entity types can declare deterministic identity keys at write time.**

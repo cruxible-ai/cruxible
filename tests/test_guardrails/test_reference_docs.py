@@ -13,6 +13,7 @@ from cruxible_core.cli.main import cli
 from cruxible_core.config.composer import _KEYED_MAP_KEYS
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.mcp.server import create_server
+from cruxible_core.mcp.tool_prompts import tool_description
 from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
 from cruxible_core.workflow.step_handlers import DEFAULT_STEP_HANDLER_REGISTRY
 
@@ -202,8 +203,15 @@ def test_mcp_reference_lists_every_registered_tool_and_input_property() -> None:
         assert f"**Permission:** `{TOOL_PERMISSIONS[tool.name].name}`" in body, (
             f"{tool.name} has stale permission documentation"
         )
-        assert f"**Purpose:** {tool.description}" in body, (
-            f"{tool.name} has stale purpose documentation"
+        # The doc pins the REVIEWED description. A served description may also
+        # carry the loaded kit's vocabulary (named queries, providers,
+        # contracts), which is instance state and cannot be documented in a
+        # repo file — so the doc is checked against the static text, and the
+        # served text is required to still begin with it.
+        reviewed = tool_description(tool.name)
+        assert f"**Purpose:** {reviewed}" in body, f"{tool.name} has stale purpose documentation"
+        assert (tool.description or "").startswith(reviewed), (
+            f"{tool.name} no longer serves its reviewed description"
         )
         for prop in tool.inputSchema.get("properties", {}):
             assert f"`{prop}`" in body, f"{tool.name} omits input property {prop}"
