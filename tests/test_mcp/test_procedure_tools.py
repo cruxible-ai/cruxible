@@ -98,7 +98,10 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
 
         def get_procedure(self, instance_id, procedure_id):
             calls.append(("get", (instance_id, procedure_id)))
-            return {"procedure": {"procedure_id": procedure_id}}
+            return {
+                "procedure": {"procedure_id": procedure_id},
+                "contract_in_schema": [{"name": "value", "type": "int", "required": True}],
+            }
 
         def resolve_procedure(self, instance_id, procedure_id, **kwargs):
             calls.append(("resolve", (instance_id, procedure_id, kwargs)))
@@ -124,7 +127,7 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
 
     handlers.handle_propose_procedure("inst_1", {"name": "p"})
     handlers.handle_list_procedures("inst_1", status="live")
-    handlers.handle_get_procedure("inst_1", "PRC-1")
+    shown = handlers.handle_get_procedure("inst_1", "PRC-1")
     handlers.handle_resolve_procedure(
         "inst_1",
         "PRC-1",
@@ -151,5 +154,6 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
         "run",
         "runs",
     ]
+    assert shown["contract_in_schema"] == [{"name": "value", "type": "int", "required": True}]
     withdraw_call = next(payload for name, payload in calls if name == "withdraw")
     assert withdraw_call[2] == {"expected_version": 1, "reason": None}

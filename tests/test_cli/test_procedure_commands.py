@@ -82,7 +82,11 @@ def test_procedure_read_commands_use_envelopes_and_surface_started_tombstone(
     assert [item["procedure_id"] for item in list_payload["items"]] == [procedure_id]
 
     assert shown.exit_code == 0, shown.output
-    assert json.loads(shown.output)["procedure"]["procedure_id"] == procedure_id
+    shown_payload = json.loads(shown.output)
+    assert shown_payload["procedure"]["procedure_id"] == procedure_id
+    assert shown_payload["contract_in_schema"] == [
+        {"name": "value", "type": "int", "required": True}
+    ]
 
     assert runs_json.exit_code == 0, runs_json.output
     run_payload = json.loads(runs_json.output)
@@ -150,6 +154,7 @@ def test_procedure_propose_loads_yaml_and_forwards_governance_fields(
                     exclude_none=True,
                 ),
                 "receipt_id": "RCP-procedure",
+                "warnings": ["budget does not match provider-call count"],
             }
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -177,6 +182,7 @@ def test_procedure_propose_loads_yaml_and_forwards_governance_fields(
     evidence_refs = cast(list[object], captured["evidence_refs"])
     assert len(evidence_refs) == 1
     assert "Receipt: RCP-procedure" in result.output
+    assert "Warning: budget does not match provider-call count" in result.output
 
 
 def test_procedure_withdraw_forwards_version_and_optional_reason(

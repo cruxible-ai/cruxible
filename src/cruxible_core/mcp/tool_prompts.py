@@ -281,7 +281,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need to find governed procedures by lifecycle status or page."
     ),
     "cruxible_get_procedure": (
-        "Use when you need one procedure's definition, budget, precondition, and lifecycle."
+        "Use when you need one procedure's definition, resolved input field schema, budget, "
+        "precondition, and lifecycle."
     ),
     "cruxible_resolve_procedure": (
         "Use when an independent reviewer needs to accept or reject a pending procedure."

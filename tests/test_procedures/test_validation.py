@@ -335,28 +335,23 @@ def test_static_expansion_counts_repeat_provider_calls() -> None:
     }
 
 
-def test_budget_refusal_carries_all_computed_numbers() -> None:
-    with pytest.raises(ValidationError) as exc_info:
-        _definition(
-            steps=[
-                {
-                    "id": "retry",
-                    "repeat": {
-                        "max_attempts": 4,
-                        "until": {"left": 1, "op": "eq", "right": 1, "message": "done"},
-                        "steps": [_provider_step(1)],
-                    },
-                    "as": "attempt",
-                }
-            ],
-            budget={"wall_clock_s": 10, "max_provider_calls": 3},
-        )
+def test_budget_may_differ_from_static_provider_call_count_for_authoring_lint() -> None:
+    definition = _definition(
+        steps=[
+            {
+                "id": "retry",
+                "repeat": {
+                    "max_attempts": 4,
+                    "until": {"left": 1, "op": "eq", "right": 1, "message": "done"},
+                    "steps": [_provider_step(1)],
+                },
+                "as": "attempt",
+            }
+        ],
+        budget={"wall_clock_s": 10, "max_provider_calls": 3},
+    )
 
-    message = str(exc_info.value)
-    assert "total_steps=2" in message
-    assert "expanded_steps=5" in message
-    assert "expanded_provider_calls=4" in message
-    assert "declared max_provider_calls=3" in message
+    assert definition.static_expansion().expanded_provider_calls == 4
 
 
 def test_global_expanded_step_ceiling_is_enforced_with_counts() -> None:

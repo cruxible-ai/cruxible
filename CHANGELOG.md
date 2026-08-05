@@ -7,6 +7,20 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **Procedure proposals catch impossible input contracts before they enter the
+  library.** Definition-time authoring lint now blocks a step reference such as
+  `$input.transactions_arguments` when `contract_in` does not declare that
+  field, naming the step, reference, and the contract's typed required/optional
+  fields. This deliberately changes `propose_procedure` behavior:
+  statically-wrong definitions that were previously accepted are now refused.
+  The existing produced-alias check still blocks invalid `returns`. Non-blocking
+  proposal warnings flag declared-but-unused inputs, read-implying names backed
+  by side-effecting providers, stringified JSON-object step inputs, and
+  `max_provider_calls` values that differ from the expanded provider-call
+  count. `get_procedure` now returns the resolved input field schema needed to
+  construct a valid invocation, and run-time contract refusals are covered by
+  the same typed required/optional schema echo.
+
 - **A Procedure author can withdraw their own pending proposal.** `withdraw`
   moves a pending definition to the new terminal `withdrawn` status through the
   same receipted transition as accept/reject, at the proposing

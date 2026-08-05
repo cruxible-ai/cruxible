@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from cruxible_core.config.schema import (
     AssertSpec,
     ContractReference,
+    PropertyType,
     WorkflowStepSchema,
     reject_reserved_property_equality_condition_keys,
     workflow_step_kind,
@@ -237,10 +238,6 @@ class ProcedureDefinition(BaseModel):
             refusals.append(
                 f"expanded provider-call ceiling is {MAX_PROCEDURE_EXPANDED_PROVIDER_CALLS}"
             )
-        if self.budget.max_provider_calls < expansion.expanded_provider_calls:
-            refusals.append(
-                "budget.max_provider_calls must be at least the expanded provider-call count"
-            )
         if refusals:
             counts = (
                 f"computed total_steps={expansion.total_steps}, "
@@ -312,6 +309,25 @@ class ProcedureRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ProcedureContractFieldSchema(BaseModel):
+    """Resolved construction hint for one procedure input field."""
+
+    name: str
+    type: PropertyType
+    required: bool
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ProcedureGetResult(BaseModel):
+    """One procedure record plus its currently resolved input field schema."""
+
+    procedure: ProcedureRecord
+    contract_in_schema: list[ProcedureContractFieldSchema] | None
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 class ProcedureBudgetSpent(BaseModel):
     """Budget accounting persisted for one procedure invocation."""
 
@@ -351,6 +367,7 @@ class ProcedureTransitionResult(BaseModel):
     action: Literal["propose", "accept", "reject", "retire", "withdraw"]
     procedure: ProcedureRecord
     receipt_id: str | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ProcedureExecutionResult(BaseModel):
@@ -429,8 +446,10 @@ __all__ = [
     "ProcedureBudget",
     "ProcedureBudgetSpent",
     "ProcedureDefinition",
+    "ProcedureContractFieldSchema",
     "ProcedureEvidenceArtifact",
     "ProcedureExecutionResult",
+    "ProcedureGetResult",
     "ProcedurePrecondition",
     "ProcedureRecord",
     "ProcedureRepeatSpec",

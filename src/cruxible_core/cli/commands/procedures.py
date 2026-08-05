@@ -22,6 +22,7 @@ from cruxible_core.cli.main import handle_errors
 from cruxible_core.procedure.types import (
     ProcedureDefinition,
     ProcedureExecutionResult,
+    ProcedureGetResult,
     ProcedureRecord,
     ProcedureRun,
     ProcedureStatus,
@@ -29,7 +30,7 @@ from cruxible_core.procedure.types import (
 )
 from cruxible_core.service import (
     service_accept_procedure,
-    service_get_procedure,
+    service_get_procedure_details,
     service_list_procedure_runs,
     service_list_procedures,
     service_propose_procedure,
@@ -96,6 +97,8 @@ def _procedure_from_result(result: Any) -> ProcedureRecord:
         return result
     if isinstance(result, ProcedureTransitionResult):
         return result.procedure
+    if isinstance(result, ProcedureGetResult):
+        return result.procedure
     if not isinstance(result, dict) or not isinstance(result.get("procedure"), dict):
         raise click.ClickException("Procedure response is missing its procedure record")
     return ProcedureRecord.model_validate(result["procedure"])
@@ -107,6 +110,30 @@ def _transition_receipt_id(result: Any) -> str | None:
     if isinstance(result, dict):
         value = result.get("receipt_id")
         return value if isinstance(value, str) else None
+    return None
+
+
+def _transition_warnings(result: Any) -> list[str]:
+    if isinstance(result, ProcedureTransitionResult):
+        return result.warnings
+    if isinstance(result, dict):
+        warnings = result.get("warnings")
+        if isinstance(warnings, list) and all(isinstance(item, str) for item in warnings):
+            return warnings
+    return []
+
+
+def _contract_in_schema(result: Any) -> list[dict[str, Any]] | None:
+    if isinstance(result, ProcedureGetResult):
+        if result.contract_in_schema is None:
+            return None
+        return [field.model_dump(mode="json") for field in result.contract_in_schema]
+    if isinstance(result, dict):
+        value = result.get("contract_in_schema")
+        if value is None:
+            return None
+        if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+            return value
     return None
 
 
@@ -180,6 +207,8 @@ def procedure_propose(
     receipt_id = _transition_receipt_id(result)
     if receipt_id:
         click.echo(f"  Receipt: {receipt_id}")
+    for warning in _transition_warnings(result):
+        click.echo(f"  Warning: {warning}")
 
 
 @procedure_group.command("list")
@@ -242,11 +271,16 @@ def procedure_show(procedure_id: str, output_json: bool) -> None:
     """Show one procedure definition and lifecycle record."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.get_procedure(instance_id, procedure_id),
-        lambda instance: service_get_procedure(instance, procedure_id),
+        lambda instance: service_get_procedure_details(instance, procedure_id),
     )
     procedure = _procedure_from_result(result)
     if output_json:
-        _emit_json({"procedure": _procedure_payload(procedure)})
+        _emit_json(
+            {
+                "procedure": _procedure_payload(procedure),
+                "contract_in_schema": _contract_in_schema(result),
+            }
+        )
         return
     _echo_procedure(procedure)
     click.echo("  Definition:")

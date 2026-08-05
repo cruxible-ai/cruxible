@@ -7,6 +7,7 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError
 from cruxible_core.procedure.types import (
+    ProcedureDefinition,
     ProcedureRecord,
     compute_procedure_definition_digest,
 )
@@ -14,6 +15,7 @@ from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     service_accept_procedure,
     service_get_procedure,
+    service_get_procedure_details,
     service_lock,
     service_propose_procedure,
     service_reject_procedure,
@@ -74,6 +76,15 @@ def test_propose_and_accept_pin_definition_config_and_lock_digests(
     assert accepted.receipt_id is not None
     assert _receipt(procedure_instance, accepted.receipt_id).committed is True
 
+    details = service_get_procedure_details(
+        procedure_instance,
+        proposed.procedure.procedure_id,
+    )
+    assert details.procedure == accepted.procedure
+    assert [field.model_dump() for field in details.contract_in_schema or []] == [
+        {"name": "value", "type": "int", "required": True}
+    ]
+
 
 def test_proposal_refuses_unknown_precondition_entity_type_with_receipt(
     procedure_instance: CruxibleInstance,
@@ -104,6 +115,88 @@ def test_proposal_refuses_unknown_precondition_entity_type_with_receipt(
         for node in receipt.nodes
         if node.node_type == "validation"
     )
+
+
+def test_proposal_blocks_input_reference_missing_from_contract(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    definition = provider_definition("invalid_contract_reference")
+    definition = definition.model_copy(
+        update={
+            "steps": [
+                definition.steps[0].model_copy(
+                    update={"input": {"value": "$input.transactions_arguments"}}
+                )
+            ]
+        }
+    )
+
+    with pytest.raises(ConfigError) as exc_info:
+        service_propose_procedure(
+            procedure_instance,
+            definition,
+            actor_context=actor("proposer"),
+        )
+
+    message = str(exc_info.value)
+    assert "step 'invoke'" in message
+    assert "'$input.transactions_arguments'" in message
+    assert "value (int, required)" in message
+    store = procedure_instance.get_procedure_store()
+    try:
+        assert store.count_procedures() == 0
+    finally:
+        store.close()
+
+
+def test_proposal_returns_non_blocking_authoring_warnings(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    config = procedure_instance.load_config()
+    config.providers["exported_action"].side_effects = True
+    procedure_instance.save_config(config)
+    service_lock(procedure_instance)
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "get_task",
+            "contract_in": {
+                "fields": {
+                    "value": {"type": "int"},
+                    "unused": {"type": "json", "optional": True},
+                }
+            },
+            "steps": [
+                {
+                    "id": "invoke",
+                    "provider": "exported_action",
+                    "input": {
+                        "value": "$input.value",
+                        "metadata": '{"passthrough": true}',
+                    },
+                    "as": "result",
+                }
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 0},
+            "declared_tier": "graph_write",
+        }
+    )
+
+    proposed = service_propose_procedure(
+        procedure_instance,
+        definition,
+        actor_context=actor("proposer"),
+    )
+
+    assert proposed.warnings == [
+        "contract_in field 'unused' is declared but not consumed by any procedure step",
+        "procedure name 'get_task' implies a read, but step 'invoke' uses "
+        "side-effecting provider 'exported_action'",
+        "step 'invoke' input value at 'input.metadata' is a stringified JSON object; "
+        "pass the object directly",
+        "budget.max_provider_calls (0) does not match the expanded provider-call count (1)",
+    ]
 
 
 def test_acceptance_refuses_precondition_entity_type_removed_after_proposal(

@@ -83,6 +83,7 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
         },
     )
     assert proposed.status_code == 200, proposed.text
+    assert proposed.json()["warnings"] == []
     procedure_id = proposed.json()["procedure"]["procedure_id"]
 
     listed = app_client.get(
@@ -95,6 +96,9 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     assert listed.json()["read_revision"] is not None
     assert shown.status_code == 200, shown.text
     assert shown.json()["procedure"]["procedure_id"] == procedure_id
+    assert shown.json()["contract_in_schema"] == [
+        {"name": "value", "type": "int", "required": True}
+    ]
 
     # accept enforces reviewer independence, so an HTTP caller may not name the
     # reviewer itself; the request is attributed to the local operator instead.
@@ -249,6 +253,51 @@ def test_invalid_procedure_definition_returns_typed_validation_error(
     assert response.json()["message"] == "Invalid procedure definition"
     assert response.json()["errors"] == [
         "precondition.identity_verified: Extra inputs are not permitted"
+    ]
+
+
+def test_procedure_proposal_authoring_lint_is_typed_and_surfaces_warnings(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_procedure_instance(app_client, tmp_path / "workspace")
+    invalid = _definition()
+    steps = invalid["steps"]
+    assert isinstance(steps, list)
+    step = steps[0]
+    assert isinstance(step, dict)
+    step["shape_items"] = {
+        "items": [{"value": "$input.undeclared"}],
+        "fields": {"value": "$item.value"},
+    }
+
+    refused = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={
+            "definition": invalid,
+            "actor_context": actor("http-proposer").model_dump(mode="json"),
+        },
+    )
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error_type"] == "ConfigError"
+    assert "step 'shape'" in refused.json()["message"]
+    assert "'$input.undeclared'" in refused.json()["message"]
+    assert "value (int, required)" in refused.json()["message"]
+
+    warning_definition = _definition()
+    warning_definition["budget"] = {"wall_clock_s": 10, "max_provider_calls": 2}
+    proposed = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={
+            "definition": warning_definition,
+            "actor_context": actor("http-proposer").model_dump(mode="json"),
+        },
+    )
+
+    assert proposed.status_code == 200, proposed.text
+    assert proposed.json()["warnings"] == [
+        "budget.max_provider_calls (2) does not match the expanded provider-call count (0)"
     ]
 
 

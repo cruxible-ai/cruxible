@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
@@ -26,9 +27,11 @@ from cruxible_core.procedure.types import (
     MAX_PROCEDURE_EVIDENCE_BYTES,
     PROCEDURE_EVIDENCE_HEAD_BYTES,
     ProcedureBudgetSpent,
+    ProcedureContractFieldSchema,
     ProcedureDefinition,
     ProcedureEvidenceArtifact,
     ProcedureExecutionResult,
+    ProcedureGetResult,
     ProcedurePrecondition,
     ProcedureRecord,
     ProcedureRun,
@@ -54,6 +57,11 @@ from cruxible_core.workflow.compiler import (
     load_lock,
     resolve_lock_path,
 )
+from cruxible_core.workflow.contracts import (
+    contract_reference_label,
+    declared_fields,
+    resolve_contract,
+)
 from cruxible_core.workflow.execution_context import ProcedureExecutionBudget
 from cruxible_core.workflow.executor import (
     FAILED_WORKFLOW_RECEIPT_ATTR,
@@ -71,6 +79,7 @@ _PERMISSION_BY_TIER = {
 }
 _READ_REVISION_STATE_KEY = "read_revision"
 _MAX_REGISTERED_PROVIDERS_IN_ERROR = 40
+_READ_IMPLYING_PROCEDURE_PREFIXES = ("review_", "get_", "list_", "check_", "inspect_")
 
 WITHDRAW_NON_AUTHOR_PERMISSION = PermissionMode.GRAPH_WRITE
 """Tier required to withdraw a proposal the actor did not author.
@@ -174,18 +183,155 @@ def compile_procedure_definition(
     input_payload: dict[str, Any] | None = None,
 ) -> CompiledPlan:
     """Compile a state-held procedure definition against the active config/lock."""
+    plan, _ = _compile_procedure_definition(instance, definition, input_payload)
+    return plan
+
+
+def _compile_procedure_definition(
+    instance: InstanceProtocol,
+    definition: ProcedureDefinition,
+    input_payload: dict[str, Any] | None = None,
+) -> tuple[CompiledPlan, list[str]]:
+    """Compile a procedure and return its non-blocking authoring warnings."""
     config = instance.load_config()
     validate_procedure_definition_against_config(definition, config)
+    warnings = lint_procedure_definition_authoring(definition, config)
     lock = load_lock(resolve_lock_path(instance))
-    return compile_plan_definition(
-        config,
-        lock,
-        definition.name,
-        definition,
-        input_payload,
-        config_base_path=instance.get_config_path().parent,
-        definition_label="Procedure",
+    return (
+        compile_plan_definition(
+            config,
+            lock,
+            definition.name,
+            definition,
+            input_payload,
+            config_base_path=instance.get_config_path().parent,
+            definition_label="Procedure",
+        ),
+        warnings,
     )
+
+
+def lint_procedure_definition_authoring(
+    definition: ProcedureDefinition,
+    config: CoreConfig,
+) -> list[str]:
+    """Block impossible input refs and return deterministic authoring warnings."""
+    contract = resolve_contract(config, definition.contract_in)
+    if contract is None:
+        # The compiler owns the existing unknown-contract diagnostic.
+        return []
+
+    references = _procedure_step_input_references(definition)
+    consumed_fields: set[str] = set()
+    for step_id, reference in references:
+        if reference == "$input":
+            consumed_fields.update(contract.fields)
+            continue
+        field_name = _input_reference_field(reference)
+        if field_name is None:
+            continue
+        consumed_fields.add(field_name)
+        if field_name not in contract.fields:
+            contract_name = contract_reference_label(definition.contract_in)
+            raise ConfigError(
+                f"Procedure '{definition.name}' step '{step_id}' input reference "
+                f"'{reference}' uses undeclared contract_in field '{field_name}'; "
+                f"contract '{contract_name}' declares: {declared_fields(contract)}"
+            )
+
+    warnings = [
+        f"contract_in field '{field_name}' is declared but not consumed by any procedure step"
+        for field_name in sorted(set(contract.fields) - consumed_fields)
+    ]
+
+    read_implying_name = definition.name.lower().startswith(_READ_IMPLYING_PROCEDURE_PREFIXES)
+    for step in _procedure_workflow_steps(definition):
+        if step.provider is not None:
+            provider = config.providers.get(step.provider)
+            if read_implying_name and provider is not None and provider.side_effects:
+                warnings.append(
+                    f"procedure name '{definition.name}' implies a read, but step "
+                    f"'{step.id}' uses side-effecting provider '{step.provider}'"
+                )
+            warnings.extend(_stringified_object_input_warnings(step.id, step.input))
+
+    provider_call_count = definition.static_expansion().expanded_provider_calls
+    if definition.budget.max_provider_calls != provider_call_count:
+        warnings.append(
+            "budget.max_provider_calls "
+            f"({definition.budget.max_provider_calls}) does not match the expanded "
+            f"provider-call count ({provider_call_count})"
+        )
+    return warnings
+
+
+def _procedure_workflow_steps(definition: ProcedureDefinition) -> list[Any]:
+    steps: list[Any] = []
+    for step in definition.steps:
+        repeat = getattr(step, "repeat", None)
+        if repeat is None:
+            steps.append(step)
+        else:
+            steps.extend(repeat.steps)
+    return steps
+
+
+def _procedure_step_input_references(
+    definition: ProcedureDefinition,
+) -> list[tuple[str, str]]:
+    references: list[tuple[str, str]] = []
+    for step in _procedure_workflow_steps(definition):
+        dumped = step.model_dump(
+            mode="python",
+            by_alias=True,
+            exclude={"id", "as_", "as"},
+            exclude_none=True,
+        )
+        references.extend((step.id, ref) for ref in _input_references(dumped))
+    return references
+
+
+def _input_references(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value == "$input" or value.startswith("$input.") else []
+    if isinstance(value, dict):
+        return [ref for item in value.values() for ref in _input_references(item)]
+    if isinstance(value, list):
+        return [ref for item in value for ref in _input_references(item)]
+    return []
+
+
+def _input_reference_field(reference: str) -> str | None:
+    if not reference.startswith("$input."):
+        return None
+    path = reference[len("$input.") :]
+    return path.split(".", 1)[0].split("[", 1)[0]
+
+
+def _stringified_object_input_warnings(step_id: str, value: Any) -> list[str]:
+    warnings: list[str] = []
+
+    def visit(item: Any, path: str) -> None:
+        if isinstance(item, str):
+            try:
+                parsed = json.loads(item)
+            except (json.JSONDecodeError, TypeError):
+                return
+            if isinstance(parsed, dict):
+                warnings.append(
+                    f"step '{step_id}' input value at '{path}' is a stringified JSON "
+                    "object; pass the object directly"
+                )
+            return
+        if isinstance(item, dict):
+            for key, nested in item.items():
+                visit(nested, f"{path}.{key}" if path else str(key))
+        elif isinstance(item, list):
+            for index, nested in enumerate(item):
+                visit(nested, f"{path}[{index}]")
+
+    visit(value, "input")
+    return warnings
 
 
 def service_propose_procedure(
@@ -236,6 +382,10 @@ def service_propose_procedure(
                 )
 
         try:
+            warnings = lint_procedure_definition_authoring(
+                definition,
+                instance.load_config(),
+            )
             plan = compile_procedure_definition(instance, definition)
         except ConfigError as exc:
             ctx.builder.record_validation(
@@ -260,9 +410,14 @@ def service_propose_procedure(
                 "definition_digest": definition_digest,
                 "config_digest": plan.config_digest,
                 "lock_digest": plan.lock_digest,
+                "warnings": warnings,
             },
         )
-        result = ProcedureTransitionResult(action="propose", procedure=procedure)
+        result = ProcedureTransitionResult(
+            action="propose",
+            procedure=procedure,
+            warnings=warnings,
+        )
         ctx.set_result(result)
 
     return result
@@ -410,6 +565,31 @@ def service_get_procedure(
         return _get_procedure(store, procedure_id)
     finally:
         store.close()
+
+
+def service_get_procedure_details(
+    instance: InstanceProtocol,
+    procedure_id: str,
+) -> ProcedureGetResult:
+    """Read a procedure with the active config's resolved input field schema."""
+    procedure = service_get_procedure(instance, procedure_id)
+    contract = resolve_contract(instance.load_config(), procedure.definition.contract_in)
+    contract_in_schema = (
+        None
+        if contract is None
+        else [
+            ProcedureContractFieldSchema(
+                name=field_name,
+                type=field_schema.type,
+                required=not field_schema.optional,
+            )
+            for field_name, field_schema in sorted(contract.fields.items())
+        ]
+    )
+    return ProcedureGetResult(
+        procedure=procedure,
+        contract_in_schema=contract_in_schema,
+    )
 
 
 def service_list_procedures(
@@ -1467,7 +1647,9 @@ def _validate_list_page(*, limit: int, offset: int) -> None:
 
 __all__ = [
     "compile_procedure_definition",
+    "lint_procedure_definition_authoring",
     "service_get_procedure",
+    "service_get_procedure_details",
     "service_list_procedure_runs",
     "service_list_procedures",
     "service_accept_procedure",
