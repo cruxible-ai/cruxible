@@ -1814,6 +1814,27 @@ never activated has nothing to resolve and simply expires.
 
 **Side Effects:** Accepts or rejects a pending procedure and writes a receipt.
 
+## cruxible_withdraw_procedure
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Use when you changed your mind about a procedure YOU proposed and it is still pending: withdraw it instead of proposing a renamed variant. The name is immediately free to re-propose.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `procedure_id` | yes | string | Procedure ID. |
+| `expected_version` | yes | integer | Optimistic lifecycle version. |
+| `reason` | no | string or null | Optional note on why it was withdrawn. |
+
+**Returns:** The withdrawn procedure and receipt ID.
+
+**Side Effects:** Moves a pending proposal to `withdrawn` and writes a receipt.
+Withdrawing your own proposal needs only this tool's `GOVERNED_WRITE` floor;
+withdrawing another actor's pending proposal is refused below `GRAPH_WRITE`.
+
 ## cruxible_retire_procedure
 
 **Permission:** `GRAPH_WRITE`

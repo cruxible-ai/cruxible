@@ -177,6 +177,7 @@ from cruxible_core.service import (
     service_test,
     service_update_trust_status,
     service_validate,
+    service_withdraw_procedure,
 )
 from cruxible_core.service.direct_write_policy import required_direct_write_tier
 from cruxible_core.service.lifecycle_inputs import (
@@ -4248,6 +4249,41 @@ def resolve_procedure(
             reason=reason or "",
             actor_context=actor,
         )
+    return _procedure_transition_payload(result)
+
+
+def withdraw_procedure(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    expected_version: int,
+    reason: str | None = None,
+    actor_context: Any | None = None,
+) -> dict[str, Any]:
+    """Retract one pending procedure proposal as its author (or as a reviewer).
+
+    Deliberately does NOT call ``_refuse_caller_asserted_actor``, unlike
+    ``resolve_procedure``. That guard exists because reviewer INDEPENDENCE is
+    meaningless when the caller names the reviewer. Withdrawal asserts the
+    opposite relation — that the actor IS the proposer — so refusing a
+    caller-supplied context here would not tighten anything: on an auth-off
+    daemon the proposer identity was itself caller-asserted at propose time
+    (the known residue documented on that guard), and refusing the assertion
+    would leave an author unable to retract the proposal they just made. The
+    privileged half of the verb, withdrawing SOMEONE ELSE'S proposal, is gated
+    on the runtime permission tier rather than on an asserted name, and that
+    gate an HTTP caller cannot talk its way past.
+    """
+    check_permission("cruxible_withdraw_procedure", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
+    instance = get_manager().get(instance_id)
+    result = service_withdraw_procedure(
+        instance,
+        procedure_id,
+        expected_version=expected_version,
+        reason=reason,
+        actor_context=actor,
+    )
     return _procedure_transition_payload(result)
 
 

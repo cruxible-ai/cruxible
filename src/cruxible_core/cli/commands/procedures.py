@@ -36,6 +36,7 @@ from cruxible_core.service import (
     service_reject_procedure,
     service_retire_procedure,
     service_run_procedure,
+    service_withdraw_procedure,
 )
 
 
@@ -184,7 +185,7 @@ def procedure_propose(
 @procedure_group.command("list")
 @click.option(
     "--status",
-    type=click.Choice(["pending", "live", "rejected", "retired"]),
+    type=click.Choice(["pending", "live", "rejected", "retired", "withdrawn"]),
     default=None,
     help="Filter by lifecycle status.",
 )
@@ -302,6 +303,42 @@ def procedure_resolve(
     )
     procedure = _procedure_from_result(result)
     click.echo(f"Procedure {procedure.procedure_id} {procedure.status}.")
+    click.echo(f"  Version: {procedure.version}")
+    receipt_id = _transition_receipt_id(result)
+    if receipt_id:
+        click.echo(f"  Receipt: {receipt_id}")
+
+
+@procedure_group.command("withdraw")
+@click.argument("procedure_id")
+@click.option("--expected-version", required=True, type=click.IntRange(min=1))
+@click.option("--reason", default=None, help="Optional note on why it was withdrawn.")
+@handle_errors
+def procedure_withdraw(
+    procedure_id: str,
+    expected_version: int,
+    reason: str | None,
+) -> None:
+    """Withdraw your own pending proposal, freeing its name to re-propose."""
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.withdraw_procedure(
+            instance_id,
+            procedure_id,
+            expected_version=expected_version,
+            reason=reason,
+        ),
+        lambda instance: service_withdraw_procedure(
+            instance,
+            procedure_id,
+            expected_version=expected_version,
+            reason=reason,
+            actor_context=None,
+        ),
+        allow_local=False,
+        command_name="procedure withdraw",
+    )
+    procedure = _procedure_from_result(result)
+    click.echo(f"Procedure {procedure.procedure_id} withdrawn.")
     click.echo(f"  Version: {procedure.version}")
     receipt_id = _transition_receipt_id(result)
     if receipt_id:
@@ -442,4 +479,5 @@ __all__ = [
     "procedure_run",
     "procedure_runs",
     "procedure_show",
+    "procedure_withdraw",
 ]

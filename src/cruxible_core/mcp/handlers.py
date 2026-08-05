@@ -1933,6 +1933,32 @@ def handle_resolve_procedure(
     )
 
 
+def handle_withdraw_procedure(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    expected_version: int,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Withdraw one pending procedure proposal as its author."""
+    return _dispatch_remote_or_local(
+        lambda client: client.withdraw_procedure(
+            instance_id,
+            procedure_id,
+            expected_version=expected_version,
+            reason=reason,
+        ),
+        lambda: api.withdraw_procedure(
+            instance_id,
+            procedure_id,
+            expected_version=expected_version,
+            reason=reason,
+        ),
+        allow_local=False,
+        operation_name="cruxible_withdraw_procedure",
+    )
+
+
 def handle_retire_procedure(
     instance_id: str,
     procedure_id: str,

@@ -186,6 +186,9 @@
   "/api/v1/{instance_id}/procedures/{procedure_id}/runs": {
     "GET": "ListResult"
   },
+  "/api/v1/{instance_id}/procedures/{procedure_id}/withdraw": {
+    "POST": null
+  },
   "/api/v1/{instance_id}/queries": {
     "GET": "QueryListResult | QueryListDetailResult"
   },

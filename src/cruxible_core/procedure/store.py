@@ -227,6 +227,7 @@ class ProcedureStore(ProcedureStoreProtocol):
         allowed_transitions = {
             ("pending", "live"),
             ("pending", "rejected"),
+            ("pending", "withdrawn"),
             ("live", "retired"),
         }
         if (from_status, to_status) not in allowed_transitions:
@@ -243,6 +244,11 @@ class ProcedureStore(ProcedureStoreProtocol):
             )
         if to_status == "rejected" and resolved_actor_context is None:
             raise ValueError("procedure rejection requires reviewer attribution")
+        # A withdrawal carries no required reason -- an author retracting their
+        # own proposal owes no verdict -- but it must still say WHO retracted it,
+        # because that identity is exactly what authorized the transition.
+        if to_status == "withdrawn" and resolved_actor_context is None:
+            raise ValueError("procedure withdrawal requires author or reviewer attribution")
         if to_status == "retired" and retired_actor_context is None:
             raise ValueError("procedure retirement requires reviewer attribution")
 

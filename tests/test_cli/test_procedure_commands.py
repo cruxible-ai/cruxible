@@ -177,3 +177,71 @@ def test_procedure_propose_loads_yaml_and_forwards_governance_fields(
     evidence_refs = cast(list[object], captured["evidence_refs"])
     assert len(evidence_refs) == 1
     assert "Receipt: RCP-procedure" in result.output
+
+
+def test_procedure_withdraw_forwards_version_and_optional_reason(
+    runner: CliRunner,
+    procedure_cli_instance: tuple[CruxibleInstance, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, procedure_id = procedure_cli_instance
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def withdraw_procedure(
+            self,
+            instance_id: str,
+            target_id: str,
+            *,
+            expected_version: int,
+            reason: str | None,
+        ) -> dict[str, object]:
+            captured.update(
+                {
+                    "instance_id": instance_id,
+                    "procedure_id": target_id,
+                    "expected_version": expected_version,
+                    "reason": reason,
+                }
+            )
+            store = instance.get_procedure_store()
+            try:
+                procedure = store.get_procedure(target_id)
+            finally:
+                store.close()
+            assert procedure is not None
+            payload = procedure.model_dump(mode="json", by_alias=True, exclude_none=True)
+            payload["status"] = "withdrawn"
+            payload["version"] = expected_version + 1
+            return {
+                "action": "withdraw",
+                "procedure": payload,
+                "receipt_id": "RCP-withdraw",
+            }
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_procedure",
+            "procedure",
+            "withdraw",
+            procedure_id,
+            "--expected-version",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured == {
+        "instance_id": "inst_procedure",
+        "procedure_id": procedure_id,
+        "expected_version": 1,
+        "reason": None,
+    }
+    assert f"Procedure {procedure_id} withdrawn." in result.output
+    assert "Version: 2" in result.output
+    assert "Receipt: RCP-withdraw" in result.output

@@ -144,6 +144,93 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     assert retired.json()["procedure"]["status"] == "retired"
 
 
+def test_withdraw_route_retracts_a_pending_proposal_and_frees_its_name(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_procedure_instance(app_client, tmp_path / "workspace")
+    author = actor("http-proposer").model_dump(mode="json")
+    proposed = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={"definition": _definition(), "actor_context": author},
+    )
+    assert proposed.status_code == 200, proposed.text
+    procedure_id = proposed.json()["procedure"]["procedure_id"]
+
+    # Unlike resolve, withdraw accepts the caller-asserted author identity: it
+    # asserts the actor IS the proposer rather than that it is independent.
+    withdrawn = app_client.post(
+        f"/api/v1/{instance_id}/procedures/{procedure_id}/withdraw",
+        json={
+            "expected_version": 1,
+            "reason": "re-proposing with a tighter budget",
+            "actor_context": author,
+        },
+    )
+    assert withdrawn.status_code == 200, withdrawn.text
+    assert withdrawn.json()["action"] == "withdraw"
+    assert withdrawn.json()["procedure"]["status"] == "withdrawn"
+    assert withdrawn.json()["procedure"]["reason"] == "re-proposing with a tighter budget"
+    assert withdrawn.json()["receipt_id"]
+
+    repeated = app_client.post(
+        f"/api/v1/{instance_id}/procedures/{procedure_id}/withdraw",
+        json={"expected_version": 2, "actor_context": author},
+    )
+    assert repeated.status_code == 400, repeated.text
+    assert "must be pending; found 'withdrawn'" in repeated.json()["message"]
+
+    listed = app_client.get(
+        f"/api/v1/{instance_id}/procedures",
+        params={"status": "withdrawn"},
+    )
+    assert listed.status_code == 200, listed.text
+    assert [item["procedure_id"] for item in listed.json()["items"]] == [procedure_id]
+
+    # The name is free: a fresh proposal under it accepts normally.
+    reproposed = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={"definition": _definition(), "actor_context": author},
+    )
+    assert reproposed.status_code == 200, reproposed.text
+    accepted = app_client.post(
+        f"/api/v1/{instance_id}/procedures/"
+        f"{reproposed.json()['procedure']['procedure_id']}/resolve",
+        json={"action": "accept", "expected_version": 1},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["procedure"]["status"] == "live"
+
+
+def test_superseding_a_pending_proposal_points_the_author_at_withdraw(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_procedure_instance(app_client, tmp_path / "workspace")
+    author = actor("http-proposer").model_dump(mode="json")
+    pending = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={"definition": _definition(), "actor_context": author},
+    )
+    assert pending.status_code == 200, pending.text
+    pending_id = pending.json()["procedure"]["procedure_id"]
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={
+            "definition": _definition(),
+            "supersedes_procedure_id": pending_id,
+            "actor_context": author,
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["message"].startswith(
+        f"superseded procedure '{pending_id}' must be live; found 'pending'; "
+        "the author may withdraw the pending proposal and re-propose"
+    )
+
+
 def test_invalid_procedure_definition_returns_typed_validation_error(
     app_client: TestClient,
     tmp_path: Path,

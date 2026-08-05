@@ -2095,6 +2095,27 @@ class CruxibleClient:
         )
         return self._parse_json(response)
 
+    def withdraw_procedure(
+        self,
+        instance_id: str,
+        procedure_id: str,
+        *,
+        expected_version: int,
+        reason: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/procedures/{procedure_id}/withdraw",
+            json=self._with_actor_context(
+                {
+                    "expected_version": expected_version,
+                    "reason": reason,
+                },
+                actor_context,
+            ),
+        )
+        return self._parse_json(response)
+
     def retire_procedure(
         self,
         instance_id: str,

@@ -1295,7 +1295,7 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
     @_tool
     def cruxible_list_procedures(
         instance_id: str,
-        status: Literal["pending", "live", "rejected", "retired"] | None = None,
+        status: Literal["pending", "live", "rejected", "retired", "withdrawn"] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> contracts.ListResult:
@@ -1328,6 +1328,21 @@ def register_tools(server: FastMCP, *, offload_sync_calls: bool = False) -> list
             instance_id,
             procedure_id,
             action=action,
+            expected_version=expected_version,
+            reason=reason,
+        )
+
+    @_tool
+    def cruxible_withdraw_procedure(
+        instance_id: str,
+        procedure_id: str,
+        expected_version: int,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Withdraw your own pending procedure proposal, freeing its name."""
+        return handlers.handle_withdraw_procedure(
+            instance_id,
+            procedure_id,
             expected_version=expected_version,
             reason=reason,
         )

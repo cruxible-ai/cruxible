@@ -163,6 +163,11 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_propose_group": PermissionMode.GOVERNED_WRITE,
     "cruxible_propose_procedure": PermissionMode.GOVERNED_WRITE,
     "cruxible_run_procedure": PermissionMode.GOVERNED_WRITE,
+    # Withdrawing YOUR OWN pending proposal is the retraction half of proposing
+    # it, so it sits at the proposing tier. Withdrawing SOMEONE ELSE'S is a
+    # review act and is refused below GRAPH_WRITE inside the service transition
+    # (``WITHDRAW_NON_AUTHOR_PERMISSION``), where the refusal is receipted.
+    "cruxible_withdraw_procedure": PermissionMode.GOVERNED_WRITE,
     "cruxible_attest": PermissionMode.GOVERNED_WRITE,
     "cruxible_open_outcome_contract": PermissionMode.GOVERNED_WRITE,
     "cruxible_resolve_outcome": PermissionMode.GOVERNED_WRITE,

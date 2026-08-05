@@ -7,6 +7,21 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **A Procedure author can withdraw their own pending proposal.** `withdraw`
+  moves a pending definition to the new terminal `withdrawn` status through the
+  same receipted transition as accept/reject, at the proposing
+  (`governed_write`) tier — withdrawing another actor's pending proposal is a
+  review act and is refused below `graph_write` with a typed
+  `ProcedureWithdrawalRefusedError` naming the rule. `reject` stays distinct as
+  the reviewer's verdict with its required reason; a withdrawal's reason is
+  optional, and the terminal status records which of the two happened. A
+  withdrawn definition is not live, so its name is immediately free to
+  re-propose, and the refusal to supersede a still-pending definition now
+  points at the new verb instead of leaving authors to invent renamed variants.
+  Available as `cruxible procedure withdraw`, the
+  `cruxible_withdraw_procedure` MCP tool, and
+  `POST /procedures/{procedure_id}/withdraw`.
+
 ## [0.3.1] - 2026-08-05
 
 - **Entity types can declare deterministic identity keys at write time.**

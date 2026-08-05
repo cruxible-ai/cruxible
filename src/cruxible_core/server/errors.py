@@ -28,6 +28,7 @@ from cruxible_core.errors import (
     PendingEdgeWriteRefusedError,
     PermissionDeniedError,
     ProcedureNotFoundError,
+    ProcedureWithdrawalRefusedError,
     QueryExecutionError,
     QueryNotFoundError,
     ReceiptNotFoundError,
@@ -81,6 +82,7 @@ def _status_for_error(exc: CoreError) -> int:
             InstanceScopeError,
             DirectWriteRefusedError,
             TerminalLifecycleWriteRefusedError,
+            ProcedureWithdrawalRefusedError,
         ),
     ):
         return 403
@@ -182,6 +184,10 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["group_id"] = exc.group_id
     if isinstance(exc, ProcedureNotFoundError):
         context["procedure_id"] = exc.procedure_id
+    if isinstance(exc, ProcedureWithdrawalRefusedError):
+        context["procedure_id"] = exc.procedure_id
+        context["current_mode"] = exc.current_mode
+        context["required_mode"] = exc.required_mode
     if isinstance(exc, SourceArtifactNotFoundError):
         context["source_artifact_id"] = exc.source_artifact_id
     if isinstance(exc, CitationHandleResolutionError):

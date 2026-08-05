@@ -22,6 +22,7 @@ from cruxible_core.errors import (
     PendingEdgeWriteRefusedError,
     PermissionDeniedError,
     ProcedureNotFoundError,
+    ProcedureWithdrawalRefusedError,
     QueryExecutionError,
     QueryNotFoundError,
     ReceiptNotFoundError,
@@ -190,6 +191,40 @@ def test_error_round_trip_preserves_subclass_and_context(
         assert body.error_code == "citation_handle_resolution_failed"
     for key, value in attrs.items():
         assert getattr(restored, key) == value
+
+
+def test_procedure_withdrawal_refusal_is_a_403_naming_the_author_rule() -> None:
+    """The refusal must cross the wire with the RULE, not just a tier number.
+
+    "You are neither the author nor a reviewer" is the whole remediation, so a
+    round trip that kept only ``required_mode`` would strand the caller.
+    """
+    error = ProcedureWithdrawalRefusedError(
+        "PRC-1",
+        current_mode="GOVERNED_WRITE",
+        required_mode="GRAPH_WRITE",
+        message=(
+            "procedure 'PRC-1' may be withdrawn only by its proposing author "
+            "(actor 'author' in org 'org-1') at their own tier, or by a reviewer "
+            "holding GRAPH_WRITE; actor 'bystander' in org 'org-1' is neither "
+            "(current mode GOVERNED_WRITE)"
+        ),
+    )
+    status, body = error_to_response(error)
+
+    assert status == 403
+    assert body.error_code == "procedure_withdrawal_refused"
+    assert body.context == {
+        "procedure_id": "PRC-1",
+        "current_mode": "GOVERNED_WRITE",
+        "required_mode": "GRAPH_WRITE",
+    }
+
+    restored = client_errors.response_to_error(status, body)
+    assert type(restored) is client_errors.ProcedureWithdrawalRefusedError
+    assert str(restored) == str(error)
+    assert restored.procedure_id == "PRC-1"
+    assert restored.required_mode == "GRAPH_WRITE"
 
 
 def test_pending_edge_refusal_is_a_409_conflict_with_both_exits_intact() -> None:
