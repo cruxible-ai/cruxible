@@ -18,11 +18,14 @@ SCORER = ProviderCandidate(
     name="widget_scorer",
     contract_in="acme.widget-triage.ScoreInput",
     contract_out="acme.widget-triage.ScoreResult",
+    billing=["platform"],
+    capabilities=["deterministic"],
 )
 
 
 def _lower(document, **kwargs):
     kwargs.setdefault("bindings", {"scorer": "widget_scorer"})
+    kwargs.setdefault("candidates", [SCORER])
     return lower_blueprint(parse_blueprint(document), **kwargs)
 
 
@@ -193,6 +196,126 @@ def test_bound_provider_with_mismatched_contracts_refused(document):
     assert "does not satisfy the slot interface" in message
     assert "contract_in is 'acme.widget-triage.QueryEnvelope'" in message
     assert "contract_out is 'acme.widget-triage.QueryEnvelope'" in message
+
+
+def test_binding_a_provider_absent_from_an_empty_catalog_refused(document):
+    # The failure the reviewer reproduced: a provider nobody offered used to
+    # sail through and be reported as satisfying the slot's own contracts.
+    with pytest.raises(BlueprintBindingError) as excinfo:
+        _lower(document, bindings={"scorer": "totally_incompatible_provider"}, candidates=[])
+
+    error = excinfo.value
+    assert error.slot == "scorer"
+    assert error.paths == ["bindings.scorer"]
+    message = str(error)
+    assert "is not among the 0 candidate provider(s) offered" in message
+    assert "will not certify a provider it has never seen" in message
+    assert "candidates=[] was passed" in message
+
+
+def test_binding_a_provider_absent_from_a_catalog_names_what_was_offered(document):
+    with pytest.raises(BlueprintBindingError) as excinfo:
+        _lower(document, bindings={"scorer": "ghost_scorer"}, candidates=[SCORER])
+
+    error = excinfo.value
+    assert error.paths == ["bindings.scorer"]
+    assert error.issues[0].expected == "one of: widget_scorer"
+    assert "is not among the 1 candidate provider(s) offered" in str(error)
+    # The catalog it *was* given still gets mined for the suggestion.
+    assert error.near_match_names == ["widget_scorer"]
+
+
+def test_bound_provider_with_incompatible_billing_refused(document):
+    document["slots"]["scorer"]["billing"] = ["byok"]
+    platform_only = ProviderCandidate(
+        name="widget_scorer",
+        contract_in="acme.widget-triage.ScoreInput",
+        contract_out="acme.widget-triage.ScoreResult",
+        billing=["platform"],
+        capabilities=["deterministic"],
+    )
+
+    with pytest.raises(BlueprintBindingError) as excinfo:
+        _lower(document, candidates=[platform_only])
+
+    error = excinfo.value
+    assert error.paths == ["slots.scorer.billing"]
+    assert error.issues[0].expected == "at least one of: byok"
+    assert "billing modes ['platform'] do not intersect the slot's ['byok']" in str(error)
+
+
+def test_bound_provider_declaring_no_billing_mode_refused(document):
+    silent = ProviderCandidate(
+        name="widget_scorer",
+        contract_in="acme.widget-triage.ScoreInput",
+        contract_out="acme.widget-triage.ScoreResult",
+        capabilities=["deterministic"],
+    )
+
+    with pytest.raises(BlueprintBindingError) as excinfo:
+        _lower(document, candidates=[silent])
+
+    expected = excinfo.value.issues[0].expected
+    assert expected is not None
+    assert "an undeclared billing mode is not a wildcard" in expected
+
+
+def test_bound_provider_missing_a_required_capability_refused(document):
+    document["slots"]["scorer"]["capabilities"] = ["deterministic", "no_side_effects"]
+    partial = ProviderCandidate(
+        name="widget_scorer",
+        contract_in="acme.widget-triage.ScoreInput",
+        contract_out="acme.widget-triage.ScoreResult",
+        billing=["platform"],
+        capabilities=["deterministic"],
+    )
+
+    with pytest.raises(BlueprintBindingError) as excinfo:
+        _lower(document, candidates=[partial])
+
+    error = excinfo.value
+    assert error.paths == ["slots.scorer.capabilities"]
+    assert error.issues[0].expected == "every tag in: deterministic, no_side_effects"
+    assert "does not claim ['no_side_effects']" in str(error)
+
+
+def test_every_violated_constraint_gets_its_own_issue(document):
+    document["slots"]["scorer"]["billing"] = ["byok"]
+    document["slots"]["scorer"]["capabilities"] = ["deterministic", "no_side_effects"]
+    wrong_everywhere = ProviderCandidate(
+        name="widget_scorer",
+        contract_in="acme.widget-triage.QueryEnvelope",
+        contract_out="acme.widget-triage.QueryEnvelope",
+        billing=["platform"],
+    )
+
+    with pytest.raises(BlueprintBindingError) as excinfo:
+        _lower(document, candidates=[wrong_everywhere])
+
+    assert excinfo.value.paths == [
+        "slots.scorer.contract_in",
+        "slots.scorer.contract_out",
+        "slots.scorer.billing",
+        "slots.scorer.capabilities",
+    ]
+
+
+def test_an_exact_contract_match_that_fails_billing_is_not_advertised_as_bindable(document):
+    document["slots"]["scorer"]["billing"] = ["byok"]
+    platform_only = ProviderCandidate(
+        name="platform_scorer",
+        contract_in="acme.widget-triage.ScoreInput",
+        contract_out="acme.widget-triage.ScoreResult",
+        billing=["platform"],
+        capabilities=["deterministic"],
+    )
+
+    with pytest.raises(BlueprintBindingError) as excinfo:
+        _lower(document, bindings={}, candidates=[platform_only])
+
+    message = str(excinfo.value)
+    assert "contracts match exactly, but billing modes ['platform']" in message
+    assert "bind it explicitly" not in message
 
 
 def test_binding_an_undeclared_slot_refused(document):

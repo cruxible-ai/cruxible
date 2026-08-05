@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from cruxible_core.blueprint import (
+    BlueprintBindingError,
     ProviderCandidate,
     canonical_document,
     canonical_yaml,
@@ -47,12 +50,29 @@ def _fake_bindings(blueprint):
 
 
 def _fake_candidates(blueprint):
+    """Offer one candidate per slot, carrying every fact the slot constrains.
+
+    Lowering is fail-closed on the whole slot interface, so a stand-in provider
+    has to declare its billing modes and capability tags the way a real catalog
+    entry would -- contracts alone no longer bind.
+    """
     return [
         ProviderCandidate(
-            name=f"provider_{name}", contract_in=slot.contract_in, contract_out=slot.contract_out
+            name=f"provider_{name}",
+            contract_in=slot.contract_in,
+            contract_out=slot.contract_out,
+            billing=list(slot.billing),
+            capabilities=list(slot.capabilities),
         )
         for name, slot in blueprint.slots.items()
     ]
+
+
+def _lower_fixture(loaded, **kwargs):
+    blueprint = loaded.blueprint
+    kwargs.setdefault("bindings", _fake_bindings(blueprint))
+    kwargs.setdefault("candidates", _fake_candidates(blueprint))
+    return lower_blueprint(blueprint, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -147,14 +167,8 @@ def test_kev_fixture_digest_ignores_comments_and_key_order():
 
 def test_kev_fixture_lowers_into_valid_procedure_definitions():
     loaded = _load()
-    blueprint = loaded.blueprint
 
-    lowered = lower_blueprint(
-        blueprint,
-        bindings=_fake_bindings(blueprint),
-        candidates=_fake_candidates(blueprint),
-        digest=loaded.digest,
-    )
+    lowered = _lower_fixture(loaded, digest=loaded.digest)
 
     assert lowered.digest == loaded.digest
     assert [procedure.name for procedure in lowered.procedures] == EXPECTED_PROCEDURES
@@ -172,7 +186,7 @@ def test_kev_fixture_lowering_leaves_no_slot_names_in_the_procedures():
     loaded = _load()
     blueprint = loaded.blueprint
 
-    lowered = lower_blueprint(blueprint, bindings=_fake_bindings(blueprint))
+    lowered = _lower_fixture(loaded)
 
     bound_providers = {binding.provider for binding in lowered.slot_bindings}
     installed_queries = set(lowered.query_slot_installs.values())
@@ -189,7 +203,7 @@ def test_kev_fixture_overlay_matches_the_declared_objects():
     loaded = _load()
     blueprint = loaded.blueprint
 
-    lowered = lower_blueprint(blueprint, bindings=_fake_bindings(blueprint))
+    lowered = _lower_fixture(loaded)
 
     assert set(lowered.overlay.contracts) == set(blueprint.contracts)
     assert set(lowered.overlay.named_queries) == set(lowered.query_slot_installs.values())
@@ -200,12 +214,46 @@ def test_kev_fixture_overlay_matches_the_declared_objects():
 
 def test_kev_fixture_heaviest_procedure_keeps_its_expansion_bounds():
     loaded = _load()
-    blueprint = loaded.blueprint
 
-    lowered = lower_blueprint(blueprint, bindings=_fake_bindings(blueprint))
+    lowered = _lower_fixture(loaded)
 
     rescore = next(p for p in lowered.procedures if p.name == "kev_exposure_rescore")
     expansion = rescore.static_expansion()
     assert expansion.total_steps == 19
     assert expansion.expanded_provider_calls == 2
     assert rescore.budget.max_provider_calls >= expansion.expanded_provider_calls
+
+
+def test_kev_fixture_refuses_a_provider_nobody_offered():
+    """The reviewer's reproduction: bind every slot to a provider, offer none.
+
+    This used to lower cleanly into three ``ResolvedSlotBinding`` rows that
+    reported the *slot's own* contracts as though the provider satisfied them.
+    """
+    loaded = _load()
+    blueprint = loaded.blueprint
+    bindings = {slot: "totally_incompatible_provider" for slot in blueprint.slots}
+
+    with pytest.raises(BlueprintBindingError) as excinfo:
+        lower_blueprint(blueprint, bindings=bindings, candidates=[])
+
+    error = excinfo.value
+    assert error.slot == "affected_assessment"  # first slot in sorted order
+    assert error.paths == ["bindings.affected_assessment"]
+    assert "totally_incompatible_provider" in str(error)
+    assert "is not among the 0 candidate provider(s) offered" in str(error)
+
+
+def test_kev_fixture_refuses_a_candidate_that_cannot_meet_the_capability_tags():
+    loaded = _load()
+    blueprint = loaded.blueprint
+    stripped = [
+        candidate.model_copy(update={"capabilities": ()})
+        for candidate in _fake_candidates(blueprint)
+    ]
+
+    with pytest.raises(BlueprintBindingError) as excinfo:
+        lower_blueprint(blueprint, bindings=_fake_bindings(blueprint), candidates=stripped)
+
+    assert excinfo.value.paths == ["slots.affected_assessment.capabilities"]
+    assert "deterministic" in str(excinfo.value)

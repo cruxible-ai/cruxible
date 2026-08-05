@@ -17,8 +17,13 @@ the project's own state instance.
   content digest over a canonical form plus an ordered attachment manifest, and
   lowers it into the artifacts an installer submits: a config-overlay fragment
   and concrete `ProcedureDefinition`s with slot references resolved from a
-  caller-supplied binding map. Refusals are typed and field-pathed; an
-  unbindable slot lists the near-matching providers and why each failed. This
+  caller-supplied binding map, checked against a caller-supplied provider
+  catalog. Binding is fail-closed: a provider missing from the catalog is
+  refused rather than assumed compatible, and a bound provider must match the
+  slot's contract names, intersect its billing modes, and claim every
+  capability tag it requires. Refusals are typed and field-pathed — one issue
+  per violated constraint — and an unbindable slot lists the near-matching
+  providers and why each failed. This
   release ships the artifact only — there is no installer, no trigger runtime,
   and no binding registry. `triggers:` and `pipelines:` parse and validate but
   refuse to lower; `invocation: manual` procedure libraries are the executable

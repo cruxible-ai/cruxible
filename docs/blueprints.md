@@ -22,7 +22,9 @@ metadata.
     - **`invocation: manual` is the executable slice** — agent-invoked
       procedure libraries.
     - **There is no binding registry.** Lowering resolves compute slots from a
-      binding map *you* pass it.
+      binding map *you* pass it, checked against a provider catalog you pass
+      alongside it. Both are required: a provider lowering has not seen is
+      refused, never assumed compatible.
 
 ## The document
 
@@ -107,7 +109,7 @@ install_checks: [contracts_load, all_required_slots_bindable]
 | `contracts` | no | Blueprint-owned payload contracts, keyed by **fully qualified** name. |
 | `dependencies` | no | What the target instance must already have. |
 | `query_slots` | no | Read sockets. Each ships a `default` installed as a named config query. |
-| `slots` | no | Swappable compute stages. Declared by contract, bound to a provider at install. |
+| `slots` | no | Swappable compute stages. Declared by contract plus `billing` and `capabilities` constraints; all three are enforced when a provider is bound. |
 | `invocation` | no | `manual` (default) or `triggered`. |
 | `triggers` | no | Entry points. Parsed; not executable. |
 | `pipelines` | no | Trigger-invoked procedure bodies. Parsed; not executable. |
@@ -202,6 +204,8 @@ lowered = lower_blueprint(
             name="kev_exposure_scorer",
             contract_in="cruxible-ai.kev-triage.ExposureAssessmentInput",
             contract_out="cruxible-ai.kev-triage.ExposureAssessmentResult",
+            billing=["platform", "byok"],
+            capabilities=["deterministic", "no_side_effects"],
         )
     ],
     digest=loaded.digest,
@@ -212,11 +216,40 @@ lowered.procedures                 # [ProcedureDefinition, ...]
 lowered.slot_bindings              # [ResolvedSlotBinding(slot=..., provider=...)]
 ```
 
-`bindings` maps slot name → provider name. `candidates` is the catalog you
-could have bound from; it is used only to explain failures.
+`bindings` maps slot name → provider name. `candidates` is the catalog every
+binding is **checked against** — not a hint, and not optional. A
+`ResolvedSlotBinding` is a claim that the named provider satisfies the slot, so
+lowering only emits one for a provider it was shown and could check. Binding a
+provider absent from `candidates` is a `BlueprintBindingError`; passing
+`candidates=[]` therefore refuses every binding.
 
-A required slot with no binding is refused, and the refusal lists the
-candidates that nearly matched and why each failed:
+A candidate declares everything a slot can constrain, and lowering checks all
+of it:
+
+| Slot field | Rule |
+|---|---|
+| `contract_in`, `contract_out` | The candidate's names must **equal** the slot's. |
+| `billing` | The candidate's billing modes must **intersect** the slot's. A candidate declaring none intersects nothing — an undeclared mode is not a wildcard. |
+| `capabilities` | The candidate must claim **every** tag the slot lists. A slot listing no tags constrains nothing. |
+
+Each violated constraint arrives as its own field-pathed `BlueprintIssue` on
+the error (`slots.<name>.billing`, `slots.<name>.capabilities`, …), so an
+operator fixing a catalog entry sees every problem in one pass:
+
+```
+Compute slot 'exposure_assessment' could not be bound: bound provider
+'kev_exposure_scorer' does not satisfy the slot interface: billing modes
+['platform'] do not intersect the slot's ['byok']. The slot requires
+contract_in='cruxible-ai.kev-triage.ExposureAssessmentInput' and
+contract_out='cruxible-ai.kev-triage.ExposureAssessmentResult'. Violations:
+slots.exposure_assessment.billing: bound provider 'kev_exposure_scorer'
+declares billing modes ['platform'] (expected: at least one of: byok).
+```
+
+A required slot with no binding is refused the same way, and the refusal lists
+the candidates that nearly matched and why each failed. Near-matching is by
+contract name; a candidate whose contracts match exactly but whose billing or
+capabilities do not says so, rather than being advertised as ready to bind:
 
 ```
 Compute slot 'exposure_assessment' could not be bound: no binding was supplied
@@ -226,10 +259,10 @@ contract_out='cruxible-ai.kev-triage.ExposureAssessmentResult'. Near matches:
 'kev_exposure_scorer' (...) — contracts match exactly; bind it explicitly
 ```
 
-Matching is **nominal** in this release: a bound provider's declared contract
-names must equal the slot's. That never binds across mismatched types, but it
-also means a structurally identical provider under a different contract name
-cannot bind. Structural (width-subtyping) matching needs a
+Contract matching is **nominal** in this release: a bound provider's declared
+contract names must equal the slot's. That never binds across mismatched types,
+but it also means a structurally identical provider under a different contract
+name cannot bind. Structural (width-subtyping) matching needs a
 contract-compatibility relation core does not have yet.
 
 ## Errors
@@ -242,7 +275,7 @@ expected shape.
 | `BlueprintValidationError` | Document shape or cross-references are wrong. Carries `issues` (`path`, `message`, `expected`). |
 | `BlueprintDigestError` | A document or attachment could not be read, or an attachment escapes the blueprint root. |
 | `BlueprintUnsupportedError` | Valid, but names machinery core cannot execute (triggers, pipelines, `invocation: triggered`). Names the work item. |
-| `BlueprintBindingError` | A required compute slot has no usable provider. Carries `near_matches`. |
+| `BlueprintBindingError` | A compute slot has no usable provider: unbound, bound to a provider absent from `candidates`, or bound to one that fails the slot's contracts, billing modes, or capabilities. Carries `issues` (one per violated constraint) and `near_matches`. |
 
 All four derive from `BlueprintError`, which derives from `CoreError`.
 

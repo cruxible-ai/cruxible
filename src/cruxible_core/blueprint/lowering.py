@@ -17,6 +17,13 @@ across mismatched types -- but it means a structurally identical provider under
 a different contract name cannot bind. Structural (width-subtyping) matching is
 the recommended follow-up; it needs a contract-compatibility relation core does
 not have yet.
+
+Resolution is **fail-closed**. ``candidates`` is not a hint: it is the catalog
+lowering checks against, and a binding naming a provider that is not in it is
+refused. Lowering emits a ``ResolvedSlotBinding`` -- a document that later
+governance reads as "this provider satisfies this interface" -- so it may only
+emit one for a provider whose declared contracts, billing modes, and
+capabilities it has actually seen and checked.
 """
 
 from __future__ import annotations
@@ -106,9 +113,11 @@ def lower_blueprint(
 ) -> LoweredBlueprint:
     """Lower ``blueprint`` against a caller-supplied slot->provider binding map.
 
-    ``candidates`` is the provider catalog the caller could have bound from. It
-    is used only to explain failures: an unbound slot reports the candidates
-    that *nearly* matched and why each one was rejected.
+    ``candidates`` is the provider catalog every binding is checked against. A
+    binding naming a provider absent from it is refused: an unchecked provider
+    cannot be certified as satisfying the slot. The catalog also explains
+    failures -- an unbindable slot reports the candidates that *nearly* matched
+    and why each one was rejected.
     """
     _refuse_unsupported(blueprint)
     binding_map = dict(bindings or {})
@@ -257,19 +266,38 @@ def _resolve_slots(
                 near_matches=_near_matches(slot, catalog),
             )
         candidate = by_name.get(provider)
-        if candidate is not None:
-            mismatches = _contract_mismatches(slot, candidate)
-            if mismatches:
-                raise BlueprintBindingError(
-                    slot_name,
-                    contract_in=slot.contract_in,
-                    contract_out=slot.contract_out,
-                    reason=(
-                        f"bound provider '{provider}' does not satisfy the slot interface: "
-                        + "; ".join(mismatches)
-                    ),
-                    near_matches=_near_matches(slot, catalog),
-                )
+        if candidate is None:
+            raise BlueprintBindingError(
+                slot_name,
+                contract_in=slot.contract_in,
+                contract_out=slot.contract_out,
+                reason=(
+                    f"bound provider '{provider}' is not among the {len(catalog)} candidate "
+                    "provider(s) offered to the binder, so nothing declares what it accepts "
+                    "or returns; lowering will not certify a provider it has never seen"
+                ),
+                issues=[
+                    BlueprintIssue(
+                        path=f"bindings.{slot_name}",
+                        message=(f"provider '{provider}' is absent from the candidate catalog"),
+                        expected=_expected_provider_names(catalog),
+                    )
+                ],
+                near_matches=_near_matches(slot, catalog),
+            )
+        issues = _compatibility_issues(slot_name, slot, candidate)
+        if issues:
+            raise BlueprintBindingError(
+                slot_name,
+                contract_in=slot.contract_in,
+                contract_out=slot.contract_out,
+                reason=(
+                    f"bound provider '{provider}' does not satisfy the slot interface: "
+                    + "; ".join(_reasons(slot, candidate))
+                ),
+                issues=issues,
+                near_matches=_near_matches(slot, catalog),
+            )
         resolved.append(
             ResolvedSlotBinding(
                 slot=slot_name,
@@ -279,6 +307,15 @@ def _resolve_slots(
             )
         )
     return resolved
+
+
+def _expected_provider_names(catalog: Sequence[ProviderCandidate]) -> str:
+    if not catalog:
+        return (
+            "one of the candidate provider names, but candidates=[] was passed: "
+            "offer the provider catalog to lower a binding"
+        )
+    return "one of: " + ", ".join(sorted(candidate.name for candidate in catalog))
 
 
 def _contract_mismatches(slot: ComputeSlot, candidate: ProviderCandidate) -> list[str]:
@@ -294,6 +331,95 @@ def _contract_mismatches(slot: ComputeSlot, candidate: ProviderCandidate) -> lis
     return mismatches
 
 
+def _metadata_mismatches(slot: ComputeSlot, candidate: ProviderCandidate) -> list[str]:
+    """Return billing and capability violations, as short prose reasons.
+
+    ``billing`` is always constrained -- the schema requires at least one mode
+    -- so a candidate declaring none can never intersect it. ``capabilities``
+    constrains only when the slot names tags; then the candidate must claim all
+    of them.
+    """
+    mismatches: list[str] = []
+    if slot.billing and not (set(candidate.billing) & set(slot.billing)):
+        mismatches.append(
+            f"billing modes {list(candidate.billing)} do not intersect the slot's "
+            f"{list(slot.billing)}"
+        )
+    missing = [tag for tag in slot.capabilities if tag not in set(candidate.capabilities)]
+    if missing:
+        mismatches.append(
+            f"missing required capabilities {missing} (candidate claims "
+            f"{list(candidate.capabilities)})"
+        )
+    return mismatches
+
+
+def _reasons(slot: ComputeSlot, candidate: ProviderCandidate) -> list[str]:
+    return _contract_mismatches(slot, candidate) + _metadata_mismatches(slot, candidate)
+
+
+def _compatibility_issues(
+    slot_name: str, slot: ComputeSlot, candidate: ProviderCandidate
+) -> list[BlueprintIssue]:
+    """Return one field-pathed issue per constraint the candidate violates."""
+    issues: list[BlueprintIssue] = []
+    if candidate.contract_in != slot.contract_in:
+        issues.append(
+            BlueprintIssue(
+                path=f"slots.{slot_name}.contract_in",
+                message=(
+                    f"bound provider '{candidate.name}' declares "
+                    f"contract_in='{candidate.contract_in}'"
+                ),
+                expected=f"contract_in='{slot.contract_in}' (names must match exactly)",
+            )
+        )
+    if candidate.contract_out != slot.contract_out:
+        issues.append(
+            BlueprintIssue(
+                path=f"slots.{slot_name}.contract_out",
+                message=(
+                    f"bound provider '{candidate.name}' declares "
+                    f"contract_out='{candidate.contract_out}'"
+                ),
+                expected=f"contract_out='{slot.contract_out}' (names must match exactly)",
+            )
+        )
+    if slot.billing and not (set(candidate.billing) & set(slot.billing)):
+        issues.append(
+            BlueprintIssue(
+                path=f"slots.{slot_name}.billing",
+                message=(
+                    f"bound provider '{candidate.name}' declares billing modes "
+                    f"{list(candidate.billing)}"
+                ),
+                expected=(
+                    "at least one of: " + ", ".join(slot.billing)
+                    if candidate.billing
+                    else (
+                        "at least one of: "
+                        + ", ".join(slot.billing)
+                        + " -- the candidate declares none, and an undeclared billing mode "
+                        "is not a wildcard"
+                    )
+                ),
+            )
+        )
+    missing = [tag for tag in slot.capabilities if tag not in set(candidate.capabilities)]
+    if missing:
+        issues.append(
+            BlueprintIssue(
+                path=f"slots.{slot_name}.capabilities",
+                message=(
+                    f"bound provider '{candidate.name}' does not claim {missing}; it claims "
+                    f"{list(candidate.capabilities)}"
+                ),
+                expected="every tag in: " + ", ".join(slot.capabilities),
+            )
+        )
+    return issues
+
+
 def _near_matches(
     slot: ComputeSlot, catalog: Sequence[ProviderCandidate]
 ) -> list[tuple[ProviderCandidate, str]]:
@@ -301,7 +427,9 @@ def _near_matches(
 
     Phase-1 near-match is nominal: same ``contract_in`` and/or ``contract_out``
     name. It exists so an unbindable slot names the providers a human should
-    look at, which is the pilot's discoverability lesson.
+    look at, which is the pilot's discoverability lesson. A candidate whose
+    contracts match exactly may still be unbindable on billing or capabilities,
+    and says so rather than being advertised as ready to bind.
     """
     exact: list[tuple[ProviderCandidate, str]] = []
     input_only: list[tuple[ProviderCandidate, str]] = []
@@ -309,7 +437,13 @@ def _near_matches(
     for candidate in sorted(catalog, key=lambda item: item.name):
         mismatches = _contract_mismatches(slot, candidate)
         if not mismatches:
-            exact.append((candidate, "contracts match exactly; bind it explicitly"))
+            metadata = _metadata_mismatches(slot, candidate)
+            why = (
+                "contracts match exactly, but " + "; ".join(metadata)
+                if metadata
+                else "contracts match exactly; bind it explicitly"
+            )
+            exact.append((candidate, why))
         elif candidate.contract_in == slot.contract_in:
             input_only.append((candidate, mismatches[0]))
         elif candidate.contract_out == slot.contract_out:

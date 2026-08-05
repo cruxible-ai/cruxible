@@ -16,13 +16,23 @@ itself costs a round trip.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_core.errors import CoreError
 
 _MAX_DISPLAY_ISSUES = 10
 _MAX_DISPLAY_CANDIDATES = 5
+
+BillingMode = Literal["platform", "byok"]
+"""Billing-compatibility vocabulary shared by a slot and a provider candidate.
+
+It lives here rather than in :mod:`.schema` because
+:class:`BlueprintSlotCandidate` -- the catalog side of the same constraint --
+lives here, and :mod:`.schema` imports this module. One definition means the
+constraint a slot declares and the fact a candidate reports cannot drift.
+"""
 
 
 class BlueprintIssue(BaseModel):
@@ -107,17 +117,44 @@ class BlueprintUnsupportedError(BlueprintError):
 
 
 class BlueprintSlotCandidate(BaseModel):
-    """A provider offered to the binder, described by its declared contracts."""
+    """A provider offered to the binder, described by what it declares.
+
+    A candidate carries every fact a compute slot can constrain: its contracts,
+    the billing modes it can run under, and the capability tags it claims.
+    Anything the candidate leaves empty is *not* an unconstrained wildcard --
+    lowering cannot certify a compatibility it was never told about, so an
+    empty ``billing`` fails a slot's billing constraint, and missing capability
+    tags fail a slot that requires them.
+    """
 
     name: str
     contract_in: str | None = None
     contract_out: str | None = None
+    billing: tuple[BillingMode, ...] = Field(default_factory=tuple)
+    capabilities: tuple[str, ...] = Field(default_factory=tuple)
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    def describe(self) -> str:
+        """Render the candidate's declared facts for a refusal message."""
+        parts = [
+            f"contract_in='{self.contract_in}'",
+            f"contract_out='{self.contract_out}'",
+        ]
+        if self.billing:
+            parts.append(f"billing={list(self.billing)}")
+        if self.capabilities:
+            parts.append(f"capabilities={list(self.capabilities)}")
+        return ", ".join(parts)
+
 
 class BlueprintBindingError(BlueprintError):
-    """A required compute slot has no usable provider binding.
+    """A compute slot has no usable provider binding.
+
+    Raised when a needed slot is unbound, when the bound provider is not in the
+    candidate catalog at all, and when the bound candidate fails any constraint
+    the slot declares (contracts, billing modes, capabilities). Each individual
+    violation is carried as its own field-pathed :class:`BlueprintIssue`.
 
     The message lists near-matching candidates and *why each one failed*, which
     is the discoverability lesson from the pilot: an unbindable slot that only
@@ -133,12 +170,14 @@ class BlueprintBindingError(BlueprintError):
         contract_in: str,
         contract_out: str,
         reason: str,
+        issues: Sequence[BlueprintIssue] | None = None,
         near_matches: Iterable[tuple[BlueprintSlotCandidate, str]] = (),
     ) -> None:
         self.slot = slot
         self.contract_in = contract_in
         self.contract_out = contract_out
         self.reason = reason
+        self.issues: list[BlueprintIssue] = list(issues or [])
         self.near_matches: list[tuple[BlueprintSlotCandidate, str]] = list(near_matches)
         super().__init__(self._render())
 
@@ -148,22 +187,33 @@ class BlueprintBindingError(BlueprintError):
             f"The slot requires contract_in='{self.contract_in}' and "
             f"contract_out='{self.contract_out}'."
         )
+        if self.issues:
+            shown = [issue.render() for issue in self.issues[:_MAX_DISPLAY_ISSUES]]
+            message += f" Violations: {'; '.join(shown)}."
+            if len(self.issues) > _MAX_DISPLAY_ISSUES:
+                message += f" ... and {len(self.issues) - _MAX_DISPLAY_ISSUES} more violation(s)."
         if not self.near_matches:
             message += (
                 " No candidate provider declared either contract. Pass a binding for this slot "
-                "via bindings={'" + self.slot + "': '<provider name>'}."
+                "via bindings={'" + self.slot + "': '<provider name>'}, and offer the provider "
+                "in candidates=[...] so its contracts, billing modes, and capabilities can be "
+                "checked."
             )
             return message
-        shown = self.near_matches[:_MAX_DISPLAY_CANDIDATES]
+        shown_candidates = self.near_matches[:_MAX_DISPLAY_CANDIDATES]
         rendered = "; ".join(
-            f"'{candidate.name}' (contract_in='{candidate.contract_in}', "
-            f"contract_out='{candidate.contract_out}') — {why}"
-            for candidate, why in shown
+            f"'{candidate.name}' ({candidate.describe()}) — {why}"
+            for candidate, why in shown_candidates
         )
         message += f" Near matches: {rendered}"
         if len(self.near_matches) > _MAX_DISPLAY_CANDIDATES:
             message += f" ... and {len(self.near_matches) - _MAX_DISPLAY_CANDIDATES} more"
         return message
+
+    @property
+    def paths(self) -> list[str]:
+        """Return the failing field paths, in report order."""
+        return [issue.path for issue in self.issues]
 
     @property
     def near_match_names(self) -> list[str]:

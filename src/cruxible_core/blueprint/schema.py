@@ -26,7 +26,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-from cruxible_core.blueprint.errors import BlueprintIssue
+from cruxible_core.blueprint.errors import BillingMode, BlueprintIssue
 from cruxible_core.config.schema import (
     BUILTIN_CONTRACTS,
     ContractSchema,
@@ -49,7 +49,6 @@ INSTALLER_WORK_ITEM = "wi-043"
 """Work item that owns the installer consuming :mod:`.lowering` output."""
 
 InvocationMode = Literal["manual", "triggered"]
-BillingMode = Literal["platform", "byok"]
 ProvenanceOrigin = Literal["agent-authored", "curated", "hybrid"]
 TriggerKind = Literal["artifact", "webhook", "schedule"]
 EnumOrdering = Literal["low_to_high", "high_to_low"]
@@ -304,6 +303,11 @@ class ComputeSlot(BaseModel):
     ``billing`` declares *compatibility constraints* only. Real billing facts
     (pricing, payer, quota, account) live on the install-time binding record and
     its receipts, so they cannot reach the portable digest (RFC §10.3).
+
+    Every constraint here is enforced at lowering against the bound
+    :class:`~cruxible_core.blueprint.errors.BlueprintSlotCandidate`: contract
+    names must match exactly, the candidate's billing modes must intersect
+    ``billing``, and the candidate must claim every tag in ``capabilities``.
     """
 
     description: str | None = None
