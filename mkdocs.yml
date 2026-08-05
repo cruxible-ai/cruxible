@@ -76,6 +76,7 @@ nav:
       - Agent operation guide: agent-operation-guide.md
   - Reference:
       - CLI reference: cli-reference.md
+      - Blueprint format: blueprints.md
       - Compact config authoring: compact-config.md
       - Config reference: config-reference.md
       - MCP tools: mcp-tools.md

@@ -7,6 +7,23 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **Procedure blueprints have a document format.** A blueprint is a portable,
+  digest-addressed document that packages a procedure library: its own fully
+  qualified contracts, its reference-state/ontology dependencies, its query
+  slots (read sockets that install a default named query), its compute slots
+  (swappable stages declared by contract, with billing-mode compatibility
+  constraints and an opt-in outcome-metric hook), and its procedures. The new
+  `cruxible_core.blueprint` module parses and validates a document, computes a
+  content digest over a canonical form plus an ordered attachment manifest, and
+  lowers it into the artifacts an installer submits: a config-overlay fragment
+  and concrete `ProcedureDefinition`s with slot references resolved from a
+  caller-supplied binding map. Refusals are typed and field-pathed; an
+  unbindable slot lists the near-matching providers and why each failed. This
+  release ships the artifact only — there is no installer, no trigger runtime,
+  and no binding registry. `triggers:` and `pipelines:` parse and validate but
+  refuse to lower; `invocation: manual` procedure libraries are the executable
+  slice. Format reference: `docs/blueprints.md`.
+
 ## [0.3.1] - 2026-08-05
 
 - **Entity types can declare deterministic identity keys at write time.**
