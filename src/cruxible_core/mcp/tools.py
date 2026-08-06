@@ -1322,7 +1322,7 @@ def register_tools(
         instance_id: str,
         procedure_id: str,
     ) -> dict[str, Any]:
-        """Get one procedure definition, lifecycle fields, and run-ledger track record."""
+        """Get one procedure definition, input schema, lifecycle fields, and track record."""
         return handlers.handle_get_procedure(instance_id, procedure_id)
 
     @_tool

@@ -90,6 +90,7 @@ from cruxible_core.service.procedures import (
     compile_procedure_definition,
     service_accept_procedure,
     service_get_procedure,
+    service_get_procedure_details,
     service_list_procedure_runs,
     service_list_procedures,
     service_propose_procedure,
@@ -424,6 +425,7 @@ __all__ = [
     # Procedures
     "compile_procedure_definition",
     "service_get_procedure",
+    "service_get_procedure_details",
     "service_list_procedure_runs",
     "service_list_procedures",
     "service_accept_procedure",

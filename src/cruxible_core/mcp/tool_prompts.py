@@ -282,8 +282,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "their run-ledger track records before choosing one."
     ),
     "cruxible_get_procedure": (
-        "Use when you need one procedure's definition, budget, precondition, lifecycle, and "
-        "run-ledger track record."
+        "Use when you need one procedure's definition, resolved input field schema, budget, "
+        "precondition, lifecycle, and run-ledger track record."
     ),
     "cruxible_resolve_procedure": (
         "Use when an independent reviewer needs to accept or reject a pending procedure."

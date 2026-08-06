@@ -101,11 +101,21 @@ def test_procedure_read_commands_use_envelopes_and_surface_started_tombstone(
     )
 
     assert shown.exit_code == 0, shown.output
-    shown_payload = json.loads(shown.output)["procedure"]
-    assert shown_payload["procedure_id"] == procedure_id
-    assert shown_payload["track_record"] == expected_track_record
+    shown_payload = json.loads(shown.output)
+    assert shown_payload["procedure"]["procedure_id"] == procedure_id
+    assert shown_payload["procedure"]["track_record"] == expected_track_record
+    assert shown_payload["contract_in_schema"] == {
+        "fields": [{"name": "value", "type": "int", "required": True}],
+        "allow_extra": False,
+        "input_example": {"value": 1},
+    }
+
     assert shown_text.exit_code == 0, shown_text.output
     assert "top_refusal_reason=null, linked_outcomes=null" in shown_text.output
+    assert "Input schema:" in shown_text.output
+    assert "value (int, required)" in shown_text.output
+    assert "Input example:" in shown_text.output
+    assert '{"value": 1}' in shown_text.output
 
     assert runs_json.exit_code == 0, runs_json.output
     run_payload = json.loads(runs_json.output)
@@ -173,6 +183,7 @@ def test_procedure_propose_loads_yaml_and_forwards_governance_fields(
                     exclude_none=True,
                 ),
                 "receipt_id": "RCP-procedure",
+                "warnings": ["budget does not match provider-call count"],
             }
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -200,6 +211,7 @@ def test_procedure_propose_loads_yaml_and_forwards_governance_fields(
     evidence_refs = cast(list[object], captured["evidence_refs"])
     assert len(evidence_refs) == 1
     assert "Receipt: RCP-procedure" in result.output
+    assert "Warning: budget does not match provider-call count" in result.output
 
 
 def test_procedure_withdraw_forwards_version_and_optional_reason(

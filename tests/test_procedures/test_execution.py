@@ -195,6 +195,39 @@ def test_precondition_refusal_finalizes_started_run_and_receipts_revision(
     assert receipt.nodes[0].detail["verdict"] == "refused"
 
 
+def test_run_contract_refusal_echoes_resolved_required_and_optional_fields(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    definition_payload = provider_definition("contract_refusal_schema_echo").model_dump(
+        mode="python",
+        by_alias=True,
+        exclude_none=True,
+    )
+    definition_payload["contract_in"] = {
+        "fields": {
+            "value": {"type": "int"},
+            "note": {"type": "string", "optional": True},
+        }
+    }
+    definition = ProcedureDefinition.model_validate(definition_payload)
+    procedure_id = _accept(procedure_instance, definition)
+
+    with pytest.raises(ConfigError) as exc_info:
+        service_run_procedure(
+            procedure_instance,
+            procedure_id,
+            {"note": "missing the required value"},
+            actor("runner"),
+        )
+
+    message = str(exc_info.value)
+    assert "missing required field 'value'" in message
+    assert "note (string, optional), value (int, required)" in message
+    run = _run(procedure_instance, getattr(exc_info.value, "procedure_run_id"))
+    assert run.status == "finalized"
+    assert run.verdict == "refused"
+
+
 def test_precondition_matches_only_named_type_and_records_typed_satisfiers(
     procedure_instance: CruxibleInstance,
     monkeypatch: pytest.MonkeyPatch,
@@ -432,7 +465,9 @@ def test_legacy_return_reference_failure_is_typed_and_finalizes_failed_run(
             "declared_tier": "graph_write",
         }
     )
-    original_compile = procedure_service.compile_procedure_definition
+    # Both propose and accept compile through this one seam, so patching it is
+    # what lets a definition the current rules refuse reach a live status.
+    original_compile = procedure_service._compile_procedure_definition
 
     def compile_as_legacy_accepted(
         instance: CruxibleInstance,
@@ -440,13 +475,13 @@ def test_legacy_return_reference_failure_is_typed_and_finalizes_failed_run(
         input_payload: dict[str, Any] | None = None,
     ) -> Any:
         valid_candidate = candidate.model_copy(update={"returns": "transactions"})
-        plan = original_compile(instance, valid_candidate, input_payload)
-        return plan.model_copy(update={"returns": candidate.returns})
+        plan, warnings = original_compile(instance, valid_candidate, input_payload)
+        return plan.model_copy(update={"returns": candidate.returns}), warnings
 
     with monkeypatch.context() as acceptance_context:
         acceptance_context.setattr(
             procedure_service,
-            "compile_procedure_definition",
+            "_compile_procedure_definition",
             compile_as_legacy_accepted,
         )
         procedure_id = _accept(procedure_instance, definition)

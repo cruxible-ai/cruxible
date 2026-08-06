@@ -113,7 +113,7 @@ from cruxible_core.service import (
     service_get_feedback_profile,
     service_get_group,
     service_get_outcome_profile,
-    service_get_procedure,
+    service_get_procedure_details,
     service_get_receipt,
     service_get_relationship,
     service_get_relationship_lineage,
@@ -3850,6 +3850,7 @@ def _procedure_transition_payload(result: ProcedureTransitionResult) -> dict[str
         "action": result.action,
         "procedure": _procedure_record_payload(result.procedure),
         "receipt_id": result.receipt_id,
+        "warnings": result.warnings,
     }
 
 
@@ -4250,8 +4251,15 @@ def get_procedure(instance_id: str, procedure_id: str) -> dict[str, Any]:
     """Return one governed procedure definition and lifecycle record."""
     check_permission("cruxible_get_procedure", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    procedure = service_get_procedure(instance, procedure_id)
-    return {"procedure": _procedure_record_payload(procedure)}
+    result = service_get_procedure_details(instance, procedure_id)
+    return {
+        "procedure": _procedure_record_payload(result.procedure),
+        "contract_in_schema": (
+            None
+            if result.contract_in_schema is None
+            else result.contract_in_schema.model_dump(mode="json", exclude_none=True)
+        ),
+    }
 
 
 def resolve_procedure(

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+import re
+from typing import Any, Callable, Mapping
 
 from cruxible_core.config.json_schema_validation import validate_value_against_json_schema
-from cruxible_core.config.property_validation import normalize_value
+from cruxible_core.config.property_validation import enum_ref_values, normalize_value
 from cruxible_core.config.schema import (
     BUILTIN_CONTRACTS,
     ContractReference,
@@ -25,10 +26,26 @@ dump.
 """
 
 
+def contract_field_is_required(field_schema: PropertySchema) -> bool:
+    """Return whether a caller must supply this contract field.
+
+    The one requiredness predicate for contracts, shared by the rejection
+    message :func:`declared_fields` renders and by the discovery surface
+    ``get_procedure`` returns. It answers the only question a caller building a
+    payload has -- *must I supply this key?* -- and a defaulted field is the case
+    the two surfaces used to answer differently: ``validate_contract_payload``
+    fills a declared ``default`` before it ever reaches the ``optional`` check,
+    so a non-optional field carrying a default is never missing, and calling it
+    required is a lie the caller would obey.
+    """
+    return not field_schema.optional and field_schema.default is None
+
+
 def declared_fields(contract: ContractSchema) -> str:
     """Render a contract's declared fields as ``name (type, required|optional)``."""
     entries = [
-        f"{field_name} ({field_schema.type}, {'optional' if field_schema.optional else 'required'})"
+        f"{field_name} ({field_schema.type}, "
+        f"{'required' if contract_field_is_required(field_schema) else 'optional'})"
         for field_name, field_schema in sorted(contract.fields.items())
     ]
     if not entries:
@@ -43,6 +60,164 @@ def declared_fields(contract: ContractSchema) -> str:
             f"first {MAX_DECLARED_FIELDS_IN_ERROR} shown){suffix}"
         )
     return f"{', '.join(entries)}{suffix}"
+
+
+_DESCRIPTION_BACKTICK_HINT = re.compile(r"`([^`\n]{1,64})`")
+_DESCRIPTION_EG_HINT = re.compile(r"e\.g\.\s*[\"'`]?([^\"'`,.;\n]{1,64})", flags=re.IGNORECASE)
+
+_EXAMPLE_BY_TYPE: dict[str, Any] = {
+    "int": 1,
+    "integer": 1,
+    "float": 1.0,
+    "number": 1.0,
+    "bool": True,
+    "date": "2026-01-01",
+    "datetime": "2026-01-01T00:00:00Z",
+}
+
+
+def contract_input_example(
+    config: CoreConfig,
+    contract: ContractSchema,
+) -> dict[str, Any] | None:
+    """Build one worked payload satisfying a contract, or ``None`` if it takes none.
+
+    A caller reading a field list still has to invent values for it; a worked
+    example is the thing that gets pasted. The example carries exactly the keys
+    the caller MUST supply (:func:`contract_field_is_required`) -- defaulted and
+    optional fields are deliberately absent, because including them would teach
+    a payload wider than the contract demands.
+
+    ``None`` means "this contract accepts no payload at all"
+    (``cruxible.EmptyInput``: no fields, no extras). A contract that declares no
+    fields but sets ``allow_extra`` (``cruxible.JsonObject``) yields ``{}`` --
+    an empty object is a valid payload there and the caller may add any keys.
+    """
+    if not contract.fields and not contract.allow_extra:
+        return None
+    return {
+        field_name: _example_field_value(config, field_name, field_schema)
+        for field_name, field_schema in sorted(contract.fields.items())
+        if contract_field_is_required(field_schema)
+    }
+
+
+def _declared_enum_values(
+    enums: Mapping[str, Any],
+    inline_enum: Any,
+    enum_ref: Any,
+) -> list[Any] | None:
+    """Resolve the vocabulary a schema node pins, inline or by shared reference.
+
+    The one enum lookup every example-generating node reads, so no node can
+    quietly skip the vocabulary that constrains it. Mirrors
+    :func:`enum_values` for ``PropertySchema`` and reads the same two keywords
+    the nested json_schema subset supports, which is why one helper can serve
+    both levels.
+
+    An ``enum_ref`` that does not resolve yields ``None`` rather than raising:
+    the caller is a discovery surface, and refusing to describe a procedure at
+    all is a worse answer than describing it with a placeholder value.
+    """
+    if isinstance(inline_enum, list) and inline_enum:
+        return list(inline_enum)
+    if isinstance(enum_ref, str) and enum_ref.strip():
+        try:
+            values = enum_ref_values(enums, enum_ref)
+        except ValueError:
+            return None
+        if values:
+            return values
+    return None
+
+
+def _example_field_value(config: CoreConfig, field_name: str, field_schema: PropertySchema) -> Any:
+    """Return one type-appropriate example value for a contract field.
+
+    Preference order is most-specific-first: an enumerated vocabulary pins the
+    value exactly, a declared default is the author's own worked value, a
+    description that quotes a literal is the author spelling one out, and only
+    then does the field type supply a placeholder.
+    """
+    allowed = _declared_enum_values(config.enums, field_schema.enum, field_schema.enum_ref)
+    if allowed:
+        return allowed[0]
+    if field_schema.default is not None:
+        return field_schema.default
+    if field_schema.type == "string":
+        hint = _description_example(field_schema.description)
+        return hint if hint is not None else f"<{field_name}>"
+    if field_schema.type == "json":
+        return _json_schema_example(config.enums, field_schema.json_schema)
+    return _EXAMPLE_BY_TYPE.get(field_schema.type, f"<{field_name}>")
+
+
+def _description_example(description: str | None) -> str | None:
+    """Extract a literal example a field description spells out, if any.
+
+    Only two mechanical shapes are read -- a backticked token and the token
+    after ``e.g.`` -- so the hint is deterministic prose extraction, never a
+    guess at what free text means.
+    """
+    if not description:
+        return None
+    for pattern in (_DESCRIPTION_BACKTICK_HINT, _DESCRIPTION_EG_HINT):
+        match = pattern.search(description)
+        if match is not None:
+            candidate = match.group(1).strip()
+            if candidate:
+                return candidate
+    return None
+
+
+def _json_schema_example(enums: Mapping[str, Any], json_schema: dict[str, Any] | None) -> Any:
+    """Build a minimal example for a json-typed field from its nested schema.
+
+    Every node applies the same preference order the top-level field does, and
+    it applies it *before* the type placeholder: a vocabulary constrains a node
+    of any type, so ``{"type": "integer", "enum": [7, 8]}`` must yield ``7``,
+    not the type's ``1``. Generating the placeholder first is how the example
+    came to fail the very contract it demonstrates -- runtime validation checks
+    the enum at every node too.
+    """
+    if not isinstance(json_schema, dict):
+        return {}
+    allowed = _declared_enum_values(enums, json_schema.get("enum"), json_schema.get("enum_ref"))
+    if allowed:
+        return allowed[0]
+    schema_type = json_schema.get("type")
+    if schema_type == "array":
+        item_schema = json_schema.get("items")
+        item = _json_schema_example(enums, item_schema) if isinstance(item_schema, dict) else {}
+        return [item]
+    if schema_type in {"integer", "number"}:
+        return 1 if schema_type == "integer" else 1.0
+    if schema_type == "boolean":
+        return True
+    if schema_type == "null":
+        return None
+    if schema_type == "string":
+        return "<value>"
+    properties = json_schema.get("properties")
+    required = json_schema.get("required")
+    if not isinstance(properties, dict):
+        properties = {}
+    if not isinstance(required, list) and not properties:
+        return {}
+    names = required if isinstance(required, list) else sorted(properties)
+    example: dict[str, Any] = {}
+    for name in names:
+        if not isinstance(name, str):
+            continue
+        child_schema = properties.get(name)
+        if isinstance(child_schema, dict):
+            example[name] = _json_schema_example(enums, child_schema)
+        elif isinstance(required, list):
+            # A required property the schema never describes still has to be
+            # present or runtime validation rejects the example; with no schema
+            # to read, any value satisfies it.
+            example[name] = "<value>"
+    return example
 
 
 def validate_contract_payload(

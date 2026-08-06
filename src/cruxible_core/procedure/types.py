@@ -19,6 +19,7 @@ from pydantic import (
 from cruxible_core.config.schema import (
     AssertSpec,
     ContractReference,
+    PropertyType,
     WorkflowStepSchema,
     reject_reserved_property_equality_condition_keys,
     workflow_step_kind,
@@ -260,6 +261,9 @@ class ProcedureDefinition(BaseModel):
                 f"expanded provider-call ceiling is {MAX_PROCEDURE_EXPANDED_PROVIDER_CALLS}"
             )
         if self.budget.max_provider_calls < expansion.expanded_provider_calls:
+            # An under-provisioned ceiling is a statically unrunnable definition:
+            # the run would abort mid-flight on the budget guard every time. Keep
+            # this a refusal, not an authoring warning.
             refusals.append(
                 "budget.max_provider_calls must be at least the expanded provider-call count"
             )
@@ -419,6 +423,69 @@ def procedure_record_from_payload(payload: Any) -> ProcedureRecord:
     return record_type.model_validate(payload)
 
 
+class ProcedureContractFieldSchema(BaseModel):
+    """Resolved construction hint for one procedure input field.
+
+    ``required`` answers the only question a caller building an invocation has:
+    must I supply this key? A field carrying a ``default`` is therefore *not*
+    required -- contract validation fills the default before it ever checks
+    whether the field was optional.
+    """
+
+    name: str
+    type: PropertyType
+    required: bool
+    default: Any | None = None
+    enum: list[Any] | None = None
+    enum_ref: str | None = None
+    description: str | None = None
+    json_schema: dict[str, Any] | None = None
+    """Nested JSON Schema a ``json``-typed field is additionally validated against.
+
+    Without it a ``json`` field reads as "any JSON here" while the runtime still
+    rejects payloads that miss the nested shape -- the exact gap this surface
+    exists to close.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ProcedureContractSchema(BaseModel):
+    """Resolved ``contract_in`` shape one invocation payload must satisfy.
+
+    ``allow_extra`` is part of the shape, not decoration: it is the only thing
+    separating ``cruxible.EmptyInput`` (no fields, nothing else accepted) from
+    ``cruxible.JsonObject`` (no declared fields, any object accepted). Without
+    it both render as an empty field list and a caller cannot tell whether the
+    procedure takes arbitrary input or none at all.
+
+    ``input_example`` is the worked payload the field list otherwise leaves the
+    caller to invent: every key they must supply, filled with a type-appropriate
+    value. It is ``None`` only when the contract accepts no payload at all.
+    """
+
+    description: str | None = None
+    fields: list[ProcedureContractFieldSchema]
+    allow_extra: bool
+    input_example: dict[str, Any] | None = None
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ProcedureGetResult(BaseModel):
+    """One procedure record plus its currently resolved input field schema.
+
+    ``procedure`` is the read record, not the bare persisted one: the get
+    surface carries the run-ledger ``track_record`` block, and annotating the
+    base class here would serialize it away.
+    """
+
+    procedure: ProcedureReadRecord
+    contract_in_schema: ProcedureContractSchema | None
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 class ProcedureBudgetSpent(BaseModel):
     """Budget accounting persisted for one procedure invocation."""
 
@@ -463,6 +530,7 @@ class ProcedureTransitionResult(BaseModel):
     action: Literal["propose", "accept", "reject", "retire", "withdraw"]
     procedure: ProcedureRecord
     receipt_id: str | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ProcedureExecutionResult(BaseModel):
@@ -541,8 +609,11 @@ __all__ = [
     "ProcedureBudget",
     "ProcedureBudgetSpent",
     "ProcedureDefinition",
+    "ProcedureContractFieldSchema",
+    "ProcedureContractSchema",
     "ProcedureEvidenceArtifact",
     "ProcedureExecutionResult",
+    "ProcedureGetResult",
     "ProcedurePrecondition",
     "ProcedureReadRecord",
     "ProcedureRecord",

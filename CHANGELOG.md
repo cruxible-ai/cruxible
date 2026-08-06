@@ -62,6 +62,37 @@ the project's own state instance.
   from CLI collection — the daemon's traffic is counted at the HTTP boundary
   that serves it.
 
+- **Procedure proposals catch impossible input contracts before they enter the
+  library.** Definition-time authoring lint now blocks a step reference such as
+  `$input.transactions_arguments` when `contract_in` does not declare that
+  field, naming the step, reference, and the contract's typed required/optional
+  fields. A contract that sets `allow_extra` (including the built-in
+  `cruxible.JsonObject`) accepts undeclared references, since the payload may
+  legitimately carry them. This deliberately changes `propose_procedure`
+  behavior: statically-wrong definitions that were previously accepted are now
+  refused. The same lint also runs at accept time, so a proposal that was left
+  pending before this change can now fail on `resolve --action accept` and must
+  be fixed and re-proposed. The existing produced-alias check still blocks
+  invalid `returns`. The lint reads only the step fields the runtime resolver
+  itself walks, so literal prose that happens to quote a reference — an
+  `assert` message telling an operator to supply `$input.foo` — is text, not a
+  reference, and no longer blocks a definition that runs correctly.
+  Non-blocking proposal warnings flag declared-but-unused inputs, read-implying
+  names backed by side-effecting providers, stringified JSON-object step
+  inputs, a whole declared string field handed to an `arguments` parameter
+  (an opaque bundle the contract cannot validate), a procedure bundling reads
+  with side-effecting steps or declaring more than five provider steps, and
+  `max_provider_calls` headroom above the expanded provider-call count.
+  `get_procedure` now returns `contract_in_schema` — the resolved input field
+  shape (per-field defaults, enums, descriptions, and the nested `json_schema`
+  a `json` field is validated against), the contract description, the
+  `allow_extra` flag, and `input_example`: a worked payload carrying every key
+  the caller must supply, which `cruxible procedure show` prints in human mode
+  too. Run-time contract refusals are covered by the same typed
+  required/optional schema echo, and both surfaces now share one requiredness
+  rule — a field carrying a default is optional to supply, because contract
+  validation fills the default before it ever checks optionality.
+
 - **A Procedure author can withdraw their own pending proposal.** `withdraw`
   moves a pending definition to the new terminal `withdrawn` status through the
   same receipted transition as accept/reject, at the proposing
