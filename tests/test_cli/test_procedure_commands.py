@@ -88,11 +88,14 @@ def test_procedure_read_commands_use_envelopes_and_surface_started_tombstone(
     assert shown_payload["contract_in_schema"] == {
         "fields": [{"name": "value", "type": "int", "required": True}],
         "allow_extra": False,
+        "input_example": {"value": 1},
     }
 
     assert shown_text.exit_code == 0, shown_text.output
     assert "Input schema:" in shown_text.output
     assert "value (int, required)" in shown_text.output
+    assert "Input example:" in shown_text.output
+    assert '{"value": 1}' in shown_text.output
 
     assert runs_json.exit_code == 0, runs_json.output
     run_payload = json.loads(runs_json.output)

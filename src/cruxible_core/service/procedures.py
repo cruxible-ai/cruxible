@@ -9,7 +9,7 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, NoReturn
 
-from cruxible_core.config.schema import CoreConfig, WorkflowStepSchema
+from cruxible_core.config.schema import ContractSchema, CoreConfig, WorkflowStepSchema
 from cruxible_core.errors import (
     ConfigError,
     CoreError,
@@ -60,6 +60,8 @@ from cruxible_core.workflow.compiler import (
     resolve_lock_path,
 )
 from cruxible_core.workflow.contracts import (
+    contract_field_is_required,
+    contract_input_example,
     contract_reference_label,
     declared_fields,
     resolve_contract,
@@ -69,6 +71,7 @@ from cruxible_core.workflow.executor import (
     FAILED_WORKFLOW_RECEIPT_ATTR,
     execute_procedure_plan,
 )
+from cruxible_core.workflow.refs import iter_step_reference_templates
 from cruxible_core.workflow.types import CompiledPlan
 
 _logger = logging.getLogger(__name__)
@@ -82,6 +85,10 @@ _PERMISSION_BY_TIER = {
 _READ_REVISION_STATE_KEY = "read_revision"
 _MAX_REGISTERED_PROVIDERS_IN_ERROR = 40
 _READ_IMPLYING_PROCEDURE_PREFIXES = ("review_", "get_", "list_", "check_", "inspect_")
+_WHOLESALE_PASSTHROUGH_PARAMETER = "arguments"
+"""Provider input key that conventionally carries an opaque argument bundle."""
+_PREFERRED_PROVIDER_STEP_COUNT = 5
+"""Provider steps above which one procedure is doing more than one job."""
 
 WITHDRAW_NON_AUTHOR_PERMISSION = PermissionMode.GRAPH_WRITE
 """Tier required to withdraw a proposal the actor did not author.
@@ -263,6 +270,9 @@ def lint_procedure_definition_authoring(
                     f"'{step.id}' uses side-effecting provider '{step.provider}'"
                 )
             warnings.extend(_stringified_object_input_warnings(step.id, step.input))
+            warnings.extend(_wholesale_passthrough_warnings(step.id, step.input, contract))
+
+    warnings.extend(_read_fanout_warnings(definition, config))
 
     provider_call_count = definition.static_expansion().expanded_provider_calls
     if definition.budget.max_provider_calls > provider_call_count:
@@ -291,15 +301,19 @@ def _procedure_workflow_steps(definition: ProcedureDefinition) -> list[WorkflowS
 def _procedure_step_input_references(
     definition: ProcedureDefinition,
 ) -> list[tuple[str, str]]:
+    """Collect ``$input`` references from the fields the resolver actually walks.
+
+    Scope equals resolution scope: ``iter_step_reference_templates`` selects the
+    same step fields :func:`resolve_value` visits, and nothing else. Scanning the
+    whole dumped step instead would read literal prose -- an assert ``message``
+    quoting ``$input.foo`` to explain a failure -- as a reference and block a
+    definition that runs correctly.
+    """
     references: list[tuple[str, str]] = []
     for step in _procedure_workflow_steps(definition):
-        dumped = step.model_dump(
-            mode="python",
-            by_alias=True,
-            exclude={"id", "as_", "as"},
-            exclude_none=True,
-        )
-        references.extend((step.id, ref) for ref in _input_references(dumped))
+        dumped = step.model_dump(mode="python", by_alias=True, exclude_none=True)
+        for template in iter_step_reference_templates(dumped):
+            references.extend((step.id, ref) for ref in _input_references(template))
     return references
 
 
@@ -343,6 +357,108 @@ def _stringified_object_input_warnings(step_id: str, value: Any) -> list[str]:
                 visit(nested, f"{path}[{index}]")
 
     visit(value, "input")
+    return warnings
+
+
+def _wholesale_passthrough_warnings(
+    step_id: str,
+    value: Any,
+    contract: ContractSchema,
+) -> list[str]:
+    """Flag a declared string field handed whole to an ``arguments`` parameter.
+
+    Feeding one contract field entire into a parameter named ``arguments`` --
+    the ``call_discoverable_agent_tool``-style string argument bundle -- routes
+    around the contract: whatever the caller packed into that one string is
+    never type-checked, and the declared shape stops describing what the tool
+    actually receives. The fix is to declare the individual fields the tool
+    needs, so the reference is a warning rather than a refusal.
+    """
+    warnings: list[str] = []
+
+    def visit(item: Any, path: str, key: str | None) -> None:
+        if isinstance(item, str):
+            if key != _WHOLESALE_PASSTHROUGH_PARAMETER:
+                return
+            field_name = _whole_input_reference_field(item)
+            if field_name is None:
+                return
+            field_schema = contract.fields.get(field_name)
+            if field_schema is None or field_schema.type != "string":
+                return
+            warnings.append(
+                f"step '{step_id}' input at '{path}' passes the whole contract_in field "
+                f"'{field_name}' into an '{_WHOLESALE_PASSTHROUGH_PARAMETER}' parameter; "
+                "the contract cannot validate what that string carries -- declare the "
+                "individual fields the provider needs"
+            )
+            return
+        if isinstance(item, dict):
+            for nested_key, nested in item.items():
+                visit(nested, f"{path}.{nested_key}" if path else str(nested_key), str(nested_key))
+        elif isinstance(item, list):
+            for index, nested in enumerate(item):
+                visit(nested, f"{path}[{index}]", key)
+
+    visit(value, "input", None)
+    return warnings
+
+
+def _whole_input_reference_field(reference: str) -> str | None:
+    """Return the field name when a reference is one whole ``$input.<field>``.
+
+    A path or index into the field (``$input.spec.limit``) is a narrowed read
+    and does not defeat validation; only the undivided field does.
+    """
+    if not reference.startswith("$input."):
+        return None
+    path = reference[len("$input.") :]
+    if not path or "." in path or "[" in path:
+        return None
+    return path
+
+
+def _read_fanout_warnings(
+    definition: ProcedureDefinition,
+    config: CoreConfig,
+) -> list[str]:
+    """Prefer small, single-purpose procedures over read-plus-write omnibuses.
+
+    A definition that reads widely and then writes is two procedures wearing one
+    name: the reads are re-runnable and cheap to review, the write is neither,
+    and bundling them means every review of the read half re-reviews the write.
+    Guidance only -- a legitimately wide procedure is still proposable.
+    """
+    read_steps: list[str] = []
+    side_effecting_steps: list[str] = []
+    provider_steps: list[str] = []
+    for step in _procedure_workflow_steps(definition):
+        if step.query is not None:
+            read_steps.append(step.id)
+            continue
+        if step.provider is None:
+            continue
+        provider_steps.append(step.id)
+        provider = config.providers.get(step.provider)
+        if provider is not None and provider.side_effects:
+            side_effecting_steps.append(step.id)
+        else:
+            read_steps.append(step.id)
+
+    warnings: list[str] = []
+    if side_effecting_steps and len(read_steps) > 1:
+        warnings.append(
+            f"procedure mixes {len(read_steps)} read steps "
+            f"({', '.join(read_steps)}) with {len(side_effecting_steps)} side-effecting step(s) "
+            f"({', '.join(side_effecting_steps)}); consider splitting reads into a "
+            "read-only bundle"
+        )
+    if len(provider_steps) > _PREFERRED_PROVIDER_STEP_COUNT:
+        warnings.append(
+            f"procedure declares {len(provider_steps)} provider steps, above the "
+            f"{_PREFERRED_PROVIDER_STEP_COUNT}-step guidance for one procedure; "
+            "consider splitting reads into a read-only bundle"
+        )
     return warnings
 
 
@@ -583,29 +699,33 @@ def service_get_procedure_details(
 ) -> ProcedureGetResult:
     """Read a procedure with the active config's resolved input field schema."""
     procedure = service_get_procedure(instance, procedure_id)
-    contract = resolve_contract(instance.load_config(), procedure.definition.contract_in)
+    config = instance.load_config()
+    contract = resolve_contract(config, procedure.definition.contract_in)
     if contract is None:
         return ProcedureGetResult(procedure=procedure, contract_in_schema=None)
     return ProcedureGetResult(
         procedure=procedure,
         contract_in_schema=ProcedureContractSchema(
+            description=contract.description,
             fields=[
                 ProcedureContractFieldSchema(
                     name=field_name,
-                    # A defaulted field is filled in by contract validation
-                    # before the optional check runs, so the caller never has to
-                    # supply it -- reporting it as required would be a lie the
-                    # caller would obey.
-                    required=not field_schema.optional and field_schema.default is None,
+                    # One shared requiredness predicate with the contract
+                    # rejection message: a defaulted field is filled in by
+                    # contract validation before the optional check runs, so the
+                    # caller never has to supply it.
+                    required=contract_field_is_required(field_schema),
                     type=field_schema.type,
                     default=field_schema.default,
                     enum=field_schema.enum,
                     enum_ref=field_schema.enum_ref,
                     description=field_schema.description,
+                    json_schema=field_schema.json_schema,
                 )
                 for field_name, field_schema in sorted(contract.fields.items())
             ],
             allow_extra=contract.allow_extra,
+            input_example=contract_input_example(config, contract),
         ),
     )
 

@@ -332,6 +332,13 @@ class ProcedureContractFieldSchema(BaseModel):
     enum: list[Any] | None = None
     enum_ref: str | None = None
     description: str | None = None
+    json_schema: dict[str, Any] | None = None
+    """Nested JSON Schema a ``json``-typed field is additionally validated against.
+
+    Without it a ``json`` field reads as "any JSON here" while the runtime still
+    rejects payloads that miss the nested shape -- the exact gap this surface
+    exists to close.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -344,10 +351,16 @@ class ProcedureContractSchema(BaseModel):
     ``cruxible.JsonObject`` (no declared fields, any object accepted). Without
     it both render as an empty field list and a caller cannot tell whether the
     procedure takes arbitrary input or none at all.
+
+    ``input_example`` is the worked payload the field list otherwise leaves the
+    caller to invent: every key they must supply, filled with a type-appropriate
+    value. It is ``None`` only when the contract accepts no payload at all.
     """
 
+    description: str | None = None
     fields: list[ProcedureContractFieldSchema]
     allow_extra: bool
+    input_example: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

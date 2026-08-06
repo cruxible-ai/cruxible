@@ -3,13 +3,142 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Any
 
 from cruxible_core.errors import ConfigError, QueryExecutionError
 
 _SEGMENT_RE = re.compile(r"([^\.\[\]]+)|\[(\d+)\]")
 _RUNTIME_REFERENCE_ATTR = "_cruxible_workflow_reference"
+
+_STEP_REFERENCE_TEMPLATE_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
+    # Query steps: params and relationship_state are resolved in workflow.io.
+    "params": ((),),
+    "relationship_state": ((),),
+    # Provider steps: the whole input template is resolved in workflow.io.
+    "input": ((),),
+    # Assert family. ``message`` is literal operator-facing prose; ``step`` and
+    # ``count`` name a prior alias and a selector. None of the three reach the
+    # resolver, so none of them may be read as a reference.
+    "assert": (("left",), ("right",)),
+    "assert_count": (("value",),),
+    "assert_exists": (("ref",),),
+    # Item-shaping steps (workflow.transforms). ``rename``/``casts``/``required``
+    # are literal field names; ``strategy``/``join_type``/``op`` are literals.
+    "shape_items": (("items",), ("fields", "*")),
+    "join_items": (
+        ("left_items",),
+        ("right_items",),
+        ("left_key",),
+        ("right_key",),
+        ("fields", "*"),
+    ),
+    "filter_items": (
+        ("items",),
+        ("where", "*"),
+        ("comparisons", "*", "left"),
+        ("comparisons", "*", "right"),
+    ),
+    "aggregate_items": (
+        ("items",),
+        ("group_by", "*"),
+        ("measures", "*", "count_where", "left"),
+        ("measures", "*", "count_where", "right"),
+        ("measures", "*", "count_distinct", "value"),
+        ("measures", "*", "sum", "value"),
+        ("measures", "*", "min", "value"),
+        ("measures", "*", "max", "value"),
+    ),
+    "dedupe_items": (("items",), ("keys", "*"), ("rank",)),
+    # Build steps (workflow.proposals / workflow.apply). ``entity_type``,
+    # ``relationship_type``, ``signal_source``, ``candidates_from``,
+    # ``signals_from`` and the ``score``/``enum`` mapping paths are literals.
+    "make_candidates": (
+        ("items",),
+        ("from_type",),
+        ("from_id",),
+        ("to_type",),
+        ("to_id",),
+        ("properties", "*"),
+        ("evidence", "refs"),
+        ("evidence", "rationale"),
+    ),
+    "make_relationships": (
+        ("items",),
+        ("from_type",),
+        ("from_id",),
+        ("to_type",),
+        ("to_id",),
+        ("properties", "*"),
+        ("evidence", "refs"),
+        ("evidence", "rationale"),
+    ),
+    "make_entities": (("items",), ("entity_id",), ("properties", "*")),
+    "map_signals": (
+        ("items",),
+        ("from_id",),
+        ("to_id",),
+        ("evidence",),
+        ("evidence_refs",),
+    ),
+    "propose_relationship_group": (
+        ("thesis_text",),
+        ("analysis_state", "*"),
+        ("suggested_priority",),
+    ),
+    "register_source_artifacts": (
+        ("items",),
+        ("artifact_id",),
+        ("content",),
+        ("label",),
+        ("original_uri",),
+    ),
+}
+"""Per-step-field selectors naming exactly what :func:`resolve_value` walks.
+
+Keys are the by-alias field names of a dumped workflow step; each selector is a
+path within that field, ``()`` meaning the whole value and ``"*"`` matching every
+dict value or list item at that position. Step kinds absent from the map
+(``assert_not_truncated``, ``apply_entities``, ``apply_relationships``,
+``apply_all``) carry no reference-bearing field at all.
+
+Anything NOT selected here is literal text the resolver never sees -- an assert
+``message``, a ``rename`` target, a step alias. Static analysis that reads
+references out of a step definition must walk this map rather than the whole
+dumped step, or literal prose beginning with ``$input.`` is mistaken for a
+reference the runtime would never resolve.
+"""
+
+
+def iter_step_reference_templates(step: Mapping[str, Any]) -> Iterator[Any]:
+    """Yield every sub-value of one dumped workflow step the resolver walks.
+
+    The dump must be taken ``by_alias=True`` so the ``assert`` step kind is keyed
+    by its alias rather than by the ``assert_spec`` attribute name.
+    """
+    for field_name, selectors in _STEP_REFERENCE_TEMPLATE_PATHS.items():
+        if field_name not in step:
+            continue
+        value = step[field_name]
+        for selector in selectors:
+            yield from _select_reference_path(value, selector)
+
+
+def _select_reference_path(value: Any, selector: tuple[str, ...]) -> Iterator[Any]:
+    if not selector:
+        yield value
+        return
+    head, rest = selector[0], selector[1:]
+    if head == "*":
+        if isinstance(value, Mapping):
+            for item in value.values():
+                yield from _select_reference_path(item, rest)
+        elif isinstance(value, list):
+            for item in value:
+                yield from _select_reference_path(item, rest)
+        return
+    if isinstance(value, Mapping) and head in value:
+        yield from _select_reference_path(value[head], rest)
 
 
 def preview_value(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.config.schema import ContractSchema
 from cruxible_core.errors import ConfigError
 from cruxible_core.procedure.types import (
     ProcedureDefinition,
@@ -27,6 +28,7 @@ from cruxible_core.workflow.compiler import (
     load_lock,
     resolve_lock_path,
 )
+from cruxible_core.workflow.contracts import validate_contract_payload
 from tests.test_procedures.conftest import actor, provider_definition
 
 
@@ -85,6 +87,9 @@ def test_propose_and_accept_pin_definition_config_and_lock_digests(
     assert details.contract_in_schema.model_dump(exclude_none=True) == {
         "fields": [{"name": "value", "type": "int", "required": True}],
         "allow_extra": False,
+        # The worked payload the field list would otherwise leave the caller to
+        # invent -- every key they must supply, with a value of the right type.
+        "input_example": {"value": 1},
     }
 
 
@@ -324,6 +329,8 @@ def test_builtin_json_object_contract_permits_undeclared_input_references(
     assert details.contract_in_schema.model_dump(exclude_none=True) == {
         "fields": [],
         "allow_extra": True,
+        # An open contract with no declared fields accepts {} plus anything.
+        "input_example": {},
     }
 
 
@@ -366,6 +373,10 @@ def test_empty_input_and_json_object_schemas_are_distinguishable(
     assert empty.fields == [] and json_object.fields == []
     assert empty.allow_extra is False
     assert json_object.allow_extra is True
+    # The worked example says the same thing a second way: an open contract has
+    # a valid empty payload to paste, a closed empty one accepts no payload.
+    assert empty.input_example is None
+    assert json_object.input_example == {}
     assert empty != json_object
 
 
@@ -427,7 +438,336 @@ def test_contract_in_schema_reports_defaulted_field_as_not_required(
             {"name": "value", "type": "int", "required": True},
         ],
         "allow_extra": False,
+        # 'mode' is filled from its default, so the worked example omits it:
+        # including it would teach a payload wider than the contract demands.
+        "input_example": {"value": 1},
     }
+
+
+def test_contract_in_schema_carries_a_worked_input_example(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """A field list still leaves the caller inventing values; the example is pasteable."""
+    contract_in = {
+        "description": "One task reconciliation request",
+        "fields": {
+            "task_id": {"type": "string", "description": "Task identifier, e.g. TSK-1"},
+            "mode": {"type": "string", "enum": ["fast", "slow"]},
+            "attempts": {"type": "int"},
+            "dry_run": {"type": "bool"},
+            "spec": {
+                "type": "json",
+                "json_schema": {
+                    "type": "object",
+                    "properties": {"limit": {"type": "integer"}},
+                    "required": ["limit"],
+                },
+            },
+            "note": {"type": "string", "optional": True},
+        },
+    }
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "reconcile_task_with_rich_contract",
+            "contract_in": contract_in,
+            "steps": [
+                {
+                    "id": "invoke",
+                    "provider": "exported_action",
+                    "input": {
+                        "task_id": "$input.task_id",
+                        "mode": "$input.mode",
+                        "attempts": "$input.attempts",
+                        "dry_run": "$input.dry_run",
+                        "spec": "$input.spec",
+                        "note": "$input.note",
+                    },
+                    "as": "result",
+                }
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+    proposed = service_propose_procedure(
+        procedure_instance,
+        definition,
+        actor_context=actor("proposer"),
+    )
+
+    schema = service_get_procedure_details(
+        procedure_instance,
+        proposed.procedure.procedure_id,
+    ).contract_in_schema
+
+    assert schema is not None
+    assert schema.description == "One task reconciliation request"
+    assert schema.input_example == {
+        "attempts": 1,
+        "dry_run": True,
+        # An enum pins the value exactly; a description that spells one out is
+        # the author's own worked value; otherwise a placeholder for the type.
+        "mode": "fast",
+        "spec": {"limit": 1},
+        "task_id": "TSK-1",
+    }
+    # The optional field is absent: the example teaches the payload the contract
+    # demands, not the widest one it tolerates.
+    assert "note" not in schema.input_example
+    spec_field = next(field for field in schema.fields if field.name == "spec")
+    assert spec_field.json_schema == {
+        "type": "object",
+        "properties": {"limit": {"type": "integer"}},
+        "required": ["limit"],
+    }
+
+    # The example is worked, not decorative: it passes the contract it describes.
+    validate_contract_payload(
+        procedure_instance.load_config(),
+        ContractSchema.model_validate(contract_in),
+        schema.input_example,
+        subject="Procedure input example",
+        error_factory=ConfigError,
+    )
+
+
+def test_literal_input_text_outside_a_reference_field_is_not_blocked(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """Lint scope equals resolution scope, so an assert message may quote a ref.
+
+    ``assert.message`` is operator-facing prose the resolver never walks. Reading
+    it as a reference would block a definition that runs correctly -- the
+    over-blocking failure mode, strictly worse than the under-blocking one this
+    lint exists to fix.
+    """
+    quoted = "supply $input.transactions_arguments before retrying"
+    steps = [
+        {
+            "id": "invoke",
+            "provider": "exported_action",
+            "input": {"value": "$input.value"},
+            "as": "result",
+        },
+        {
+            "id": "guard",
+            "assert": {"left": "$steps.result", "op": "ne", "right": 0, "message": quoted},
+        },
+    ]
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "assert_message_quotes_a_reference",
+            "contract_in": "ProcedureInput",
+            "steps": steps,
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+
+    proposed = service_propose_procedure(
+        procedure_instance,
+        definition,
+        actor_context=actor("proposer"),
+    )
+    assert proposed.procedure.status == "pending"
+    assert proposed.warnings == []
+
+    # The same text in a position the resolver DOES walk is still refused.
+    blocked = ProcedureDefinition.model_validate(
+        {
+            "name": "assert_left_uses_a_bad_reference",
+            "contract_in": "ProcedureInput",
+            "steps": [
+                steps[0],
+                {
+                    "id": "guard",
+                    "assert": {
+                        "left": "$input.transactions_arguments",
+                        "op": "ne",
+                        "right": 0,
+                        "message": "guard",
+                    },
+                },
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+    with pytest.raises(ConfigError) as exc_info:
+        service_propose_procedure(
+            procedure_instance,
+            blocked,
+            actor_context=actor("proposer"),
+        )
+    assert "step 'guard'" in str(exc_info.value)
+    assert "'$input.transactions_arguments'" in str(exc_info.value)
+
+
+def test_blocking_message_labels_a_defaulted_field_optional_to_supply(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """One requiredness predicate: the rejection and the discovery surface agree."""
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "defaulted_field_label",
+            "contract_in": {
+                "fields": {
+                    "value": {"type": "int"},
+                    "mode": {"type": "string", "default": "fast"},
+                }
+            },
+            "steps": [
+                {
+                    "id": "invoke",
+                    "provider": "exported_action",
+                    "input": {"value": "$input.absent_field"},
+                    "as": "result",
+                }
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+
+    with pytest.raises(ConfigError) as exc_info:
+        service_propose_procedure(
+            procedure_instance,
+            definition,
+            actor_context=actor("proposer"),
+        )
+
+    message = str(exc_info.value)
+    assert "value (int, required)" in message
+    # Contract validation fills the default before the optional check, so the
+    # caller never has to supply this key -- and the echo must not claim so.
+    assert "mode (string, optional)" in message
+
+
+def test_wholesale_string_passthrough_into_arguments_is_warned(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """A whole declared string handed to an ``arguments`` bundle defeats the contract."""
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "invoke_agent_tool",
+            "contract_in": {
+                "fields": {
+                    "tool_arguments": {"type": "string"},
+                    "tool_name": {"type": "string"},
+                }
+            },
+            "steps": [
+                {
+                    "id": "invoke",
+                    "provider": "exported_action",
+                    "input": {
+                        "name": "$input.tool_name",
+                        "arguments": "$input.tool_arguments",
+                    },
+                    "as": "result",
+                }
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+
+    proposed = service_propose_procedure(
+        procedure_instance,
+        definition,
+        actor_context=actor("proposer"),
+    )
+
+    # ``tool_name`` goes into a normally named key and is not flagged: the
+    # objection is the opaque bundle, not passing a declared field along.
+    assert proposed.warnings == [
+        "step 'invoke' input at 'input.arguments' passes the whole contract_in field "
+        "'tool_arguments' into an 'arguments' parameter; the contract cannot validate "
+        "what that string carries -- declare the individual fields the provider needs"
+    ]
+
+
+def _add_read_provider(instance: CruxibleInstance, name: str) -> None:
+    """Register a second exported provider that reads rather than writes."""
+    config = instance.load_config()
+    config.providers[name] = config.providers["exported_action"].model_copy(
+        update={"side_effects": False}
+    )
+    config.providers["exported_action"].side_effects = True
+    instance.save_config(config)
+    service_lock(instance)
+
+
+def _provider_step(step_id: str, provider: str) -> dict[str, object]:
+    return {
+        "id": step_id,
+        "provider": provider,
+        "input": {"value": 1},
+        "as": f"{step_id}_result",
+    }
+
+
+def test_read_fanout_guidance_warns_on_mixed_and_wide_procedures(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """Reads bundled with a write, or too many provider steps, get split guidance."""
+    _add_read_provider(procedure_instance, "read_action")
+
+    mixed = ProcedureDefinition.model_validate(
+        {
+            "name": "reconcile_task",
+            "contract_in": "cruxible.EmptyInput",
+            "steps": [
+                _provider_step("read_one", "read_action"),
+                _provider_step("read_two", "read_action"),
+                _provider_step("write_it", "exported_action"),
+            ],
+            "returns": "write_it_result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 3},
+            "declared_tier": "graph_write",
+        }
+    )
+    proposed = service_propose_procedure(
+        procedure_instance,
+        mixed,
+        actor_context=actor("proposer"),
+    )
+    assert proposed.warnings == [
+        "procedure mixes 2 read steps (read_one, read_two) with 1 side-effecting step(s) "
+        "(write_it); consider splitting reads into a read-only bundle"
+    ]
+
+    wide = ProcedureDefinition.model_validate(
+        {
+            "name": "reconcile_everything",
+            "contract_in": "cruxible.EmptyInput",
+            "steps": [_provider_step(f"read_{index}", "read_action") for index in range(6)],
+            "returns": "read_5_result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 6},
+            "declared_tier": "graph_write",
+        }
+    )
+    wide_proposed = service_propose_procedure(
+        procedure_instance,
+        wide,
+        actor_context=actor("proposer"),
+    )
+    assert wide_proposed.warnings == [
+        "procedure declares 6 provider steps, above the 5-step guidance for one "
+        "procedure; consider splitting reads into a read-only bundle"
+    ]
 
 
 def test_contract_in_schema_is_none_when_contract_no_longer_resolves(

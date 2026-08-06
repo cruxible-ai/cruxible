@@ -1768,7 +1768,7 @@ never activated has nothing to resolve and simply expires.
 | `supersedes_procedure_id` | no | string or null | Immutable procedure being replaced. |
 | `evidence_refs` | no | array or null | Distillation evidence refs. |
 
-**Returns:** The pending procedure record, transition receipt ID, and `warnings`: non-blocking authoring lint findings (declared-but-unused `contract_in` fields, read-implying names backed by side-effecting providers, stringified JSON-object step inputs, and provider-call budget headroom the run can never reach). Statically impossible definitions are refused rather than warned about.
+**Returns:** The pending procedure record, transition receipt ID, and `warnings`: non-blocking authoring lint findings (declared-but-unused `contract_in` fields, read-implying names backed by side-effecting providers, stringified JSON-object step inputs, a declared string field passed whole into an `arguments` parameter, read steps bundled with side-effecting ones or more than five provider steps in one procedure, and provider-call budget headroom the run can never reach). Statically impossible definitions are refused rather than warned about.
 
 **Side Effects:** Persists a pending procedure and receipt.
 
@@ -1804,7 +1804,7 @@ never activated has nothing to resolve and simply expires.
 | `instance_id` | yes | string | Governed instance ID. |
 | `procedure_id` | yes | string | Procedure ID. |
 
-**Returns:** A `procedure` object envelope plus `contract_in_schema`, the `contract_in` shape resolved against the active config: `fields` (each with `name`, `type`, `required`, and any `default`, `enum`, `enum_ref`, `description`) and `allow_extra`. A field carrying a default is reported as not required. `contract_in_schema` is null when the definition's `contract_in` no longer resolves in the active config.
+**Returns:** A `procedure` object envelope plus `contract_in_schema`, the `contract_in` shape resolved against the active config: the contract `description`, `fields` (each with `name`, `type`, `required`, and any `default`, `enum`, `enum_ref`, `description`, and the nested `json_schema` a `json`-typed field is validated against), `allow_extra`, and `input_example` — a worked payload carrying every key the caller must supply, filled with type-appropriate values (an enum's first value, a declared default, a literal the field description quotes, else a placeholder for the type). A field carrying a default is reported as not required and is absent from `input_example`. `input_example` is `{}` for a contract that declares no fields but accepts extras (`cruxible.JsonObject`) and is omitted for one that accepts no payload at all (`cruxible.EmptyInput`). `contract_in_schema` is null when the definition's `contract_in` no longer resolves in the active config.
 
 **Side Effects:** Read-only.
 

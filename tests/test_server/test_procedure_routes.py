@@ -99,6 +99,7 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     assert shown.json()["contract_in_schema"] == {
         "fields": [{"name": "value", "type": "int", "required": True}],
         "allow_extra": False,
+        "input_example": {"value": 1},
     }
 
     # accept enforces reviewer independence, so an HTTP caller may not name the

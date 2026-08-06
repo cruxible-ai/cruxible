@@ -297,10 +297,14 @@ def _echo_contract_in_schema(schema: dict[str, Any] | None) -> None:
         return
     fields = schema.get("fields") or []
     allow_extra = bool(schema.get("allow_extra"))
+    description = schema.get("description")
+    if isinstance(description, str) and description:
+        click.echo(f"  Input contract: {description}")
     if not fields:
         click.echo(
             "  Input: any JSON object" if allow_extra else "  Input: none (empty payload)",
         )
+        _echo_input_example(schema)
         return
     click.echo("  Input schema:")
     for field in fields:
@@ -309,8 +313,26 @@ def _echo_contract_in_schema(schema: dict[str, Any] | None) -> None:
         if field.get("default") is not None:
             parts.append(f"default={field['default']!r}")
         click.echo(f"    {field.get('name')} ({', '.join(parts)})")
+        field_description = field.get("description")
+        if isinstance(field_description, str) and field_description:
+            click.echo(f"      {field_description}")
+        json_schema = field.get("json_schema")
+        if isinstance(json_schema, dict):
+            click.echo(f"      json_schema: {json.dumps(json_schema, sort_keys=True)}")
     if allow_extra:
         click.echo("    (extra fields accepted)")
+    _echo_input_example(schema)
+
+
+def _echo_input_example(schema: dict[str, Any]) -> None:
+    """Print the worked payload a caller can paste, when the contract takes one."""
+    if "input_example" not in schema:
+        return
+    example = schema["input_example"]
+    if not isinstance(example, dict):
+        return
+    click.echo("  Input example:")
+    click.echo(f"    {json.dumps(example, sort_keys=True)}")
 
 
 @procedure_group.command("resolve")

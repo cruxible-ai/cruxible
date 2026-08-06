@@ -103,6 +103,7 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
                 "contract_in_schema": {
                     "fields": [{"name": "value", "type": "int", "required": True}],
                     "allow_extra": False,
+                    "input_example": {"value": 1},
                 },
             }
 
@@ -160,6 +161,7 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
     assert shown["contract_in_schema"] == {
         "fields": [{"name": "value", "type": "int", "required": True}],
         "allow_extra": False,
+        "input_example": {"value": 1},
     }
     withdraw_call = next(payload for name, payload in calls if name == "withdraw")
     assert withdraw_call[2] == {"expected_version": 1, "reason": None}
