@@ -291,6 +291,15 @@ after a new attestation raises a `409` `StaleContinuationError` so a paginated
 read can never silently span two different states. Repeat the read from the
 first page to pick up the new corroboration.
 
+**Running a procedure advances it too, twice.** The run ledger is read state
+now that `procedure list` / `procedure show` derive a `track_record` block from
+it, so both ledger writes bump `read_revision`: once when the crash-visible
+started run commits, and once when the run is finalized with its verdict. That
+holds for refusals as well as successes — a preflight or precondition refusal
+still writes both. The same continuation rule follows: a procedure page read
+before an invocation cannot be resumed after it, and a working-set record
+captured before it reads stale rather than fresh.
+
 Hand-authored `metadata={"lifecycle": ...}` is inert free-form data — it can
 never become the typed state. The lifecycle write is a direct-write verb, so a
 `proposal_only` type refuses it too. Reserve deletion for bad imports and test

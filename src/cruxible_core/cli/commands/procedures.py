@@ -22,10 +22,12 @@ from cruxible_core.cli.main import handle_errors
 from cruxible_core.procedure.types import (
     ProcedureDefinition,
     ProcedureExecutionResult,
+    ProcedureReadRecord,
     ProcedureRecord,
     ProcedureRun,
     ProcedureStatus,
     ProcedureTransitionResult,
+    procedure_record_from_payload,
 )
 from cruxible_core.service import (
     service_accept_procedure,
@@ -92,13 +94,20 @@ def _parse_run_input(raw: str) -> dict[str, Any]:
 
 
 def _procedure_from_result(result: Any) -> ProcedureRecord:
+    """Unwrap a procedure from any local service result or daemon envelope.
+
+    The local paths return models (a record, or a transition result wrapping
+    one) and every daemon path returns a JSON envelope; there is no third
+    shape, so anything else is a genuine surface mismatch, not a case to
+    normalize.
+    """
     if isinstance(result, ProcedureRecord):
         return result
     if isinstance(result, ProcedureTransitionResult):
         return result.procedure
     if not isinstance(result, dict) or not isinstance(result.get("procedure"), dict):
         raise click.ClickException("Procedure response is missing its procedure record")
-    return ProcedureRecord.model_validate(result["procedure"])
+    return _procedure_from_payload(result["procedure"])
 
 
 def _transition_receipt_id(result: Any) -> str | None:
@@ -111,7 +120,16 @@ def _transition_receipt_id(result: Any) -> str | None:
 
 
 def _procedure_items(result: Any) -> list[ProcedureRecord]:
-    return [ProcedureRecord.model_validate(item) for item in result.items]
+    return [_procedure_from_payload(item) for item in result.items]
+
+
+def _procedure_from_payload(payload: Any) -> ProcedureRecord:
+    try:
+        return procedure_record_from_payload(payload)
+    except (TypeError, ValidationError) as exc:
+        raise click.ClickException(
+            f"Procedure response contains an invalid procedure record: {exc}"
+        ) from exc
 
 
 def _run_items(result: Any) -> list[ProcedureRun]:
@@ -129,6 +147,25 @@ def _echo_procedure(procedure: ProcedureRecord) -> None:
     )
     if procedure.definition.description:
         click.echo(f"  {procedure.definition.description}")
+    if isinstance(procedure, ProcedureReadRecord):
+        track_record = procedure.track_record
+        last_succeeded_at = (
+            track_record.last_succeeded_at.isoformat()
+            if track_record.last_succeeded_at is not None
+            else "null"
+        )
+        top_refusal_reason = track_record.top_refusal_reason or "null"
+        click.echo(
+            "  Track record: "
+            f"runs={track_record.runs}, succeeded={track_record.succeeded}, "
+            f"failed={track_record.failed}, refused={track_record.refused}, "
+            f"budget_exceeded={track_record.budget_exceeded}, "
+            f"in_flight={track_record.in_flight}"
+        )
+        click.echo(
+            f"    last_succeeded_at={last_succeeded_at}, "
+            f"top_refusal_reason={top_refusal_reason}, linked_outcomes=null"
+        )
 
 
 def _procedure_payload(procedure: ProcedureRecord) -> dict[str, Any]:

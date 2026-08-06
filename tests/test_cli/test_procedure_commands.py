@@ -65,7 +65,9 @@ def test_procedure_read_commands_use_envelopes_and_surface_started_tombstone(
     monkeypatch.chdir(instance.get_root_path())
 
     listed = runner.invoke(cli, ["procedure", "list", "--status", "pending", "--json"])
+    listed_text = runner.invoke(cli, ["procedure", "list", "--status", "pending"])
     shown = runner.invoke(cli, ["procedure", "show", procedure_id, "--json"])
+    shown_text = runner.invoke(cli, ["procedure", "show", procedure_id])
     runs_json = runner.invoke(cli, ["procedure", "runs", procedure_id, "--json"])
     runs_text = runner.invoke(cli, ["procedure", "runs", procedure_id])
 
@@ -80,9 +82,30 @@ def test_procedure_read_commands_use_envelopes_and_surface_started_tombstone(
         "read_revision",
     }
     assert [item["procedure_id"] for item in list_payload["items"]] == [procedure_id]
+    expected_track_record = {
+        "runs": 1,
+        "succeeded": 0,
+        "failed": 0,
+        "refused": 0,
+        "budget_exceeded": 0,
+        "in_flight": 1,
+        "last_succeeded_at": None,
+        "top_refusal_reason": None,
+        "linked_outcomes": None,
+    }
+    assert list_payload["items"][0]["track_record"] == expected_track_record
+    assert listed_text.exit_code == 0, listed_text.output
+    assert (
+        "Track record: runs=1, succeeded=0, failed=0, refused=0, "
+        "budget_exceeded=0, in_flight=1" in listed_text.output
+    )
 
     assert shown.exit_code == 0, shown.output
-    assert json.loads(shown.output)["procedure"]["procedure_id"] == procedure_id
+    shown_payload = json.loads(shown.output)["procedure"]
+    assert shown_payload["procedure_id"] == procedure_id
+    assert shown_payload["track_record"] == expected_track_record
+    assert shown_text.exit_code == 0, shown_text.output
+    assert "top_refusal_reason=null, linked_outcomes=null" in shown_text.output
 
     assert runs_json.exit_code == 0, runs_json.output
     run_payload = json.loads(runs_json.output)

@@ -34,9 +34,11 @@ if TYPE_CHECKING:
         ProcedureBudgetSpent,
         ProcedureEvidenceArtifact,
         ProcedureRecord,
+        ProcedureRefusalReason,
         ProcedureRun,
         ProcedureRunVerdict,
         ProcedureStatus,
+        ProcedureTrackRecord,
     )
     from cruxible_core.provider.types import ExecutionTrace
     from cruxible_core.receipt.types import Receipt
@@ -449,6 +451,7 @@ class ProcedureStoreProtocol(ABC):
         budget_spent: ProcedureBudgetSpent,
         receipt_id: str,
         finalized_at: str,
+        refusal_reason: ProcedureRefusalReason | None = None,
     ) -> bool: ...
     @abstractmethod
     def get_run(self, run_id: str) -> ProcedureRun | None: ...
@@ -468,6 +471,11 @@ class ProcedureStoreProtocol(ABC):
         procedure_id: str | None = None,
         status: str | None = None,
     ) -> int: ...
+    @abstractmethod
+    def get_run_track_records(
+        self,
+        procedure_ids: Sequence[str],
+    ) -> dict[str, ProcedureTrackRecord]: ...
     @abstractmethod
     def save_evidence_artifact(self, artifact: ProcedureEvidenceArtifact) -> str: ...
     @abstractmethod

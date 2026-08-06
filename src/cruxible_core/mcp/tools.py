@@ -1309,7 +1309,7 @@ def register_tools(
         limit: int = 100,
         offset: int = 0,
     ) -> contracts.ListResult:
-        """List governed procedures with optional lifecycle filtering."""
+        """List governed procedures with lifecycle and run-ledger track records."""
         return handlers.handle_list_procedures(
             instance_id,
             status=status,
@@ -1322,7 +1322,7 @@ def register_tools(
         instance_id: str,
         procedure_id: str,
     ) -> dict[str, Any]:
-        """Get one procedure definition and its lifecycle fields."""
+        """Get one procedure definition, lifecycle fields, and run-ledger track record."""
         return handlers.handle_get_procedure(instance_id, procedure_id)
 
     @_tool

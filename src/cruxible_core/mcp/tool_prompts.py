@@ -278,10 +278,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "for independent review."
     ),
     "cruxible_list_procedures": (
-        "Use when you need to find governed procedures by lifecycle status or page."
+        "Use when you need to find governed procedures by lifecycle status or page and compare "
+        "their run-ledger track records before choosing one."
     ),
     "cruxible_get_procedure": (
-        "Use when you need one procedure's definition, budget, precondition, and lifecycle."
+        "Use when you need one procedure's definition, budget, precondition, lifecycle, and "
+        "run-ledger track record."
     ),
     "cruxible_resolve_procedure": (
         "Use when an independent reviewer needs to accept or reject a pending procedure."

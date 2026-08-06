@@ -6,7 +6,15 @@ import hashlib
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from cruxible_core.config.schema import (
     AssertSpec,
@@ -28,6 +36,20 @@ says which one happened. Neither is live, so neither holds a name."""
 ProcedureTier = Literal["governed_write", "graph_write", "admin"]
 ProcedureRunStatus = Literal["started", "finalized"]
 ProcedureRunVerdict = Literal["succeeded", "failed", "refused", "budget_exceeded"]
+ProcedureRefusalReason = Literal[
+    "procedure_not_live",
+    "definition_digest_changed",
+    "tier_not_permitted",
+    "preflight_refused",
+    "precondition_evaluation_failed",
+    "precondition_unsatisfied",
+]
+"""Stable, low-cardinality classification recorded on a ``refused`` run.
+
+Deliberately a bucket, not the refusal message: the message carries procedure
+ids and content digests, so a most-frequent-reason aggregate over messages
+would degenerate to "every refusal is unique". The full message stays on the
+run's receipt; this is only what the read surface can count."""
 
 MAX_PROCEDURE_EVIDENCE_BYTES = 256 * 1024
 """Maximum canonical JSON bytes retained for one typed procedure output."""
@@ -312,6 +334,91 @@ class ProcedureRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ProcedureTrackRecord(BaseModel):
+    """Run-ledger summary attached to procedure read records.
+
+    The verdict buckets are EXHAUSTIVE over ``ProcedureRunVerdict`` plus
+    ``in_flight`` for rows that have not been finalized, and the invariant
+    below is enforced rather than documented. A partial set of buckets is worse
+    than none: a procedure that blows its budget on every invocation would
+    otherwise report the same ``runs`` with all-zero outcomes as a procedure
+    with N invocations still running, and the dead one would read as busy.
+    """
+
+    runs: int = Field(default=0, ge=0)
+    succeeded: int = Field(default=0, ge=0)
+    failed: int = Field(default=0, ge=0)
+    refused: int = Field(default=0, ge=0)
+    budget_exceeded: int = Field(default=0, ge=0)
+    in_flight: int = Field(default=0, ge=0)
+    last_succeeded_at: datetime | None = None
+    top_refusal_reason: ProcedureRefusalReason | None = None
+    linked_outcomes: None = None
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="after")
+    def validate_buckets_cover_every_run(self) -> ProcedureTrackRecord:
+        bucketed = (
+            self.succeeded + self.failed + self.refused + self.budget_exceeded + self.in_flight
+        )
+        if bucketed != self.runs:
+            raise ValueError(
+                "procedure track-record buckets must cover every run: "
+                f"runs={self.runs}, bucketed={bucketed}"
+            )
+        return self
+
+
+class ProcedureReadRecord(ProcedureRecord):
+    """Procedure definition and governance state with its run-ledger summary."""
+
+    track_record: ProcedureTrackRecord = Field(default_factory=ProcedureTrackRecord)
+
+    @model_serializer(mode="wrap")
+    def serialize_with_whole_track_record(
+        self,
+        handler: SerializerFunctionWrapHandler,
+        info: SerializationInfo,
+    ) -> dict[str, Any]:
+        """Emit the track record whole, whatever the caller's dump options.
+
+        Every read surface dumps procedures with ``exclude_none=True`` (the
+        definition is full of optional keys nobody wants echoed as nulls), which
+        would silently drop ``last_succeeded_at``/``top_refusal_reason``/
+        ``linked_outcomes`` from the block and leave each surface to patch the
+        shape back in by hand. The block is a fixed-shape summary: a missing key
+        and a null key mean different things to a reader, so it is serialized
+        here once instead of in every caller.
+        """
+        payload = dict(handler(self))
+        payload["track_record"] = self.track_record.model_dump(
+            mode="json" if info.mode_is_json() else "python"
+        )
+        return payload
+
+
+def procedure_record_from_payload(payload: Any) -> ProcedureRecord:
+    """Parse a procedure record from any surface's representation.
+
+    Read surfaces carry ``track_record`` and lifecycle-transition surfaces do
+    not, and both reach clients as plain dicts over HTTP and as models in
+    process. Validating every payload as the bare :class:`ProcedureRecord`
+    (``extra="forbid"``) rejects every read payload, so the record type is
+    chosen from the payload itself.
+    """
+    if isinstance(payload, ProcedureRecord):
+        return payload
+    if isinstance(payload, BaseModel):
+        payload = payload.model_dump(mode="python")
+    if not isinstance(payload, dict):
+        raise TypeError(
+            f"procedure payload must be a mapping or model, got {type(payload).__name__}"
+        )
+    record_type = ProcedureReadRecord if "track_record" in payload else ProcedureRecord
+    return record_type.model_validate(payload)
+
+
 class ProcedureBudgetSpent(BaseModel):
     """Budget accounting persisted for one procedure invocation."""
 
@@ -333,6 +440,9 @@ class ProcedureRun(BaseModel):
     receipt_id: str | None = None
     started_at: datetime = Field(default_factory=utc_now)
     finalized_at: datetime | None = None
+    refusal_reason: ProcedureRefusalReason | None = None
+    """Bucket for a ``refused`` run. Null on every other verdict, and null on
+    runs finalized before the column existed."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -342,6 +452,8 @@ class ProcedureRun(BaseModel):
             raise ValueError("started procedure runs must have a null verdict")
         if self.status == "finalized" and self.verdict is None:
             raise ValueError("finalized procedure runs require a verdict")
+        if self.refusal_reason is not None and self.verdict != "refused":
+            raise ValueError("only refused procedure runs carry a refusal reason")
         return self
 
 
@@ -432,7 +544,9 @@ __all__ = [
     "ProcedureEvidenceArtifact",
     "ProcedureExecutionResult",
     "ProcedurePrecondition",
+    "ProcedureReadRecord",
     "ProcedureRecord",
+    "ProcedureRefusalReason",
     "ProcedureRepeatSpec",
     "ProcedureRepeatStepSchema",
     "ProcedureRun",
@@ -442,6 +556,8 @@ __all__ = [
     "ProcedureStatus",
     "ProcedureStepSchema",
     "ProcedureTier",
+    "ProcedureTrackRecord",
     "ProcedureTransitionResult",
     "compute_procedure_definition_digest",
+    "procedure_record_from_payload",
 ]

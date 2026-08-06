@@ -1776,7 +1776,7 @@ never activated has nothing to resolve and simply expires.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need to find governed procedures by lifecycle status or page.
+**Purpose:** Use when you need to find governed procedures by lifecycle status or page and compare their run-ledger track records before choosing one.
 
 **Arguments:**
 
@@ -1787,7 +1787,16 @@ never activated has nothing to resolve and simply expires.
 | `limit` | no | integer | Maximum records. |
 | `offset` | no | integer | Records to skip. |
 
-**Returns:** Standard list envelope with procedure records.
+**Returns:** Standard list envelope with procedure records. Each record carries
+a `track_record` block summarizing its run ledger: `runs`, the exhaustive
+verdict buckets `succeeded`, `failed`, `refused`, `budget_exceeded`, and
+`in_flight` (started but not yet finalized, so `runs` always equals their sum),
+`last_succeeded_at`, the most frequent `top_refusal_reason`, and
+`linked_outcomes` (reserved, always null). `top_refusal_reason` is null when a
+procedure has never been refused and for refusals recorded before the reason
+was tracked. These buckets are read state, so running a procedure advances
+`read_revision` (once at start, once at finalization, refusals included) and a
+truncated page cannot be resumed across an invocation.
 
 **Side Effects:** Read-only.
 
@@ -1795,7 +1804,7 @@ never activated has nothing to resolve and simply expires.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need one procedure's definition, budget, precondition, and lifecycle.
+**Purpose:** Use when you need one procedure's definition, budget, precondition, lifecycle, and run-ledger track record.
 
 **Arguments:**
 
@@ -1804,7 +1813,8 @@ never activated has nothing to resolve and simply expires.
 | `instance_id` | yes | string | Governed instance ID. |
 | `procedure_id` | yes | string | Procedure ID. |
 
-**Returns:** A `procedure` object envelope.
+**Returns:** A `procedure` object envelope carrying the same `track_record`
+block as the list surface.
 
 **Side Effects:** Read-only.
 
@@ -1902,7 +1912,10 @@ withdrawing another actor's pending proposal is refused below `GRAPH_WRITE`.
 | `offset` | no | integer | Records to skip. |
 
 **Returns:** Standard list envelope containing finalized runs and
-`status: started`/`verdict: null` tombstones.
+`status: started`/`verdict: null` tombstones. A `refused` run also carries the
+`refusal_reason` classification that the procedure's `top_refusal_reason`
+counts; it is null on every other verdict and on refusals recorded before the
+reason was tracked.
 
 **Side Effects:** Read-only.
 

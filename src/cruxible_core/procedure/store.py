@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast, get_args
 
 from cruxible_core.governance.actors import (
     GovernedActorContext,
@@ -22,9 +23,11 @@ from cruxible_core.procedure.types import (
     ProcedureBudgetSpent,
     ProcedureEvidenceArtifact,
     ProcedureRecord,
+    ProcedureRefusalReason,
     ProcedureRun,
     ProcedureRunVerdict,
     ProcedureStatus,
+    ProcedureTrackRecord,
     compute_procedure_definition_digest,
 )
 from cruxible_core.sqlite_ddl import execute_schema_script
@@ -55,6 +58,13 @@ CREATE INDEX IF NOT EXISTS idx_procedures_status ON procedures(status);
 CREATE INDEX IF NOT EXISTS idx_procedures_supersedes
     ON procedures(supersedes_procedure_id);
 
+-- ``refusal_reason`` reaches already-populated databases through storage
+-- migration 0005, not through this statement: rows finalized before it keep
+-- NULL, because the bucket is derived from the branch that refuses and the
+-- historical receipt text cannot be reclassified retroactively. Kept OUT of
+-- the table body deliberately -- SQLite stores a CREATE TABLE verbatim,
+-- comments included, and rebuilds the statement on ALTER TABLE, so a comment
+-- next to the last column breaks any later DROP COLUMN.
 CREATE TABLE IF NOT EXISTS procedure_runs (
     run_id TEXT PRIMARY KEY,
     procedure_id TEXT NOT NULL REFERENCES procedures(procedure_id),
@@ -64,11 +74,16 @@ CREATE TABLE IF NOT EXISTS procedure_runs (
     budget_spent_json TEXT NOT NULL DEFAULT '{}',
     receipt_id TEXT,
     started_at TEXT NOT NULL,
-    finalized_at TEXT
+    finalized_at TEXT,
+    refusal_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_procedure_runs_procedure
     ON procedure_runs(procedure_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_procedure_runs_status ON procedure_runs(status);
+-- Covering index for the track-record aggregate: the grouped query reads only
+-- these three columns, so a procedure list page never touches the run rows.
+CREATE INDEX IF NOT EXISTS idx_procedure_runs_track_record
+    ON procedure_runs(procedure_id, verdict, finalized_at);
 
 CREATE TABLE IF NOT EXISTS procedure_evidence_artifacts (
     artifact_id TEXT PRIMARY KEY,
@@ -90,6 +105,24 @@ CREATE TABLE IF NOT EXISTS procedure_run_evidence (
 CREATE INDEX IF NOT EXISTS idx_procedure_run_evidence_artifact
     ON procedure_run_evidence(artifact_id);
 """
+
+_KNOWN_REFUSAL_REASONS = frozenset(get_args(ProcedureRefusalReason))
+"""Refusal buckets this version understands, for reading a foreign database."""
+
+_MAX_ID_PARAMETERS_PER_STATEMENT = 500
+"""Ids bound into one ``IN (...)`` statement.
+
+SQLite's compiled-in limit is 32766 host parameters and exceeding it raises
+rather than degrading, so an unbounded ``IN`` list makes the caller's page size
+a correctness constraint on the store. 500 keeps every statement far below the
+cap while staying one round trip for any realistic procedure page.
+"""
+
+
+def _id_chunks(ids: tuple[str, ...]) -> list[tuple[str, ...]]:
+    """Split an id tuple into statement-sized chunks, preserving order."""
+    size = _MAX_ID_PARAMETERS_PER_STATEMENT
+    return [ids[start : start + size] for start in range(0, len(ids), size)]
 
 
 class ProcedureStore(ProcedureStoreProtocol):
@@ -288,8 +321,8 @@ class ProcedureStore(ProcedureStoreProtocol):
         self._conn.execute(
             "INSERT INTO procedure_runs "
             "(run_id, procedure_id, definition_digest, status, verdict, "
-            "budget_spent_json, receipt_id, started_at, finalized_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "budget_spent_json, receipt_id, started_at, finalized_at, refusal_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run.run_id,
                 run.procedure_id,
@@ -300,6 +333,7 @@ class ProcedureStore(ProcedureStoreProtocol):
                 run.receipt_id,
                 format_datetime(run.started_at),
                 _format_optional_datetime(run.finalized_at),
+                run.refusal_reason,
             ),
         )
         return run.run_id
@@ -312,17 +346,21 @@ class ProcedureStore(ProcedureStoreProtocol):
         budget_spent: ProcedureBudgetSpent,
         receipt_id: str,
         finalized_at: str,
+        refusal_reason: ProcedureRefusalReason | None = None,
     ) -> bool:
         """Finalize one started run exactly once. Does not commit."""
+        if refusal_reason is not None and verdict != "refused":
+            raise ValueError("only a refused procedure run may record a refusal reason")
         cursor = self._conn.execute(
             "UPDATE procedure_runs SET status = 'finalized', verdict = ?, "
-            "budget_spent_json = ?, receipt_id = ?, finalized_at = ? "
+            "budget_spent_json = ?, receipt_id = ?, finalized_at = ?, refusal_reason = ? "
             "WHERE run_id = ? AND status = 'started' AND verdict IS NULL",
             (
                 verdict,
                 json.dumps(budget_spent.model_dump(mode="json"), sort_keys=True),
                 receipt_id,
                 finalized_at,
+                refusal_reason,
                 run_id,
             ),
         )
@@ -381,6 +419,88 @@ class ProcedureStore(ProcedureStoreProtocol):
             tuple(params),
         ).fetchone()
         return int(row["count"]) if row is not None else 0
+
+    def get_run_track_records(
+        self,
+        procedure_ids: Sequence[str],
+    ) -> dict[str, ProcedureTrackRecord]:
+        """Aggregate run-ledger summaries for a whole procedure page.
+
+        Two grouped statements per id chunk -- the verdict buckets, then the
+        most-frequent refusal bucket -- rather than one statement per procedure.
+        The id list is chunked because a caller may hand us a page far larger
+        than SQLite's per-statement host-parameter cap, and blowing that cap is
+        an outright error, not a slow path.
+        """
+        unique_ids = tuple(dict.fromkeys(procedure_ids))
+        if not unique_ids:
+            return {}
+        records: dict[str, ProcedureTrackRecord] = {}
+        for chunk in _id_chunks(unique_ids):
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT procedure_id, COUNT(*) AS runs, "
+                "SUM(CASE WHEN verdict = 'succeeded' THEN 1 ELSE 0 END) AS succeeded, "
+                "SUM(CASE WHEN verdict = 'failed' THEN 1 ELSE 0 END) AS failed, "
+                "SUM(CASE WHEN verdict = 'refused' THEN 1 ELSE 0 END) AS refused, "
+                "SUM(CASE WHEN verdict = 'budget_exceeded' THEN 1 ELSE 0 END) "
+                "AS budget_exceeded, "
+                "SUM(CASE WHEN verdict IS NULL THEN 1 ELSE 0 END) AS in_flight, "
+                "MAX(CASE WHEN verdict = 'succeeded' THEN finalized_at END) "
+                "AS last_succeeded_at "
+                f"FROM procedure_runs WHERE procedure_id IN ({placeholders}) "
+                "GROUP BY procedure_id",
+                chunk,
+            ).fetchall()
+            top_reasons = self._top_refusal_reasons(chunk, placeholders)
+            for row in rows:
+                procedure_id = str(row["procedure_id"])
+                records[procedure_id] = ProcedureTrackRecord(
+                    runs=int(row["runs"]),
+                    succeeded=int(row["succeeded"]),
+                    failed=int(row["failed"]),
+                    refused=int(row["refused"]),
+                    budget_exceeded=int(row["budget_exceeded"]),
+                    in_flight=int(row["in_flight"]),
+                    last_succeeded_at=row["last_succeeded_at"],
+                    top_refusal_reason=top_reasons.get(procedure_id),
+                    linked_outcomes=None,
+                )
+        return records
+
+    def _top_refusal_reasons(
+        self,
+        chunk: tuple[str, ...],
+        placeholders: str,
+    ) -> dict[str, ProcedureRefusalReason]:
+        """Most-frequent recorded refusal bucket per procedure in one chunk.
+
+        Ties break on the bucket name so the surface is deterministic rather
+        than dependent on scan order. Runs refused before the column existed
+        carry no bucket and are excluded outright: counting them as a shared
+        "unknown" bucket would let history outvote every reason actually
+        observed since.
+
+        Buckets this version does not recognize are skipped for the same
+        reason a null is -- a database written by a newer version must degrade
+        to a less specific summary, never fail the whole procedure listing over
+        an advisory count.
+        """
+        rows = self._conn.execute(
+            "SELECT procedure_id, refusal_reason, COUNT(*) AS reason_count "
+            f"FROM procedure_runs WHERE procedure_id IN ({placeholders}) "
+            "AND verdict = 'refused' AND refusal_reason IS NOT NULL "
+            "GROUP BY procedure_id, refusal_reason "
+            "ORDER BY procedure_id ASC, reason_count DESC, refusal_reason ASC",
+            chunk,
+        ).fetchall()
+        top: dict[str, ProcedureRefusalReason] = {}
+        for row in rows:
+            reason = str(row["refusal_reason"])
+            if reason not in _KNOWN_REFUSAL_REASONS:
+                continue
+            top.setdefault(str(row["procedure_id"]), cast(ProcedureRefusalReason, reason))
+        return top
 
     def save_evidence_artifact(self, artifact: ProcedureEvidenceArtifact) -> str:
         """Persist digest-addressed typed JSON content without committing."""
@@ -503,6 +623,7 @@ class ProcedureStore(ProcedureStoreProtocol):
             receipt_id=row["receipt_id"],
             started_at=row["started_at"],
             finalized_at=row["finalized_at"],
+            refusal_reason=row["refusal_reason"],
         )
 
 

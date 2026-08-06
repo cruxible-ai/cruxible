@@ -30,12 +30,15 @@ from cruxible_core.procedure.types import (
     ProcedureEvidenceArtifact,
     ProcedureExecutionResult,
     ProcedurePrecondition,
+    ProcedureReadRecord,
     ProcedureRecord,
+    ProcedureRefusalReason,
     ProcedureRun,
     ProcedureRunStatus,
     ProcedureRunVerdict,
     ProcedureStatus,
     ProcedureTier,
+    ProcedureTrackRecord,
     ProcedureTransitionResult,
     compute_procedure_definition_digest,
 )
@@ -403,11 +406,13 @@ def service_retire_procedure(
 def service_get_procedure(
     instance: InstanceProtocol,
     procedure_id: str,
-) -> ProcedureRecord:
+) -> ProcedureReadRecord:
     """Read one procedure record."""
     store = instance.get_procedure_store()
     try:
-        return _get_procedure(store, procedure_id)
+        procedure = _get_procedure(store, procedure_id)
+        track_records = store.get_run_track_records([procedure_id])
+        return _procedure_read_record(procedure, track_records.get(procedure_id))
     finally:
         store.close()
 
@@ -430,17 +435,42 @@ def service_list_procedures(
             limit=limit,
             offset=offset,
         )
+        track_records = store.get_run_track_records([procedure.procedure_id for procedure in items])
+        read_items = [
+            _procedure_read_record(
+                procedure,
+                track_records.get(procedure.procedure_id),
+            )
+            for procedure in items
+        ]
         total = store.count_procedures(name=name, status=status)
         return ListResult(
-            items=items,
+            items=read_items,
             total=total,
             limit=limit,
             offset=offset,
-            truncated=list_truncated(total=total, offset=offset, returned=len(items)),
+            truncated=list_truncated(total=total, offset=offset, returned=len(read_items)),
             read_revision=instance.get_read_revision(),
         )
     finally:
         store.close()
+
+
+def _procedure_read_record(
+    procedure: ProcedureRecord,
+    track_record: ProcedureTrackRecord | None,
+) -> ProcedureReadRecord:
+    """Widen a stored record to its read shape, revalidating the whole thing.
+
+    ``model_construct`` would be faster and would skip exactly the check worth
+    keeping: the store's record and the read record share every field, so a
+    field added to one and not the other must fail here rather than silently
+    produce a half-populated read payload.
+    """
+    return ProcedureReadRecord(
+        **dict(procedure),
+        track_record=track_record or ProcedureTrackRecord(),
+    )
 
 
 def service_list_procedure_runs(
@@ -516,15 +546,22 @@ def service_run_procedure(
     }
     executed_config_digest: str | None = None
     executed_lock_digest: str | None = None
+    # Classified where the refusal is DECIDED, not reconstructed from the
+    # message afterwards: the message carries ids and digests, so the read
+    # surface could never count it. Checks that live inside the preflight
+    # helpers below share the generic bucket; the receipt keeps their detail.
+    preflight_reason: ProcedureRefusalReason = "preflight_refused"
 
     try:
         if procedure.status != "live":
+            preflight_reason = "procedure_not_live"
             raise ConfigError(
                 f"Procedure '{procedure.procedure_id}' must be live to run; "
                 f"found '{procedure.status}'"
             )
         current_definition_digest = compute_procedure_definition_digest(procedure.definition)
         if current_definition_digest != procedure.definition_digest:
+            preflight_reason = "definition_digest_changed"
             raise ConfigError(
                 "Procedure definition digest changed since acceptance: "
                 f"stored={procedure.definition_digest}, computed={current_definition_digest}"
@@ -563,6 +600,10 @@ def service_run_procedure(
             if isinstance(exc, ConfigError | PermissionDeniedError)
             else ConfigError(f"Procedure preflight failed closed: {type(exc).__name__}: {exc}")
         )
+        if preflight_reason == "preflight_refused" and isinstance(
+            refusal_error, PermissionDeniedError
+        ):
+            preflight_reason = "tier_not_permitted"
         builder.record_validation(
             passed=False,
             detail={
@@ -591,6 +632,7 @@ def service_run_procedure(
             executed_config_digest=executed_config_digest,
             executed_lock_digest=executed_lock_digest,
             error=refusal_error,
+            refusal_reason=preflight_reason,
         )
         _tag_procedure_exception(refusal_error, finalized_run, receipt)
         if refusal_error is exc:
@@ -598,6 +640,7 @@ def service_run_procedure(
         raise refusal_error from exc
 
     refusal: ConfigError | None = None
+    refusal_reason: ProcedureRefusalReason | None = None
     refusal_receipt: Receipt | None = None
     refusal_run: ProcedureRun | None = None
     with instance.write_transaction() as uow:
@@ -608,17 +651,20 @@ def service_run_procedure(
             authorization_procedure.definition
         )
         if authorization_procedure.status != "live":
+            refusal_reason = "procedure_not_live"
             refusal = ConfigError(
                 f"Procedure '{authorization_procedure.procedure_id}' must be live to run; "
                 f"found '{authorization_procedure.status}'"
             )
         elif authorization_procedure.definition_digest != procedure.definition_digest:
+            refusal_reason = "definition_digest_changed"
             refusal = ConfigError(
                 "Procedure definition digest changed before authorization: "
                 f"started={procedure.definition_digest}, "
                 f"current={authorization_procedure.definition_digest}"
             )
         elif authorization_definition_digest != authorization_procedure.definition_digest:
+            refusal_reason = "definition_digest_changed"
             refusal = ConfigError(
                 "Procedure definition digest changed before authorization: "
                 f"stored={authorization_procedure.definition_digest}, "
@@ -635,6 +681,7 @@ def service_run_procedure(
                     authorization_procedure.definition.precondition,
                 )
             except Exception as exc:
+                refusal_reason = "precondition_evaluation_failed"
                 refusal = ConfigError(
                     f"Procedure precondition evaluation failed closed: {type(exc).__name__}: {exc}"
                 )
@@ -643,6 +690,7 @@ def service_run_procedure(
             authorization_procedure.definition.precondition.is_empty or bool(satisfiers)
         )
         if not satisfied and refusal is None:
+            refusal_reason = "precondition_unsatisfied"
             refusal = ConfigError(
                 f"Procedure '{procedure.procedure_id}' precondition was unsatisfied"
             )
@@ -675,6 +723,7 @@ def service_run_procedure(
             )
         if not satisfied:
             assert refusal is not None
+            assert refusal_reason is not None
             refusal_receipt, refusal_run = _finalize_procedure_invocation_in_uow(
                 uow,
                 procedure=procedure,
@@ -688,6 +737,7 @@ def service_run_procedure(
                 executed_config_digest=plan.config_digest,
                 executed_lock_digest=plan.lock_digest,
                 error=refusal,
+                refusal_reason=refusal_reason,
             )
 
     if refusal is not None:
@@ -976,6 +1026,7 @@ def _finalize_procedure_invocation(
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
+    refusal_reason: ProcedureRefusalReason | None = None,
 ) -> tuple[Receipt, ProcedureRun]:
     with instance.write_transaction() as uow:
         return _finalize_procedure_invocation_in_uow(
@@ -991,6 +1042,7 @@ def _finalize_procedure_invocation(
             executed_config_digest=executed_config_digest,
             executed_lock_digest=executed_lock_digest,
             error=error,
+            refusal_reason=refusal_reason,
         )
 
 
@@ -1008,6 +1060,7 @@ def _finalize_procedure_invocation_in_uow(
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
+    refusal_reason: ProcedureRefusalReason | None = None,
 ) -> tuple[Receipt, ProcedureRun]:
     results = [{"output": None, "error": str(error)}] if error is not None else [{"output": None}]
     builder.record_results(results)
@@ -1025,6 +1078,7 @@ def _finalize_procedure_invocation_in_uow(
         executed_config_digest=executed_config_digest,
         executed_lock_digest=executed_lock_digest,
         error=error,
+        refusal_reason=refusal_reason,
     )
 
 
@@ -1042,6 +1096,7 @@ def _persist_built_procedure_receipt(
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
+    refusal_reason: ProcedureRefusalReason | None = None,
 ) -> tuple[Receipt, ProcedureRun]:
     with instance.write_transaction() as uow:
         return _persist_built_procedure_receipt_in_uow(
@@ -1057,6 +1112,7 @@ def _persist_built_procedure_receipt(
             executed_config_digest=executed_config_digest,
             executed_lock_digest=executed_lock_digest,
             error=error,
+            refusal_reason=refusal_reason,
         )
 
 
@@ -1074,6 +1130,7 @@ def _persist_built_procedure_receipt_in_uow(
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
+    refusal_reason: ProcedureRefusalReason | None = None,
 ) -> tuple[Receipt, ProcedureRun]:
     budget_spent = _procedure_budget_spent(budget)
     root_detail = receipt.nodes[0].detail
@@ -1108,6 +1165,8 @@ def _persist_built_procedure_receipt_in_uow(
         root_detail["budget_exceeded"] = True
     if bool(getattr(error, "repeat_exhausted", False)):
         root_detail["repeat_exhausted"] = True
+    if refusal_reason is not None:
+        root_detail["refusal_reason"] = refusal_reason
     receipt.committed = True
     uow.receipts.save_receipt(receipt)
     finalized_at = utc_now()
@@ -1117,6 +1176,7 @@ def _persist_built_procedure_receipt_in_uow(
         budget_spent=budget_spent,
         receipt_id=receipt.receipt_id,
         finalized_at=format_datetime(finalized_at),
+        refusal_reason=refusal_reason,
     )
     if not updated:
         raise QueryExecutionError(
