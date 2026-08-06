@@ -41,8 +41,10 @@ from cruxible_core.instance_protocol import (
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.storage.sqlite import (
+    PROCEDURE_REFUSAL_REASON_MIGRATION,
     SNAPSHOT_SCHEMA_MIGRATION,
     SQLiteGraphRepository,
+    SQLiteStorageBackend,
 )
 
 # Modules permitted to ``import sqlite3`` directly. Everything else must go
@@ -66,6 +68,15 @@ DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
         Path("src/cruxible_core/attestation/store.py"),
         Path("src/cruxible_core/resolution_contracts/store.py"),
         Path("src/cruxible_core/decision/store.py"),
+        # Boundary telemetry deliberately does NOT join the UnitOfWork, so it
+        # cannot borrow the shared transaction's connection: fail-open telemetry
+        # must never join or block the request transaction. It opens its own
+        # connection with ``timeout=0`` from the off-request flusher thread and
+        # drops the batch when the DB is busy, so a counter write can never
+        # delay, fail, or roll back the work the request came to do. The same
+        # exemption is spelled out in
+        # ``tests/test_guardrails/test_store_registration.py``.
+        Path("src/cruxible_core/telemetry/store.py"),
         Path("src/cruxible_core/server/registry.py"),
         Path("src/cruxible_core/server/credentials.py"),
     }
@@ -107,7 +118,46 @@ def test_state_db_has_versioned_migration_marker(initialized_instance: CruxibleI
 
     assert "0001_unified_sqlite_state" in migrations
     assert SNAPSHOT_SCHEMA_MIGRATION in migrations
+    assert PROCEDURE_REFUSAL_REASON_MIGRATION in migrations
     assert journal_mode == "wal"
+
+
+def test_procedure_refusal_reason_column_is_added_to_an_existing_state_db(
+    initialized_instance: CruxibleInstance,
+) -> None:
+    """Migration 0005 upgrades a database whose procedure_runs predates it.
+
+    ``CREATE TABLE IF NOT EXISTS`` is a no-op against the existing table, so
+    without the migration an upgraded instance would keep a column-less run
+    ledger forever and every track record would read no refusal reasons.
+    """
+    db_path = initialized_instance.instance_dir / "state.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("ALTER TABLE procedure_runs DROP COLUMN refusal_reason")
+        conn.execute(
+            "DELETE FROM storage_migrations WHERE migration_id = ?",
+            (PROCEDURE_REFUSAL_REASON_MIGRATION,),
+        )
+        conn.commit()
+        downgraded = {row[1] for row in conn.execute("PRAGMA table_info(procedure_runs)")}
+    finally:
+        conn.close()
+    assert "refusal_reason" not in downgraded
+
+    SQLiteStorageBackend(db_path).initialize()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(procedure_runs)")}
+        migrations = {row[0] for row in conn.execute("SELECT migration_id FROM storage_migrations")}
+        indexes = {row[1] for row in conn.execute("PRAGMA index_list(procedure_runs)")}
+    finally:
+        conn.close()
+
+    assert "refusal_reason" in columns
+    assert PROCEDURE_REFUSAL_REASON_MIGRATION in migrations
+    assert "idx_procedure_runs_track_record" in indexes
 
 
 def test_new_instance_does_not_create_live_graph_json(

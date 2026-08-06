@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, NoReturn
 
-from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.schema import ContractSchema, CoreConfig, WorkflowStepSchema
 from cruxible_core.errors import (
     ConfigError,
     CoreError,
@@ -26,16 +27,23 @@ from cruxible_core.procedure.types import (
     MAX_PROCEDURE_EVIDENCE_BYTES,
     PROCEDURE_EVIDENCE_HEAD_BYTES,
     ProcedureBudgetSpent,
+    ProcedureContractFieldSchema,
+    ProcedureContractSchema,
     ProcedureDefinition,
     ProcedureEvidenceArtifact,
     ProcedureExecutionResult,
+    ProcedureGetResult,
     ProcedurePrecondition,
+    ProcedureReadRecord,
     ProcedureRecord,
+    ProcedureRefusalReason,
+    ProcedureRepeatStepSchema,
     ProcedureRun,
     ProcedureRunStatus,
     ProcedureRunVerdict,
     ProcedureStatus,
     ProcedureTier,
+    ProcedureTrackRecord,
     ProcedureTransitionResult,
     compute_procedure_definition_digest,
 )
@@ -54,11 +62,19 @@ from cruxible_core.workflow.compiler import (
     load_lock,
     resolve_lock_path,
 )
+from cruxible_core.workflow.contracts import (
+    contract_field_is_required,
+    contract_input_example,
+    contract_reference_label,
+    declared_fields,
+    resolve_contract,
+)
 from cruxible_core.workflow.execution_context import ProcedureExecutionBudget
 from cruxible_core.workflow.executor import (
     FAILED_WORKFLOW_RECEIPT_ATTR,
     execute_procedure_plan,
 )
+from cruxible_core.workflow.refs import iter_step_reference_templates
 from cruxible_core.workflow.types import CompiledPlan
 
 _logger = logging.getLogger(__name__)
@@ -71,6 +87,11 @@ _PERMISSION_BY_TIER = {
 }
 _READ_REVISION_STATE_KEY = "read_revision"
 _MAX_REGISTERED_PROVIDERS_IN_ERROR = 40
+_READ_IMPLYING_PROCEDURE_PREFIXES = ("review_", "get_", "list_", "check_", "inspect_")
+_WHOLESALE_PASSTHROUGH_PARAMETER = "arguments"
+"""Provider input key that conventionally carries an opaque argument bundle."""
+_PREFERRED_PROVIDER_STEP_COUNT = 5
+"""Provider steps above which one procedure is doing more than one job."""
 
 WITHDRAW_NON_AUTHOR_PERMISSION = PermissionMode.GRAPH_WRITE
 """Tier required to withdraw a proposal the actor did not author.
@@ -98,6 +119,22 @@ def _format_registered_providers(config: CoreConfig) -> str:
     return ", ".join(provider_names)
 
 
+def _format_valid_tiers() -> str:
+    """List the accepted ``declared_tier`` values, weakest first."""
+    return ", ".join(sorted(_TIER_RANK, key=lambda tier: _TIER_RANK[tier]))
+
+
+def _tiers_at_or_above(tier: ProcedureTier) -> str:
+    """List the ``declared_tier`` values that satisfy an effective tier floor."""
+    floor = _TIER_RANK[tier]
+    return ", ".join(
+        sorted(
+            (name for name, rank in _TIER_RANK.items() if rank >= floor),
+            key=lambda name: _TIER_RANK[name],
+        )
+    )
+
+
 def validate_procedure_definition_against_config(
     definition: ProcedureDefinition,
     config: CoreConfig,
@@ -111,6 +148,10 @@ def validate_procedure_definition_against_config(
         )
 
     effective_tier: ProcedureTier = "governed_write"
+    # Which provider forced the floor. Without it the tier refusal names a tier
+    # the author never wrote down and leaves them to bisect the provider list to
+    # find the one that raised it.
+    tier_source: str | None = None
     for provider_name in sorted(definition.referenced_providers()):
         provider = config.providers.get(provider_name)
         if provider is None:
@@ -131,11 +172,19 @@ def validate_procedure_definition_against_config(
         provider_tier = _provider_tier(provider.procedure_access)
         if _TIER_RANK[provider_tier] > _TIER_RANK[effective_tier]:
             effective_tier = provider_tier
+            tier_source = provider_name
 
     if _TIER_RANK[definition.declared_tier] < _TIER_RANK[effective_tier]:
+        forced_by = (
+            f" required by provider '{tier_source}' "
+            f"(procedure_access '{config.providers[tier_source].procedure_access}')"
+            if tier_source is not None
+            else ""
+        )
         raise ConfigError(
             f"Procedure '{definition.name}' declares tier '{definition.declared_tier}' "
-            f"below its effective provider tier '{effective_tier}'"
+            f"below its effective provider tier '{effective_tier}'{forced_by}; "
+            f"set declared_tier to one of: {_tiers_at_or_above(effective_tier)}"
         )
     return definition.declared_tier
 
@@ -146,18 +195,274 @@ def compile_procedure_definition(
     input_payload: dict[str, Any] | None = None,
 ) -> CompiledPlan:
     """Compile a state-held procedure definition against the active config/lock."""
+    plan, _ = _compile_procedure_definition(instance, definition, input_payload)
+    return plan
+
+
+def _compile_procedure_definition(
+    instance: InstanceProtocol,
+    definition: ProcedureDefinition,
+    input_payload: dict[str, Any] | None = None,
+) -> tuple[CompiledPlan, list[str]]:
+    """Compile a procedure and return its non-blocking authoring warnings."""
     config = instance.load_config()
     validate_procedure_definition_against_config(definition, config)
+    warnings = lint_procedure_definition_authoring(definition, config)
     lock = load_lock(resolve_lock_path(instance))
-    return compile_plan_definition(
-        config,
-        lock,
-        definition.name,
-        definition,
-        input_payload,
-        config_base_path=instance.get_config_path().parent,
-        definition_label="Procedure",
+    return (
+        compile_plan_definition(
+            config,
+            lock,
+            definition.name,
+            definition,
+            input_payload,
+            config_base_path=instance.get_config_path().parent,
+            definition_label="Procedure",
+        ),
+        warnings,
     )
+
+
+def lint_procedure_definition_authoring(
+    definition: ProcedureDefinition,
+    config: CoreConfig,
+) -> list[str]:
+    """Block impossible input refs and return deterministic authoring warnings."""
+    contract = resolve_contract(config, definition.contract_in)
+    if contract is None:
+        # The compiler owns the existing unknown-contract diagnostic.
+        return []
+
+    references = _procedure_step_input_references(definition)
+    consumed_fields: set[str] = set()
+    for step_id, reference in references:
+        if reference == "$input":
+            consumed_fields.update(contract.fields)
+            continue
+        field_name = _input_reference_field(reference)
+        if field_name is None:
+            continue
+        consumed_fields.add(field_name)
+        if field_name not in contract.fields and not contract.allow_extra:
+            # An ``allow_extra`` contract (built-in ``cruxible.JsonObject``, or
+            # any config contract that opts in) accepts keys it never declared,
+            # so an undeclared reference is not statically impossible there --
+            # the payload may legitimately carry it. Only a closed contract can
+            # prove the reference can never resolve.
+            contract_name = contract_reference_label(definition.contract_in)
+            raise ConfigError(
+                f"Procedure '{definition.name}' step '{step_id}' input reference "
+                f"'{reference}' uses undeclared contract_in field '{field_name}'; "
+                f"contract '{contract_name}' declares: {declared_fields(contract)}"
+            )
+
+    warnings: list[str] = []
+    if not contract.allow_extra:
+        warnings.extend(
+            f"contract_in field '{field_name}' is declared but not consumed by any procedure step"
+            for field_name in sorted(set(contract.fields) - consumed_fields)
+        )
+
+    read_implying_name = definition.name.lower().startswith(_READ_IMPLYING_PROCEDURE_PREFIXES)
+    for step in _procedure_workflow_steps(definition):
+        if step.provider is not None:
+            provider = config.providers.get(step.provider)
+            if read_implying_name and provider is not None and provider.side_effects:
+                warnings.append(
+                    f"procedure name '{definition.name}' implies a read, but step "
+                    f"'{step.id}' uses side-effecting provider '{step.provider}'"
+                )
+            warnings.extend(_stringified_object_input_warnings(step.id, step.input))
+            warnings.extend(_wholesale_passthrough_warnings(step.id, step.input, contract))
+
+    warnings.extend(_read_fanout_warnings(definition, config))
+
+    provider_call_count = definition.static_expansion().expanded_provider_calls
+    if definition.budget.max_provider_calls > provider_call_count:
+        # Under-provisioning is refused by ``ProcedureDefinition`` itself, so the
+        # only mismatch that can reach here is slack above the static maximum --
+        # headroom the run can never reach, which quietly disarms the ceiling as
+        # a review signal.
+        warnings.append(
+            "budget.max_provider_calls "
+            f"({definition.budget.max_provider_calls}) exceeds the expanded "
+            f"provider-call count ({provider_call_count}); the extra headroom is unreachable"
+        )
+    return warnings
+
+
+def _procedure_workflow_steps(definition: ProcedureDefinition) -> list[WorkflowStepSchema]:
+    steps: list[WorkflowStepSchema] = []
+    for step in definition.steps:
+        if isinstance(step, ProcedureRepeatStepSchema):
+            steps.extend(step.repeat.steps)
+        else:
+            steps.append(step)
+    return steps
+
+
+def _procedure_step_input_references(
+    definition: ProcedureDefinition,
+) -> list[tuple[str, str]]:
+    """Collect ``$input`` references from the fields the resolver actually walks.
+
+    Scope equals resolution scope: ``iter_step_reference_templates`` selects the
+    same step fields :func:`resolve_value` visits, and nothing else. Scanning the
+    whole dumped step instead would read literal prose -- an assert ``message``
+    quoting ``$input.foo`` to explain a failure -- as a reference and block a
+    definition that runs correctly.
+    """
+    references: list[tuple[str, str]] = []
+    for step in _procedure_workflow_steps(definition):
+        dumped = step.model_dump(mode="python", by_alias=True, exclude_none=True)
+        for template in iter_step_reference_templates(dumped):
+            references.extend((step.id, ref) for ref in _input_references(template))
+    return references
+
+
+def _input_references(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value == "$input" or value.startswith("$input.") else []
+    if isinstance(value, dict):
+        return [ref for item in value.values() for ref in _input_references(item)]
+    if isinstance(value, list):
+        return [ref for item in value for ref in _input_references(item)]
+    return []
+
+
+def _input_reference_field(reference: str) -> str | None:
+    if not reference.startswith("$input."):
+        return None
+    path = reference[len("$input.") :]
+    return path.split(".", 1)[0].split("[", 1)[0]
+
+
+def _stringified_object_input_warnings(step_id: str, value: Any) -> list[str]:
+    warnings: list[str] = []
+
+    def visit(item: Any, path: str) -> None:
+        if isinstance(item, str):
+            try:
+                parsed = json.loads(item)
+            except (json.JSONDecodeError, TypeError):
+                return
+            if isinstance(parsed, dict):
+                warnings.append(
+                    f"step '{step_id}' input value at '{path}' is a stringified JSON "
+                    "object; pass the object directly"
+                )
+            return
+        if isinstance(item, dict):
+            for key, nested in item.items():
+                visit(nested, f"{path}.{key}" if path else str(key))
+        elif isinstance(item, list):
+            for index, nested in enumerate(item):
+                visit(nested, f"{path}[{index}]")
+
+    visit(value, "input")
+    return warnings
+
+
+def _wholesale_passthrough_warnings(
+    step_id: str,
+    value: Any,
+    contract: ContractSchema,
+) -> list[str]:
+    """Flag a declared string field handed whole to an ``arguments`` parameter.
+
+    Feeding one contract field entire into a parameter named ``arguments`` --
+    the ``call_discoverable_agent_tool``-style string argument bundle -- routes
+    around the contract: whatever the caller packed into that one string is
+    never type-checked, and the declared shape stops describing what the tool
+    actually receives. The fix is to declare the individual fields the tool
+    needs, so the reference is a warning rather than a refusal.
+    """
+    warnings: list[str] = []
+
+    def visit(item: Any, path: str, key: str | None) -> None:
+        if isinstance(item, str):
+            if key != _WHOLESALE_PASSTHROUGH_PARAMETER:
+                return
+            field_name = _whole_input_reference_field(item)
+            if field_name is None:
+                return
+            field_schema = contract.fields.get(field_name)
+            if field_schema is None or field_schema.type != "string":
+                return
+            warnings.append(
+                f"step '{step_id}' input at '{path}' passes the whole contract_in field "
+                f"'{field_name}' into an '{_WHOLESALE_PASSTHROUGH_PARAMETER}' parameter; "
+                "the contract cannot validate what that string carries -- declare the "
+                "individual fields the provider needs"
+            )
+            return
+        if isinstance(item, dict):
+            for nested_key, nested in item.items():
+                visit(nested, f"{path}.{nested_key}" if path else str(nested_key), str(nested_key))
+        elif isinstance(item, list):
+            for index, nested in enumerate(item):
+                visit(nested, f"{path}[{index}]", key)
+
+    visit(value, "input", None)
+    return warnings
+
+
+def _whole_input_reference_field(reference: str) -> str | None:
+    """Return the field name when a reference is one whole ``$input.<field>``.
+
+    A path or index into the field (``$input.spec.limit``) is a narrowed read
+    and does not defeat validation; only the undivided field does.
+    """
+    if not reference.startswith("$input."):
+        return None
+    path = reference[len("$input.") :]
+    if not path or "." in path or "[" in path:
+        return None
+    return path
+
+
+def _read_fanout_warnings(
+    definition: ProcedureDefinition,
+    config: CoreConfig,
+) -> list[str]:
+    """Prefer small, single-purpose procedures over read-plus-write omnibuses.
+
+    A definition that reads widely and then writes is two procedures wearing one
+    name: the reads are re-runnable and cheap to review, the write is neither,
+    and bundling them means every review of the read half re-reviews the write.
+    Guidance only -- a legitimately wide procedure is still proposable.
+    """
+    read_steps: list[str] = []
+    side_effecting_steps: list[str] = []
+    provider_steps: list[str] = []
+    for step in _procedure_workflow_steps(definition):
+        if step.query is not None:
+            read_steps.append(step.id)
+            continue
+        if step.provider is None:
+            continue
+        provider_steps.append(step.id)
+        provider = config.providers.get(step.provider)
+        if provider is not None and provider.side_effects:
+            side_effecting_steps.append(step.id)
+        else:
+            read_steps.append(step.id)
+
+    warnings: list[str] = []
+    if side_effecting_steps and len(read_steps) > 1:
+        warnings.append(
+            f"procedure mixes {len(read_steps)} read steps "
+            f"({', '.join(read_steps)}) with {len(side_effecting_steps)} side-effecting step(s) "
+            f"({', '.join(side_effecting_steps)}); consider splitting reads into a "
+            "read-only bundle"
+        )
+    if len(provider_steps) > _PREFERRED_PROVIDER_STEP_COUNT:
+        warnings.append(
+            f"procedure declares {len(provider_steps)} provider steps, above the "
+            f"{_PREFERRED_PROVIDER_STEP_COUNT}-step guidance for one procedure; "
+            "consider splitting reads into a read-only bundle"
+        )
+    return warnings
 
 
 def service_propose_procedure(
@@ -208,7 +513,9 @@ def service_propose_procedure(
                 )
 
         try:
-            plan = compile_procedure_definition(instance, definition)
+            # One compile, one lint: the compile helper already runs the
+            # authoring lint and hands back its warnings.
+            plan, warnings = _compile_procedure_definition(instance, definition)
         except ConfigError as exc:
             ctx.builder.record_validation(
                 passed=False,
@@ -232,9 +539,14 @@ def service_propose_procedure(
                 "definition_digest": definition_digest,
                 "config_digest": plan.config_digest,
                 "lock_digest": plan.lock_digest,
+                "warnings": warnings,
             },
         )
-        result = ProcedureTransitionResult(action="propose", procedure=procedure)
+        result = ProcedureTransitionResult(
+            action="propose",
+            procedure=procedure,
+            warnings=warnings,
+        )
         ctx.set_result(result)
 
     return result
@@ -375,13 +687,52 @@ def service_retire_procedure(
 def service_get_procedure(
     instance: InstanceProtocol,
     procedure_id: str,
-) -> ProcedureRecord:
+) -> ProcedureReadRecord:
     """Read one procedure record."""
     store = instance.get_procedure_store()
     try:
-        return _get_procedure(store, procedure_id)
+        procedure = _get_procedure(store, procedure_id)
+        track_records = store.get_run_track_records([procedure_id])
+        return _procedure_read_record(procedure, track_records.get(procedure_id))
     finally:
         store.close()
+
+
+def service_get_procedure_details(
+    instance: InstanceProtocol,
+    procedure_id: str,
+) -> ProcedureGetResult:
+    """Read a procedure with the active config's resolved input field schema."""
+    procedure = service_get_procedure(instance, procedure_id)
+    config = instance.load_config()
+    contract = resolve_contract(config, procedure.definition.contract_in)
+    if contract is None:
+        return ProcedureGetResult(procedure=procedure, contract_in_schema=None)
+    return ProcedureGetResult(
+        procedure=procedure,
+        contract_in_schema=ProcedureContractSchema(
+            description=contract.description,
+            fields=[
+                ProcedureContractFieldSchema(
+                    name=field_name,
+                    # One shared requiredness predicate with the contract
+                    # rejection message: a defaulted field is filled in by
+                    # contract validation before the optional check runs, so the
+                    # caller never has to supply it.
+                    required=contract_field_is_required(field_schema),
+                    type=field_schema.type,
+                    default=field_schema.default,
+                    enum=field_schema.enum,
+                    enum_ref=field_schema.enum_ref,
+                    description=field_schema.description,
+                    json_schema=field_schema.json_schema,
+                )
+                for field_name, field_schema in sorted(contract.fields.items())
+            ],
+            allow_extra=contract.allow_extra,
+            input_example=contract_input_example(config, contract),
+        ),
+    )
 
 
 def service_list_procedures(
@@ -402,17 +753,42 @@ def service_list_procedures(
             limit=limit,
             offset=offset,
         )
+        track_records = store.get_run_track_records([procedure.procedure_id for procedure in items])
+        read_items = [
+            _procedure_read_record(
+                procedure,
+                track_records.get(procedure.procedure_id),
+            )
+            for procedure in items
+        ]
         total = store.count_procedures(name=name, status=status)
         return ListResult(
-            items=items,
+            items=read_items,
             total=total,
             limit=limit,
             offset=offset,
-            truncated=list_truncated(total=total, offset=offset, returned=len(items)),
+            truncated=list_truncated(total=total, offset=offset, returned=len(read_items)),
             read_revision=instance.get_read_revision(),
         )
     finally:
         store.close()
+
+
+def _procedure_read_record(
+    procedure: ProcedureRecord,
+    track_record: ProcedureTrackRecord | None,
+) -> ProcedureReadRecord:
+    """Widen a stored record to its read shape, revalidating the whole thing.
+
+    ``model_construct`` would be faster and would skip exactly the check worth
+    keeping: the store's record and the read record share every field, so a
+    field added to one and not the other must fail here rather than silently
+    produce a half-populated read payload.
+    """
+    return ProcedureReadRecord(
+        **dict(procedure),
+        track_record=track_record or ProcedureTrackRecord(),
+    )
 
 
 def service_list_procedure_runs(
@@ -488,15 +864,22 @@ def service_run_procedure(
     }
     executed_config_digest: str | None = None
     executed_lock_digest: str | None = None
+    # Classified where the refusal is DECIDED, not reconstructed from the
+    # message afterwards: the message carries ids and digests, so the read
+    # surface could never count it. Checks that live inside the preflight
+    # helpers below share the generic bucket; the receipt keeps their detail.
+    preflight_reason: ProcedureRefusalReason = "preflight_refused"
 
     try:
         if procedure.status != "live":
+            preflight_reason = "procedure_not_live"
             raise ConfigError(
                 f"Procedure '{procedure.procedure_id}' must be live to run; "
                 f"found '{procedure.status}'"
             )
         current_definition_digest = compute_procedure_definition_digest(procedure.definition)
         if current_definition_digest != procedure.definition_digest:
+            preflight_reason = "definition_digest_changed"
             raise ConfigError(
                 "Procedure definition digest changed since acceptance: "
                 f"stored={procedure.definition_digest}, computed={current_definition_digest}"
@@ -535,6 +918,10 @@ def service_run_procedure(
             if isinstance(exc, ConfigError | PermissionDeniedError)
             else ConfigError(f"Procedure preflight failed closed: {type(exc).__name__}: {exc}")
         )
+        if preflight_reason == "preflight_refused" and isinstance(
+            refusal_error, PermissionDeniedError
+        ):
+            preflight_reason = "tier_not_permitted"
         builder.record_validation(
             passed=False,
             detail={
@@ -563,6 +950,7 @@ def service_run_procedure(
             executed_config_digest=executed_config_digest,
             executed_lock_digest=executed_lock_digest,
             error=refusal_error,
+            refusal_reason=preflight_reason,
         )
         _tag_procedure_exception(refusal_error, finalized_run, receipt)
         if refusal_error is exc:
@@ -570,6 +958,7 @@ def service_run_procedure(
         raise refusal_error from exc
 
     refusal: ConfigError | None = None
+    refusal_reason: ProcedureRefusalReason | None = None
     refusal_receipt: Receipt | None = None
     refusal_run: ProcedureRun | None = None
     with instance.write_transaction() as uow:
@@ -580,17 +969,20 @@ def service_run_procedure(
             authorization_procedure.definition
         )
         if authorization_procedure.status != "live":
+            refusal_reason = "procedure_not_live"
             refusal = ConfigError(
                 f"Procedure '{authorization_procedure.procedure_id}' must be live to run; "
                 f"found '{authorization_procedure.status}'"
             )
         elif authorization_procedure.definition_digest != procedure.definition_digest:
+            refusal_reason = "definition_digest_changed"
             refusal = ConfigError(
                 "Procedure definition digest changed before authorization: "
                 f"started={procedure.definition_digest}, "
                 f"current={authorization_procedure.definition_digest}"
             )
         elif authorization_definition_digest != authorization_procedure.definition_digest:
+            refusal_reason = "definition_digest_changed"
             refusal = ConfigError(
                 "Procedure definition digest changed before authorization: "
                 f"stored={authorization_procedure.definition_digest}, "
@@ -607,6 +999,7 @@ def service_run_procedure(
                     authorization_procedure.definition.precondition,
                 )
             except Exception as exc:
+                refusal_reason = "precondition_evaluation_failed"
                 refusal = ConfigError(
                     f"Procedure precondition evaluation failed closed: {type(exc).__name__}: {exc}"
                 )
@@ -615,6 +1008,7 @@ def service_run_procedure(
             authorization_procedure.definition.precondition.is_empty or bool(satisfiers)
         )
         if not satisfied and refusal is None:
+            refusal_reason = "precondition_unsatisfied"
             refusal = ConfigError(
                 f"Procedure '{procedure.procedure_id}' precondition was unsatisfied"
             )
@@ -647,6 +1041,7 @@ def service_run_procedure(
             )
         if not satisfied:
             assert refusal is not None
+            assert refusal_reason is not None
             refusal_receipt, refusal_run = _finalize_procedure_invocation_in_uow(
                 uow,
                 procedure=procedure,
@@ -660,6 +1055,7 @@ def service_run_procedure(
                 executed_config_digest=plan.config_digest,
                 executed_lock_digest=plan.lock_digest,
                 error=refusal,
+                refusal_reason=refusal_reason,
             )
 
     if refusal is not None:
@@ -948,6 +1344,7 @@ def _finalize_procedure_invocation(
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
+    refusal_reason: ProcedureRefusalReason | None = None,
 ) -> tuple[Receipt, ProcedureRun]:
     with instance.write_transaction() as uow:
         return _finalize_procedure_invocation_in_uow(
@@ -963,6 +1360,7 @@ def _finalize_procedure_invocation(
             executed_config_digest=executed_config_digest,
             executed_lock_digest=executed_lock_digest,
             error=error,
+            refusal_reason=refusal_reason,
         )
 
 
@@ -980,6 +1378,7 @@ def _finalize_procedure_invocation_in_uow(
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
+    refusal_reason: ProcedureRefusalReason | None = None,
 ) -> tuple[Receipt, ProcedureRun]:
     results = [{"output": None, "error": str(error)}] if error is not None else [{"output": None}]
     builder.record_results(results)
@@ -997,6 +1396,7 @@ def _finalize_procedure_invocation_in_uow(
         executed_config_digest=executed_config_digest,
         executed_lock_digest=executed_lock_digest,
         error=error,
+        refusal_reason=refusal_reason,
     )
 
 
@@ -1014,6 +1414,7 @@ def _persist_built_procedure_receipt(
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
+    refusal_reason: ProcedureRefusalReason | None = None,
 ) -> tuple[Receipt, ProcedureRun]:
     with instance.write_transaction() as uow:
         return _persist_built_procedure_receipt_in_uow(
@@ -1029,6 +1430,7 @@ def _persist_built_procedure_receipt(
             executed_config_digest=executed_config_digest,
             executed_lock_digest=executed_lock_digest,
             error=error,
+            refusal_reason=refusal_reason,
         )
 
 
@@ -1046,6 +1448,7 @@ def _persist_built_procedure_receipt_in_uow(
     executed_config_digest: str | None,
     executed_lock_digest: str | None,
     error: BaseException | None,
+    refusal_reason: ProcedureRefusalReason | None = None,
 ) -> tuple[Receipt, ProcedureRun]:
     budget_spent = _procedure_budget_spent(budget)
     root_detail = receipt.nodes[0].detail
@@ -1080,6 +1483,8 @@ def _persist_built_procedure_receipt_in_uow(
         root_detail["budget_exceeded"] = True
     if bool(getattr(error, "repeat_exhausted", False)):
         root_detail["repeat_exhausted"] = True
+    if refusal_reason is not None:
+        root_detail["refusal_reason"] = refusal_reason
     receipt.committed = True
     uow.receipts.save_receipt(receipt)
     finalized_at = utc_now()
@@ -1089,6 +1494,7 @@ def _persist_built_procedure_receipt_in_uow(
         budget_spent=budget_spent,
         receipt_id=receipt.receipt_id,
         finalized_at=format_datetime(finalized_at),
+        refusal_reason=refusal_reason,
     )
     if not updated:
         raise QueryExecutionError(
@@ -1425,7 +1831,9 @@ def _provider_tier(access: str) -> ProcedureTier:
         return "graph_write"
     if access == "admin":
         return "admin"
-    raise ConfigError(f"Unsupported procedure_access '{access}'")
+    raise ConfigError(
+        f"Unsupported procedure_access '{access}'; valid values: disabled, {_format_valid_tiers()}"
+    )
 
 
 def _validate_list_page(*, limit: int, offset: int) -> None:
@@ -1437,7 +1845,9 @@ def _validate_list_page(*, limit: int, offset: int) -> None:
 
 __all__ = [
     "compile_procedure_definition",
+    "lint_procedure_definition_authoring",
     "service_get_procedure",
+    "service_get_procedure_details",
     "service_list_procedure_runs",
     "service_list_procedures",
     "service_accept_procedure",

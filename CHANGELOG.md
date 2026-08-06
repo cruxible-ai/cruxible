@@ -7,6 +7,94 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## [0.3.2] - 2026-08-06
+
+- **Procedure reads show their run-ledger track record.** List and detail
+  surfaces now attach a `track_record` block, so dead procedures are visible
+  before an agent chooses one. Its verdict buckets are exhaustive — `succeeded`,
+  `failed`, `refused`, `budget_exceeded`, and `in_flight` for started but
+  unfinalized runs always sum to `runs` — so a procedure that exhausts its
+  budget on every invocation reads differently from one whose invocations are
+  still running. The block also carries `last_succeeded_at` and
+  `top_refusal_reason`, the most frequent refusal classification. The summary is
+  computed once for a whole list page. `linked_outcomes` remains reserved as
+  null.
+
+- **Procedure runs now advance the instance read revision.** The run ledger was
+  classified audit-only, which was defensible while runs were readable only
+  through their own listing. Deriving `track_record` from those rows makes them
+  read state, so starting a run and finalizing one each bump `read_revision`,
+  refusals included. Without this a procedure page could be read at one
+  revision, a run could land, and the next page's continuation token would
+  still validate against an unchanged counter — a paginated read spanning two
+  states with nothing to detect it, and working-set records reading fresh while
+  their buckets were stale. Continuation tokens and working-set freshness now
+  react to procedure invocations the same way they react to any other write.
+
+- **Refused procedure runs record why they were refused.** A `refused` run now
+  persists a `refusal_reason` classification (`procedure_not_live`,
+  `definition_digest_changed`, `tier_not_permitted`, `preflight_refused`,
+  `precondition_evaluation_failed`, or `precondition_unsatisfied`) alongside its
+  receipt, and procedure reads report the most frequent one. Existing instances
+  gain the column on first open through storage migration
+  `0005_procedure_refusal_reason`; runs refused before the upgrade keep a null
+  reason and are excluded from the most-frequent count rather than being lumped
+  into an "unknown" bucket that would outvote every reason observed since.
+- **Core boundary traffic is measurable per instance.** HTTP routes, MCP tools,
+  and locally invoked CLI service verbs now add call, error, serialized-response-byte,
+  and total/maximum duration counters to one aggregate SQLite row per surface,
+  without storing per-call events. `cruxible telemetry summary` and
+  `GET /api/v1/{instance_id}/telemetry/summary` expose the counters and their
+  earliest recorded timestamp at the read-only tier. Which surface a call lands
+  under follows the boundary it actually crossed: **against a governed daemon,
+  an MCP call reaches core over HTTP and is counted under the HTTP route name,
+  so the MCP-tool dimension exists in local (direct-instance) mode only.** A CLI
+  command records its emitted bytes and wall time under a `cli:<command>` row,
+  while each service verb it invoked keeps its own measured duration. Refusals
+  count as that instance's errors — permission-tier, ownership, and direct-write
+  denials included; the one exception is a credential scoped to a different
+  instance, whose refusal is not the addressed instance's traffic and is not
+  counted against it. Recording never touches storage on the request path:
+  observations aggregate in memory and a background flusher writes them, never
+  waiting on a busy or unavailable store, so the underlying request result and
+  timing are unchanged either way. A batch the store refuses is retried on the
+  next flush rather than lost, and whatever capture genuinely could not keep is
+  published on the summary as `dropped_observations` / `dropped_events` so an
+  undercount is visible instead of silent. `cruxible server start` is excluded
+  from CLI collection — the daemon's traffic is counted at the HTTP boundary
+  that serves it.
+
+- **Procedure proposals catch impossible input contracts before they enter the
+  library.** Definition-time authoring lint now blocks a step reference such as
+  `$input.transactions_arguments` when `contract_in` does not declare that
+  field, naming the step, reference, and the contract's typed required/optional
+  fields. A contract that sets `allow_extra` (including the built-in
+  `cruxible.JsonObject`) accepts undeclared references, since the payload may
+  legitimately carry them. This deliberately changes `propose_procedure`
+  behavior: statically-wrong definitions that were previously accepted are now
+  refused. The same lint also runs at accept time, so a proposal that was left
+  pending before this change can now fail on `resolve --action accept` and must
+  be fixed and re-proposed. The existing produced-alias check still blocks
+  invalid `returns`. The lint reads only the step fields the runtime resolver
+  itself walks, so literal prose that happens to quote a reference — an
+  `assert` message telling an operator to supply `$input.foo` — is text, not a
+  reference, and no longer blocks a definition that runs correctly.
+  Non-blocking proposal warnings flag declared-but-unused inputs, read-implying
+  names backed by side-effecting providers, stringified JSON-object step
+  inputs, a whole declared string field handed to an `arguments` parameter
+  (an opaque bundle the contract cannot validate), a procedure bundling reads
+  with side-effecting steps or declaring more than five provider steps, and
+  `max_provider_calls` headroom above the expanded provider-call count.
+  `get_procedure` now returns `contract_in_schema` — the resolved input field
+  shape (per-field defaults, enums, descriptions, and the nested `json_schema`
+  a `json` field is validated against), the contract description, the
+  `allow_extra` flag, and `input_example`: a worked payload carrying every key
+  the caller must supply, which `cruxible procedure show` prints in human mode
+  too. Run-time contract refusals are covered by the same typed
+  required/optional schema echo, and both surfaces now share one requiredness
+  rule — a field carrying a default is optional to supply, because contract
+  validation fills the default before it ever checks optionality.
+
 - **A Procedure author can withdraw their own pending proposal.** `withdraw`
   moves a pending definition to the new terminal `withdrawn` status through the
   same receipted transition as accept/reject, at the proposing
@@ -37,6 +125,46 @@ the project's own state instance.
   does not exist instead of silently resolving. Drop the `[server]` suffix.
   Whether the server stack should move back out of the base install is a 0.4
   packaging decision and is deliberately not attempted here.
+- **Rejected writes now teach the caller how to fix them.** Four authoring
+  error classes became self-correcting, each measured as wasted retries in an
+  agent benchmark run:
+  - Datetime rejections (`observed_at` and every other typed temporal field)
+    echo the accepted format with a copyable example, on both the HTTP request
+    validation path and the runtime API argument checks.
+  - Contract rejections naming an unexpected or missing field also list the
+    contract's declared fields with type and required/optional (sorted,
+    truncated past 40 with a count), so procedure and workflow inputs can be
+    fixed in one edit.
+  - Dangling-endpoint rejections name the recovery available at the entry
+    point that raised them: a batch direct write can carry the entity, an
+    attestation cannot.
+  - Procedure tier refusals name the provider whose `procedure_access` forced
+    the effective tier, and list the `declared_tier` values that clear it.
+
+- **MCP tool descriptions describe the loaded kit.** Query tools name the
+  config's named queries; workflow and procedure tools name its registered
+  providers and contracts (with a short field preview), so an agent discovers
+  the authoring vocabulary from the tool surface instead of prompt
+  enumeration. Lists are truncated with a total. Tool schemas do not vary by
+  kit. The kit is resolved from local state only — `CRUXIBLE_MCP_KIT_CONFIG`,
+  otherwise the sole registered local instance and only in local mode — so
+  `tools/list` still answers with no reachable daemon, falling back to the
+  static descriptions. A server pointed at a remote daemon describes only what
+  `CRUXIBLE_MCP_KIT_CONFIG` names, never a local instance that merely shares
+  the host.
+
+- **The hosted runtime image has a repeatable GHCR publish pipeline.** A
+  dispatchable workflow builds `deploy/runtime/Dockerfile` from a named
+  reviewed commit — refusing to continue unless the checkout is exactly that
+  SHA — and pushes it under the immutable tag
+  `runtime-<version>-<sha12>` with OCI source, revision, version, and created
+  labels. `latest` is never published or moved: an already-published tag is
+  reused rather than rebuilt, only an explicit registry "absent" authorizes a
+  push, and a tag whose image was built from a different revision fails the
+  job. The run summary and job outputs carry the image digest, and a
+  post-push job pulls that digest and runs the runtime image suite against
+  the published artifact via the new `CRUXIBLE_RUNTIME_IMAGE_REF` test
+  override. Deployments pin the digest, not the tag.
 
 ## [0.3.1] - 2026-08-05
 

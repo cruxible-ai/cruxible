@@ -34,6 +34,10 @@ entity_types:
 
 relationships: []
 
+enums:
+  Severity:
+    values: [low, medium, high]
+
 contracts:
   ProcedureInput:
     fields:
@@ -43,6 +47,11 @@ contracts:
     fields:
       value:
         type: int
+  OpenProcedureInput:
+    fields:
+      value:
+        type: int
+    allow_extra: true
 
 providers:
   exported_action:

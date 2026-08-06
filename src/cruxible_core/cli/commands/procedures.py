@@ -22,14 +22,17 @@ from cruxible_core.cli.main import handle_errors
 from cruxible_core.procedure.types import (
     ProcedureDefinition,
     ProcedureExecutionResult,
+    ProcedureGetResult,
+    ProcedureReadRecord,
     ProcedureRecord,
     ProcedureRun,
     ProcedureStatus,
     ProcedureTransitionResult,
+    procedure_record_from_payload,
 )
 from cruxible_core.service import (
     service_accept_procedure,
-    service_get_procedure,
+    service_get_procedure_details,
     service_list_procedure_runs,
     service_list_procedures,
     service_propose_procedure,
@@ -92,13 +95,22 @@ def _parse_run_input(raw: str) -> dict[str, Any]:
 
 
 def _procedure_from_result(result: Any) -> ProcedureRecord:
+    """Unwrap a procedure from any local service result or daemon envelope.
+
+    The local paths return models (a record, or a transition result wrapping
+    one) and every daemon path returns a JSON envelope; there is no third
+    shape, so anything else is a genuine surface mismatch, not a case to
+    normalize.
+    """
     if isinstance(result, ProcedureRecord):
         return result
     if isinstance(result, ProcedureTransitionResult):
         return result.procedure
+    if isinstance(result, ProcedureGetResult):
+        return result.procedure
     if not isinstance(result, dict) or not isinstance(result.get("procedure"), dict):
         raise click.ClickException("Procedure response is missing its procedure record")
-    return ProcedureRecord.model_validate(result["procedure"])
+    return _procedure_from_payload(result["procedure"])
 
 
 def _transition_receipt_id(result: Any) -> str | None:
@@ -110,8 +122,39 @@ def _transition_receipt_id(result: Any) -> str | None:
     return None
 
 
+def _transition_warnings(result: Any) -> list[str]:
+    if isinstance(result, ProcedureTransitionResult):
+        return result.warnings
+    if isinstance(result, dict):
+        warnings = result.get("warnings")
+        if isinstance(warnings, list) and all(isinstance(item, str) for item in warnings):
+            return warnings
+    return []
+
+
+def _contract_in_schema(result: Any) -> dict[str, Any] | None:
+    if isinstance(result, ProcedureGetResult):
+        if result.contract_in_schema is None:
+            return None
+        return result.contract_in_schema.model_dump(mode="json", exclude_none=True)
+    if isinstance(result, dict):
+        value = result.get("contract_in_schema")
+        if isinstance(value, dict):
+            return value
+    return None
+
+
 def _procedure_items(result: Any) -> list[ProcedureRecord]:
-    return [ProcedureRecord.model_validate(item) for item in result.items]
+    return [_procedure_from_payload(item) for item in result.items]
+
+
+def _procedure_from_payload(payload: Any) -> ProcedureRecord:
+    try:
+        return procedure_record_from_payload(payload)
+    except (TypeError, ValidationError) as exc:
+        raise click.ClickException(
+            f"Procedure response contains an invalid procedure record: {exc}"
+        ) from exc
 
 
 def _run_items(result: Any) -> list[ProcedureRun]:
@@ -129,6 +172,25 @@ def _echo_procedure(procedure: ProcedureRecord) -> None:
     )
     if procedure.definition.description:
         click.echo(f"  {procedure.definition.description}")
+    if isinstance(procedure, ProcedureReadRecord):
+        track_record = procedure.track_record
+        last_succeeded_at = (
+            track_record.last_succeeded_at.isoformat()
+            if track_record.last_succeeded_at is not None
+            else "null"
+        )
+        top_refusal_reason = track_record.top_refusal_reason or "null"
+        click.echo(
+            "  Track record: "
+            f"runs={track_record.runs}, succeeded={track_record.succeeded}, "
+            f"failed={track_record.failed}, refused={track_record.refused}, "
+            f"budget_exceeded={track_record.budget_exceeded}, "
+            f"in_flight={track_record.in_flight}"
+        )
+        click.echo(
+            f"    last_succeeded_at={last_succeeded_at}, "
+            f"top_refusal_reason={top_refusal_reason}, linked_outcomes=null"
+        )
 
 
 def _procedure_payload(procedure: ProcedureRecord) -> dict[str, Any]:
@@ -180,6 +242,8 @@ def procedure_propose(
     receipt_id = _transition_receipt_id(result)
     if receipt_id:
         click.echo(f"  Receipt: {receipt_id}")
+    for warning in _transition_warnings(result):
+        click.echo(f"  Warning: {warning}")
 
 
 @procedure_group.command("list")
@@ -242,19 +306,70 @@ def procedure_show(procedure_id: str, output_json: bool) -> None:
     """Show one procedure definition and lifecycle record."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.get_procedure(instance_id, procedure_id),
-        lambda instance: service_get_procedure(instance, procedure_id),
+        lambda instance: service_get_procedure_details(instance, procedure_id),
     )
     procedure = _procedure_from_result(result)
     if output_json:
-        _emit_json({"procedure": _procedure_payload(procedure)})
+        _emit_json(
+            {
+                "procedure": _procedure_payload(procedure),
+                "contract_in_schema": _contract_in_schema(result),
+            }
+        )
         return
     _echo_procedure(procedure)
+    _echo_contract_in_schema(_contract_in_schema(result))
     click.echo("  Definition:")
     click.echo(
         yaml.safe_dump(
             procedure.definition.model_dump(mode="json", by_alias=True, exclude_none=True)
         )
     )
+
+
+def _echo_contract_in_schema(schema: dict[str, Any] | None) -> None:
+    """Print the resolved input shape a caller must satisfy to run this procedure."""
+    if schema is None:
+        click.echo("  Input schema: unresolved (contract_in is not defined in the active config)")
+        return
+    fields = schema.get("fields") or []
+    allow_extra = bool(schema.get("allow_extra"))
+    description = schema.get("description")
+    if isinstance(description, str) and description:
+        click.echo(f"  Input contract: {description}")
+    if not fields:
+        click.echo(
+            "  Input: any JSON object" if allow_extra else "  Input: none (empty payload)",
+        )
+        _echo_input_example(schema)
+        return
+    click.echo("  Input schema:")
+    for field in fields:
+        parts = [str(field.get("type"))]
+        parts.append("required" if field.get("required") else "optional")
+        if field.get("default") is not None:
+            parts.append(f"default={field['default']!r}")
+        click.echo(f"    {field.get('name')} ({', '.join(parts)})")
+        field_description = field.get("description")
+        if isinstance(field_description, str) and field_description:
+            click.echo(f"      {field_description}")
+        json_schema = field.get("json_schema")
+        if isinstance(json_schema, dict):
+            click.echo(f"      json_schema: {json.dumps(json_schema, sort_keys=True)}")
+    if allow_extra:
+        click.echo("    (extra fields accepted)")
+    _echo_input_example(schema)
+
+
+def _echo_input_example(schema: dict[str, Any]) -> None:
+    """Print the worked payload a caller can paste, when the contract takes one."""
+    if "input_example" not in schema:
+        return
+    example = schema["input_example"]
+    if not isinstance(example, dict):
+        return
+    click.echo("  Input example:")
+    click.echo(f"    {json.dumps(example, sort_keys=True)}")
 
 
 @procedure_group.command("resolve")

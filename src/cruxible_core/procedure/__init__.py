@@ -3,9 +3,12 @@
 from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.procedure.types import (
     ProcedureBudget,
+    ProcedureContractFieldSchema,
+    ProcedureContractSchema,
     ProcedureDefinition,
     ProcedureEvidenceArtifact,
     ProcedureExecutionResult,
+    ProcedureGetResult,
     ProcedurePrecondition,
     ProcedureRecord,
     ProcedureRepeatSpec,
@@ -18,9 +21,12 @@ from cruxible_core.procedure.types import (
 
 __all__ = [
     "ProcedureBudget",
+    "ProcedureContractFieldSchema",
+    "ProcedureContractSchema",
     "ProcedureDefinition",
     "ProcedureEvidenceArtifact",
     "ProcedureExecutionResult",
+    "ProcedureGetResult",
     "ProcedurePrecondition",
     "ProcedureRecord",
     "ProcedureRepeatSpec",

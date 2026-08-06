@@ -164,6 +164,7 @@ def test_precondition_refusal_finalizes_started_run_and_receipts_revision(
     )
     procedure_id = _accept(procedure_instance, definition)
     _stub_provider(monkeypatch, lambda payload: payload)
+    before_revision = procedure_instance.get_read_revision()
 
     with pytest.raises(ConfigError, match="precondition was unsatisfied") as exc_info:
         service_run_procedure(
@@ -184,9 +185,47 @@ def test_precondition_refusal_finalizes_started_run_and_receipts_revision(
         if node.node_type == "validation" and node.detail.get("kind") == "procedure_precondition"
     ]
     assert len(precondition_nodes) == 1
-    assert precondition_nodes[0].detail["read_revision"] == procedure_instance.get_read_revision()
+    # The run ledger is read state -- procedure reads derive their track record
+    # from it -- so the started-run commit and the finalize commit each advance
+    # the revision. The precondition stamp names the revision the precondition
+    # was EVALUATED against: after the started run, before its own finalize.
+    assert procedure_instance.get_read_revision() == before_revision + 2
+    assert precondition_nodes[0].detail["read_revision"] == before_revision + 1
     assert precondition_nodes[0].detail["satisfying_entity_ids"] == []
     assert receipt.nodes[0].detail["verdict"] == "refused"
+
+
+def test_run_contract_refusal_echoes_resolved_required_and_optional_fields(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    definition_payload = provider_definition("contract_refusal_schema_echo").model_dump(
+        mode="python",
+        by_alias=True,
+        exclude_none=True,
+    )
+    definition_payload["contract_in"] = {
+        "fields": {
+            "value": {"type": "int"},
+            "note": {"type": "string", "optional": True},
+        }
+    }
+    definition = ProcedureDefinition.model_validate(definition_payload)
+    procedure_id = _accept(procedure_instance, definition)
+
+    with pytest.raises(ConfigError) as exc_info:
+        service_run_procedure(
+            procedure_instance,
+            procedure_id,
+            {"note": "missing the required value"},
+            actor("runner"),
+        )
+
+    message = str(exc_info.value)
+    assert "missing required field 'value'" in message
+    assert "note (string, optional), value (int, required)" in message
+    run = _run(procedure_instance, getattr(exc_info.value, "procedure_run_id"))
+    assert run.status == "finalized"
+    assert run.verdict == "refused"
 
 
 def test_precondition_matches_only_named_type_and_records_typed_satisfiers(
@@ -332,6 +371,7 @@ def test_retirement_between_started_run_and_authorization_is_receipted_refusal(
         "write_transaction",
         retire_after_started_run,
     )
+    before_revision = procedure_instance.get_read_revision()
 
     with pytest.raises(ConfigError, match="must be live to run; found 'retired'") as exc_info:
         service_run_procedure(
@@ -355,7 +395,11 @@ def test_retirement_between_started_run_and_authorization_is_receipted_refusal(
     )
     assert precondition_node.detail["procedure_status"] == "retired"
     assert precondition_node.detail["evaluated"] is False
-    assert precondition_node.detail["read_revision"] == procedure_instance.get_read_revision()
+    # Three revision-advancing commits: the started run, the retirement that
+    # races it, then the refusing finalize. The stamp names what authorization
+    # actually read -- everything except its own finalize.
+    assert procedure_instance.get_read_revision() == before_revision + 3
+    assert precondition_node.detail["read_revision"] == before_revision + 2
     assert receipt.nodes[0].detail["verdict"] == "refused"
 
 
@@ -421,7 +465,9 @@ def test_legacy_return_reference_failure_is_typed_and_finalizes_failed_run(
             "declared_tier": "graph_write",
         }
     )
-    original_compile = procedure_service.compile_procedure_definition
+    # Both propose and accept compile through this one seam, so patching it is
+    # what lets a definition the current rules refuse reach a live status.
+    original_compile = procedure_service._compile_procedure_definition
 
     def compile_as_legacy_accepted(
         instance: CruxibleInstance,
@@ -429,13 +475,13 @@ def test_legacy_return_reference_failure_is_typed_and_finalizes_failed_run(
         input_payload: dict[str, Any] | None = None,
     ) -> Any:
         valid_candidate = candidate.model_copy(update={"returns": "transactions"})
-        plan = original_compile(instance, valid_candidate, input_payload)
-        return plan.model_copy(update={"returns": candidate.returns})
+        plan, warnings = original_compile(instance, valid_candidate, input_payload)
+        return plan.model_copy(update={"returns": candidate.returns}), warnings
 
     with monkeypatch.context() as acceptance_context:
         acceptance_context.setattr(
             procedure_service,
-            "compile_procedure_definition",
+            "_compile_procedure_definition",
             compile_as_legacy_accepted,
         )
         procedure_id = _accept(procedure_instance, definition)

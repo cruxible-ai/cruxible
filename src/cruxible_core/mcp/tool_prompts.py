@@ -5,11 +5,20 @@ Style rule for every description:
 - Prefer domain words a kit user sees in Cruxible: config, query, receipt,
   workflow, review, group, state, source evidence.
 - Avoid implementation terms that are not useful for tool choice.
+- Where the loaded kit answers a question the tool leaves open, the description
+  carries that answer (see ``KIT_FACTS_BY_TOOL``). The static text stays
+  self-contained: kit facts are additive, never a replacement.
 """
 
 from __future__ import annotations
 
 from cruxible_core.errors import ConfigError
+from cruxible_core.mcp.kit_surface import (
+    KitSurface,
+    describe_contracts,
+    describe_named_queries,
+    describe_providers,
+)
 
 TOOL_PROMPT_STYLE_RULE = (
     'Tool descriptions must start with "Use when", name the user intent first, '
@@ -269,10 +278,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "for independent review."
     ),
     "cruxible_list_procedures": (
-        "Use when you need to find governed procedures by lifecycle status or page."
+        "Use when you need to find governed procedures by lifecycle status or page and compare "
+        "their run-ledger track records before choosing one."
     ),
     "cruxible_get_procedure": (
-        "Use when you need one procedure's definition, budget, precondition, and lifecycle."
+        "Use when you need one procedure's definition, resolved input field schema, budget, "
+        "precondition, lifecycle, and run-ledger track record."
     ),
     "cruxible_resolve_procedure": (
         "Use when an independent reviewer needs to accept or reject a pending procedure."
@@ -418,15 +429,55 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-def tool_description(tool_name: str) -> str:
-    """Return the reviewed MCP description for *tool_name*."""
+# Which loaded-kit facts each tool's description carries.
+#
+# Deliberately narrow: a fact is injected only where it answers the question
+# THAT tool leaves open. Naming providers on a query tool would be noise, and
+# noise in a description is paid on every listing by every client.
+KIT_FACTS_BY_TOOL: dict[str, tuple[str, ...]] = {
+    "cruxible_query": ("named_queries",),
+    "cruxible_list_queries": ("named_queries",),
+    "cruxible_describe_query": ("named_queries",),
+    "cruxible_lock_workflow": ("providers",),
+    "cruxible_plan_workflow": ("providers",),
+    "cruxible_run_workflow": ("providers", "contracts"),
+    "cruxible_propose_procedure": ("providers", "contracts"),
+}
+
+_KIT_FACT_RENDERERS = {
+    "named_queries": describe_named_queries,
+    "providers": describe_providers,
+    "contracts": describe_contracts,
+}
+
+
+def tool_description(tool_name: str, *, kit_surface: KitSurface | None = None) -> str:
+    """Return the reviewed MCP description for *tool_name*.
+
+    Given a resolved ``kit_surface``, the description also names the loaded
+    config's vocabulary for the facts this tool needs, so an agent discovers
+    contracts, providers, and named queries from the tool surface rather than
+    from out-of-band prompt enumeration. Tool SCHEMAS are untouched: only the
+    prose varies with the kit.
+    """
     try:
-        return TOOL_DESCRIPTIONS[tool_name]
+        base = TOOL_DESCRIPTIONS[tool_name]
     except KeyError as exc:
         raise ConfigError(f"MCP tool '{tool_name}' is missing a prompt description") from exc
+    if kit_surface is None:
+        return base
+    sections = [
+        rendered
+        for fact in KIT_FACTS_BY_TOOL.get(tool_name, ())
+        if (rendered := _KIT_FACT_RENDERERS[fact](kit_surface)) is not None
+    ]
+    if not sections:
+        return base
+    return " ".join([base, *sections])
 
 
 __all__ = [
+    "KIT_FACTS_BY_TOOL",
     "TOOL_DESCRIPTIONS",
     "TOOL_PROMPT_STYLE_RULE",
     "tool_description",

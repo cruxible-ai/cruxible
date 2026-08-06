@@ -14,6 +14,7 @@ from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import reset_registry
+from cruxible_core.temporal import ISO_8601_FORMAT_HINT
 from tests.test_attestations.conftest import CONFIG_YAML
 
 
@@ -148,3 +149,59 @@ def test_daemon_refusal_parity_contradict_on_absent_claim(
     )
     assert 400 <= refused.status_code < 500, refused.text
     assert "only support" in refused.text
+
+
+def test_malformed_observed_at_rejection_echoes_the_expected_format(
+    attestation_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    """The rejection has to be self-correcting.
+
+    A rejection that only reports the value was invalid buys another malformed
+    retry in the same shape; the format and a copyable example travel with the
+    422 so one failed call is enough to fix the payload.
+    """
+    instance_id = _init(attestation_client, tmp_path / "workspace")
+    _seed_live_claim(attestation_client, instance_id)
+    rejected = attestation_client.post(
+        f"/api/v1/{instance_id}/attestations/record",
+        json={
+            "relationship_type": "protected_by",
+            "from_type": "Service",
+            "from_id": "svc-1",
+            "to_type": "Control",
+            "to_id": "ctl-1",
+            "stance": "support",
+            "observed_at": "01/02/2026 14:30 UTC",
+            "evidence_refs": [{"source": "test", "source_record_id": "record-bad-date"}],
+        },
+    )
+    assert rejected.status_code == 422, rejected.text
+    body = rejected.json()
+    assert body["error_type"] == "RequestValidationError"
+    observed_at_errors = [error for error in body["errors"] if "observed_at" in error]
+    assert observed_at_errors, body["errors"]
+    assert ISO_8601_FORMAT_HINT in observed_at_errors[0]
+    assert "2026-08-05T14:30:00Z" in observed_at_errors[0]
+
+
+def test_non_temporal_rejections_do_not_carry_the_datetime_hint(
+    attestation_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init(attestation_client, tmp_path / "workspace")
+    rejected = attestation_client.post(
+        f"/api/v1/{instance_id}/attestations/record",
+        json={
+            "relationship_type": "protected_by",
+            "from_type": "Service",
+            "from_id": "svc-1",
+            "to_type": "Control",
+            "to_id": "ctl-1",
+            "stance": "support",
+            "evidence_refs": [{"source": "test", "source_record_id": "record-missing-date"}],
+        },
+    )
+    assert rejected.status_code == 422, rejected.text
+    stance_errors = [error for error in rejected.json()["errors"] if "stance" in error]
+    assert not any(ISO_8601_FORMAT_HINT in error for error in stance_errors)

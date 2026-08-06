@@ -83,6 +83,7 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
         },
     )
     assert proposed.status_code == 200, proposed.text
+    assert proposed.json()["warnings"] == []
     procedure_id = proposed.json()["procedure"]["procedure_id"]
 
     listed = app_client.get(
@@ -92,9 +93,27 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     shown = app_client.get(f"/api/v1/{instance_id}/procedures/{procedure_id}")
     assert listed.status_code == 200, listed.text
     assert listed.json()["items"][0]["procedure_id"] == procedure_id
+    empty_track_record = {
+        "runs": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "refused": 0,
+        "budget_exceeded": 0,
+        "in_flight": 0,
+        "last_succeeded_at": None,
+        "top_refusal_reason": None,
+        "linked_outcomes": None,
+    }
+    assert listed.json()["items"][0]["track_record"] == empty_track_record
     assert listed.json()["read_revision"] is not None
     assert shown.status_code == 200, shown.text
     assert shown.json()["procedure"]["procedure_id"] == procedure_id
+    assert shown.json()["procedure"]["track_record"] == empty_track_record
+    assert shown.json()["contract_in_schema"] == {
+        "fields": [{"name": "value", "type": "int", "required": True}],
+        "allow_extra": False,
+        "input_example": {"value": 1},
+    }
 
     # accept enforces reviewer independence, so an HTTP caller may not name the
     # reviewer itself; the request is attributed to the local operator instead.
@@ -126,6 +145,22 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     assert executed.status_code == 200, executed.text
     assert executed.json()["run"]["status"] == "finalized"
     assert executed.json()["run"]["verdict"] == "succeeded"
+
+    tracked_list = app_client.get(f"/api/v1/{instance_id}/procedures")
+    tracked_show = app_client.get(f"/api/v1/{instance_id}/procedures/{procedure_id}")
+    expected_track_record = {
+        "runs": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "refused": 0,
+        "budget_exceeded": 0,
+        "in_flight": 0,
+        "last_succeeded_at": executed.json()["run"]["finalized_at"],
+        "top_refusal_reason": None,
+        "linked_outcomes": None,
+    }
+    assert tracked_list.json()["items"][0]["track_record"] == expected_track_record
+    assert tracked_show.json()["procedure"]["track_record"] == expected_track_record
 
     runs = app_client.get(f"/api/v1/{instance_id}/procedures/{procedure_id}/runs")
     assert runs.status_code == 200, runs.text
@@ -252,6 +287,52 @@ def test_invalid_procedure_definition_returns_typed_validation_error(
     ]
 
 
+def test_procedure_proposal_authoring_lint_is_typed_and_surfaces_warnings(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_procedure_instance(app_client, tmp_path / "workspace")
+    invalid = _definition()
+    steps = invalid["steps"]
+    assert isinstance(steps, list)
+    step = steps[0]
+    assert isinstance(step, dict)
+    step["shape_items"] = {
+        "items": [{"value": "$input.undeclared"}],
+        "fields": {"value": "$item.value"},
+    }
+
+    refused = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={
+            "definition": invalid,
+            "actor_context": actor("http-proposer").model_dump(mode="json"),
+        },
+    )
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error_type"] == "ConfigError"
+    assert "step 'shape'" in refused.json()["message"]
+    assert "'$input.undeclared'" in refused.json()["message"]
+    assert "value (int, required)" in refused.json()["message"]
+
+    warning_definition = _definition()
+    warning_definition["budget"] = {"wall_clock_s": 10, "max_provider_calls": 2}
+    proposed = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={
+            "definition": warning_definition,
+            "actor_context": actor("http-proposer").model_dump(mode="json"),
+        },
+    )
+
+    assert proposed.status_code == 200, proposed.text
+    assert proposed.json()["warnings"] == [
+        "budget.max_provider_calls (2) exceeds the expanded provider-call count (0); "
+        "the extra headroom is unreachable"
+    ]
+
+
 def test_procedure_runtime_reference_failure_is_typed_and_audited(
     app_client: TestClient,
     tmp_path: Path,
@@ -265,7 +346,9 @@ def test_procedure_runtime_reference_failure_is_typed_and_audited(
     assert isinstance(step, dict)
     step["as"] = "transactions"
     definition["returns"] = "$steps.transactions.result"
-    original_compile = procedure_service.compile_procedure_definition
+    # Both propose and accept compile through this one seam, so patching it is
+    # what lets a definition the current rules refuse reach a live status.
+    original_compile = procedure_service._compile_procedure_definition
 
     def compile_as_legacy_accepted(
         instance: Any,
@@ -273,13 +356,13 @@ def test_procedure_runtime_reference_failure_is_typed_and_audited(
         input_payload: dict[str, Any] | None = None,
     ) -> Any:
         valid_candidate = candidate.model_copy(update={"returns": "transactions"})
-        plan = original_compile(instance, valid_candidate, input_payload)
-        return plan.model_copy(update={"returns": candidate.returns})
+        plan, warnings = original_compile(instance, valid_candidate, input_payload)
+        return plan.model_copy(update={"returns": candidate.returns}), warnings
 
     with monkeypatch.context() as acceptance_context:
         acceptance_context.setattr(
             procedure_service,
-            "compile_procedure_definition",
+            "_compile_procedure_definition",
             compile_as_legacy_accepted,
         )
         proposed = app_client.post(
@@ -341,3 +424,23 @@ def test_procedure_routes_are_part_of_the_public_openapi() -> None:
     """Flipped by the 0.3.0 surface commit: exposure is deliberate contract."""
     spec = create_app().openapi()
     assert any("/procedures" in path for path in spec["paths"])
+
+
+def test_invalid_declared_tier_rejection_lists_the_valid_tiers(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    """A tier typo must not cost a round trip to learn the accepted values."""
+    instance_id = _init_procedure_instance(app_client, tmp_path / "workspace")
+    definition = _definition()
+    definition["declared_tier"] = "read_only"
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/procedures/propose",
+        json={"definition": definition},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["errors"] == [
+        "declared_tier: Input should be 'governed_write', 'graph_write' or 'admin'"
+    ]

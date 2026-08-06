@@ -1720,8 +1720,8 @@ Workflows are designed; procedures are learned.
 **Subcommands:**
 
 - `cruxible procedure propose` - Propose a definition from a JSON or YAML file.
-- `cruxible procedure list` - List definitions and lifecycle state.
-- `cruxible procedure show` - Show one definition and lifecycle record.
+- `cruxible procedure list` - List definitions, lifecycle state, and run-ledger track records.
+- `cruxible procedure show` - Show one definition, lifecycle record, and run-ledger track record.
 - `cruxible procedure resolve` - Accept or reject a pending definition.
 - `cruxible procedure withdraw` - Retract your own pending proposal.
 - `cruxible procedure retire` - Retire a live definition.
@@ -1764,6 +1764,22 @@ Workflows are designed; procedures are learned.
 The JSON result contains `items`, `total`, `limit`, `offset`, `truncated`, and
 `read_revision`.
 
+Each item carries a `track_record` block summarizing that procedure's run
+ledger, so a dead procedure is distinguishable from a healthy one without a
+second call: `runs`, the exhaustive verdict buckets `succeeded`, `failed`,
+`refused`, `budget_exceeded`, and `in_flight` (started but not yet finalized),
+`last_succeeded_at`, `top_refusal_reason`, and `linked_outcomes` (reserved,
+always null). `runs` always equals the sum of the five buckets, so a procedure
+that exhausts its budget on every invocation reads differently from one whose
+invocations are still running. `top_refusal_reason` is the most frequently
+recorded refusal classification and is null when a procedure has never been
+refused, or when its refusals predate the reason being recorded.
+
+Because these buckets are read state, running a procedure advances
+`read_revision` — once when the run starts and once when it is finalized,
+refusals included — so a truncated procedure page cannot be resumed across an
+invocation.
+
 ## cruxible procedure show
 
 **Usage:** `cruxible procedure show [OPTIONS] PROCEDURE_ID`
@@ -1776,6 +1792,9 @@ The JSON result contains `items`, `total`, `limit`, `offset`, `truncated`, and
 | --- | --- | --- | --- | --- |
 | `PROCEDURE_ID` | yes |  | argument | Procedure ID. |
 | `--json` | no | `False` | boolean | Emit a `procedure` object envelope. |
+
+The `procedure` object carries the same `track_record` block documented under
+`cruxible procedure list`.
 
 ## cruxible procedure resolve
 
@@ -1869,6 +1888,10 @@ tier.
 Text output labels an interrupted record as
 `verdict=null (started/unfinalized tombstone)`. JSON preserves
 `status: started` with `verdict: null` explicitly.
+
+A run with `verdict: refused` also carries `refusal_reason`, the classification
+counted by the procedure's `top_refusal_reason`. It is null on every other
+verdict, and null on refusals recorded before the reason was tracked.
 
 ## cruxible group
 
@@ -3456,6 +3479,46 @@ cruxible source dereference \
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible telemetry
+
+**Usage:** `cruxible telemetry [OPTIONS]`
+
+**Purpose:** Inspect aggregate traffic crossing core-owned surfaces.
+
+**Subcommands:**
+
+- `cruxible telemetry summary` - Show per-surface call, error, payload-byte, and duration counters.
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible telemetry summary
+
+**Usage:** `cruxible telemetry summary [OPTIONS]`
+
+**Purpose:** Show per-surface call, error, payload-byte, and duration counters.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Prints the earliest recorded timestamp, then one line per surface with call count, error count, total response bytes, and total/maximum duration in milliseconds.
+- Surface names carry their boundary: an HTTP route name (`stats`), an MCP tool name (`cruxible_stats`), a locally invoked service verb (`service_stats`), or a whole CLI command (`cli:stats`). A CLI command's emitted bytes and wall time belong to its `cli:` row; each service verb keeps its own measured duration.
+- Counters are aggregated in memory and written by a background flusher; this read flushes the instance first, so it never lags the calls it summarizes.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

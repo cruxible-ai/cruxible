@@ -34,9 +34,11 @@ if TYPE_CHECKING:
         ProcedureBudgetSpent,
         ProcedureEvidenceArtifact,
         ProcedureRecord,
+        ProcedureRefusalReason,
         ProcedureRun,
         ProcedureRunVerdict,
         ProcedureStatus,
+        ProcedureTrackRecord,
     )
     from cruxible_core.provider.types import ExecutionTrace
     from cruxible_core.receipt.types import Receipt
@@ -49,6 +51,7 @@ if TYPE_CHECKING:
     from cruxible_core.snapshot.types import StateSnapshot, UpstreamMetadata
     from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
     from cruxible_core.storage.protocols import UnitOfWorkProtocol
+    from cruxible_core.telemetry.types import BoundaryTelemetrySummary
 
 
 class ReceiptStoreProtocol(ABC):
@@ -449,6 +452,7 @@ class ProcedureStoreProtocol(ABC):
         budget_spent: ProcedureBudgetSpent,
         receipt_id: str,
         finalized_at: str,
+        refusal_reason: ProcedureRefusalReason | None = None,
     ) -> bool: ...
     @abstractmethod
     def get_run(self, run_id: str) -> ProcedureRun | None: ...
@@ -468,6 +472,11 @@ class ProcedureStoreProtocol(ABC):
         procedure_id: str | None = None,
         status: str | None = None,
     ) -> int: ...
+    @abstractmethod
+    def get_run_track_records(
+        self,
+        procedure_ids: Sequence[str],
+    ) -> dict[str, ProcedureTrackRecord]: ...
     @abstractmethod
     def save_evidence_artifact(self, artifact: ProcedureEvidenceArtifact) -> str: ...
     @abstractmethod
@@ -690,6 +699,27 @@ class InstanceProtocol(ABC):
     def get_head_snapshot_id(self) -> str | None: ...
     @abstractmethod
     def get_read_revision(self) -> int: ...
+
+    def record_boundary_telemetry(
+        self,
+        surface_name: str,
+        *,
+        response_bytes: int,
+        duration_ms: float,
+        error: bool,
+    ) -> None:
+        """Best-effort boundary observation hook for telemetry-aware instances."""
+        return None
+
+    def record_boundary_telemetry_drops(self, *, dropped_events: int) -> None:
+        """Best-effort hook for events lost before they became observations."""
+        return None
+
+    def get_boundary_telemetry_summary(self) -> BoundaryTelemetrySummary:
+        """Return boundary counters when supported by the instance backend."""
+        from cruxible_core.telemetry.types import BoundaryTelemetrySummary
+
+        return BoundaryTelemetrySummary(earliest_recorded_at=None)
 
     def get_instance_state(self, key: str) -> Any | None:
         """Read a raw ``instance_state`` value, or None when unsupported.

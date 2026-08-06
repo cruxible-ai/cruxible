@@ -1,0 +1,405 @@
+name: Publish runtime image
+
+# Publishes the hosted runtime container image (deploy/runtime/Dockerfile) to
+# GHCR under an immutable, source-pinned tag.
+#
+# Two entry points:
+#   * workflow_dispatch — the normal path. The operator names the reviewed
+#     source (a full 40-character commit SHA, or a tag), and the job refuses to
+#     continue unless the checkout landed on exactly that commit.
+#   * v* tag pushes — the release path, so a tagged release also gets its
+#     runtime image. This composes with `publish.yml` (which publishes the
+#     PyPI distributions on the same trigger) rather than replacing it: the two
+#     workflows share no jobs, no artifacts, and no concurrency group.
+#
+# `latest` is never published and never moved. Deployments pin the digest that
+# this workflow reports.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: >-
+          Reviewed source to build. Use the full 40-character commit SHA
+          (verified against the checkout); a tag name is also accepted.
+        required: true
+        type: string
+  push:
+    tags: ["v*"]
+
+# Serialize publishes so two runs can never race for the same immutable tag.
+concurrency:
+  group: publish-runtime-image
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.identity.outputs.image }}
+      tag: ${{ steps.identity.outputs.tag }}
+      version: ${{ steps.identity.outputs.version }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      digest: ${{ steps.result.outputs.digest }}
+      image_ref: ${{ steps.result.outputs.image_ref }}
+      rebuilt: ${{ steps.result.outputs.rebuilt }}
+
+    steps:
+      # The dispatch input is operator-supplied text, so it only ever reaches
+      # the shell through the environment, never through `${{ }}` expansion
+      # inside a script body.
+      - name: Resolve requested source ref
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_REF: ${{ inputs.source_ref }}
+          TAG_REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            requested_ref="${DISPATCH_REF}"
+          else
+            requested_ref="${TAG_REF}"
+          fi
+
+          if [ -z "${requested_ref}" ]; then
+            echo "No source ref to build from" >&2
+            exit 1
+          fi
+          if ! printf '%s' "${requested_ref}" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+            echo "Refusing unsafe source ref: ${requested_ref}" >&2
+            exit 1
+          fi
+
+          if printf '%s' "${requested_ref}" | grep -Eq '^[0-9a-f]{40}$'; then
+            pinned=true
+          else
+            pinned=false
+          fi
+
+          {
+            echo "requested_ref=${requested_ref}"
+            echo "pinned=${pinned}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Check out the requested source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ steps.source.outputs.requested_ref }}
+          persist-credentials: false
+
+      # A dispatch that names a full SHA must build that exact commit. Anything
+      # else (a moved ref, a checkout falling back to a branch head) fails here
+      # rather than producing an image labelled with the wrong revision.
+      - name: Verify the checkout is the requested commit
+        if: steps.source.outputs.pinned == 'true'
+        env:
+          REQUESTED_REF: ${{ steps.source.outputs.requested_ref }}
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          if [ "${head_sha}" != "${REQUESTED_REF}" ]; then
+            echo "Checked-out HEAD ${head_sha} does not match requested ${REQUESTED_REF}" >&2
+            exit 1
+          fi
+          echo "Building ${head_sha}"
+
+      - name: Compute image identity
+        id: identity
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_REF: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          source_sha="$(git rev-parse HEAD)"
+          sha12="${source_sha:0:12}"
+
+          version="$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          if ! printf '%s' "${version}" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z.+-]*$'; then
+            echo "Refusing unusable package version: ${version}" >&2
+            exit 1
+          fi
+
+          # On the release trigger the tag and the packaged version must agree,
+          # matching the guarantee publish.yml enforces for the wheels.
+          if [ "${EVENT_NAME}" = "push" ] && [ "${TAG_REF}" != "v${version}" ]; then
+            echo "Tag ${TAG_REF} does not match package version ${version}" >&2
+            exit 1
+          fi
+
+          image="ghcr.io/$(printf '%s' "${REPOSITORY}" | tr '[:upper:]' '[:lower:]')/runtime"
+          tag="runtime-${version}-${sha12}"
+          created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          {
+            echo "source_sha=${source_sha}"
+            echo "version=${version}"
+            echo "image=${image}"
+            echo "tag=${tag}"
+            echo "created=${created}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Immutability gate. If the tag is already published we do not build and
+      # do not push; we reuse its digest. Only a registry response of "absent"
+      # authorizes a push (see .github/scripts/ghcr-tag-digest.sh).
+      - name: Look up the published tag
+        id: published
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ steps.identity.outputs.image }}
+          TAG: ${{ steps.identity.outputs.tag }}
+        run: |
+          set -euo pipefail
+          existing_digest="$(bash .github/scripts/ghcr-tag-digest.sh "${IMAGE}" "${TAG}")"
+          if [ -n "${existing_digest}" ]; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "digest=${existing_digest}" >> "${GITHUB_OUTPUT}"
+            echo "${IMAGE}:${TAG} already published as ${existing_digest}"
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+            echo "digest=" >> "${GITHUB_OUTPUT}"
+            echo "${IMAGE}:${TAG} is unpublished; it will be built and pushed"
+          fi
+
+      # A published tag is only reusable if it still carries this source
+      # revision. A tag that was moved onto a different build fails the job
+      # instead of being silently adopted as "already published".
+      - name: Verify the published tag was built from this source
+        if: steps.published.outputs.exists == 'true'
+        env:
+          IMAGE: ${{ steps.identity.outputs.image }}
+          TAG: ${{ steps.identity.outputs.tag }}
+          DIGEST: ${{ steps.published.outputs.digest }}
+          EXPECTED_SHA: ${{ steps.identity.outputs.source_sha }}
+          EXPECTED_VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker pull --quiet "${IMAGE}@${DIGEST}"
+          actual_sha="$(
+            docker image inspect "${IMAGE}@${DIGEST}" \
+              --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+          )"
+          actual_version="$(
+            docker image inspect "${IMAGE}@${DIGEST}" \
+              --format '{{index .Config.Labels "org.opencontainers.image.version"}}'
+          )"
+          if [ "${actual_sha}" != "${EXPECTED_SHA}" ] \
+            || [ "${actual_version}" != "${EXPECTED_VERSION}" ]; then
+            echo "Immutability violation: ${IMAGE}:${TAG} -> ${DIGEST}" >&2
+            echo "  labelled revision=${actual_sha} version=${actual_version}" >&2
+            echo "  expected  revision=${EXPECTED_SHA} version=${EXPECTED_VERSION}" >&2
+            echo "The tag was moved onto a different build; publish under a new tag." >&2
+            exit 1
+          fi
+          echo "Reusing ${DIGEST} (revision ${actual_sha})"
+
+      - name: Set up Buildx
+        if: steps.published.outputs.exists == 'false'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build and push the runtime image
+        id: build
+        if: steps.published.outputs.exists == 'false'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: deploy/runtime/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.identity.outputs.image }}:${{ steps.identity.outputs.tag }}
+          # Attestations would publish an index rather than a single manifest,
+          # which makes the reported digest ambiguous for a digest-pinned
+          # deployment. One platform, one manifest, one digest.
+          provenance: false
+          sbom: false
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.identity.outputs.source_sha }}
+            org.opencontainers.image.version=${{ steps.identity.outputs.version }}
+            org.opencontainers.image.created=${{ steps.identity.outputs.created }}
+            org.opencontainers.image.title=cruxible hosted runtime
+            org.opencontainers.image.description=Cruxible hosted runtime daemon image
+
+      # Guards the push window: if anything else claimed the tag while this job
+      # was building, the tag no longer resolves to what we pushed.
+      - name: Verify the tag resolves to the image just pushed
+        if: steps.published.outputs.exists == 'false'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ steps.identity.outputs.image }}
+          TAG: ${{ steps.identity.outputs.tag }}
+          BUILT_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BUILT_DIGEST}" ]; then
+            echo "Build reported no image digest" >&2
+            exit 1
+          fi
+          published_digest="$(bash .github/scripts/ghcr-tag-digest.sh "${IMAGE}" "${TAG}")"
+          if [ "${published_digest}" != "${BUILT_DIGEST}" ]; then
+            echo "Immutability violation: ${IMAGE}:${TAG} -> ${published_digest}" >&2
+            echo "  this run pushed ${BUILT_DIGEST}" >&2
+            exit 1
+          fi
+          echo "${IMAGE}:${TAG} -> ${published_digest}"
+
+      - name: Report the published image
+        id: result
+        env:
+          IMAGE: ${{ steps.identity.outputs.image }}
+          TAG: ${{ steps.identity.outputs.tag }}
+          VERSION: ${{ steps.identity.outputs.version }}
+          SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+          EXISTED: ${{ steps.published.outputs.exists }}
+          EXISTING_DIGEST: ${{ steps.published.outputs.digest }}
+          BUILT_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          if [ "${EXISTED}" = "true" ]; then
+            digest="${EXISTING_DIGEST}"
+            rebuilt=no
+          else
+            digest="${BUILT_DIGEST}"
+            rebuilt=yes
+          fi
+          if [ -z "${digest}" ]; then
+            echo "No image digest to report" >&2
+            exit 1
+          fi
+          image_ref="${IMAGE}@${digest}"
+
+          {
+            echo "digest=${digest}"
+            echo "image_ref=${image_ref}"
+            echo "rebuilt=${rebuilt}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "## Runtime image"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Source SHA | \`${SOURCE_SHA}\` |"
+            echo "| Version | \`${VERSION}\` |"
+            echo "| Tag | \`${IMAGE}:${TAG}\` |"
+            echo "| Digest | \`${digest}\` |"
+            echo "| Rebuilt | ${rebuilt} |"
+            echo
+            echo "Pin deployments to the digest, never the tag alone:"
+            echo
+            echo '```'
+            echo "CRUXIBLE_CONTROL_PLANE_RUNTIME_IMAGE=${image_ref}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  verify:
+    name: Verify published image
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      # The tests come from the same commit the image was built from, so the
+      # published artifact is checked against its own contract.
+      - name: Check out the built source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.build.outputs.source_sha }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-packages --all-extras
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the published image by digest
+        env:
+          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          docker info
+          docker pull --quiet "${IMAGE_REF}"
+
+      - name: Verify the pulled image labels
+        env:
+          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
+          EXPECTED_SHA: ${{ needs.build.outputs.source_sha }}
+          EXPECTED_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(
+            docker image inspect "${IMAGE_REF}" \
+              --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+          )"
+          actual_version="$(
+            docker image inspect "${IMAGE_REF}" \
+              --format '{{index .Config.Labels "org.opencontainers.image.version"}}'
+          )"
+          if [ "${actual_sha}" != "${EXPECTED_SHA}" ] \
+            || [ "${actual_version}" != "${EXPECTED_VERSION}" ]; then
+            echo "Published image labels do not match its source" >&2
+            echo "  actual   revision=${actual_sha} version=${actual_version}" >&2
+            echo "  expected revision=${EXPECTED_SHA} version=${EXPECTED_VERSION}" >&2
+            exit 1
+          fi
+
+      # Same suite CI runs against a locally built image; the env override
+      # points it at the published digest instead of building one.
+      - name: Run the runtime image suite against the published digest
+        env:
+          CRUXIBLE_RUN_DOCKER_TESTS: "1"
+          CRUXIBLE_RUNTIME_IMAGE_REF: ${{ needs.build.outputs.image_ref }}
+        run: uv run pytest tests/test_image -m docker --tb=short
+
+      - name: Summarize verification
+        if: always()
+        env:
+          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
+          TAG: ${{ needs.build.outputs.tag }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+          REBUILT: ${{ needs.build.outputs.rebuilt }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Runtime image verification"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Source SHA | \`${SOURCE_SHA}\` |"
+            echo "| Tag | \`${IMAGE}:${TAG}\` |"
+            echo "| Digest ref | \`${IMAGE_REF}\` |"
+            echo "| Rebuilt | ${REBUILT} |"
+            echo "| Image suite | ${OUTCOME} |"
+          } >> "${GITHUB_STEP_SUMMARY}"

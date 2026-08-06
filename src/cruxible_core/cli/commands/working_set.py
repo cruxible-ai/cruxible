@@ -29,7 +29,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.cli.working_set import working_set_activation
 from cruxible_core.config.schema import schema_wire_payload
-from cruxible_core.procedure.types import ProcedureRecord
+from cruxible_core.procedure.types import procedure_record_from_payload
 from cruxible_core.service import (
     service_get_entity,
     service_inspect_entity,
@@ -172,7 +172,12 @@ def _catalog_procedures(context: _WsContext) -> list[dict[str, Any]]:
                 result = service_list_procedures(context.instance, limit=limit, offset=page * limit)
             items = list(result.items)
             for item in items:
-                record = ProcedureRecord.model_validate(item)
+                # Read payloads carry the run-ledger track record and reach us
+                # as models in local mode and as plain dicts from the daemon.
+                # Validating them as the bare record would reject every daemon
+                # page into the degrade-to-empty branch below -- a silently
+                # procedure-less catalog, not an error anyone would see.
+                record = procedure_record_from_payload(item)
                 cards.append(
                     {
                         "procedure_id": record.procedure_id,

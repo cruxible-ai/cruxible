@@ -60,6 +60,8 @@ def test_procedure_tools_are_registered_once_with_expected_schemas() -> None:
         "read_revision",
         "continuation_token",
     }
+    assert "track records" in tools["cruxible_list_procedures"].description
+    assert "track record" in tools["cruxible_get_procedure"].description
 
 
 def test_procedure_permission_map_matches_stage_c_tiers() -> None:
@@ -79,7 +81,22 @@ def test_procedure_permission_map_matches_stage_c_tiers() -> None:
 def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
     calls: list[tuple[str, object]] = []
     envelope = contracts.ListResult(
-        items=[],
+        items=[
+            {
+                "procedure_id": "PRC-1",
+                "track_record": {
+                    "runs": 8,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "refused": 6,
+                    "budget_exceeded": 2,
+                    "in_flight": 0,
+                    "last_succeeded_at": None,
+                    "top_refusal_reason": "precondition_unsatisfied",
+                    "linked_outcomes": None,
+                },
+            }
+        ],
         total=0,
         limit=100,
         offset=0,
@@ -98,7 +115,14 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
 
         def get_procedure(self, instance_id, procedure_id):
             calls.append(("get", (instance_id, procedure_id)))
-            return {"procedure": {"procedure_id": procedure_id}}
+            return {
+                "procedure": envelope.items[0],
+                "contract_in_schema": {
+                    "fields": [{"name": "value", "type": "int", "required": True}],
+                    "allow_extra": False,
+                    "input_example": {"value": 1},
+                },
+            }
 
         def resolve_procedure(self, instance_id, procedure_id, **kwargs):
             calls.append(("resolve", (instance_id, procedure_id, kwargs)))
@@ -123,8 +147,8 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
 
     handlers.handle_propose_procedure("inst_1", {"name": "p"})
-    handlers.handle_list_procedures("inst_1", status="live")
-    handlers.handle_get_procedure("inst_1", "PRC-1")
+    listed = handlers.handle_list_procedures("inst_1", status="live")
+    shown = handlers.handle_get_procedure("inst_1", "PRC-1")
     handlers.handle_resolve_procedure(
         "inst_1",
         "PRC-1",
@@ -151,5 +175,13 @@ def test_procedure_handlers_dispatch_to_remote_client(monkeypatch) -> None:
         "run",
         "runs",
     ]
+    assert listed.items[0]["track_record"]["budget_exceeded"] == 2
+    assert listed.items[0]["track_record"]["top_refusal_reason"] == "precondition_unsatisfied"
+    assert shown["procedure"]["track_record"]["linked_outcomes"] is None
+    assert shown["contract_in_schema"] == {
+        "fields": [{"name": "value", "type": "int", "required": True}],
+        "allow_extra": False,
+        "input_example": {"value": 1},
+    }
     withdraw_call = next(payload for name, payload in calls if name == "withdraw")
     assert withdraw_call[2] == {"expected_version": 1, "reason": None}

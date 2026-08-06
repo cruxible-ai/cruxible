@@ -699,6 +699,21 @@ class TestCatalog:
                             "status": "live",
                             "version": 1,
                             "proposed_actor_context": None,
+                            # The read surface's real shape: every procedure
+                            # list item carries its run-ledger track record, and
+                            # a catalog that cannot parse it degrades to zero
+                            # procedure cards instead of failing loudly.
+                            "track_record": {
+                                "runs": 4,
+                                "succeeded": 1,
+                                "failed": 1,
+                                "refused": 1,
+                                "budget_exceeded": 1,
+                                "in_flight": 0,
+                                "last_succeeded_at": "2026-07-22T13:00:00Z",
+                                "top_refusal_reason": "precondition_unsatisfied",
+                                "linked_outcomes": None,
+                            },
                         }
                     ]
                     if offset == 0
@@ -769,6 +784,17 @@ class TestCatalog:
             "status": "live",
             "version": 1,
             "proposed_actor_context": None,
+            "track_record": {
+                "runs": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "refused": 0,
+                "budget_exceeded": 0,
+                "in_flight": 0,
+                "last_succeeded_at": None,
+                "top_refusal_reason": None,
+                "linked_outcomes": None,
+            },
         }
 
     def test_server_pagination_ignores_lying_total_and_stops_on_short_page(
@@ -861,6 +887,10 @@ class TestCatalog:
             {
                 "name": "part_eligibility",
                 "description": "Check one part is orderable.",
+                # The steps read $input.value, so contract_in must declare it:
+                # under the default cruxible.EmptyInput they can never resolve,
+                # and the authoring lint refuses the proposal.
+                "contract_in": {"fields": {"value": {"type": "string"}}},
                 "steps": [
                     {"id": "guard", "assert_exists": {"ref": "$input.value"}},
                     {

@@ -37,6 +37,7 @@ from cruxible_core.storage.protocols import (
     SnapshotRepositoryProtocol,
     UnitOfWorkProtocol,
 )
+from cruxible_core.telemetry.store import BOUNDARY_TELEMETRY_SCHEMA, SQLiteTelemetryStore
 from cruxible_core.temporal import format_datetime, utc_now
 
 StorageIntegrityError = sqlite3.IntegrityError
@@ -201,6 +202,8 @@ _UNIFIED_STATE_MIGRATION = "0001_unified_sqlite_state"
 SNAPSHOT_SCHEMA_MIGRATION = "0002_snapshot_tables"
 READ_REVISION_MIGRATION = "0003_read_revision"
 CLAIM_IDENTITY_MIGRATION = "0004_claim_identity"
+PROCEDURE_REFUSAL_REASON_MIGRATION = "0005_procedure_refusal_reason"
+BOUNDARY_TELEMETRY_MIGRATION = "0006_boundary_telemetry"
 
 # Every migration ``_initialize_connection`` knows how to apply. The steady-state
 # pre-check compares against this set to decide whether it needs the write lock
@@ -212,6 +215,8 @@ _ALL_STORAGE_MIGRATIONS = frozenset(
         SNAPSHOT_SCHEMA_MIGRATION,
         READ_REVISION_MIGRATION,
         CLAIM_IDENTITY_MIGRATION,
+        PROCEDURE_REFUSAL_REASON_MIGRATION,
+        BOUNDARY_TELEMETRY_MIGRATION,
     }
 )
 
@@ -233,16 +238,19 @@ READ_REVISION_STATE_KEY = "read_revision"
 
 # Tables whose writes are audit/proof records rather than state mutations.
 # Read paths persist query receipts and decision-record audit events, so writes
-# to these tables must NOT advance read_revision (reads never bump it).
+# to these tables must NOT advance read_revision (reads never bump it). The
+# membership test is "can writing this row change what an ordinary read
+# returns?", not "does this row look like history?" -- see the docstring below.
 _AUDIT_ONLY_TABLES = frozenset(
     {
         "receipts",
         "receipt_entities",
         "execution_traces",
-        "procedure_runs",
         "procedure_evidence_artifacts",
         "procedure_run_evidence",
         "decision_events",
+        "boundary_telemetry",
+        "boundary_telemetry_drops",
         "instance_state",
         "storage_migrations",
     }
@@ -274,6 +282,25 @@ what ordinary reads RETURN:
 Attesting advancing the revision is CORRECT. What the protocol audit actually
 found was a DISCLOSURE gap -- the behavior was never documented -- and that is
 fixed in ``docs/state-resolution-and-maintenance.md``, not here.
+
+``procedure_runs`` was here and is NOT any more, for the same reason. It was a
+defensible classification only while the run ledger was write-only history read
+through its own dedicated ``procedure runs`` listing. It stopped being one the
+moment the procedure list and detail surfaces began deriving a ``track_record``
+block from those rows: starting a run and finalizing one each change what a
+plain ``procedure list``/``get`` returns, so leaving them revision-silent would
+let a page read at revision N, a run land, and the next page's token still
+validate against an unchanged counter -- exactly the paginated-read-spanning-
+two-states hole described above, plus stale working-set records that nothing
+could detect.
+
+The two evidence tables stay. Not because a run's declared evidence is
+uninteresting to reads, but because those rows are only ever written in the
+SAME unit of work as the run row they belong to
+(``_persist_procedure_evidence_outputs_in_uow`` runs inside the finalize
+transaction). The run write is what advances the revision; the evidence rows
+ride that same commit and can never move independently of it. If evidence ever
+becomes writable outside a run's transaction, this entry has to be revisited.
 """
 
 
@@ -1262,6 +1289,16 @@ class SQLiteStorageBackend:
         finally:
             conn.close()
 
+    @contextmanager
+    def telemetry_repository(self) -> Iterator[SQLiteTelemetryStore]:
+        conn = self.connect()
+        try:
+            self._initialize_connection(conn)
+            conn.commit()
+            yield SQLiteTelemetryStore(conn)
+        finally:
+            conn.close()
+
     def has_migration(self, migration_id: str) -> bool:
         conn = self.connect()
         try:
@@ -1284,10 +1321,11 @@ class SQLiteStorageBackend:
         """Cheap, lock-free "is this database already at this version?" check.
 
         Deliberately reads only what the upgrade path WRITES: every migration
-        id it stamps, plus the one column whose presence proves the 0004 table
-        rebuild actually ran (the migration row alone would be satisfied by a
-        half-applied rebuild that a torn write left behind, and the column alone
-        would be satisfied by a fresh-schema database that never stamped).
+        id it stamps, plus the columns whose presence proves the 0004 table
+        rebuild and the 0005 column add actually ran (the migration row alone
+        would be satisfied by a half-applied rebuild that a torn write left
+        behind, and the column alone would be satisfied by a fresh-schema
+        database that never stamped).
 
         Any missing table (a brand-new file has no ``storage_migrations``)
         answers "not current" rather than raising -- absence is exactly the
@@ -1303,7 +1341,10 @@ class SQLiteStorageBackend:
         if not applied.issuperset(_ALL_STORAGE_MIGRATIONS):
             return False
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(graph_relationships)")}
-        return "claim_id" in columns
+        if "claim_id" not in columns:
+            return False
+        run_columns = {row["name"] for row in conn.execute("PRAGMA table_info(procedure_runs)")}
+        return "refusal_reason" in run_columns
 
     @staticmethod
     def mark_migration_on_connection(conn: sqlite3.Connection, migration_id: str) -> None:
@@ -1362,6 +1403,7 @@ class SQLiteStorageBackend:
         ResolutionContractStore(self.db_path, connection=conn)
         DecisionStore(self.db_path, connection=conn)
         SQLiteSourceArtifactStore(self.db_path, connection=conn)
+        execute_schema_script(conn, BOUNDARY_TELEMETRY_SCHEMA)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):
             row = conn.execute(
                 "SELECT migration_id FROM storage_migrations WHERE migration_id = ?",
@@ -1383,6 +1425,32 @@ class SQLiteStorageBackend:
         if not self.has_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION):
             self._migrate_claim_identity(conn)
             self.mark_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION)
+        if not self.has_migration_on_connection(conn, PROCEDURE_REFUSAL_REASON_MIGRATION):
+            self._migrate_procedure_refusal_reason(conn)
+            self.mark_migration_on_connection(conn, PROCEDURE_REFUSAL_REASON_MIGRATION)
+        if not self.has_migration_on_connection(conn, BOUNDARY_TELEMETRY_MIGRATION):
+            self.mark_migration_on_connection(conn, BOUNDARY_TELEMETRY_MIGRATION)
+
+    @staticmethod
+    def _migrate_procedure_refusal_reason(conn: sqlite3.Connection) -> None:
+        """Add ``procedure_runs.refusal_reason`` (migration 0005).
+
+        A pure additive column, so no table rebuild: ``CREATE TABLE IF NOT
+        EXISTS`` above is a no-op on an existing table and would otherwise leave
+        an upgraded instance permanently without the column. The track-record
+        covering index comes from the store's own schema script, which the same
+        initialization pass already re-ran.
+
+        Rows finalized before this point keep NULL. That is the honest answer,
+        not a gap to backfill: the refusal bucket is derived at the moment of
+        refusal from the branch that refused, and reconstructing it from the
+        historical receipt text would be classification-by-string-match on
+        messages nobody promised to keep stable.
+        """
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(procedure_runs)")}
+        if "refusal_reason" in columns:
+            return
+        conn.execute("ALTER TABLE procedure_runs ADD COLUMN refusal_reason TEXT")
 
     @staticmethod
     def _migrate_claim_identity(conn: sqlite3.Connection) -> None:

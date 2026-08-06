@@ -36,6 +36,20 @@ Set `CRUXIBLE_MCP_TOOLS` or `CRUXIBLE_MCP_TOOL_ALLOWLIST` to a comma-separated l
 
 Tool descriptions are written for non-coding MCP clients. Each description starts with when to use the tool, uses kit-user vocabulary, and avoids implementation details that do not help with tool choice.
 
+## Self-Describing Tool Descriptions
+
+Where the loaded kit answers a question a tool leaves open, the served description also names it, so an agent can discover the config's vocabulary from the tool surface instead of being told it out of band:
+
+| Tool | Kit facts appended |
+| --- | --- |
+| `cruxible_query`, `cruxible_list_queries`, `cruxible_describe_query` | Named query names |
+| `cruxible_lock_workflow`, `cruxible_plan_workflow` | Registered provider names |
+| `cruxible_run_workflow`, `cruxible_propose_procedure` | Registered provider names and contract names with a short field preview |
+
+The **Purpose** lines documented below are the reviewed static descriptions; kit facts are appended to them and are never part of a tool's SCHEMA, which does not vary by kit. Long lists are truncated with a total.
+
+The kit is resolved from local state only, so `tools/list` keeps answering when no daemon is reachable: the config named by `CRUXIBLE_MCP_KIT_CONFIG`, otherwise — **in local mode only** — the sole locally registered instance. A server pointed at a remote daemon (`CRUXIBLE_SERVER_URL` or `CRUXIBLE_SERVER_SOCKET`) describes only what `CRUXIBLE_MCP_KIT_CONFIG` names: a local registry record on that host belongs to some unrelated instance and says nothing about the kit the daemon serves. With no local instance, more than one, a remote transport and no explicit config, or an unreadable config, the static descriptions are served unchanged.
+
 ## Working-Set Capture
 
 Set `CRUXIBLE_WORKING_SET_DIR` to a directory path to opt the MCP server into agent-local working-set capture: entity/edge-shaped results returned by the read tools (`cruxible_query`, `cruxible_query_inline`, `cruxible_get_entity`, `cruxible_inspect_entity`, `cruxible_list`, `cruxible_sample`, `cruxible_get_relationship`) are ALSO recorded as revision-stamped working-set records rooted at that directory — the same record format, dedupe, and credential-scoped instance keys as the CLI's `--ws` capture (see the `cruxible ws` section of `docs/cli-reference.md`). Capture happens in the MCP server process, which is a client co-located with the agent; the daemon stays blind to it, and tool results are never changed by it.
@@ -1754,7 +1768,7 @@ never activated has nothing to resolve and simply expires.
 | `supersedes_procedure_id` | no | string or null | Immutable procedure being replaced. |
 | `evidence_refs` | no | array or null | Distillation evidence refs. |
 
-**Returns:** The pending procedure record and transition receipt ID.
+**Returns:** The pending procedure record, transition receipt ID, and `warnings`: non-blocking authoring lint findings (declared-but-unused `contract_in` fields, read-implying names backed by side-effecting providers, stringified JSON-object step inputs, a declared string field passed whole into an `arguments` parameter, read steps bundled with side-effecting ones or more than five provider steps in one procedure, and provider-call budget headroom the run can never reach). Statically impossible definitions are refused rather than warned about.
 
 **Side Effects:** Persists a pending procedure and receipt.
 
@@ -1762,7 +1776,7 @@ never activated has nothing to resolve and simply expires.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need to find governed procedures by lifecycle status or page.
+**Purpose:** Use when you need to find governed procedures by lifecycle status or page and compare their run-ledger track records before choosing one.
 
 **Arguments:**
 
@@ -1773,7 +1787,16 @@ never activated has nothing to resolve and simply expires.
 | `limit` | no | integer | Maximum records. |
 | `offset` | no | integer | Records to skip. |
 
-**Returns:** Standard list envelope with procedure records.
+**Returns:** Standard list envelope with procedure records. Each record carries
+a `track_record` block summarizing its run ledger: `runs`, the exhaustive
+verdict buckets `succeeded`, `failed`, `refused`, `budget_exceeded`, and
+`in_flight` (started but not yet finalized, so `runs` always equals their sum),
+`last_succeeded_at`, the most frequent `top_refusal_reason`, and
+`linked_outcomes` (reserved, always null). `top_refusal_reason` is null when a
+procedure has never been refused and for refusals recorded before the reason
+was tracked. These buckets are read state, so running a procedure advances
+`read_revision` (once at start, once at finalization, refusals included) and a
+truncated page cannot be resumed across an invocation.
 
 **Side Effects:** Read-only.
 
@@ -1781,7 +1804,7 @@ never activated has nothing to resolve and simply expires.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need one procedure's definition, budget, precondition, and lifecycle.
+**Purpose:** Use when you need one procedure's definition, resolved input field schema, budget, precondition, lifecycle, and run-ledger track record.
 
 **Arguments:**
 
@@ -1790,7 +1813,8 @@ never activated has nothing to resolve and simply expires.
 | `instance_id` | yes | string | Governed instance ID. |
 | `procedure_id` | yes | string | Procedure ID. |
 
-**Returns:** A `procedure` object envelope.
+**Returns:** A `procedure` object envelope carrying the same `track_record`
+block as the list surface, plus `contract_in_schema`, the `contract_in` shape resolved against the active config: the contract `description`, `fields` (each with `name`, `type`, `required`, and any `default`, `enum`, `enum_ref`, `description`, and the nested `json_schema` a `json`-typed field is validated against), `allow_extra`, and `input_example` — a worked payload carrying every key the caller must supply, filled with type-appropriate values (an enum's first value, a declared default, a literal the field description quotes, else a placeholder for the type). A field carrying a default is reported as not required and is absent from `input_example`. `input_example` is `{}` for a contract that declares no fields but accepts extras (`cruxible.JsonObject`) and is omitted for one that accepts no payload at all (`cruxible.EmptyInput`). `contract_in_schema` is null when the definition's `contract_in` no longer resolves in the active config.
 
 **Side Effects:** Read-only.
 
@@ -1888,7 +1912,10 @@ withdrawing another actor's pending proposal is refused below `GRAPH_WRITE`.
 | `offset` | no | integer | Records to skip. |
 
 **Returns:** Standard list envelope containing finalized runs and
-`status: started`/`verdict: null` tombstones.
+`status: started`/`verdict: null` tombstones. A `refused` run also carries the
+`refusal_reason` classification that the procedure's `top_refusal_reason`
+counts; it is null on every other verdict and on refusals recorded before the
+reason was tracked.
 
 **Side Effects:** Read-only.
 
