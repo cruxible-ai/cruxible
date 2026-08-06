@@ -1775,6 +1775,11 @@ invocations are still running. `top_refusal_reason` is the most frequently
 recorded refusal classification and is null when a procedure has never been
 refused, or when its refusals predate the reason being recorded.
 
+Because these buckets are read state, running a procedure advances
+`read_revision` — once when the run starts and once when it is finalized,
+refusals included — so a truncated procedure page cannot be resumed across an
+invocation.
+
 ## cruxible procedure show
 
 **Usage:** `cruxible procedure show [OPTIONS] PROCEDURE_ID`

@@ -1794,7 +1794,9 @@ verdict buckets `succeeded`, `failed`, `refused`, `budget_exceeded`, and
 `last_succeeded_at`, the most frequent `top_refusal_reason`, and
 `linked_outcomes` (reserved, always null). `top_refusal_reason` is null when a
 procedure has never been refused and for refusals recorded before the reason
-was tracked.
+was tracked. These buckets are read state, so running a procedure advances
+`read_revision` (once at start, once at finalization, refusals included) and a
+truncated page cannot be resumed across an invocation.
 
 **Side Effects:** Read-only.
 

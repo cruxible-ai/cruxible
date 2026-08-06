@@ -18,6 +18,17 @@ the project's own state instance.
   computed once for a whole list page. `linked_outcomes` remains reserved as
   null.
 
+- **Procedure runs now advance the instance read revision.** The run ledger was
+  classified audit-only, which was defensible while runs were readable only
+  through their own listing. Deriving `track_record` from those rows makes them
+  read state, so starting a run and finalizing one each bump `read_revision`,
+  refusals included. Without this a procedure page could be read at one
+  revision, a run could land, and the next page's continuation token would
+  still validate against an unchanged counter — a paginated read spanning two
+  states with nothing to detect it, and working-set records reading fresh while
+  their buckets were stale. Continuation tokens and working-set freshness now
+  react to procedure invocations the same way they react to any other write.
+
 - **Refused procedure runs record why they were refused.** A `refused` run now
   persists a `refusal_reason` classification (`procedure_not_live`,
   `definition_digest_changed`, `tier_not_permitted`, `preflight_refused`,

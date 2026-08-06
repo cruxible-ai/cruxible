@@ -13,6 +13,7 @@ from cruxible_core.procedure.store import (
     ProcedureStore,
 )
 from cruxible_core.procedure.types import (
+    ProcedureBudgetSpent,
     ProcedureRun,
     ProcedureTrackRecord,
 )
@@ -410,3 +411,112 @@ def test_aggregation_chunks_id_lists_past_the_sqlite_parameter_cap(
 def test_track_record_rejects_buckets_that_lose_runs() -> None:
     with pytest.raises(ValueError, match="must cover every run"):
         ProcedureTrackRecord(runs=3, succeeded=1)
+
+
+def test_run_ledger_writes_advance_the_read_revision_once_each(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """Starting and finalizing a run each move the freshness counter exactly once.
+
+    The run ledger used to be classified audit-only in ``_AUDIT_ONLY_TABLES``,
+    which was defensible while runs were only readable through their own
+    dedicated listing. It is not defensible now that ``procedure list``/``get``
+    derive visible ``track_record`` buckets from the same rows: a revision-silent
+    run write would let a page be read at revision N, a run land, and the next
+    page's continuation token still validate against an unchanged counter --
+    a paginated read spanning two different states with nothing to detect it,
+    and a working-set record that reads fresh while its buckets are stale.
+    """
+    procedure = service_propose_procedure(
+        procedure_instance,
+        provider_definition("revision_tracked_procedure"),
+        actor_context=actor("revision-proposer"),
+    ).procedure
+
+    before = procedure_instance.get_read_revision()
+
+    with procedure_instance.write_transaction() as uow:
+        uow.procedures.save_run(
+            ProcedureRun(
+                run_id="PRN-revision-0",
+                procedure_id=procedure.procedure_id,
+                definition_digest=procedure.definition_digest,
+            )
+        )
+    started_revision = procedure_instance.get_read_revision()
+    assert started_revision == before + 1
+
+    started_record = service_get_procedure(procedure_instance, procedure.procedure_id).track_record
+    assert started_record.model_dump(mode="json") == {
+        "runs": 1,
+        "succeeded": 0,
+        "failed": 0,
+        "refused": 0,
+        "budget_exceeded": 0,
+        "in_flight": 1,
+        "last_succeeded_at": None,
+        "top_refusal_reason": None,
+        "linked_outcomes": None,
+    }
+
+    with procedure_instance.write_transaction() as uow:
+        assert uow.procedures.finalize_run(
+            run_id="PRN-revision-0",
+            verdict="succeeded",
+            budget_spent=ProcedureBudgetSpent(wall_clock_s=0.5, provider_calls=1),
+            receipt_id="RCP-revision-0",
+            finalized_at="2026-07-23T09:00:00Z",
+        )
+    finalized_revision = procedure_instance.get_read_revision()
+    assert finalized_revision == started_revision + 1
+
+    finalized = service_get_procedure(procedure_instance, procedure.procedure_id)
+    # The counter moved because the VISIBLE buckets moved, not merely because a
+    # row changed: pin both halves together or the assertion above degenerates
+    # into "some write happened".
+    assert finalized.track_record.model_dump(mode="json") == {
+        "runs": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "refused": 0,
+        "budget_exceeded": 0,
+        "in_flight": 0,
+        "last_succeeded_at": "2026-07-23T09:00:00Z",
+        "top_refusal_reason": None,
+        "linked_outcomes": None,
+    }
+
+    # And the reads that display the track record are still reads.
+    listed = service_list_procedures(procedure_instance)
+    assert listed.read_revision == finalized_revision
+    service_get_procedure(procedure_instance, procedure.procedure_id)
+    assert procedure_instance.get_read_revision() == finalized_revision
+
+
+def test_a_refused_invocation_advances_the_revision_for_start_and_finalize(
+    procedure_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End to end, through the service, not by writing run rows by hand.
+
+    A precondition refusal writes the ledger twice -- the crash-visible started
+    run, then the finalize inside the authorization transaction -- and changes
+    nothing else, so it pins the count exactly rather than as an inequality.
+    """
+    definition = provider_definition(
+        "revision_refusing_procedure",
+        precondition={"entity_type": "Task", "condition": {"status": "ready"}},
+    )
+    procedure_id = _accept(procedure_instance, definition)
+    _stub_provider(monkeypatch, lambda payload: payload)
+
+    before = procedure_instance.get_read_revision()
+
+    with pytest.raises(ConfigError, match="precondition was unsatisfied"):
+        service_run_procedure(procedure_instance, procedure_id, {"value": 1}, actor("runner"))
+
+    assert procedure_instance.get_read_revision() == before + 2
+    shown = service_get_procedure(procedure_instance, procedure_id)
+    assert shown.track_record.runs == 1
+    assert shown.track_record.refused == 1
+    assert shown.track_record.in_flight == 0

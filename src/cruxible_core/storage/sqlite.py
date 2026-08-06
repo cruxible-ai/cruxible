@@ -235,13 +235,14 @@ READ_REVISION_STATE_KEY = "read_revision"
 
 # Tables whose writes are audit/proof records rather than state mutations.
 # Read paths persist query receipts and decision-record audit events, so writes
-# to these tables must NOT advance read_revision (reads never bump it).
+# to these tables must NOT advance read_revision (reads never bump it). The
+# membership test is "can writing this row change what an ordinary read
+# returns?", not "does this row look like history?" -- see the docstring below.
 _AUDIT_ONLY_TABLES = frozenset(
     {
         "receipts",
         "receipt_entities",
         "execution_traces",
-        "procedure_runs",
         "procedure_evidence_artifacts",
         "procedure_run_evidence",
         "decision_events",
@@ -276,6 +277,25 @@ what ordinary reads RETURN:
 Attesting advancing the revision is CORRECT. What the protocol audit actually
 found was a DISCLOSURE gap -- the behavior was never documented -- and that is
 fixed in ``docs/state-resolution-and-maintenance.md``, not here.
+
+``procedure_runs`` was here and is NOT any more, for the same reason. It was a
+defensible classification only while the run ledger was write-only history read
+through its own dedicated ``procedure runs`` listing. It stopped being one the
+moment the procedure list and detail surfaces began deriving a ``track_record``
+block from those rows: starting a run and finalizing one each change what a
+plain ``procedure list``/``get`` returns, so leaving them revision-silent would
+let a page read at revision N, a run land, and the next page's token still
+validate against an unchanged counter -- exactly the paginated-read-spanning-
+two-states hole described above, plus stale working-set records that nothing
+could detect.
+
+The two evidence tables stay. Not because a run's declared evidence is
+uninteresting to reads, but because those rows are only ever written in the
+SAME unit of work as the run row they belong to
+(``_persist_procedure_evidence_outputs_in_uow`` runs inside the finalize
+transaction). The run write is what advances the revision; the evidence rows
+ride that same commit and can never move independently of it. If evidence ever
+becomes writable outside a run's transaction, this entry has to be revisited.
 """
 
 
