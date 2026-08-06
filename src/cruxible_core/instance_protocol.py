@@ -703,6 +703,10 @@ class InstanceProtocol(ABC):
         """Best-effort boundary observation hook for telemetry-aware instances."""
         return None
 
+    def record_boundary_telemetry_drops(self, *, dropped_events: int) -> None:
+        """Best-effort hook for events lost before they became observations."""
+        return None
+
     def get_boundary_telemetry_summary(self) -> BoundaryTelemetrySummary:
         """Return boundary counters when supported by the instance backend."""
         from cruxible_core.telemetry.types import BoundaryTelemetrySummary

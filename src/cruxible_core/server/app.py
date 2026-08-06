@@ -53,7 +53,10 @@ from cruxible_core.server.routes.source_artifacts import router as source_artifa
 from cruxible_core.server.routes.state import router as state_router
 from cruxible_core.server.routes.telemetry import router as telemetry_router
 from cruxible_core.server.routes.workflows import router as workflows_router
-from cruxible_core.server.telemetry import boundary_telemetry_middleware
+from cruxible_core.server.telemetry import (
+    boundary_telemetry_middleware,
+    mark_boundary_scope_refusal,
+)
 from cruxible_core.storage import StorageDatabaseError, StorageIntegrityError
 from cruxible_core.temporal import ISO_8601_FORMAT_HINT
 
@@ -95,6 +98,7 @@ def create_app() -> FastAPI:
     @app.exception_handler(CoreError)
     async def core_error_handler(request: Request, exc: CoreError) -> JSONResponse:
         request.state.error_type = exc.__class__.__name__
+        mark_boundary_scope_refusal(request, exc)
         status_code, body = error_to_response(exc)
         return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
 

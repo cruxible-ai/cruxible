@@ -1573,6 +1573,10 @@ class BoundaryTelemetryCounter(BaseModel):
 class BoundaryTelemetrySummaryResult(BaseModel):
     earliest_recorded_at: datetime | None = None
     counters: list[BoundaryTelemetryCounter] = Field(default_factory=list)
+    # Completeness of the counters above. Capture is best-effort by design, so a
+    # non-zero drop total is the difference between "quiet" and "undercounted".
+    dropped_observations: int = 0
+    dropped_events: int = 0
 
 
 class ServerInfoResult(BaseModel):

@@ -8,14 +8,39 @@ from typing import Any
 
 from fastapi import Request, Response
 
+from cruxible_core.errors import InstanceScopeError
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.telemetry.instrumentation import record_boundary
 
-# The instance-scope refusal. A caller not entitled to address this instance
-# did not generate that instance's traffic, so the call is not counted against
-# it at all rather than counted under a route it was never allowed to reach.
-_SCOPE_REFUSED_STATUS = 403
+# Marker for the ONE refusal that is not the addressed instance's traffic: a
+# caller not entitled to address this instance did not generate its traffic, so
+# the call is not counted against it at all rather than counted under a route it
+# was never allowed to reach.
+#
+# It is a marker and not a status code because 403 is a CLASS of refusal, not a
+# single one. Permission-tier, ownership, direct-write, terminal-lifecycle, and
+# procedure-withdrawal refusals are all 403 and are all real, in-scope traffic
+# whose errors a reader needs to see; skipping the status wholesale erased every
+# one of them from both the call and the error counts.
+#
+# It is also not read from the auth context: this middleware is the OUTERMOST
+# layer, and the request-scoped auth contextvar is not reliably set by the time
+# a response is measured there. The refusal marks ITSELF, on the request scope,
+# at the one point that knows for certain -- where the 403 is built.
+_SCOPE_REFUSAL_STATE_ATTR = "cruxible_boundary_scope_refusal"
+
+
+def mark_boundary_scope_refusal(request: Request, exc: Exception) -> None:
+    """Mark a scope refusal so boundary telemetry can skip only that 403.
+
+    Called by the server's CoreError handler as it builds the response. A
+    no-op for every other error, and it stores on ``request.state`` -- backed
+    by the ASGI scope dict the whole middleware chain shares -- so the outermost
+    middleware sees it on the same request it is measuring.
+    """
+    if isinstance(exc, InstanceScopeError):
+        setattr(request.state, _SCOPE_REFUSAL_STATE_ATTR, True)
 
 
 async def boundary_telemetry_middleware(
@@ -32,7 +57,6 @@ async def boundary_telemetry_middleware(
             response_bytes=0,
             duration_ms=(time.perf_counter_ns() - started) / 1_000_000,
             error=True,
-            status_code=None,
         )
         raise
 
@@ -45,7 +69,6 @@ async def boundary_telemetry_middleware(
             response_bytes=response_bytes,
             duration_ms=(time.perf_counter_ns() - started) / 1_000_000,
             error=response.status_code >= 400,
-            status_code=response.status_code,
         )
         return response
 
@@ -75,7 +98,6 @@ async def boundary_telemetry_middleware(
                 response_bytes=response_bytes,
                 duration_ms=(time.perf_counter_ns() - started) / 1_000_000,
                 error=failed,
-                status_code=response.status_code,
             )
 
     setattr(response, "body_iterator", counted_body())
@@ -88,7 +110,6 @@ def _record_http_boundary(
     response_bytes: int,
     duration_ms: float,
     error: bool,
-    status_code: int | None,
 ) -> None:
     """Attribute one response to an instance, or to nothing at all.
 
@@ -108,7 +129,7 @@ def _record_http_boundary(
         instance_id = request.path_params.get("instance_id")
         if not isinstance(surface_name, str) or not isinstance(instance_id, str):
             return
-        if status_code == _SCOPE_REFUSED_STATUS:
+        if getattr(request.state, _SCOPE_REFUSAL_STATE_ATTR, False):
             return
         record = get_registry().get(instance_id)
         if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
@@ -125,4 +146,4 @@ def _record_http_boundary(
         return
 
 
-__all__ = ["boundary_telemetry_middleware"]
+__all__ = ["boundary_telemetry_middleware", "mark_boundary_scope_refusal"]

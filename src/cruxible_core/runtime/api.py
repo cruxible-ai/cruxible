@@ -2833,6 +2833,8 @@ def telemetry_summary(instance_id: str) -> contracts.BoundaryTelemetrySummaryRes
     result = service_telemetry_summary(instance)
     return contracts.BoundaryTelemetrySummaryResult(
         earliest_recorded_at=result.earliest_recorded_at,
+        dropped_observations=result.dropped_observations,
+        dropped_events=result.dropped_events,
         counters=[
             contracts.BoundaryTelemetryCounter(
                 surface_name=counter.surface_name,

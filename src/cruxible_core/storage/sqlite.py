@@ -247,6 +247,7 @@ _AUDIT_ONLY_TABLES = frozenset(
         "procedure_run_evidence",
         "decision_events",
         "boundary_telemetry",
+        "boundary_telemetry_drops",
         "instance_state",
         "storage_migrations",
     }

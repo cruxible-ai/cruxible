@@ -17,12 +17,19 @@ the project's own state instance.
   an MCP call reaches core over HTTP and is counted under the HTTP route name,
   so the MCP-tool dimension exists in local (direct-instance) mode only.** A CLI
   command records its emitted bytes and wall time under a `cli:<command>` row,
-  while each service verb it invoked keeps its own measured duration. Recording
-  never touches storage on the request path: observations aggregate in memory
-  and a background flusher writes them, dropping a batch rather than waiting on
-  a busy or unavailable store, so the underlying request result and timing are
-  unchanged either way. `cruxible server start` is excluded from CLI collection
-  — the daemon's traffic is counted at the HTTP boundary that serves it.
+  while each service verb it invoked keeps its own measured duration. Refusals
+  count as that instance's errors — permission-tier, ownership, and direct-write
+  denials included; the one exception is a credential scoped to a different
+  instance, whose refusal is not the addressed instance's traffic and is not
+  counted against it. Recording never touches storage on the request path:
+  observations aggregate in memory and a background flusher writes them, never
+  waiting on a busy or unavailable store, so the underlying request result and
+  timing are unchanged either way. A batch the store refuses is retried on the
+  next flush rather than lost, and whatever capture genuinely could not keep is
+  published on the summary as `dropped_observations` / `dropped_events` so an
+  undercount is visible instead of silent. `cruxible server start` is excluded
+  from CLI collection — the daemon's traffic is counted at the HTTP boundary
+  that serves it.
 
 - **A Procedure author can withdraw their own pending proposal.** `withdraw`
   moves a pending definition to the new terminal `withdrawn` status through the

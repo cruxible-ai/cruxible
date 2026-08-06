@@ -124,7 +124,16 @@ def finish_cli_boundaries(
     The command row is attributed to the last instance a verb touched: one CLI
     command addresses one instance, and were a future command to span several,
     the per-verb rows would still attribute each verb correctly.
+
+    Anything the collector's cap refused is published as a drop count against
+    the same instance, so a summary built from a capped command reads as
+    incomplete rather than as a command that simply made fewer calls.
     """
+    if collector.dropped_events and collector.events:
+        record_boundary_drops(
+            collector.events[-1].instance,
+            dropped_events=collector.dropped_events,
+        )
     for event in collector.events:
         record_boundary(
             event.instance,
@@ -164,6 +173,14 @@ def record_boundary(
         pass
 
 
+def record_boundary_drops(instance: Any, *, dropped_events: int) -> None:
+    """Record what never became an observation, without affecting the call."""
+    try:
+        instance.record_boundary_telemetry_drops(dropped_events=dropped_events)
+    except Exception:
+        pass
+
+
 def _instance_argument(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any | None:
     for value in (*args, *kwargs.values()):
         if callable(getattr(value, "record_boundary_telemetry", None)):
@@ -179,4 +196,5 @@ __all__ = [
     "finish_cli_boundaries",
     "instrument_cli_service",
     "record_boundary",
+    "record_boundary_drops",
 ]

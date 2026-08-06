@@ -355,6 +355,15 @@ class CruxibleInstance(InstanceProtocol):
             error=error,
         )
 
+    def record_boundary_telemetry_drops(self, *, dropped_events: int) -> None:
+        """Record events a capture site could not hold, on the same terms.
+
+        Same contract as ``record_boundary_telemetry``: an in-memory add, no
+        I/O and no lock held across it. The count rides the next flush so a
+        summary reports the gap next to the counters it is missing from.
+        """
+        telemetry_buffer(self._state_db_path()).add_dropped_events(dropped_events)
+
     def get_boundary_telemetry_summary(self) -> BoundaryTelemetrySummary:
         """Read this instance's aggregate boundary counters.
 

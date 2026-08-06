@@ -12,9 +12,13 @@ process-wide daemon thread drains every buffer on an interval, and a read
 flushes its own instance first so ``telemetry summary`` never lags the calls it
 is summarizing.
 
-Failure stays fail-open at every step: a drained batch that cannot be written
-(busy DB, missing file, uninitialized schema) is dropped, not retried and not
-raised, and a full buffer drops new surfaces rather than growing without bound.
+Failure stays fail-open at every step: nothing here raises, waits on a lock held
+across I/O, or lets a storage problem reach the caller. A drained batch the store
+refuses (busy DB, missing file, uninitialized schema) is merged BACK into pending
+and retried on the next flush rather than lost, and a full buffer drops new
+surfaces rather than growing without bound. What genuinely cannot be kept is
+counted, and those counts are published in the summary, so an undercount is
+visible to a reader instead of silent.
 """
 
 from __future__ import annotations
@@ -46,7 +50,11 @@ class BoundaryTelemetryBuffer:
         self._db_path = db_path
         self._lock = threading.Lock()
         self._pending: dict[str, BoundaryAggregate] = {}
+        # Undelivered drop deltas, drained by ``flush`` exactly like the
+        # aggregates are. They are counts of what this buffer could not keep,
+        # so they must reach the summary or the undercount stays invisible.
         self.dropped_observations = 0
+        self.dropped_events = 0
 
     def add(
         self,
@@ -78,14 +86,80 @@ class BoundaryTelemetryBuffer:
             aggregate.total_duration_ms += clamped_ms
             aggregate.max_duration_ms = max(aggregate.max_duration_ms, clamped_ms)
 
-    def flush(self) -> None:
-        """Drain and write. The lock covers the swap only, never the write."""
+    def add_dropped_events(self, count: int) -> None:
+        """Count events lost before they could ever become observations.
+
+        The CLI collector caps how many service verbs one command may hold; past
+        that the events never reach ``add`` at all. Counting them here is what
+        puts them in the same summary as the calls they are missing from.
+        """
+        if count <= 0:
+            return
         with self._lock:
-            if not self._pending:
+            self.dropped_events += count
+
+    def flush(self) -> None:
+        """Drain and write. The lock covers the swap only, never the write.
+
+        A batch the store refuses is merged BACK into pending, so a busy DB
+        costs a flush interval rather than counters. Only what will not fit
+        under ``MAX_BUFFERED_SURFACES`` on the way back is truly lost, and that
+        is counted into ``dropped_observations`` for the summary to publish.
+        """
+        with self._lock:
+            dropped_observations = self.dropped_observations
+            dropped_events = self.dropped_events
+            if not self._pending and not dropped_observations and not dropped_events:
                 return
             pending = self._pending
             self._pending = {}
-        SQLiteTelemetryStore.merge_best_effort(self._db_path, pending)
+            self.dropped_observations = 0
+            self.dropped_events = 0
+        delivered = False
+        try:
+            delivered = SQLiteTelemetryStore.merge_best_effort(
+                self._db_path,
+                pending,
+                dropped_observations=dropped_observations,
+                dropped_events=dropped_events,
+            )
+        finally:
+            # ``finally``, not ``except``: the store is contracted never to
+            # raise, so a raise is a bug — and a bug must not be the one path
+            # that loses the batch this whole method exists to keep. The
+            # exception still propagates to the caller, which is where the
+            # existing fail-open guards are.
+            if not delivered:
+                self._restore(pending, dropped_observations, dropped_events)
+
+    def _restore(
+        self,
+        batch: dict[str, BoundaryAggregate],
+        dropped_observations: int,
+        dropped_events: int,
+    ) -> None:
+        """Fold an undelivered batch back into pending, within the surface cap.
+
+        Observations kept accumulating while the write was in flight, so a
+        surface may be pending again; ``absorb`` folds the two accumulators and
+        keeps the earlier ``first_recorded_at``. The cap is on distinct
+        surfaces, not calls, and it still binds here — a buffer that could not
+        write must not grow without bound just because the write failed — so a
+        returning surface with nowhere to go counts every call it carried as
+        dropped rather than being silently discarded.
+        """
+        with self._lock:
+            self.dropped_observations += dropped_observations
+            self.dropped_events += dropped_events
+            for surface_name, aggregate in batch.items():
+                current = self._pending.get(surface_name)
+                if current is not None:
+                    current.absorb(aggregate)
+                    continue
+                if len(self._pending) >= MAX_BUFFERED_SURFACES:
+                    self.dropped_observations += aggregate.call_count
+                    continue
+                self._pending[surface_name] = aggregate
 
 
 # One buffer per instance state DB. The number of instances a process serves is

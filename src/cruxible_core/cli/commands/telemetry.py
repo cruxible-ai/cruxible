@@ -29,6 +29,8 @@ def telemetry_summary_cmd(output_json: bool) -> None:
             if result.earliest_recorded_at is not None
             else None
         ),
+        "dropped_observations": result.dropped_observations,
+        "dropped_events": result.dropped_events,
         "counters": [
             {
                 "surface_name": counter.surface_name,
@@ -47,6 +49,13 @@ def telemetry_summary_cmd(output_json: bool) -> None:
 
     earliest = payload["earliest_recorded_at"] or "none"
     click.echo(f"Earliest recorded: {earliest}")
+    # Printed only when non-zero: a standing "dropped: 0" line trains readers to
+    # skip it, which is exactly the line they must not skip when it is not zero.
+    if result.dropped_observations or result.dropped_events:
+        click.echo(
+            f"Counters are INCOMPLETE: dropped_observations="
+            f"{result.dropped_observations} dropped_events={result.dropped_events}"
+        )
     if not result.counters:
         click.echo("No boundary telemetry recorded.")
         return

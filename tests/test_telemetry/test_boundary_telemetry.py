@@ -41,9 +41,12 @@ from cruxible_core.telemetry.instrumentation import (
     MAX_CLI_BOUNDARY_EVENTS,
     CliBoundaryCollector,
     CliBoundaryEvent,
+    finish_cli_boundaries,
     record_boundary,
 )
-from cruxible_core.telemetry.store import SQLiteTelemetryStore
+from cruxible_core.telemetry.store import BOUNDARY_TELEMETRY_SCHEMA, SQLiteTelemetryStore
+from cruxible_core.telemetry.types import BoundaryAggregate
+from cruxible_core.temporal import parse_datetime
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
@@ -168,10 +171,17 @@ def test_recording_does_no_storage_work_on_the_calling_path(
     assert _counter(instance.get_boundary_telemetry_summary(), "stats").call_count == 50
 
 
-def test_busy_telemetry_store_drops_the_flushed_batch_without_failing(
+def test_busy_telemetry_store_retries_the_batch_instead_of_losing_it(
     instance: CruxibleInstance,
 ) -> None:
-    """A writer holding the DB costs counters, never a wait and never an error."""
+    """A writer holding the DB costs a flush interval, never counters.
+
+    The flush must not wait and must not raise — but the batch it could not
+    write is the instance's real traffic, and clearing it before a best-effort
+    write whose failure was swallowed made a moment's contention silently
+    undercount. The refused batch goes back into pending and lands on the next
+    flush, and nothing is reported as dropped.
+    """
     instance.get_boundary_telemetry_summary()
     buffer = telemetry_buffer(instance.get_instance_dir() / "state.db")
     instance.record_boundary_telemetry(
@@ -185,20 +195,67 @@ def test_busy_telemetry_store_drops_the_flushed_batch_without_failing(
     connection.execute("BEGIN IMMEDIATE")
     try:
         buffer.flush()
+        blocked_summary = service_telemetry_summary(instance)
     finally:
         connection.rollback()
         connection.close()
 
-    assert service_telemetry_summary(instance).counters == []
+    # Blocked: not yet durable, and NOT counted as a drop — it is still owed.
+    assert blocked_summary.counters == []
+    assert blocked_summary.dropped_observations == 0
+
+    delivered = service_telemetry_summary(instance)
+    counter = _counter(delivered, "service_stats")
+    assert counter.call_count == 1
+    assert counter.total_response_bytes == 10
+    assert delivered.dropped_observations == 0
 
 
-def test_flush_before_schema_exists_drops_rather_than_migrating(tmp_path: Path) -> None:
-    """The documented first-drop: the flusher never initializes the schema.
+def test_a_returning_batch_that_overflows_the_cap_is_counted_as_dropped(
+    instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What re-merge genuinely cannot keep is published, not silently lost.
+
+    The surface cap still binds on the way back — a buffer that could not write
+    must not grow without bound because the write failed — so the calls that do
+    not fit are counted, and the summary says the counters are incomplete.
+    """
+    instance.get_boundary_telemetry_summary()
+    buffer = telemetry_buffer(instance.get_instance_dir() / "state.db")
+    for _ in range(3):
+        buffer.add("evicted-surface", response_bytes=1, duration_ms=1.0, error=False)
+
+    def refuse_after_the_buffer_refills(*_args: Any, **_kwargs: Any) -> bool:
+        # Stands in for observations accumulating while the write is in flight:
+        # by the time the refused batch comes back, every slot is taken.
+        for index in range(MAX_BUFFERED_SURFACES):
+            buffer.add(f"surface-{index}", response_bytes=1, duration_ms=1.0, error=False)
+        return False
+
+    monkeypatch.setattr(
+        SQLiteTelemetryStore,
+        "merge_best_effort",
+        staticmethod(refuse_after_the_buffer_refills),
+    )
+    buffer.flush()
+    monkeypatch.undo()
+
+    assert buffer.dropped_observations == 3
+
+    summary = service_telemetry_summary(instance)
+    assert "evicted-surface" not in _surface_names(summary)
+    assert "surface-0" in _surface_names(summary)
+    assert summary.dropped_observations == 3
+
+
+def test_flush_before_schema_exists_retains_rather_than_migrating(tmp_path: Path) -> None:
+    """The flusher never initializes the schema — and never loses the batch.
 
     Taking the migration lock from the background flusher could block real work
-    on a DB nobody has opened normally yet, so a batch aimed at an
-    uninitialized state DB is dropped instead. Reads initialize first, so no
-    caller can observe the gap.
+    on a DB nobody has opened normally yet, so a batch aimed at an uninitialized
+    state DB is held rather than written. Reads initialize first, so the batch
+    lands as soon as anyone can observe it.
     """
     bare_db = tmp_path / "bare-state.db"
     sqlite3.connect(bare_db).close()
@@ -212,6 +269,17 @@ def test_flush_before_schema_exists_drops_rather_than_migrating(tmp_path: Path) 
         tables = {row[0] for row in rows}
     assert "boundary_telemetry" not in tables
 
+    # Held, not dropped: once the schema exists the same batch is delivered.
+    with sqlite3.connect(bare_db) as connection:
+        connection.executescript(BOUNDARY_TELEMETRY_SCHEMA)
+    buffer.flush()
+
+    with sqlite3.connect(bare_db) as connection:
+        connection.row_factory = sqlite3.Row
+        summary = SQLiteTelemetryStore(connection).summary()
+    assert _counter(summary, "stats").call_count == 1
+    assert summary.dropped_observations == 0
+
 
 def test_buffer_caps_surfaces_and_counts_the_overflow(tmp_path: Path) -> None:
     buffer = BoundaryTelemetryBuffer(str(tmp_path / "state.db"))
@@ -220,6 +288,76 @@ def test_buffer_caps_surfaces_and_counts_the_overflow(tmp_path: Path) -> None:
         buffer.add(f"surface-{index}", response_bytes=1, duration_ms=1.0, error=False)
 
     assert buffer.dropped_observations == 25
+
+
+def test_drop_counts_reach_the_summary_so_an_undercount_is_visible(
+    instance: CruxibleInstance,
+) -> None:
+    """Both drop kinds are published; capture that lost work says so."""
+    instance.get_boundary_telemetry_summary()
+    buffer = telemetry_buffer(instance.get_instance_dir() / "state.db")
+    for index in range(MAX_BUFFERED_SURFACES + 4):
+        buffer.add(f"surface-{index}", response_bytes=1, duration_ms=1.0, error=False)
+    instance.record_boundary_telemetry_drops(dropped_events=7)
+
+    summary = service_telemetry_summary(instance)
+
+    assert summary.dropped_observations == 4
+    assert summary.dropped_events == 7
+
+    # Cumulative for the instance: a later drop adds to what is already stored.
+    instance.record_boundary_telemetry_drops(dropped_events=2)
+    assert service_telemetry_summary(instance).dropped_events == 9
+
+
+def test_out_of_order_flushes_keep_the_earliest_first_recorded_at(tmp_path: Path) -> None:
+    """The stored stamp is when the surface was first seen, not which flush won.
+
+    Batches do not arrive in stamp order: a refused batch is re-merged behind
+    batches accepted while it waited. Without MIN semantics the later flush
+    overwrote the earlier stamp and the summary reported traffic as newer than
+    it was.
+    """
+    db_path = tmp_path / "ordered-state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(BOUNDARY_TELEMETRY_SCHEMA)
+
+    later = BoundaryAggregate(first_recorded_at="2026-08-05T18:00:00+00:00", call_count=1)
+    earlier = BoundaryAggregate(first_recorded_at="2026-08-05T09:30:00.500000+00:00", call_count=1)
+    assert SQLiteTelemetryStore.merge_best_effort(db_path, {"stats": later}) is True
+    assert SQLiteTelemetryStore.merge_best_effort(db_path, {"stats": earlier}) is True
+
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        summary = SQLiteTelemetryStore(connection).summary()
+
+    assert _counter(summary, "stats").call_count == 2
+    assert summary.earliest_recorded_at == parse_datetime("2026-08-05T09:30:00.500000+00:00")
+
+
+def test_a_whole_second_stamp_sorts_before_any_fraction_of_it(tmp_path: Path) -> None:
+    """MIN over these stamps is lexicographic, and that is only safe by layout.
+
+    ``isoformat`` omits microseconds when they are zero, so widths differ. The
+    comparison still holds because position 19 is '+' without a fraction and
+    '.' with one, and '+' sorts first — pinned here because a stamp format
+    change would break the ordering silently.
+    """
+    db_path = tmp_path / "width-state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(BOUNDARY_TELEMETRY_SCHEMA)
+
+    fractional = BoundaryAggregate(first_recorded_at="2026-08-05T12:00:00.000001+00:00")
+    whole = BoundaryAggregate(first_recorded_at="2026-08-05T12:00:00+00:00")
+    assert SQLiteTelemetryStore.merge_best_effort(db_path, {"stats": fractional}) is True
+    assert SQLiteTelemetryStore.merge_best_effort(db_path, {"stats": whole}) is True
+
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT first_recorded_at FROM boundary_telemetry WHERE surface_name = 'stats'"
+        ).fetchone()
+
+    assert row[0] == "2026-08-05T12:00:00+00:00"
 
 
 def test_recorder_failure_never_escapes() -> None:
@@ -335,6 +473,52 @@ def test_http_capture_skips_instance_scope_refusals(
     assert refused.json()["error_type"] == "InstanceScopeError"
     refused_summary = get_manager().get(other_id).get_boundary_telemetry_summary()
     assert "stats" not in _surface_names(refused_summary)
+
+
+def test_http_capture_counts_in_scope_403s_as_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the SCOPE refusal is skipped; every other 403 is the instance's own.
+
+    403 is a class of refusal, not one refusal. A permission-tier denial on an
+    instance the caller is entitled to address IS that instance's traffic, and
+    it is exactly the traffic an operator reads these counters to find. Skipping
+    the status wholesale erased permission, ownership, direct-write, and
+    procedure-tier refusals from both the call and the error counts.
+    """
+    project = tmp_path / "tier-denied"
+    project.mkdir()
+    (project / "config.yaml").write_text(CAR_PARTS_YAML)
+
+    client = TestClient(create_app())
+    instance_id = client.post(
+        "/api/v1/instances",
+        json={"root_dir": str(project), "config_yaml": CAR_PARTS_YAML},
+    ).json()["instance_id"]
+
+    scoped = get_runtime_credential_store().create_credential(
+        instance_id=instance_id,
+        label="read-only",
+        permission_mode=PermissionMode.READ_ONLY,
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    headers = {"Authorization": f"Bearer {scoped.token}"}
+
+    denied = client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={"entities": [{"entity_type": "Part", "entity_id": "P-1"}]},
+        headers=headers,
+    )
+
+    assert denied.status_code == 403
+    assert denied.json()["error_type"] == "PermissionDeniedError"
+    summary = get_manager().get(instance_id).get_boundary_telemetry_summary()
+    counter = _counter(summary, "add_entities")
+    assert counter.call_count == 1
+    assert counter.error_count == 1
+    assert counter.total_response_bytes == len(denied.content)
 
 
 def test_http_counters_sum_correctly_under_concurrent_requests(
@@ -545,6 +729,31 @@ def test_cli_collector_caps_events_and_counts_the_overflow() -> None:
 
     assert len(collector.events) == MAX_CLI_BOUNDARY_EVENTS
     assert collector.dropped_events == 10
+
+
+def test_cli_collector_overflow_is_published_against_the_instance(
+    instance: CruxibleInstance,
+) -> None:
+    """A capped command reads as incomplete, not as a command that called less."""
+    collector = CliBoundaryCollector()
+    for _ in range(MAX_CLI_BOUNDARY_EVENTS + 6):
+        collector.add(
+            CliBoundaryEvent(
+                instance=instance,
+                surface_name="service_stats",
+                duration_ms=1.0,
+                error=False,
+            )
+        )
+
+    finish_cli_boundaries(
+        collector,
+        command_path=["stats"],
+        response_bytes=12,
+        command_failed=False,
+    )
+
+    assert instance.get_boundary_telemetry_summary().dropped_events == 6
 
 
 def test_server_start_opts_out_of_cli_collection_and_stream_proxies() -> None:
