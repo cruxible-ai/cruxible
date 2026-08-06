@@ -1,41 +1,41 @@
 {
-  "base_url": "https://github.com/cruxible-ai/cruxible/releases/download/v0.3.1/",
+  "base_url": "https://github.com/cruxible-ai/cruxible/releases/download/v0.3.2/",
   "kits": {
     "agent-operation": {
-      "asset": "agent-operation-0.3.1.tar.gz",
+      "asset": "agent-operation-0.3.2.tar.gz",
       "dir_digest": "sha256:316373972e52cd3b8026c32cc0255995f0398a1226f6391f7aa44b6f818b9c2b",
       "tarball_sha256": "c5167fd102a6497e82d48f6aeac556870f6915a83353e06f11131ed01e3a1b5b"
     },
     "agent-release": {
-      "asset": "agent-release-0.3.1.tar.gz",
+      "asset": "agent-release-0.3.2.tar.gz",
       "dir_digest": "sha256:7c6a0f61fce936454f8aaa88f173493117946a3c80659b47772e33f87642cc00",
       "tarball_sha256": "b24a13d92dd698c0a3f605b2b88d5cedc249d4af48a13a01a0751c309c0acf3a"
     },
     "case-law-monitoring": {
-      "asset": "case-law-monitoring-0.3.1.tar.gz",
+      "asset": "case-law-monitoring-0.3.2.tar.gz",
       "dir_digest": "sha256:217c01208d9e04215b2746683136202ed2eb5d8d7960f15074b7c40f2cccbaa3",
       "tarball_sha256": "95d2077cf9ca47942a5a3c4a0f895d9630b15454cfe34a01d66ba0198f60bdb4"
     },
     "kev-reference": {
-      "asset": "kev-reference-0.3.1.tar.gz",
+      "asset": "kev-reference-0.3.2.tar.gz",
       "dir_digest": "sha256:285a6363f3f4375e1e9893b88522f93fbfdf35fcb56232943d703c60d49aa91a",
       "tarball_sha256": "5b594fc747ae0376ebaee564d07a93bf62fe5e689a92a5aae7bfb6667f01c4ae"
     },
     "kev-triage": {
-      "asset": "kev-triage-0.3.1.tar.gz",
+      "asset": "kev-triage-0.3.2.tar.gz",
       "dir_digest": "sha256:bd3b35862f4aae0bcef1133f6b14e297423851d4dfb15f21f55b605bb7d1cb2b",
       "tarball_sha256": "2805ef4970f95d2689667f95d96b86a01bfd16c15caf76692e8f2f100146e4a4"
     },
     "project-domain": {
-      "asset": "project-domain-0.3.1.tar.gz",
+      "asset": "project-domain-0.3.2.tar.gz",
       "dir_digest": "sha256:cfade77d44c3388a457a1e4c8ae462b2cbbb17ce7e6bb1b81e694a58eb4bad80",
       "tarball_sha256": "c6ab9efa5c87a235601de2f307f2ffae5b4485f198fbefda4962c2c4ace6d422"
     },
     "supply-chain-blast-radius": {
-      "asset": "supply-chain-blast-radius-0.3.1.tar.gz",
+      "asset": "supply-chain-blast-radius-0.3.2.tar.gz",
       "dir_digest": "sha256:3632aa394ec85fc468a76a14e9c59a16c2e93176a6308b59745d40579fff06d1",
       "tarball_sha256": "87a35f7e68b4400eb8541abad113ebc414967a280b576be9e23493aaf7612136"
     }
   },
-  "version": "0.3.1"
+  "version": "0.3.2"
 }

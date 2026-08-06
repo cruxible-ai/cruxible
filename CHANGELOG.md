@@ -7,6 +7,8 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## [0.3.2] - 2026-08-06
+
 - **Procedure reads show their run-ledger track record.** List and detail
   surfaces now attach a `track_record` block, so dead procedures are visible
   before an agent chooses one. Its verdict buckets are exhaustive — `succeeded`,
