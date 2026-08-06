@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from cruxible_core.config.json_schema_validation import validate_value_against_json_schema
-from cruxible_core.config.property_validation import enum_values, normalize_value
+from cruxible_core.config.property_validation import enum_ref_values, normalize_value
 from cruxible_core.config.schema import (
     BUILTIN_CONTRACTS,
     ContractReference,
@@ -102,6 +102,35 @@ def contract_input_example(
     }
 
 
+def _declared_enum_values(
+    enums: Mapping[str, Any],
+    inline_enum: Any,
+    enum_ref: Any,
+) -> list[Any] | None:
+    """Resolve the vocabulary a schema node pins, inline or by shared reference.
+
+    The one enum lookup every example-generating node reads, so no node can
+    quietly skip the vocabulary that constrains it. Mirrors
+    :func:`enum_values` for ``PropertySchema`` and reads the same two keywords
+    the nested json_schema subset supports, which is why one helper can serve
+    both levels.
+
+    An ``enum_ref`` that does not resolve yields ``None`` rather than raising:
+    the caller is a discovery surface, and refusing to describe a procedure at
+    all is a worse answer than describing it with a placeholder value.
+    """
+    if isinstance(inline_enum, list) and inline_enum:
+        return list(inline_enum)
+    if isinstance(enum_ref, str) and enum_ref.strip():
+        try:
+            values = enum_ref_values(enums, enum_ref)
+        except ValueError:
+            return None
+        if values:
+            return values
+    return None
+
+
 def _example_field_value(config: CoreConfig, field_name: str, field_schema: PropertySchema) -> Any:
     """Return one type-appropriate example value for a contract field.
 
@@ -110,7 +139,7 @@ def _example_field_value(config: CoreConfig, field_name: str, field_schema: Prop
     description that quotes a literal is the author spelling one out, and only
     then does the field type supply a placeholder.
     """
-    allowed = enum_values(config, field_schema)
+    allowed = _declared_enum_values(config.enums, field_schema.enum, field_schema.enum_ref)
     if allowed:
         return allowed[0]
     if field_schema.default is not None:
@@ -119,7 +148,7 @@ def _example_field_value(config: CoreConfig, field_name: str, field_schema: Prop
         hint = _description_example(field_schema.description)
         return hint if hint is not None else f"<{field_name}>"
     if field_schema.type == "json":
-        return _json_schema_example(field_schema.json_schema)
+        return _json_schema_example(config.enums, field_schema.json_schema)
     return _EXAMPLE_BY_TYPE.get(field_schema.type, f"<{field_name}>")
 
 
@@ -141,34 +170,54 @@ def _description_example(description: str | None) -> str | None:
     return None
 
 
-def _json_schema_example(json_schema: dict[str, Any] | None) -> Any:
-    """Build a minimal example for a json-typed field from its nested schema."""
+def _json_schema_example(enums: Mapping[str, Any], json_schema: dict[str, Any] | None) -> Any:
+    """Build a minimal example for a json-typed field from its nested schema.
+
+    Every node applies the same preference order the top-level field does, and
+    it applies it *before* the type placeholder: a vocabulary constrains a node
+    of any type, so ``{"type": "integer", "enum": [7, 8]}`` must yield ``7``,
+    not the type's ``1``. Generating the placeholder first is how the example
+    came to fail the very contract it demonstrates -- runtime validation checks
+    the enum at every node too.
+    """
     if not isinstance(json_schema, dict):
         return {}
+    allowed = _declared_enum_values(enums, json_schema.get("enum"), json_schema.get("enum_ref"))
+    if allowed:
+        return allowed[0]
     schema_type = json_schema.get("type")
     if schema_type == "array":
         item_schema = json_schema.get("items")
-        item = _json_schema_example(item_schema) if isinstance(item_schema, dict) else {}
+        item = _json_schema_example(enums, item_schema) if isinstance(item_schema, dict) else {}
         return [item]
     if schema_type in {"integer", "number"}:
         return 1 if schema_type == "integer" else 1.0
     if schema_type == "boolean":
         return True
+    if schema_type == "null":
+        return None
     if schema_type == "string":
-        enum = json_schema.get("enum")
-        if isinstance(enum, list) and enum:
-            return enum[0]
         return "<value>"
     properties = json_schema.get("properties")
     required = json_schema.get("required")
     if not isinstance(properties, dict):
+        properties = {}
+    if not isinstance(required, list) and not properties:
         return {}
     names = required if isinstance(required, list) else sorted(properties)
-    return {
-        str(name): _json_schema_example(properties[name])
-        for name in names
-        if name in properties and isinstance(properties[name], dict)
-    }
+    example: dict[str, Any] = {}
+    for name in names:
+        if not isinstance(name, str):
+            continue
+        child_schema = properties.get(name)
+        if isinstance(child_schema, dict):
+            example[name] = _json_schema_example(enums, child_schema)
+        elif isinstance(required, list):
+            # A required property the schema never describes still has to be
+            # present or runtime validation rejects the example; with no schema
+            # to read, any value satisfies it.
+            example[name] = "<value>"
+    return example
 
 
 def validate_contract_payload(

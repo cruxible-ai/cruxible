@@ -34,6 +34,10 @@ entity_types:
 
 relationships: []
 
+enums:
+  Severity:
+    values: [low, medium, high]
+
 contracts:
   ProcedureInput:
     fields:

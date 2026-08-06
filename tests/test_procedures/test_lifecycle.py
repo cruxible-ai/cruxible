@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any, Mapping
+
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.schema import ContractSchema
 from cruxible_core.errors import ConfigError
 from cruxible_core.procedure.types import (
+    ProcedureContractSchema,
     ProcedureDefinition,
     ProcedureRecord,
     compute_procedure_definition_digest,
@@ -40,6 +43,61 @@ def _receipt(instance: CruxibleInstance, receipt_id: str) -> Receipt:
         return receipt
     finally:
         store.close()
+
+
+def _contract_in_schema(
+    instance: CruxibleInstance,
+    name: str,
+    contract_in: Mapping[str, Any],
+) -> ProcedureContractSchema:
+    """Propose a procedure carrying ``contract_in`` and return its discovery schema."""
+    fields = contract_in["fields"]
+    assert isinstance(fields, dict)
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": name,
+            "contract_in": contract_in,
+            "steps": [
+                {
+                    "id": "invoke",
+                    "provider": "exported_action",
+                    "input": {field_name: f"$input.{field_name}" for field_name in sorted(fields)},
+                    "as": "result",
+                }
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+    proposed = service_propose_procedure(
+        instance,
+        definition,
+        actor_context=actor("proposer"),
+    )
+    schema = service_get_procedure_details(
+        instance,
+        proposed.procedure.procedure_id,
+    ).contract_in_schema
+    assert schema is not None
+    return schema
+
+
+def _assert_example_satisfies_contract(
+    instance: CruxibleInstance,
+    contract_in: Mapping[str, Any],
+    example: Mapping[str, Any] | None,
+) -> None:
+    """Assert a generated example passes the very contract it demonstrates."""
+    assert example is not None
+    validate_contract_payload(
+        instance.load_config(),
+        ContractSchema.model_validate(contract_in),
+        dict(example),
+        subject="Procedure input example",
+        error_factory=ConfigError,
+    )
 
 
 def test_propose_and_accept_pin_definition_config_and_lock_digests(
@@ -447,62 +505,54 @@ def test_contract_in_schema_reports_defaulted_field_as_not_required(
 def test_contract_in_schema_carries_a_worked_input_example(
     procedure_instance: CruxibleInstance,
 ) -> None:
-    """A field list still leaves the caller inventing values; the example is pasteable."""
-    contract_in = {
+    """A field list still leaves the caller inventing values; the example is pasteable.
+
+    One contract exercising every generation branch, so a branch that stops
+    agreeing with runtime validation cannot hide behind the branches that do.
+    """
+    contract_in: dict[str, Any] = {
         "description": "One task reconciliation request",
         "fields": {
+            # A description that quotes a literal.
             "task_id": {"type": "string", "description": "Task identifier, e.g. TSK-1"},
+            # An inline vocabulary.
             "mode": {"type": "string", "enum": ["fast", "slow"]},
+            # A shared vocabulary resolved through the config's enums.
+            "severity": {"type": "string", "enum_ref": "Severity"},
+            # Type placeholders.
             "attempts": {"type": "int"},
             "dry_run": {"type": "bool"},
+            # Nested json: enums at non-string nodes, an enum_ref, array items,
+            # and a plain placeholder underneath them all.
             "spec": {
                 "type": "json",
                 "json_schema": {
                     "type": "object",
-                    "properties": {"limit": {"type": "integer"}},
-                    "required": ["limit"],
+                    "properties": {
+                        "limit": {"type": "integer", "enum": [10, 20]},
+                        "ratio": {"type": "number"},
+                        "tier": {"type": "string", "enum_ref": "Severity"},
+                        "labels": {
+                            "type": "array",
+                            "items": {"type": "string", "enum": ["alpha", "beta"]},
+                        },
+                    },
+                    "required": ["limit", "ratio", "tier", "labels"],
                 },
             },
+            # Filled by validation before the optionality check, so never a key
+            # the caller must supply.
+            "window": {"type": "string", "default": "7d"},
             "note": {"type": "string", "optional": True},
         },
     }
-    definition = ProcedureDefinition.model_validate(
-        {
-            "name": "reconcile_task_with_rich_contract",
-            "contract_in": contract_in,
-            "steps": [
-                {
-                    "id": "invoke",
-                    "provider": "exported_action",
-                    "input": {
-                        "task_id": "$input.task_id",
-                        "mode": "$input.mode",
-                        "attempts": "$input.attempts",
-                        "dry_run": "$input.dry_run",
-                        "spec": "$input.spec",
-                        "note": "$input.note",
-                    },
-                    "as": "result",
-                }
-            ],
-            "returns": "result",
-            "precondition": {},
-            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
-            "declared_tier": "graph_write",
-        }
-    )
-    proposed = service_propose_procedure(
+
+    schema = _contract_in_schema(
         procedure_instance,
-        definition,
-        actor_context=actor("proposer"),
+        "reconcile_task_with_rich_contract",
+        contract_in,
     )
 
-    schema = service_get_procedure_details(
-        procedure_instance,
-        proposed.procedure.procedure_id,
-    ).contract_in_schema
-
-    assert schema is not None
     assert schema.description == "One task reconciliation request"
     assert schema.input_example == {
         "attempts": 1,
@@ -510,27 +560,116 @@ def test_contract_in_schema_carries_a_worked_input_example(
         # An enum pins the value exactly; a description that spells one out is
         # the author's own worked value; otherwise a placeholder for the type.
         "mode": "fast",
-        "spec": {"limit": 1},
+        "severity": "low",
+        "spec": {"limit": 10, "ratio": 1.0, "tier": "low", "labels": ["alpha"]},
         "task_id": "TSK-1",
     }
-    # The optional field is absent: the example teaches the payload the contract
-    # demands, not the widest one it tolerates.
+    # The optional and defaulted fields are absent: the example teaches the
+    # payload the contract demands, not the widest one it tolerates.
     assert "note" not in schema.input_example
+    assert "window" not in schema.input_example
     spec_field = next(field for field in schema.fields if field.name == "spec")
-    assert spec_field.json_schema == {
-        "type": "object",
-        "properties": {"limit": {"type": "integer"}},
-        "required": ["limit"],
-    }
+    assert spec_field.json_schema == contract_in["fields"]["spec"]["json_schema"]
 
     # The example is worked, not decorative: it passes the contract it describes.
-    validate_contract_payload(
-        procedure_instance.load_config(),
-        ContractSchema.model_validate(contract_in),
-        schema.input_example,
-        subject="Procedure input example",
-        error_factory=ConfigError,
-    )
+    _assert_example_satisfies_contract(procedure_instance, contract_in, schema.input_example)
+
+
+def test_input_example_prefers_an_inline_enum_over_the_type_placeholder(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """A vocabulary constrains a node of any type, not only a string one.
+
+    The generator used to read ``enum`` only on string nodes, so an integer
+    node enumerating ``[7, 8]`` was demonstrated with the type placeholder
+    ``1`` -- an example the contract's own validation rejects.
+    """
+    contract_in = {
+        "fields": {
+            "retries": {"type": "json", "json_schema": {"type": "integer", "enum": [7, 8]}},
+            "ratio": {"type": "json", "json_schema": {"type": "number", "enum": [2.5, 3.5]}},
+            "dry_run": {"type": "json", "json_schema": {"type": "boolean", "enum": [False]}},
+        }
+    }
+
+    schema = _contract_in_schema(procedure_instance, "choose_from_typed_enums", contract_in)
+
+    assert schema.input_example == {"retries": 7, "ratio": 2.5, "dry_run": False}
+    _assert_example_satisfies_contract(procedure_instance, contract_in, schema.input_example)
+
+
+def test_input_example_fills_an_enum_ref_field_from_the_shared_vocabulary(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """A field pinned to a config-declared enum is demonstrated with a member of it."""
+    contract_in = {"fields": {"severity": {"type": "string", "enum_ref": "Severity"}}}
+
+    schema = _contract_in_schema(procedure_instance, "triage_by_shared_severity", contract_in)
+
+    assert schema.input_example == {"severity": "low"}
+    _assert_example_satisfies_contract(procedure_instance, contract_in, schema.input_example)
+
+
+def test_input_example_honors_enums_nested_inside_a_json_field_schema(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """Every nested node reads its vocabulary: object properties, array items, deeper objects."""
+    contract_in = {
+        "fields": {
+            "spec": {
+                "type": "json",
+                "json_schema": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "enum": [10, 20]},
+                        "tier": {"type": "string", "enum_ref": "Severity"},
+                        "codes": {"type": "array", "items": {"type": "integer", "enum": [3, 4]}},
+                        "nested": {
+                            "type": "object",
+                            "properties": {"flag": {"type": "boolean", "enum": [False]}},
+                            "required": ["flag"],
+                        },
+                    },
+                    "required": ["limit", "tier", "codes", "nested"],
+                },
+            }
+        }
+    }
+
+    schema = _contract_in_schema(procedure_instance, "apply_nested_enum_spec", contract_in)
+
+    assert schema.input_example == {
+        "spec": {
+            "limit": 10,
+            "tier": "low",
+            "codes": [3],
+            "nested": {"flag": False},
+        }
+    }
+    _assert_example_satisfies_contract(procedure_instance, contract_in, schema.input_example)
+
+
+def test_input_example_includes_a_required_property_the_schema_never_describes(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """Presence is what a bare ``required`` entry demands, so the example supplies it."""
+    contract_in = {
+        "fields": {
+            "spec": {
+                "type": "json",
+                "json_schema": {
+                    "type": "object",
+                    "properties": {"limit": {"type": "integer"}},
+                    "required": ["limit", "opaque"],
+                },
+            }
+        }
+    }
+
+    schema = _contract_in_schema(procedure_instance, "apply_partially_described_spec", contract_in)
+
+    assert schema.input_example == {"spec": {"limit": 1, "opaque": "<value>"}}
+    _assert_example_satisfies_contract(procedure_instance, contract_in, schema.input_example)
 
 
 def test_literal_input_text_outside_a_reference_field_is_not_blocked(
