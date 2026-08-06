@@ -6,17 +6,43 @@ import functools
 import importlib
 import os
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TextIO
 
 import click
 
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
+from cruxible_core.telemetry.instrumentation import (
+    collect_cli_boundaries,
+    finish_cli_boundaries,
+)
 
 if TYPE_CHECKING:
     import httpx
+
+
+class _CountingTextIO:
+    """Transparent text-stream proxy that counts the bytes Click already emits."""
+
+    def __init__(self, wrapped: TextIO) -> None:
+        self._wrapped = wrapped
+        self.byte_count = 0
+
+    def write(self, value: str) -> int:
+        encoding = self._wrapped.encoding or "utf-8"
+        errors = self._wrapped.errors or "strict"
+        self.byte_count += len(value.encode(encoding, errors=errors))
+        return self._wrapped.write(value)
+
+    def flush(self) -> None:
+        self._wrapped.flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped, name)
+
 
 # Authoritative CLI inventory for commands that write authoritative state or
 # write an artifact from a selected instance. ``handle_errors`` consults this
@@ -149,15 +175,40 @@ def _active_transport_label(exc: httpx.TransportError) -> str:
     return "configured Cruxible server"
 
 
+LONG_RUNNING_MARKER = "_cruxible_long_running"
+
+
+def long_running_command(f: Any) -> Any:
+    """Mark a command whose callback owns the process for its whole lifetime.
+
+    ``handle_errors`` normally collects boundary events and proxies
+    stdout/stderr for the duration of the callback, both of which assume the
+    callback returns promptly. For a callback that returns only as the process
+    shuts down — ``cruxible server start`` hosts uvicorn in-process — those
+    assumptions invert into bugs: every served request would append to an event
+    list nobody drains, shutdown would replay the whole list as a write storm
+    carrying the daemon's entire wall time as each duration, each request would
+    be counted twice (the HTTP middleware already counted it), and structlog
+    would bind the counting stream proxy for the process lifetime. Marked
+    commands opt out of collection AND of the stream proxies entirely; their
+    traffic is counted at the surface that actually serves it.
+
+    Apply this BELOW ``@handle_errors`` so the marker is set on the callback
+    before ``handle_errors`` wraps it.
+    """
+    setattr(f, LONG_RUNNING_MARKER, True)
+    return f
+
+
 def handle_errors(f: Any) -> Any:
     """Decorator that catches any Cruxible error and prints a friendly message.
 
     Core errors subclass the client base, so the client hierarchy is the
     single catch surface for local and remote failures.
     """
+    long_running = bool(getattr(f, LONG_RUNNING_MARKER, False))
 
-    @functools.wraps(f)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def run_with_error_handling(*args: Any, **kwargs: Any) -> Any:
         try:
             ctx = click.get_current_context(silent=True)
             if ctx is not None:
@@ -199,6 +250,31 @@ def handle_errors(f: Any) -> Any:
                 )
                 sys.exit(1)
             raise
+
+    @functools.wraps(f)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if long_running:
+            return run_with_error_handling(*args, **kwargs)
+
+        ctx = click.get_current_context(silent=True)
+        command_path = _command_path(ctx) if ctx is not None else ()
+        stdout = _CountingTextIO(sys.stdout)
+        stderr = _CountingTextIO(sys.stderr)
+        command_failed = False
+        with collect_cli_boundaries() as collector:
+            try:
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    return run_with_error_handling(*args, **kwargs)
+            except BaseException:
+                command_failed = True
+                raise
+            finally:
+                finish_cli_boundaries(
+                    collector,
+                    command_path=command_path,
+                    response_bytes=stdout.byte_count + stderr.byte_count,
+                    command_failed=command_failed,
+                )
 
     return wrapper
 
@@ -602,6 +678,18 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "schema": _command("reads", "schema", "Display the config schema for this instance."),
     "stats": _command(
         "read_stats", "stats_cmd", "Display entity and relationship counts for this instance."
+    ),
+    "telemetry": _group(
+        "Inspect aggregate traffic crossing core-owned surfaces.",
+        {
+            "summary": _command(
+                "telemetry",
+                "telemetry_summary_cmd",
+                "Show per-surface call, error, payload-byte, and duration counters.",
+            ),
+        },
+        module="telemetry",
+        attr="telemetry_group",
     ),
     "sample": _command("reads", "sample", "Show a sample of entities of a given type."),
     "evaluate": _command(

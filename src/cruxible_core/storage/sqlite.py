@@ -37,6 +37,7 @@ from cruxible_core.storage.protocols import (
     SnapshotRepositoryProtocol,
     UnitOfWorkProtocol,
 )
+from cruxible_core.telemetry.store import BOUNDARY_TELEMETRY_SCHEMA, SQLiteTelemetryStore
 from cruxible_core.temporal import format_datetime, utc_now
 
 StorageIntegrityError = sqlite3.IntegrityError
@@ -202,6 +203,7 @@ SNAPSHOT_SCHEMA_MIGRATION = "0002_snapshot_tables"
 READ_REVISION_MIGRATION = "0003_read_revision"
 CLAIM_IDENTITY_MIGRATION = "0004_claim_identity"
 PROCEDURE_REFUSAL_REASON_MIGRATION = "0005_procedure_refusal_reason"
+BOUNDARY_TELEMETRY_MIGRATION = "0006_boundary_telemetry"
 
 # Every migration ``_initialize_connection`` knows how to apply. The steady-state
 # pre-check compares against this set to decide whether it needs the write lock
@@ -214,6 +216,7 @@ _ALL_STORAGE_MIGRATIONS = frozenset(
         READ_REVISION_MIGRATION,
         CLAIM_IDENTITY_MIGRATION,
         PROCEDURE_REFUSAL_REASON_MIGRATION,
+        BOUNDARY_TELEMETRY_MIGRATION,
     }
 )
 
@@ -246,6 +249,8 @@ _AUDIT_ONLY_TABLES = frozenset(
         "procedure_evidence_artifacts",
         "procedure_run_evidence",
         "decision_events",
+        "boundary_telemetry",
+        "boundary_telemetry_drops",
         "instance_state",
         "storage_migrations",
     }
@@ -1284,6 +1289,16 @@ class SQLiteStorageBackend:
         finally:
             conn.close()
 
+    @contextmanager
+    def telemetry_repository(self) -> Iterator[SQLiteTelemetryStore]:
+        conn = self.connect()
+        try:
+            self._initialize_connection(conn)
+            conn.commit()
+            yield SQLiteTelemetryStore(conn)
+        finally:
+            conn.close()
+
     def has_migration(self, migration_id: str) -> bool:
         conn = self.connect()
         try:
@@ -1388,6 +1403,7 @@ class SQLiteStorageBackend:
         ResolutionContractStore(self.db_path, connection=conn)
         DecisionStore(self.db_path, connection=conn)
         SQLiteSourceArtifactStore(self.db_path, connection=conn)
+        execute_schema_script(conn, BOUNDARY_TELEMETRY_SCHEMA)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):
             row = conn.execute(
                 "SELECT migration_id FROM storage_migrations WHERE migration_id = ?",
@@ -1412,6 +1428,8 @@ class SQLiteStorageBackend:
         if not self.has_migration_on_connection(conn, PROCEDURE_REFUSAL_REASON_MIGRATION):
             self._migrate_procedure_refusal_reason(conn)
             self.mark_migration_on_connection(conn, PROCEDURE_REFUSAL_REASON_MIGRATION)
+        if not self.has_migration_on_connection(conn, BOUNDARY_TELEMETRY_MIGRATION):
+            self.mark_migration_on_connection(conn, BOUNDARY_TELEMETRY_MIGRATION)
 
     @staticmethod
     def _migrate_procedure_refusal_reason(conn: sqlite3.Connection) -> None:

@@ -38,6 +38,29 @@ the project's own state instance.
   `0005_procedure_refusal_reason`; runs refused before the upgrade keep a null
   reason and are excluded from the most-frequent count rather than being lumped
   into an "unknown" bucket that would outvote every reason observed since.
+- **Core boundary traffic is measurable per instance.** HTTP routes, MCP tools,
+  and locally invoked CLI service verbs now add call, error, serialized-response-byte,
+  and total/maximum duration counters to one aggregate SQLite row per surface,
+  without storing per-call events. `cruxible telemetry summary` and
+  `GET /api/v1/{instance_id}/telemetry/summary` expose the counters and their
+  earliest recorded timestamp at the read-only tier. Which surface a call lands
+  under follows the boundary it actually crossed: **against a governed daemon,
+  an MCP call reaches core over HTTP and is counted under the HTTP route name,
+  so the MCP-tool dimension exists in local (direct-instance) mode only.** A CLI
+  command records its emitted bytes and wall time under a `cli:<command>` row,
+  while each service verb it invoked keeps its own measured duration. Refusals
+  count as that instance's errors — permission-tier, ownership, and direct-write
+  denials included; the one exception is a credential scoped to a different
+  instance, whose refusal is not the addressed instance's traffic and is not
+  counted against it. Recording never touches storage on the request path:
+  observations aggregate in memory and a background flusher writes them, never
+  waiting on a busy or unavailable store, so the underlying request result and
+  timing are unchanged either way. A batch the store refuses is retried on the
+  next flush rather than lost, and whatever capture genuinely could not keep is
+  published on the summary as `dropped_observations` / `dropped_events` so an
+  undercount is visible instead of silent. `cruxible server start` is excluded
+  from CLI collection — the daemon's traffic is counted at the HTTP boundary
+  that serves it.
 
 - **A Procedure author can withdraw their own pending proposal.** `withdraw`
   moves a pending definition to the new terminal `withdrawn` status through the

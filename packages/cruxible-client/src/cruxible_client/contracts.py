@@ -1561,6 +1561,24 @@ class StatsResult(BaseModel):
     read_revision: int | None = None
 
 
+class BoundaryTelemetryCounter(BaseModel):
+    surface_name: str
+    call_count: int
+    error_count: int
+    total_response_bytes: int
+    total_duration_ms: float
+    max_duration_ms: float
+
+
+class BoundaryTelemetrySummaryResult(BaseModel):
+    earliest_recorded_at: datetime | None = None
+    counters: list[BoundaryTelemetryCounter] = Field(default_factory=list)
+    # Completeness of the counters above. Capture is best-effort by design, so a
+    # non-zero drop total is the difference between "quiet" and "undercounted".
+    dropped_observations: int = 0
+    dropped_events: int = 0
+
+
 class ServerInfoResult(BaseModel):
     server_required: bool
     state_dir: str

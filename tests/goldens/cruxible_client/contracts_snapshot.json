@@ -3867,6 +3867,257 @@
         "to_type"
       ]
     },
+    "BoundaryTelemetryCounter": {
+      "fields": {
+        "call_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "call_count",
+          "required": true,
+          "schema": {
+            "title": "Call Count",
+            "type": "integer"
+          }
+        },
+        "error_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "error_count",
+          "required": true,
+          "schema": {
+            "title": "Error Count",
+            "type": "integer"
+          }
+        },
+        "max_duration_ms": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "max_duration_ms",
+          "required": true,
+          "schema": {
+            "title": "Max Duration Ms",
+            "type": "number"
+          }
+        },
+        "surface_name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "surface_name",
+          "required": true,
+          "schema": {
+            "title": "Surface Name",
+            "type": "string"
+          }
+        },
+        "total_duration_ms": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total_duration_ms",
+          "required": true,
+          "schema": {
+            "title": "Total Duration Ms",
+            "type": "number"
+          }
+        },
+        "total_response_bytes": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total_response_bytes",
+          "required": true,
+          "schema": {
+            "title": "Total Response Bytes",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "call_count": {
+            "title": "Call Count",
+            "type": "integer"
+          },
+          "error_count": {
+            "title": "Error Count",
+            "type": "integer"
+          },
+          "max_duration_ms": {
+            "title": "Max Duration Ms",
+            "type": "number"
+          },
+          "surface_name": {
+            "title": "Surface Name",
+            "type": "string"
+          },
+          "total_duration_ms": {
+            "title": "Total Duration Ms",
+            "type": "number"
+          },
+          "total_response_bytes": {
+            "title": "Total Response Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "surface_name",
+          "call_count",
+          "error_count",
+          "total_response_bytes",
+          "total_duration_ms",
+          "max_duration_ms"
+        ],
+        "title": "BoundaryTelemetryCounter",
+        "type": "object"
+      },
+      "required_fields": [
+        "call_count",
+        "error_count",
+        "max_duration_ms",
+        "surface_name",
+        "total_duration_ms",
+        "total_response_bytes"
+      ]
+    },
+    "BoundaryTelemetrySummaryResult": {
+      "fields": {
+        "counters": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "counters",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/BoundaryTelemetryCounter"
+            },
+            "title": "Counters",
+            "type": "array"
+          }
+        },
+        "dropped_events": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "dropped_events",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Dropped Events",
+            "type": "integer"
+          }
+        },
+        "dropped_observations": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "dropped_observations",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Dropped Observations",
+            "type": "integer"
+          }
+        },
+        "earliest_recorded_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "earliest_recorded_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Earliest Recorded At"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "BoundaryTelemetryCounter": {
+            "properties": {
+              "call_count": {
+                "title": "Call Count",
+                "type": "integer"
+              },
+              "error_count": {
+                "title": "Error Count",
+                "type": "integer"
+              },
+              "max_duration_ms": {
+                "title": "Max Duration Ms",
+                "type": "number"
+              },
+              "surface_name": {
+                "title": "Surface Name",
+                "type": "string"
+              },
+              "total_duration_ms": {
+                "title": "Total Duration Ms",
+                "type": "number"
+              },
+              "total_response_bytes": {
+                "title": "Total Response Bytes",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "surface_name",
+              "call_count",
+              "error_count",
+              "total_response_bytes",
+              "total_duration_ms",
+              "max_duration_ms"
+            ],
+            "title": "BoundaryTelemetryCounter",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "counters": {
+            "items": {
+              "$ref": "#/$defs/BoundaryTelemetryCounter"
+            },
+            "title": "Counters",
+            "type": "array"
+          },
+          "dropped_events": {
+            "default": 0,
+            "title": "Dropped Events",
+            "type": "integer"
+          },
+          "dropped_observations": {
+            "default": 0,
+            "title": "Dropped Observations",
+            "type": "integer"
+          },
+          "earliest_recorded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Earliest Recorded At"
+          }
+        },
+        "title": "BoundaryTelemetrySummaryResult",
+        "type": "object"
+      },
+      "required_fields": []
+    },
     "CanonicalViewResult": {
       "fields": {
         "payload": {

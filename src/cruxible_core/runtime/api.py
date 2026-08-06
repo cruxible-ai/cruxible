@@ -174,6 +174,7 @@ from cruxible_core.service import (
     service_stats,
     service_supersede_claim,
     service_supersede_entity,
+    service_telemetry_summary,
     service_test,
     service_update_trust_status,
     service_validate,
@@ -2822,6 +2823,29 @@ def stats(instance_id: str) -> contracts.StatsResult:
         status_counts=result.status_counts,
         head_snapshot_id=result.head_snapshot_id,
         read_revision=result.read_revision,
+    )
+
+
+def telemetry_summary(instance_id: str) -> contracts.BoundaryTelemetrySummaryResult:
+    """Return aggregate instance-local boundary counters."""
+    check_permission("cruxible_telemetry_summary", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_telemetry_summary(instance)
+    return contracts.BoundaryTelemetrySummaryResult(
+        earliest_recorded_at=result.earliest_recorded_at,
+        dropped_observations=result.dropped_observations,
+        dropped_events=result.dropped_events,
+        counters=[
+            contracts.BoundaryTelemetryCounter(
+                surface_name=counter.surface_name,
+                call_count=counter.call_count,
+                error_count=counter.error_count,
+                total_response_bytes=counter.total_response_bytes,
+                total_duration_ms=counter.total_duration_ms,
+                max_duration_ms=counter.max_duration_ms,
+            )
+            for counter in result.counters
+        ],
     )
 
 

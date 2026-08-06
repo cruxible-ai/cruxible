@@ -284,6 +284,9 @@
   "/api/v1/{instance_id}/stats": {
     "GET": "StatsResult"
   },
+  "/api/v1/{instance_id}/telemetry/summary": {
+    "GET": "BoundaryTelemetrySummaryResult"
+  },
   "/api/v1/{instance_id}/traces": {
     "GET": "TraceListResult"
   },

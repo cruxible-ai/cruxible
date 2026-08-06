@@ -48,6 +48,26 @@ Adding src/cruxible_core/<domain>/store.py means completing all of:
      work is active.
 Offending modules and the step they missed:"""
 
+# Store modules that deliberately do NOT join the UnitOfWork, mapped to the
+# reason. Steps 3-6 of the checklist all exist to keep a store inside the
+# request's open transaction; a store that must stay OUTSIDE that transaction
+# cannot satisfy them, and forcing it to would defeat its purpose. Step 1
+# (defines a store type) and step 2 (sqlite3 allowlist) still apply to every
+# module here — an exemption is from the transaction, not from the inventory.
+#
+# Adding an entry here is a design decision, not a way past a red test: the
+# reason must say why joining the transaction would be WRONG for this store,
+# not merely inconvenient.
+UOW_EXEMPT_STORES: dict[Path, str] = {
+    Path("src/cruxible_core/telemetry/store.py"): (
+        "fail-open telemetry must never join or block the request transaction: "
+        "counters are aggregated in memory and written from an off-request "
+        "flusher on its own connection with timeout=0, dropping the batch when "
+        "the DB is busy, so a counter write can never delay, fail, or roll back "
+        "the work the request came to do"
+    ),
+}
+
 
 def _store_modules() -> list[Path]:
     modules = sorted(SRC_ROOT.glob("*/store.py"))
@@ -168,6 +188,11 @@ def test_every_store_module_completes_the_registration_checklist() -> None:
         ):
             problems.append(f"{path}: (2) imports sqlite3 but is not in the allowlist")
 
+        if path.relative_to(REPO_ROOT) in UOW_EXEMPT_STORES:
+            # Steps 3-6 are the transaction-membership steps; this store is
+            # exempt from the transaction, so they do not apply to it.
+            continue
+
         # A slot belongs to this module when either the protocol it is typed as
         # or the concrete class wired into it is defined by the module. That
         # covers both layouts in the tree: protocol in instance_protocol.py with
@@ -228,4 +253,22 @@ def test_direct_sqlite_import_allowlist_has_no_stale_entries() -> None:
     assert stale == [], (
         "DIRECT_SQLITE_IMPORT_ALLOWLIST entries that are gone or no longer import "
         f"sqlite3 (drop them): {stale}"
+    )
+
+
+def test_uow_exemptions_name_a_live_store_and_state_a_reason() -> None:
+    """Each exemption points at a real store module and explains itself.
+
+    An exemption is only legitimate while the module it names exists and while
+    somebody has written down why joining the transaction would be wrong for
+    it. A deleted or renamed store must take its exemption with it rather than
+    leave a standing hole in the checklist.
+    """
+    problems = sorted(
+        f"{entry}: {'no such store module' if not (REPO_ROOT / entry).is_file() else 'no reason'}"
+        for entry, reason in UOW_EXEMPT_STORES.items()
+        if not (REPO_ROOT / entry).is_file() or len(reason.strip()) < 40
+    )
+    assert problems == [], (
+        f"UOW_EXEMPT_STORES entries that are stale or unexplained (fix or drop them): {problems}"
     )

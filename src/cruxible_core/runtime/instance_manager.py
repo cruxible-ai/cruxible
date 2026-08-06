@@ -13,6 +13,7 @@ from cruxible_core.server.registry import (
     InstanceRecord,
     get_registry,
 )
+from cruxible_core.telemetry.buffer import flush_all
 
 
 class InstanceManager:
@@ -48,6 +49,13 @@ class InstanceManager:
         return list(self._instances.keys())
 
     def clear(self) -> None:
+        """Drop every live instance, writing their buffered telemetry first.
+
+        This is the closest thing core has to an instance-close hook, so it is
+        where in-memory boundary counters become durable outside the periodic
+        flush and process exit.
+        """
+        flush_all()
         self._instances.clear()
 
     @staticmethod
