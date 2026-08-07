@@ -19,12 +19,23 @@ same code path, not a branch around it.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
 from cruxible_core.config.schema import WorkflowStepSchema, workflow_step_kind
 from cruxible_core.errors import ConfigError
+from cruxible_core.predicate import (
+    ComparisonOp,
+    PredicateCoercionError,
+    PredicateValueType,
+    coerce_predicate_value,
+    comparison_symbol,
+    evaluate_typed_comparison,
+    normalize_comparison_op,
+)
+from cruxible_core.procedure.guards import GuardSpec, PredicateOperand, parse_predicate_operand
 from cruxible_core.procedure.types import (
     ABORT_TARGET,
     ProcedureFlowStepSchema,
@@ -503,10 +514,379 @@ def format_witness_path(path: Sequence[str]) -> str:
     return " -> ".join(path) if path else "(empty)"
 
 
+# ---------------------------------------------------------------------------
+# Analysis 5 -- vacuity / unsatisfiability, R9 (§3.5)
+# ---------------------------------------------------------------------------
+#
+# CONNECTIVE-AWARE AND DELIBERATELY SHALLOW. The fragment narrows a domain only
+# through CONJUNCTIVE dominating comparisons: a plain comparison, or a member
+# of an `all_of`. `any_of` contributes nothing -- a disjunction narrows nothing
+# -- and `not_of` contributes nothing, because negating a range over an open
+# domain is not a range. No SMT. Anything the fragment cannot decide is NOT
+# refused: fail-open on the analysis, fail-closed on the semantics. v1's
+# "intersect dominating comparisons" was insufficient for exactly these two
+# connectives and would have hard-refused valid definitions.
+
+
+@dataclass(frozen=True)
+class GuardConstraint:
+    """One conjunctive comparison, normalised to ``<reference> <op> <literal>``."""
+
+    key: str
+    op: ComparisonOp
+    value: Any
+    source_node_id: str
+
+    def rendered(self) -> str:
+        return (
+            f"{self.key} {comparison_symbol(self.op)} {self.value!r} (at '{self.source_node_id}')"
+        )
+
+
+@dataclass
+class _Domain:
+    """What the conjunction admits for one reference, as far as it can tell."""
+
+    equals: set[Any] | None = None
+    excluded: set[Any] = field(default_factory=set)
+    lower: tuple[Any, bool] | None = None
+    upper: tuple[Any, bool] | None = None
+    witnesses: list[GuardConstraint] = field(default_factory=list)
+
+
+def conjunctive_comparisons(spec: GuardSpec) -> list[GuardSpec]:
+    """Return the comparisons a predicate asserts UNCONDITIONALLY.
+
+    ``all_of`` distributes, because every member must hold. ``any_of`` and
+    ``not_of`` return nothing at all -- not "their children", nothing. A
+    disjunct is not asserted, and a negated range is not a range.
+    """
+    if spec.all_of is not None:
+        return [
+            comparison for child in spec.all_of for comparison in conjunctive_comparisons(child)
+        ]
+    if spec.any_of is not None or spec.not_of is not None:
+        return []
+    return [spec] if spec.op is not None else []
+
+
+def true_arm_dominators(graph: ProcedureGraph) -> dict[str, tuple[str, ...]]:
+    """Per node, the guards whose TRUE arm every entry-to-node path traverses.
+
+    Only the true arm contributes. The false arm asserts a NEGATION, and the
+    fragment takes nothing from negations -- the same rule that excludes
+    ``not_of``, applied to the same reasoning about open domains.
+
+    A guard whose two arms converge on one node contributes nothing to that
+    node either: control reaches it under the predicate and under its negation,
+    so the predicate is not implied there.
+    """
+    dominators: dict[str, list[str]] = {node_id: [] for node_id in graph.node_ids}
+    for guard_id in graph.node_ids:
+        if graph.kinds[guard_id] != "guard":
+            continue
+        targets = graph.edges[guard_id]
+        true_target = targets.get(TRUE_ARM)
+        if true_target is None or true_target == ABORT_TARGET:
+            continue
+        if targets.get(FALSE_ARM) == true_target:
+            continue
+        reachable = _reachable_without_arm(graph, guard_id, TRUE_ARM)
+        for node_id in graph.node_ids:
+            if node_id not in reachable:
+                dominators[node_id].append(guard_id)
+    return {node_id: tuple(guards) for node_id, guards in dominators.items()}
+
+
+def _reachable_without_arm(graph: ProcedureGraph, guard_id: str, arm: str) -> set[str]:
+    """Nodes reachable from the entry when one labelled edge is cut."""
+    seen = {graph.entry_id}
+    queue = deque([graph.entry_id])
+    while queue:
+        node_id = queue.popleft()
+        for label, target in graph.edges[node_id].items():
+            if target == ABORT_TARGET or (node_id == guard_id and label == arm):
+                continue
+            if target not in seen:
+                seen.add(target)
+                queue.append(target)
+    return seen
+
+
+def refuse_unsatisfiable_guards(
+    graph: ProcedureGraph,
+    definition: ProcedureDefinition,
+    *,
+    declared_input_enums: Mapping[str, frozenset[Any]] | None = None,
+) -> None:
+    """Refuse a guard no execution can satisfy (R9).
+
+    A guard whose predicate cannot hold is a dead arm wearing the costume of a
+    decision: the reviewer reads a three-way triage and the instance runs a
+    two-way one, forever, with nothing anywhere saying so.
+    """
+    dominators = true_arm_dominators(graph)
+    guards = {
+        str(step.id): step
+        for step in definition.steps
+        if isinstance(step, ProcedureGuardStepSchema)
+    }
+    for node_id, guard in guards.items():
+        asserted: list[tuple[str, GuardSpec]] = [
+            (dominator, guards[dominator].guard)
+            for dominator in dominators[node_id]
+            if dominator in guards
+        ]
+        asserted.append((node_id, guard.guard))
+        _refuse_empty_domain(
+            node_id,
+            asserted,
+            declared_input_enums=declared_input_enums or {},
+        )
+
+
+def _refuse_empty_domain(
+    node_id: str,
+    asserted: Sequence[tuple[str, GuardSpec]],
+    *,
+    declared_input_enums: Mapping[str, frozenset[Any]],
+) -> None:
+    domains: dict[str, _Domain] = {}
+    for source_node_id, spec in asserted:
+        for comparison in conjunctive_comparisons(spec):
+            _apply_comparison(
+                comparison,
+                source_node_id=source_node_id,
+                node_id=node_id,
+                domains=domains,
+                declared_input_enums=declared_input_enums,
+            )
+    for key, domain in sorted(domains.items()):
+        if not _domain_is_empty(domain):
+            continue
+        cited = "; ".join(constraint.rendered() for constraint in domain.witnesses)
+        raise ConfigError(  # R9
+            f"procedure guard step '{node_id}' is statically unsatisfiable: no value of "
+            f"{key} satisfies every comparison that must hold on the paths reaching it "
+            f"[{cited}]. A predicate that cannot hold is a branch that never runs."
+        )
+
+
+def _apply_comparison(
+    comparison: GuardSpec,
+    *,
+    source_node_id: str,
+    node_id: str,
+    domains: dict[str, _Domain],
+    declared_input_enums: Mapping[str, frozenset[Any]],
+) -> None:
+    left = parse_predicate_operand(comparison.left)
+    right = parse_predicate_operand(comparison.right)
+    if left.form == "param" or right.form == "param":
+        # A governed parameter's value is not known here. Narrowing on an
+        # unknown would refuse definitions whose values are perfectly
+        # satisfiable, so the comparison contributes nothing.
+        return
+    assert comparison.op is not None
+    op = normalize_comparison_op(comparison.op)
+
+    if left.form == "literal" and right.form == "literal":
+        _refuse_constant_false(comparison, op, node_id=node_id, source_node_id=source_node_id)
+        return
+
+    key = _operand_key(left)
+    literal = right.literal if right.form == "literal" else None
+    if key is None or right.form != "literal":
+        key = _operand_key(right)
+        literal = left.literal if left.form == "literal" else None
+        if key is None or left.form != "literal":
+            # Reference against reference: two unknowns, nothing to intersect.
+            return
+        op = _flip(op)
+
+    value = _coerced(literal, comparison.value_type)
+    if value is _UNCOERCIBLE:
+        return
+    domain = domains.get(key)
+    if domain is None:
+        domain = _Domain(equals=_seeded_enum(key, declared_input_enums))
+        domains[key] = domain
+    constraint = GuardConstraint(key=key, op=op, value=value, source_node_id=source_node_id)
+    domain.witnesses.append(constraint)
+    _narrow(domain, op, value)
+
+
+def _refuse_constant_false(
+    comparison: GuardSpec,
+    op: ComparisonOp,
+    *,
+    node_id: str,
+    source_node_id: str,
+) -> None:
+    """A comparison of two literals is a constant, and half of them are false.
+
+    The degenerate empty domain: no reference to narrow, and the answer is
+    already known. It sits inside R9 rather than beside it because the defect
+    is identical -- a branch whose predicate no execution can satisfy.
+    """
+    if evaluate_typed_comparison(
+        comparison.left,
+        op,
+        comparison.right,
+        value_type=comparison.value_type,
+    ):
+        return
+    raise ConfigError(  # R9
+        f"procedure guard step '{node_id}' is statically unsatisfiable: the comparison "
+        f"{comparison.left!r} {comparison_symbol(op)} {comparison.right!r} (at "
+        f"'{source_node_id}') compares two literals and is constantly false."
+    )
+
+
+_UNCOERCIBLE = object()
+
+
+def _coerced(value: Any, value_type: PredicateValueType | None) -> Any:
+    if value_type is None:
+        return value
+    try:
+        return coerce_predicate_value(value, value_type)
+    except PredicateCoercionError:
+        # A literal the declared type rejects is the typed-comparison layer's
+        # business, not this one's.
+        return _UNCOERCIBLE
+
+
+def _seeded_enum(
+    key: str,
+    declared_input_enums: Mapping[str, frozenset[Any]],
+) -> set[Any] | None:
+    """Seed a domain with the vocabulary the CONTRACT declares, if any.
+
+    This is the "declared enum sets" half of §3.5: a guard demanding a value
+    the contract's own enumeration does not contain can never hold, whatever
+    the caller sends.
+    """
+    declared = declared_input_enums.get(key)
+    return None if declared is None else set(declared)
+
+
+def _narrow(domain: _Domain, op: ComparisonOp, value: Any) -> None:
+    if op == "eq":
+        domain.equals = {value} if domain.equals is None else domain.equals & {value}
+        return
+    if op == "ne":
+        domain.excluded.add(value)
+        return
+    if not _is_orderable(value):
+        # Only numeric and temporal intervals are intersected (§3.5). A
+        # lexicographic bound on a string is not what an author writing
+        # `tier > "gold"` means, and refusing on one would be a guess.
+        return
+    if op in {"gt", "gte"}:
+        candidate = (value, op == "gte")
+        if domain.lower is None or _tighter_lower(candidate, domain.lower):
+            domain.lower = candidate
+        return
+    candidate = (value, op == "lte")
+    if domain.upper is None or _tighter_upper(candidate, domain.upper):
+        domain.upper = candidate
+
+
+def _tighter_lower(candidate: tuple[Any, bool], current: tuple[Any, bool]) -> bool:
+    if candidate[0] != current[0]:
+        return bool(candidate[0] > current[0])
+    return not candidate[1] and current[1]
+
+
+def _tighter_upper(candidate: tuple[Any, bool], current: tuple[Any, bool]) -> bool:
+    if candidate[0] != current[0]:
+        return bool(candidate[0] < current[0])
+    return not candidate[1] and current[1]
+
+
+def _is_orderable(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, int | float | date | datetime)
+
+
+def _domain_is_empty(domain: _Domain) -> bool:
+    if domain.equals is not None:
+        return not any(
+            candidate not in domain.excluded and _within_bounds(candidate, domain)
+            for candidate in domain.equals
+        )
+    if domain.lower is None or domain.upper is None:
+        return False
+    low, low_inclusive = domain.lower
+    high, high_inclusive = domain.upper
+    try:
+        if low > high:
+            return True
+        return bool(low == high and not (low_inclusive and high_inclusive))
+    except TypeError:
+        return False
+
+
+def _within_bounds(candidate: Any, domain: _Domain) -> bool:
+    """Fail OPEN on anything incomparable: an unknown is not a contradiction."""
+    for bound, is_lower in ((domain.lower, True), (domain.upper, False)):
+        if bound is None:
+            continue
+        value, inclusive = bound
+        if not _is_orderable(candidate) or not _is_orderable(value):
+            continue
+        try:
+            if is_lower and not (candidate >= value if inclusive else candidate > value):
+                return False
+            if not is_lower and not (candidate <= value if inclusive else candidate < value):
+                return False
+        except TypeError:
+            continue
+    return True
+
+
+def _flip(op: ComparisonOp) -> ComparisonOp:
+    """Mirror a comparison so the reference is always on the left."""
+    mirrored: dict[ComparisonOp, ComparisonOp] = {
+        "gt": "lt",
+        "gte": "lte",
+        "lt": "gt",
+        "lte": "gte",
+        "eq": "eq",
+        "ne": "ne",
+    }
+    return mirrored[op]
+
+
+def _operand_key(operand: PredicateOperand) -> str | None:
+    """Canonical name for the value an operand reads, or ``None`` for a literal.
+
+    Two comparisons narrow ONE domain only when they name the same thing, so
+    the key has to be the operand's whole reference -- ``$steps.rows.score``
+    and ``$steps.rows.count`` are different values and intersecting them would
+    invent a contradiction.
+    """
+    if operand.form == "input_path":
+        return "$input" if operand.path is None else f"$input.{operand.path}"
+    if operand.form == "steps_path":
+        tail = f".{operand.path}" if operand.path else ""
+        return f"$steps.{operand.alias}{tail}"
+    if operand.form == "count":
+        return f"count({operand.alias}, {operand.selector})"
+    if operand.form == "truncated":
+        return f"truncated({operand.alias})"
+    if operand.form == "exists":
+        return f"exists({operand.ref})"
+    return None
+
+
 __all__ = [
     "FALLTHROUGH",
     "FALSE_ARM",
     "TRUE_ARM",
+    "GuardConstraint",
     "ProcedureGraph",
     "WorstCaseExpansion",
     "WorstCasePath",
@@ -515,11 +895,14 @@ __all__ = [
     "control_targets_are_forward_only",
     "declared_control_targets",
     "format_witness_path",
+    "conjunctive_comparisons",
     "has_path_avoiding",
     "longest_weighted_path",
     "node_provider_weight",
     "node_step_weight",
     "procedure_node_kind",
+    "refuse_unsatisfiable_guards",
     "resolve_control_edges",
+    "true_arm_dominators",
     "worst_case_expansion",
 ]

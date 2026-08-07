@@ -180,15 +180,20 @@ def test_short_circuit_free_connectives_record_every_comparison(
             },
             {
                 "id": "gate",
+                # A SATISFIABLE conjunction that the run's input still fails on
+                # its first member. It used to be `>= 10 and <= 0`, which R9
+                # now refuses at compile as statically unsatisfiable -- and
+                # correctly: this test is about what the receipt records, not
+                # about admitting a branch that can never be taken.
                 "guard": {
                     "all_of": [
                         {"left": "$steps.rows.value", "op": "gte", "right": 10},
-                        {"left": "$steps.rows.value", "op": "lte", "right": 0},
+                        {"left": "$steps.rows.value", "op": "lte", "right": 100},
                     ]
                 },
                 "on_false": "tail",
                 "on_true": "tail",
-                "message": "unreachable",
+                "message": "outside the band",
             },
             {
                 "id": "tail",

@@ -20,6 +20,7 @@ from cruxible_core.procedure.analysis import (
     ProcedureGraph,
     build_procedure_graph,
     declared_control_targets,
+    refuse_unsatisfiable_guards,
 )
 from cruxible_core.procedure.types import (
     ABORT_TARGET,
@@ -36,6 +37,7 @@ from cruxible_core.provider.registry import (
 from cruxible_core.workflow.artifacts import resolve_local_artifact_path
 from cruxible_core.workflow.contracts import (
     contract_reference_label,
+    declared_input_field_enums,
     resolve_contract,
     validate_contract_payload,
 )
@@ -239,8 +241,13 @@ def _prior_step_aliases_by_index(
     return per_index
 
 
-def _resolved_procedure_graph(workflow: Any, definition_label: str) -> ProcedureGraph | None:
-    """Resolve the control graph once, refusing R1/R2/R3/R15 in the process.
+def _resolved_procedure_graph(
+    workflow: Any,
+    definition_label: str,
+    *,
+    config: CoreConfig,
+) -> ProcedureGraph | None:
+    """Resolve the control graph once, refusing R1/R2/R3/R15/R9 in the process.
 
     Only procedures have a control graph. A configured workflow cannot parse a
     guard node or a flow wrapper -- the type system already refused it -- so
@@ -254,6 +261,14 @@ def _resolved_procedure_graph(workflow: Any, definition_label: str) -> Procedure
     graph = build_procedure_graph(workflow)
     _refuse_unresolvable_parameter_operands(graph, workflow)
     _bind_guard_operands(graph, workflow)
+    contract = resolve_contract(config, workflow.contract_in)
+    refuse_unsatisfiable_guards(  # R9
+        graph,
+        workflow,
+        declared_input_enums=(
+            {} if contract is None else declared_input_field_enums(config, contract)
+        ),
+    )
     return graph
 
 
@@ -448,7 +463,7 @@ def compile_plan_definition(
         workflow.steps,
         initial_aliases=_initial_step_aliases,
     )
-    procedure_graph = _resolved_procedure_graph(workflow, definition_label)
+    procedure_graph = _resolved_procedure_graph(workflow, definition_label, config=config)
     control_edges = {} if procedure_graph is None else procedure_graph.edges
     for step_index, step in enumerate(workflow.steps):
         prior_step_aliases = prior_aliases_by_index[step_index]
