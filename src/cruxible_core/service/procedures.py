@@ -47,6 +47,7 @@ from cruxible_core.procedure.types import (
     ProcedureTrackRecord,
     ProcedureTransitionResult,
     compute_procedure_definition_digest,
+    unwrap_procedure_step,
 )
 from cruxible_core.query.entity_state import entity_matches_query_state
 from cruxible_core.receipt.builder import ReceiptBuilder
@@ -293,11 +294,18 @@ def lint_procedure_definition_authoring(
 
 
 def _procedure_workflow_steps(definition: ProcedureDefinition) -> list[WorkflowStepSchema]:
+    """Flatten a definition to the plain workflow steps a reference scan walks.
+
+    Wrappers unwrap; guards are skipped, because a guard carries no reference
+    template fields -- its operands are the predicate grammar's business, not
+    the resolver's.
+    """
     steps: list[WorkflowStepSchema] = []
-    for step in definition.steps:
+    for wrapper in definition.steps:
+        step = unwrap_procedure_step(wrapper)
         if isinstance(step, ProcedureRepeatStepSchema):
             steps.extend(step.repeat.steps)
-        else:
+        elif isinstance(step, WorkflowStepSchema):
             steps.append(step)
     return steps
 
