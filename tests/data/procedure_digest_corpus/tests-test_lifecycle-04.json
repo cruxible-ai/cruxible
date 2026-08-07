@@ -1,0 +1,27 @@
+{
+  "digest_v1": "sha256:f6b3920ca1bcbea42567b00ccb58a48d9a79687610b39e4b372f0e7cc1ec4a27",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 1,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "cruxible.JsonObject",
+    "declared_tier": "graph_write",
+    "name": "json_object_procedure",
+    "precondition": {},
+    "returns": "result",
+    "steps": [
+      {
+        "as": "result",
+        "id": "invoke",
+        "include_source": false,
+        "input": {
+          "value": "$input.anything_at_all"
+        },
+        "params": {},
+        "provider": "exported_action"
+      }
+    ]
+  },
+  "source_label": "tests-test_lifecycle-04"
+}

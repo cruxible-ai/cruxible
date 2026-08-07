@@ -1,0 +1,26 @@
+{
+  "digest_v1": "sha256:73d8f0675f9b9411bc25aaf75818799aebeb51f7f883b31efdd7b9f5ce518cf3",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 0,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "ProcedureInput",
+    "declared_tier": "governed_write",
+    "name": "invalid_guard_return",
+    "precondition": {},
+    "returns": "input_present",
+    "steps": [
+      {
+        "assert_exists": {
+          "ref": "$input.value"
+        },
+        "id": "input_present",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      }
+    ]
+  },
+  "source_label": "tests-test_compiler-03"
+}

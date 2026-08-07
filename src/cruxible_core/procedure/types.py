@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
     SerializationInfo,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -26,7 +27,14 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef
-from cruxible_core.primitives import canonical_json, new_id
+from cruxible_core.primitives import new_id
+from cruxible_core.procedure.graph_format import (
+    DEFINITION_FORMAT_V1,
+    coerce_present_declared_format,
+    definition_format_version,
+    register_v2_step_type,
+)
+from cruxible_core.procedure.guards import GuardSpec
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.temporal import utc_now
 
@@ -87,6 +95,39 @@ _TOP_LEVEL_STEP_KINDS = frozenset(
 )
 _NESTED_STEP_KINDS = _TOP_LEVEL_STEP_KINDS - {"query"}
 
+_GRAPH_NODE_BODY_KEYS = frozenset(
+    {"guard", "on_true", "on_false", "next", "step", "project", "propose_group_from"}
+)
+"""Keys that identify a graph node or a step wrapper, refused inside a repeat body."""
+
+ABORT_TARGET = "$abort"
+"""The one control-edge target that is not a step id: terminate with the message."""
+
+
+def _require_top_level_procedure_kind(step: WorkflowStepSchema) -> WorkflowStepSchema:
+    kind = workflow_step_kind(step)
+    if kind not in _TOP_LEVEL_STEP_KINDS:
+        raise ValueError(
+            f"procedure steps may only use {sorted(_TOP_LEVEL_STEP_KINDS)}; "
+            f"found disallowed kind '{kind}'"
+        )
+    return step
+
+
+ProcedureInnerStep = Annotated[
+    WorkflowStepSchema, AfterValidator(_require_top_level_procedure_kind)
+]
+"""A workflow step RESTRICTED to the ruled procedure subset, refused at PARSE.
+
+This is the type-system refusal, not a downstream compile check. The top-level
+whitelist iterates ``self.steps`` and tests ``isinstance(step,
+WorkflowStepSchema)``; a step WRAPPED in a flow node is not a
+``WorkflowStepSchema`` instance, so it would be skipped entirely -- admitting
+``apply_all``, ``propose_relationship_group`` or any other excluded kind
+through ``step:``. Typing the wrapped slot closes that hole where it opens,
+and nothing downstream has to remember to check.
+"""
+
 
 class ProcedureBudget(BaseModel):
     """Required hard bounds for a procedure invocation."""
@@ -111,6 +152,34 @@ class ProcedureRepeatSpec(BaseModel):
     steps: list[WorkflowStepSchema] = Field(min_length=1)
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def refuse_graph_nodes_in_body(cls, data: Any) -> Any:
+        """R17 -- a repeat body holds plain steps, never graph nodes or wrappers.
+
+        Branching inside a bounded loop body is out of scope, and admitting it
+        would break two things at once: the attempt-isolation contract (the
+        handler swaps ``step_outputs`` per attempt), and the local-digest
+        reasoning that treats a repeat body as the node's own CONTENT. That
+        treatment is only unambiguous while nested steps carry no control
+        targets, so the control-target exclusion is a no-op inside a body.
+        """
+        if not isinstance(data, dict):
+            return data
+        steps = data.get("steps")
+        if not isinstance(steps, list):
+            return data
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            found = sorted(_GRAPH_NODE_BODY_KEYS.intersection(step))
+            if found:
+                raise ValueError(
+                    "repeat bodies may not contain graph nodes or step wrappers; "
+                    f"found {found}. Branch outside the loop instead."
+                )
+        return data
 
     @model_validator(mode="after")
     def validate_nested_step_subset(self) -> ProcedureRepeatSpec:
@@ -153,7 +222,115 @@ class ProcedureRepeatStepSchema(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
-ProcedureStepSchema = WorkflowStepSchema | ProcedureRepeatStepSchema
+class ProcedureGuardStepSchema(BaseModel):
+    """A predicate with two labelled successors. Procedure-only.
+
+    Graph control lives on procedure-only schemas and adds ZERO fields to any
+    shared model. The four shared assert specs and ``WorkflowStepSchema`` are
+    the CONFIGURED-WORKFLOW grammar, compiled by the ordinary workflow path,
+    which would parse branch fields and then silently ignore them. A configured
+    workflow cannot parse a guard node because guard nodes are not members of
+    ``WorkflowStepSchema`` -- the type system is the refusal, so none is
+    written.
+    """
+
+    id: str
+    guard: GuardSpec
+    on_true: str | None = None
+    """Step id, or ``None`` for fallthrough to the next step in list order."""
+    on_false: str | None = None
+    """Step id or ``"$abort"``; ``None`` means ``"$abort"``."""
+    message: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProcedureFlowStepSchema(BaseModel):
+    """An unconditional successor override on a non-guard node. Procedure-only.
+
+    There is NO outer ``id``: the node's identity is the wrapped step's ``id``,
+    exposed as a property so unique-id validation and every downstream analysis
+    keep reading ``step.id`` unchanged. A second, independently-settable id
+    would be an unconstrained alias for the same node.
+    """
+
+    step: ProcedureInnerStep
+    next: str
+
+    model_config = ConfigDict(extra="forbid")
+
+    @property
+    def id(self) -> str:
+        return self.step.id
+
+    @property
+    def as_(self) -> str | None:
+        """The wrapped step's alias.
+
+        Alias discovery reads ``as_`` off each step; a wrapper that did not
+        forward it would make a wrapped step's output invisible to every
+        downstream ``$steps.<alias>`` reference.
+        """
+        return self.step.as_
+
+
+class ProjectSpec(BaseModel):
+    """Assemble one output object from named alias references."""
+
+    fields: dict[str, Any]
+    contract_out: ContractReference | None = None
+    """Where wi-062's declared and enforced output contract will land.
+
+    Shipping the declaration and its enforcement is that work's own lane; this
+    is the SITE, reserved so the node does not have to change shape later.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProcedureProjectStepSchema(BaseModel):
+    """A projection node: the thing ``returns`` NAMES. Procedure-only.
+
+    It is deliberately not a replacement for ``returns``. ``returns`` stays a
+    top-level string naming one alias because the observed-output publication
+    path reads it with a literal ``$.returns`` json_extract and has no fallback
+    by design -- moving, nesting or renaming it makes that join match nothing
+    and silently publishes no envelope.
+    """
+
+    id: str
+    project: ProjectSpec
+    as_: str = Field(alias="as")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+ProcedureStepSchema = (
+    WorkflowStepSchema
+    | ProcedureRepeatStepSchema
+    | ProcedureGuardStepSchema
+    | ProcedureFlowStepSchema
+    | ProcedureProjectStepSchema
+)
+"""The procedure step union.
+
+Deliberately UNTAGGED. Discrimination is safe because every member is
+``extra="forbid"`` with distinct required fields, and the flow wrapper is
+additionally distinguished by having no ``id`` of its own. Converting to a
+``Field(discriminator=...)`` union would require a discriminator key in the
+wire form and hence a v1 digest change, so a guardrail asserts pairwise unique
+identifiability instead.
+"""
+
+register_v2_step_type(ProcedureGuardStepSchema)
+register_v2_step_type(ProcedureFlowStepSchema)
+register_v2_step_type(ProcedureProjectStepSchema)
+
+
+def unwrap_procedure_step(step: Any) -> Any:
+    """Return the wrapped inner step of a flow node, or the step itself."""
+    inner = getattr(step, "step", None)
+    return step if inner is None else inner
 
 
 class ProcedureStaticExpansion(BaseModel):
@@ -217,18 +394,62 @@ class ProcedureDefinition(BaseModel):
     budget: ProcedureBudget
     declared_tier: ProcedureTier = "governed_write"
     evidence_outputs: list[str] | None = None
+    graph_format: int | None = None
+    """The format discriminator, and the ONLY signal of definition format.
+
+    Legal wire spellings are exactly ABSENT and ``2``; every other value is
+    refused at parse. The annotation is left open rather than
+    ``Literal[2] | None`` because the refusal has to REPORT the unreadable
+    value it met: a Literal collapses "this core cannot read format 3" into a
+    generic type error that names no version and offers no remedy.
+
+    ``None`` means format v1; ``2`` means the graph format. It defaults to
+    ``None`` so ``exclude_none=True`` drops it from every existing definition
+    and no v1 byte moves. It is deliberately explicit rather than inferred:
+    procedure steps carry arbitrary ``dict[str, Any]`` payloads, so a valid,
+    current v1 definition whose provider input happens to contain ``next`` and
+    ``parameters`` would be mis-detected by any content sniffer and routed
+    through v2 digest rules.
+
+    It is also the old-reader lock. ``ProcedureDefinition`` is
+    ``extra="forbid"``, so a 0.3 core raises ``extra_forbidden`` on this key at
+    all three definition parse paths -- the store row reader, the snapshot
+    loader, and the state-diff artifact reader -- rather than silently
+    mis-executing a definition whose control flow it cannot follow.
+    """
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("graph_format", mode="before")
+    @classmethod
+    def refuse_non_canonical_format_spellings(cls, value: Any) -> Any:
+        """Ahead of coercion, and only when the KEY IS PRESENT.
+
+        Two things this position buys, neither available later. Coercion is the
+        fail-open: ``int | None`` is non-strict, so ``"2"`` and ``2.0`` would
+        arrive at the value check already looking like a legal ``2``. And a
+        before-validator on a defaulted field runs ONLY when the key was
+        supplied, which is the only place explicit null can still be told apart
+        from absence -- by the time the model exists both are ``None``.
+        """
+        return coerce_present_declared_format(value)
 
     @model_validator(mode="after")
     def validate_definition(self) -> ProcedureDefinition:
         if not self.name.strip():
             raise ValueError("procedure name must be non-empty")
+        # R13/R14. Refuses an undeclared graph construct at PARSE, so no
+        # downstream stage has to remember to look.
+        definition_format_version(self)
 
+        # Defence in depth behind ProcedureInnerStep: the whitelist UNWRAPS, so
+        # it walks the inner step of every wrapper kind rather than skipping
+        # wrapped steps as non-WorkflowStepSchema instances.
+        unwrapped = [unwrap_procedure_step(step) for step in self.steps]
         disallowed = sorted(
             {
                 workflow_step_kind(step)
-                for step in self.steps
+                for step in unwrapped
                 if isinstance(step, WorkflowStepSchema)
                 and workflow_step_kind(step) not in _TOP_LEVEL_STEP_KINDS
             }
@@ -243,8 +464,9 @@ class ProcedureDefinition(BaseModel):
             if len(set(self.evidence_outputs)) != len(self.evidence_outputs):
                 raise ValueError("evidence_outputs must not contain duplicate aliases")
             available_outputs = {
-                step.as_ if isinstance(step, ProcedureRepeatStepSchema) else (step.as_ or step.id)
-                for step in self.steps
+                alias
+                for alias in (_step_output_alias(step) for step in self.steps)
+                if alias is not None
             }
             unknown = sorted(set(self.evidence_outputs) - available_outputs)
             if unknown:
@@ -282,7 +504,8 @@ class ProcedureDefinition(BaseModel):
         total_steps = 0
         expanded_steps = 0
         expanded_provider_calls = 0
-        for step in self.steps:
+        for wrapper in self.steps:
+            step = unwrap_procedure_step(wrapper)
             if isinstance(step, ProcedureRepeatStepSchema):
                 nested_count = len(step.repeat.steps)
                 nested_provider_count = sum(
@@ -294,7 +517,11 @@ class ProcedureDefinition(BaseModel):
                 continue
             total_steps += 1
             expanded_steps += 1
-            if workflow_step_kind(step) == "provider":
+            # A guard is one step and zero provider calls: it decides where
+            # control goes, it does not call out. Batch C turns the provider
+            # sum into a longest-path max; until then a branch-free definition
+            # counts exactly as it did.
+            if isinstance(step, WorkflowStepSchema) and workflow_step_kind(step) == "provider":
                 expanded_provider_calls += 1
         return ProcedureStaticExpansion(
             total_steps=total_steps,
@@ -305,12 +532,13 @@ class ProcedureDefinition(BaseModel):
     def referenced_providers(self) -> set[str]:
         """Return every provider referenced at top level or inside repeat."""
         names: set[str] = set()
-        for step in self.steps:
+        for wrapper in self.steps:
+            step = unwrap_procedure_step(wrapper)
             if isinstance(step, ProcedureRepeatStepSchema):
                 names.update(
                     nested.provider for nested in step.repeat.steps if nested.provider is not None
                 )
-            elif step.provider is not None:
+            elif isinstance(step, WorkflowStepSchema) and step.provider is not None:
                 names.add(step.provider)
         return names
 
@@ -334,6 +562,14 @@ class ProcedureRecord(BaseModel):
     reason: str | None = None
     acceptance_config_digest: str | None = None
     acceptance_lock_digest: str | None = None
+    definition_format_version: int = DEFINITION_FORMAT_V1
+    """Which format the stored definition was parsed under.
+
+    A non-``None`` default is safe HERE and only here: the record is not part
+    of the definition digest, so emitting it moves no stored commitment. It is
+    the record-level answer to "which verifier proves this row", which a reader
+    must not have to re-derive from the definition it is about to trust.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -568,10 +804,31 @@ class ProcedureEvidenceArtifact(BaseModel):
 
 
 def compute_procedure_definition_digest(definition: ProcedureDefinition) -> str:
-    """Return the stable content digest of one validated definition."""
-    payload = definition.model_dump(mode="json", by_alias=True, exclude_none=True)
-    digest = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
-    return f"sha256:{digest}"
+    """Return the stable content digest of one validated definition.
+
+    The signature is UNCHANGED: one argument, no instance, no lock, no pins.
+    That is what lets all five existing call sites -- propose, both run
+    preflights, transition, and the store's round-trip verification -- keep
+    working untouched while the dispatcher underneath grows a second format.
+
+    The import is deferred because the digest layer sits ON TOP of this module:
+    it reads the step types and the control graph declared here.
+    """
+    from cruxible_core.procedure.digest import compute_definition_digest
+
+    return compute_definition_digest(definition)
+
+
+def _step_output_alias(step: Any) -> str | None:
+    """Return the alias a node publishes, or ``None`` when it publishes nothing.
+
+    A guard publishes nothing: it is a decision point, not a producer.
+    """
+    if isinstance(step, ProcedureGuardStepSchema):
+        return None
+    inner = unwrap_procedure_step(step)
+    alias = getattr(inner, "as_", None)
+    return alias or str(inner.id)
 
 
 def _validate_unique_step_ids(
@@ -613,7 +870,11 @@ __all__ = [
     "ProcedureContractSchema",
     "ProcedureEvidenceArtifact",
     "ProcedureExecutionResult",
+    "ProcedureFlowStepSchema",
     "ProcedureGetResult",
+    "ProcedureGuardStepSchema",
+    "ProcedureInnerStep",
+    "ProcedureProjectStepSchema",
     "ProcedurePrecondition",
     "ProcedureReadRecord",
     "ProcedureRecord",
@@ -629,6 +890,8 @@ __all__ = [
     "ProcedureTier",
     "ProcedureTrackRecord",
     "ProcedureTransitionResult",
+    "ProjectSpec",
     "compute_procedure_definition_digest",
     "procedure_record_from_payload",
+    "unwrap_procedure_step",
 ]

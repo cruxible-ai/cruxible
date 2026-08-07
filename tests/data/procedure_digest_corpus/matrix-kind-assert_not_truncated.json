@@ -1,0 +1,34 @@
+{
+  "digest_v1": "sha256:b8aefc85db9c78c4aeb08e09cb4092f1632dd71e7324e39dcd1a5955601dfe7f",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 5,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "cruxible.EmptyInput",
+    "declared_tier": "governed_write",
+    "name": "matrix_assert_not_truncated",
+    "precondition": {},
+    "returns": "rows",
+    "steps": [
+      {
+        "as": "rows",
+        "id": "seed",
+        "include_source": false,
+        "input": {},
+        "params": {},
+        "query": "named_query"
+      },
+      {
+        "assert_not_truncated": {
+          "step": "rows"
+        },
+        "id": "guard",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      }
+    ]
+  },
+  "source_label": "matrix-kind-assert_not_truncated"
+}

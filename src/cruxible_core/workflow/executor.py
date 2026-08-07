@@ -16,6 +16,7 @@ from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.procedure.types import ABORT_TARGET
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.workflow.apply import compute_apply_digest
@@ -34,6 +35,7 @@ from cruxible_core.workflow.step_helpers import extract_read_metadata
 from cruxible_core.workflow.tracing import persist_receipt as persist_workflow_receipt
 from cruxible_core.workflow.types import (
     CompiledPlan,
+    CompiledPlanStep,
     WorkflowExecutionResult,
     WorkflowLock,
 )
@@ -282,9 +284,7 @@ def execute_procedure_plan(
     results_recorded = False
 
     try:
-        for compiled_step in context.plan.steps:
-            context.check_procedure_wall_clock()
-            PROCEDURE_STEP_HANDLER_REGISTRY.execute(context, compiled_step)
+        _walk_procedure_successors(context)
         context.check_procedure_wall_clock()
 
         output = _resolve_procedure_output(context)
@@ -337,6 +337,60 @@ def execute_procedure_plan(
         alias_step_ids=context.alias_step_ids,
         step_trace_ids=context.step_trace_ids,
     )
+
+
+def _walk_procedure_successors(context: WorkflowExecutionContext) -> None:
+    """Execute a compiled procedure by following its successor function.
+
+    LINEARITY IS NOT A SPECIAL CASE. With no declared control edges the
+    successor of every step is the next step in list order, so this walk visits
+    exactly the sequence the flat loop visited -- the same code path, not a
+    branch around it.
+
+    Control edges were resolved to step ids at compile time and R1/R2/R3 have
+    already been checked, so the successor function here is a dict lookup. The
+    forward-only rule bounds the walk without a visited set: every hop moves
+    strictly later in the list.
+    """
+    steps = context.plan.steps
+    if not steps:
+        return
+    by_id = {step.step_id: step for step in steps}
+    next_in_order = {
+        step.step_id: steps[index + 1].step_id
+        for index, step in enumerate(steps)
+        if index + 1 < len(steps)
+    }
+    current: str | None = steps[0].step_id
+    while current is not None:
+        compiled_step = by_id[current]
+        context.check_procedure_wall_clock()
+        PROCEDURE_STEP_HANDLER_REGISTRY.execute(context, compiled_step)
+        current = _procedure_successor(context, compiled_step, next_in_order)
+
+
+def _procedure_successor(
+    context: WorkflowExecutionContext,
+    compiled_step: CompiledPlanStep,
+    next_in_order: dict[str, str],
+) -> str | None:
+    fallthrough = next_in_order.get(compiled_step.step_id)
+    if compiled_step.kind == "guard":
+        arm = context.guard_outcomes[compiled_step.step_id]
+        target = (
+            compiled_step.on_true_step_id if arm == "on_true" else compiled_step.on_false_step_id
+        )
+        if target == ABORT_TARGET:
+            # The sentinel terminates the run with the node's message -- the
+            # same outcome, and the same failure shape, as the assert kinds
+            # this node supersedes.
+            raise QueryExecutionError(
+                compiled_step.guard_message or f"guard step '{compiled_step.step_id}' failed"
+            )
+        return target if target is not None else fallthrough
+    if compiled_step.next_step_id is not None:
+        return compiled_step.next_step_id
+    return fallthrough
 
 
 def _resolve_procedure_output(context: WorkflowExecutionContext) -> Any:

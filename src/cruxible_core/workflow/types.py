@@ -37,6 +37,8 @@ from cruxible_core.group.types import (
     SignalBucketBasis,
     SignalValue,
 )
+from cruxible_core.procedure.guards import GuardSpec
+from cruxible_core.procedure.types import ProjectSpec
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.temporal import utc_now
@@ -103,7 +105,13 @@ class CompiledPlanStep(BaseModel):
     """Single compiled workflow step."""
 
     step_id: str
-    kind: StepKind | Literal["repeat"]
+    kind: StepKind | Literal["repeat", "guard", "project", "propose_group_from"]
+    """Widened on the COMPILED model only.
+
+    ``StepKind`` itself is untouched, which is why the config-reference
+    set-equality gate and the default-registry completeness invariant do not
+    fire: these kinds are procedure-only, exactly as ``repeat`` already is.
+    """
     workflow_type: WorkflowType = "utility"
     as_name: str | None = None
     query_name: str | None = None
@@ -145,6 +153,18 @@ class CompiledPlanStep(BaseModel):
     repeat_steps: list[CompiledPlanStep] = Field(
         default_factory=list, exclude_if=lambda value: not value
     )
+    # Graph carriers. Each is optional and excluded when None, so a compiled
+    # plan of a linear procedure is byte-unchanged -- the same discipline the
+    # repeat fields above already follow.
+    guard_spec: GuardSpec | None = Field(default=None, exclude_if=lambda value: value is None)
+    on_true_step_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    on_false_step_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    next_step_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    guard_message: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    project_spec: ProjectSpec | None = Field(default=None, exclude_if=lambda value: value is None)
+    """Control edges are RESOLVED to step ids at compile time, not chased at run
+    time: the executor's successor function is a dict lookup, and R1/R2/R3 have
+    already been checked when it runs."""
 
     @property
     def canonical(self) -> bool:

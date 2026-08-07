@@ -33,7 +33,11 @@ from cruxible_core.config.schema import (
     NamedQuerySchema,
     WorkflowStepSchema,
 )
-from cruxible_core.procedure.types import ProcedureDefinition, ProcedureRepeatStepSchema
+from cruxible_core.procedure.types import (
+    ProcedureDefinition,
+    ProcedureRepeatStepSchema,
+    unwrap_procedure_step,
+)
 
 BLUEPRINT_FORMAT_VERSION = "1"
 """Format generation folded into the digest preimage.
@@ -414,12 +418,13 @@ class _ProcedureBody(BaseModel):
     def referenced_provider_names(self) -> list[str]:
         """Return provider references at top level and inside repeats, in step order."""
         names: list[str] = []
-        for step in self.definition.steps:
+        for wrapper in self.definition.steps:
+            step = unwrap_procedure_step(wrapper)
             if isinstance(step, ProcedureRepeatStepSchema):
                 names.extend(
                     nested.provider for nested in step.repeat.steps if nested.provider is not None
                 )
-            elif step.provider is not None:
+            elif isinstance(step, WorkflowStepSchema) and step.provider is not None:
                 names.append(step.provider)
         return names
 

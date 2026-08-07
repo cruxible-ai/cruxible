@@ -63,6 +63,13 @@ The MCP server name includes the version (`cruxible-core v0.2.0`) so agents and 
 - **Minor (0.x.0):** New features (tools, evaluate checks, config capabilities), breaking prompt changes
 - **Major (x.0.0):** Breaking API changes (tool signatures, config schema, storage format)
 
+**Recorded ruling — maintainer, 2026-08-06 (`dd-compat-sacrificeable-for-product`).** The 0.4.x
+line may break 0.3 compatibility; staging within 0.4.x is allowed. This carves out the rows
+above for 0.4.x: a config-schema or storage-format change that would otherwise be MAJOR ships
+inside the minor. Provenance integrity is **not** compatibility and may never be sacrificed —
+stored digests are never recomputed under a different rule, and receipts stay verifiable
+forever, including by the frozen verifiers of retired formats.
+
 **Release process:**
 1. Bump version in both files
 2. Rebuild kit bundles + manifest: `uv run python scripts/build_kit_bundles.py` (if a kit's config/providers changed, first `uv run cruxible lock --kit-dir kits/<kit>`); verify with `uv run python scripts/check_kit_lockfiles.py` and commit the regenerated manifest/locks

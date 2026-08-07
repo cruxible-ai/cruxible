@@ -42,6 +42,9 @@ from cruxible_core.group.store import GroupStore
 from cruxible_core.installs.store import InstallLedgerStore
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
 from cruxible_core.primitives import new_id
+from cruxible_core.procedure.digest import compute_node_digests
+from cruxible_core.procedure.graph_format import refuse_unknown_artifact_format
+from cruxible_core.procedure.pins import AcceptanceNodePin
 from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.procedure.types import ProcedureRecord
 from cruxible_core.receipt.store import SQLiteReceiptStore
@@ -74,7 +77,22 @@ _PROCEDURES_SNAPSHOT_ARTIFACT = "procedures.json"
 UPSTREAM_SNAPSHOT_ARTIFACT = "upstream.json"
 """Snapshot artifact member pinning the upstream ownership boundary at write time."""
 _UPSTREAM_SNAPSHOT_ARTIFACT = UPSTREAM_SNAPSHOT_ARTIFACT
-_PROCEDURES_SNAPSHOT_FORMAT_VERSION = 1
+_PROCEDURES_SNAPSHOT_FORMAT_VERSION = 2
+"""The version the WRITER always emits.
+
+The lowest-sufficient writer is deliberately not built. A 0.3 reader refuses
+version 2 loudly at its own exact-version gate with a message naming the core
+version it needs, which is the whole old-reader story: fail loud, upgrade. A
+writer that emitted 1 whenever an instance happened to hold no graph procedures
+would make that behaviour depend on data rather than on version, and nothing
+downstream could predict it."""
+
+_SUPPORTED_PROCEDURES_SNAPSHOT_FORMATS: frozenset[int] = frozenset({1, 2})
+"""The READER registry, which is a different question from the writer's.
+
+A 0.4 core must read 0.3 snapshots -- that is the upgrade path, and it has
+nothing to do with backwards compatibility. Reading is where old versions are
+supported forever; writing is where the line moves."""
 CONFIG_INTEGRITY_OVERRIDE_ENV = "CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH"
 
 
@@ -738,11 +756,28 @@ class CruxibleInstance(InstanceProtocol):
             artifacts.get(_PROCEDURES_SNAPSHOT_ARTIFACT),
             snapshot_id=snapshot_id,
         )
+        restored_node_pins = _load_snapshot_node_pins(artifacts.get(_PROCEDURES_SNAPSHOT_ARTIFACT))
         origin_snapshot_id = snapshot.origin_snapshot_id or snapshot.snapshot_id
         with instance.write_transaction() as uow:
             uow.graph.save_graph(graph)
             for procedure in procedures:
                 uow.procedures.save_procedure(procedure)
+                # BACKFILL. Node digests are derived and the computation is
+                # pure, so they are not carried in the artifact -- but nothing
+                # else would ever write them for a restored row, and a
+                # procedure whose decision points have no digests cannot be
+                # joined to any reading about them. Restore is the canonical
+                # moment: it is the one write path definitions enter by
+                # without passing through acceptance.
+                uow.procedures.save_node_digests(
+                    procedure.procedure_id,
+                    list(compute_node_digests(procedure.definition).values()),
+                )
+            # Same unit of work as the definitions they pin: a clone that
+            # committed procedures without their pins would produce v2 rows
+            # that refuse to run.
+            if restored_node_pins:
+                uow.procedures.save_acceptance_node_pins(restored_node_pins)
             uow.snapshots.save_snapshot(snapshot, artifacts)
             uow.snapshots.set_instance_state(_HEAD_SNAPSHOT_STATE_KEY, snapshot.snapshot_id)
             uow.snapshots.set_instance_state(_ORIGIN_SNAPSHOT_STATE_KEY, origin_snapshot_id)
@@ -867,13 +902,33 @@ class CruxibleInstance(InstanceProtocol):
 
 
 def _serialize_snapshot_procedures(store: ProcedureStoreProtocol) -> bytes:
-    """Serialize snapshot-time definitions and lifecycle state, excluding runs."""
+    """Serialize snapshot-time definitions, lifecycle state and pins, excluding runs.
+
+    Per-node pins RIDE THE ARTIFACT. Without them a restored v2 procedure would
+    arrive with no recorded accepted world, which its own fail-closed rule then
+    refuses -- so a clone would silently produce unrunnable procedures. Version-1
+    artifacts carry none, which is consistent: they can only hold v1 procedures,
+    for which the coarse acceptance digests are authoritative.
+    """
     total = store.count_procedures()
     procedures = store.list_procedures(limit=max(total, 1), offset=0)
     procedures = _dependency_order_procedures(
         procedures,
         context="Current procedure state",
     )
+    node_pins = {
+        procedure.procedure_id: [
+            {
+                "node_id": pin.node_id,
+                "pin_kind": pin.pin_kind,
+                "pin_key": pin.pin_key,
+                "pin_payload": pin.pin_payload,
+                "pin_digest": pin.pin_digest,
+            }
+            for pin in store.list_acceptance_node_pins(procedure.procedure_id)
+        ]
+        for procedure in procedures
+    }
     return (
         json.dumps(
             {
@@ -882,12 +937,30 @@ def _serialize_snapshot_procedures(store: ProcedureStoreProtocol) -> bytes:
                     procedure.model_dump(mode="json", by_alias=True, exclude_none=True)
                     for procedure in procedures
                 ],
+                "node_pins": {
+                    procedure_id: pins for procedure_id, pins in node_pins.items() if pins
+                },
             },
             indent=2,
             sort_keys=True,
         )
         + "\n"
     ).encode("utf-8")
+
+
+def _load_snapshot_node_pins(content: bytes | None) -> list[AcceptanceNodePin]:
+    """Read the pin rows a version-2 artifact carries."""
+    if content is None:
+        return []
+    payload = json.loads(content.decode("utf-8"))
+    raw = payload.get("node_pins") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        return []
+    return [
+        AcceptanceNodePin(procedure_id=procedure_id, **pin)
+        for procedure_id, pins in raw.items()
+        for pin in pins
+    ]
 
 
 def _load_snapshot_procedures(
@@ -908,9 +981,12 @@ def _load_snapshot_procedures(
         ) from exc
     if not isinstance(payload, dict):
         raise ConfigError(f"Snapshot '{snapshot_id}' has an invalid procedures.json artifact")
-    if payload.get("format_version") != _PROCEDURES_SNAPSHOT_FORMAT_VERSION:
-        raise ConfigError(
-            f"Snapshot '{snapshot_id}' has unsupported procedures.json format_version"
+    declared_version = payload.get("format_version")
+    if declared_version not in _SUPPORTED_PROCEDURES_SNAPSHOT_FORMATS:
+        raise refuse_unknown_artifact_format(
+            artifact_class=f"Snapshot '{snapshot_id}' procedures.json",
+            declared_version=declared_version,
+            supported_versions=tuple(sorted(_SUPPORTED_PROCEDURES_SNAPSHOT_FORMATS)),
         )
     raw_procedures = payload.get("procedures")
     if not isinstance(raw_procedures, list):

@@ -1,0 +1,45 @@
+{
+  "digest_v1": "sha256:b40735ee4f1a82a54f6a695de4d2e769e9528822f70ad7563c3add16c88000bb",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 2,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "cruxible.EmptyInput",
+    "declared_tier": "governed_write",
+    "name": "collision_provider_input",
+    "precondition": {},
+    "returns": "rows",
+    "steps": [
+      {
+        "as": "rows",
+        "id": "call",
+        "include_source": false,
+        "input": {
+          "guard": {
+            "left": 1,
+            "op": "eq",
+            "right": 1
+          },
+          "measurements": [
+            {
+              "name": "m"
+            }
+          ],
+          "next": "somewhere",
+          "parameters": {
+            "threshold": 3
+          },
+          "project": {
+            "fields": {
+              "a": "b"
+            }
+          }
+        },
+        "params": {},
+        "provider": "scorer"
+      }
+    ]
+  },
+  "source_label": "collision-provider-input-graph-keys"
+}

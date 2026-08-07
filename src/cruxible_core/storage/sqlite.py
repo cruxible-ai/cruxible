@@ -208,6 +208,7 @@ PROCEDURE_REFUSAL_REASON_MIGRATION = "0005_procedure_refusal_reason"
 BOUNDARY_TELEMETRY_MIGRATION = "0006_boundary_telemetry"
 INSTALL_LEDGER_MIGRATION = "0007_install_ledger"
 BINDING_LEDGER_MIGRATION = "0008_binding_ledger"
+PROCEDURE_GRAPH_MIGRATION = "0009_procedure_graph"
 """Compute-slot binding ledger tables (``slot_bindings`` + revisions).
 
 Migration ids are stamped rows rather than a dense sequence -- nothing reads the
@@ -237,6 +238,7 @@ _ALL_STORAGE_MIGRATIONS = frozenset(
         BOUNDARY_TELEMETRY_MIGRATION,
         INSTALL_LEDGER_MIGRATION,
         BINDING_LEDGER_MIGRATION,
+        PROCEDURE_GRAPH_MIGRATION,
     }
 )
 
@@ -1351,11 +1353,11 @@ class SQLiteStorageBackend:
         """Cheap, lock-free "is this database already at this version?" check.
 
         Deliberately reads only what the upgrade path WRITES: every migration
-        id it stamps, plus the columns whose presence proves the 0004 table
-        rebuild and the 0005 column add actually ran (the migration row alone
-        would be satisfied by a half-applied rebuild that a torn write left
-        behind, and the column alone would be satisfied by a fresh-schema
-        database that never stamped).
+        id it stamps, plus one proof column per ALTERING migration -- the 0004
+        table rebuild, the 0005 column add, and the 0009 column add. The
+        migration row alone would be satisfied by a half-applied change that a
+        torn write left behind; the column alone would be satisfied by a
+        fresh-schema database that never stamped.
 
         Any missing table (a brand-new file has no ``storage_migrations``)
         answers "not current" rather than raising -- absence is exactly the
@@ -1374,7 +1376,10 @@ class SQLiteStorageBackend:
         if "claim_id" not in columns:
             return False
         run_columns = {row["name"] for row in conn.execute("PRAGMA table_info(procedure_runs)")}
-        return "refusal_reason" in run_columns
+        if "refusal_reason" not in run_columns:
+            return False
+        procedure_columns = {row["name"] for row in conn.execute("PRAGMA table_info(procedures)")}
+        return "definition_format_version" in procedure_columns
 
     @staticmethod
     def mark_migration_on_connection(conn: sqlite3.Connection, migration_id: str) -> None:
@@ -1475,6 +1480,31 @@ class SQLiteStorageBackend:
         # every single connect.
         if not self.has_migration_on_connection(conn, BINDING_LEDGER_MIGRATION):
             self.mark_migration_on_connection(conn, BINDING_LEDGER_MIGRATION)
+        if not self.has_migration_on_connection(conn, PROCEDURE_GRAPH_MIGRATION):
+            self._migrate_procedure_graph(conn)
+            self.mark_migration_on_connection(conn, PROCEDURE_GRAPH_MIGRATION)
+
+    @staticmethod
+    def _migrate_procedure_graph(conn: sqlite3.Connection) -> None:
+        """Add ``procedures.definition_format_version`` (migration 0009).
+
+        The two new tables -- ``procedure_node_digests`` and
+        ``procedure_acceptance_node_pins`` -- are created by the procedure
+        store's own schema script, which this initialization pass already
+        re-ran, so they need no statement here. The COLUMN does: ``CREATE TABLE
+        IF NOT EXISTS`` is a no-op on an existing table and would otherwise
+        leave every upgraded instance permanently without it.
+
+        Existing rows take 1, which is the truth rather than a default: every
+        definition written before this column was format v1, and none of them
+        can have been anything else.
+        """
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(procedures)")}
+        if "definition_format_version" in columns:
+            return
+        conn.execute(
+            "ALTER TABLE procedures ADD COLUMN definition_format_version INTEGER NOT NULL DEFAULT 1"
+        )
 
     @staticmethod
     def _migrate_procedure_refusal_reason(conn: sqlite3.Connection) -> None:

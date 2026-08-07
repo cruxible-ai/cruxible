@@ -1,0 +1,29 @@
+{
+  "digest_v1": "sha256:380b458749a8957e85db0b3fdef433322844b352436e17f8510dbeaedbf3ab27",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 2,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "cruxible.EmptyInput",
+    "declared_tier": "governed_write",
+    "name": "collision_relationship_state",
+    "precondition": {},
+    "returns": "rows",
+    "steps": [
+      {
+        "as": "rows",
+        "id": "read",
+        "include_source": false,
+        "input": {},
+        "params": {},
+        "query": "named_query",
+        "relationship_state": {
+          "graph_format": 2,
+          "on_true": "x"
+        }
+      }
+    ]
+  },
+  "source_label": "collision-relationship-state-graph-keys"
+}

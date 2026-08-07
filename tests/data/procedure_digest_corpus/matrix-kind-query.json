@@ -1,0 +1,27 @@
+{
+  "digest_v1": "sha256:a9ffcf03fc54dceff28c902caa64df109d0084c64dacb052fa4042e48410e700",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 5,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "cruxible.EmptyInput",
+    "declared_tier": "governed_write",
+    "name": "matrix_query",
+    "precondition": {},
+    "returns": "rows",
+    "steps": [
+      {
+        "as": "rows",
+        "id": "read",
+        "include_source": false,
+        "input": {},
+        "params": {
+          "limit": 5
+        },
+        "query": "named_query"
+      }
+    ]
+  },
+  "source_label": "matrix-kind-query"
+}

@@ -1,0 +1,131 @@
+{
+  "digest_v1": "sha256:f7352a35da76374bca5a2a05612d09229904eb5898e13d230795261d8ee5cc66",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 4,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "ExchangeDeliveredItemsProcedureInput",
+    "contract_out": "TauToolResult",
+    "declared_tier": "graph_write",
+    "description": "RET-AUTH-001: \"At the beginning of the conversation, you have to authenticate the user identity by locating their user id via email, or via name + zip code. This has to be done even when the user already provides the user id.\" RET-EXCHANGE-001: \"An order can only be exchanged if its status is 'delivered', and you should check its status before taking the action.\" RET-EXCHANGE-002: \"In particular, remember to remind the customer to confirm they have provided all items to be exchanged.\" RET-CONFIRM-001: \"Before taking any action that updates the database (cancel, modify, return, exchange), you must list the action details and obtain explicit user confirmation (yes) to proceed.\"",
+    "evidence_outputs": [
+      "authenticated",
+      "order",
+      "confirmation",
+      "result"
+    ],
+    "name": "governed_exchange_delivered_order_items",
+    "precondition": {
+      "condition": {
+        "text": "An order can only be exchanged if its status is 'delivered', and you should check its status before taking the action."
+      },
+      "entity_type": "PolicyRule"
+    },
+    "returns": "result",
+    "steps": [
+      {
+        "as": "authenticated",
+        "id": "authenticate",
+        "include_source": false,
+        "input": {
+          "email": "$input.email"
+        },
+        "params": {},
+        "provider": "find_user_id_by_email"
+      },
+      {
+        "as": "order",
+        "id": "read_order",
+        "include_source": false,
+        "input": {
+          "order_id": "$input.order_id"
+        },
+        "params": {},
+        "provider": "get_order_details"
+      },
+      {
+        "assert": {
+          "left": "$steps.order.result.user_id",
+          "message": "Refused because the order does not belong to the authenticated user.",
+          "op": "eq",
+          "right": "$steps.authenticated.result"
+        },
+        "id": "require_order_owner",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      },
+      {
+        "assert": {
+          "left": "$steps.order.result.status",
+          "message": "Refused because only an order with status 'delivered' may be exchanged.",
+          "op": "eq",
+          "right": "delivered"
+        },
+        "id": "require_delivered",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      },
+      {
+        "assert": {
+          "left": "$input.item_ids",
+          "message": "Refused because no items were supplied for exchange.",
+          "op": "ne",
+          "right": []
+        },
+        "id": "require_items",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      },
+      {
+        "assert": {
+          "left": "$input.new_item_ids",
+          "message": "Refused because no replacement items were supplied.",
+          "op": "ne",
+          "right": []
+        },
+        "id": "require_new_items",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      },
+      {
+        "as": "confirmation",
+        "id": "read_confirmation",
+        "include_source": false,
+        "input": {},
+        "params": {},
+        "provider": "latest_user_confirmation"
+      },
+      {
+        "assert": {
+          "left": "$steps.confirmation.result.is_affirmative",
+          "message": "Refused because the latest actual user turn was not an explicit yes-family confirmation.",
+          "op": "eq",
+          "right": true
+        },
+        "id": "require_confirmation",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      },
+      {
+        "as": "result",
+        "id": "request_exchange",
+        "include_source": false,
+        "input": {
+          "item_ids": "$input.item_ids",
+          "new_item_ids": "$input.new_item_ids",
+          "order_id": "$input.order_id",
+          "payment_method_id": "$input.payment_method_id"
+        },
+        "params": {},
+        "provider": "exchange_delivered_order_items"
+      }
+    ]
+  },
+  "source_label": "tau3-retail-exchange_delivered_order_items"
+}

@@ -1,0 +1,38 @@
+{
+  "digest_v1": "sha256:248e68f24f8c1ea4034ee1c80ca595a1f8a33d41cb4aadd37e38983408090527",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 5,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "cruxible.EmptyInput",
+    "declared_tier": "governed_write",
+    "name": "matrix_assert_count",
+    "precondition": {},
+    "returns": "rows",
+    "steps": [
+      {
+        "as": "rows",
+        "id": "seed",
+        "include_source": false,
+        "input": {},
+        "params": {},
+        "query": "named_query"
+      },
+      {
+        "assert_count": {
+          "count": "returned_results",
+          "message": "empty read",
+          "op": "gte",
+          "step": "rows",
+          "value": 1
+        },
+        "id": "guard",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      }
+    ]
+  },
+  "source_label": "matrix-kind-assert_count"
+}

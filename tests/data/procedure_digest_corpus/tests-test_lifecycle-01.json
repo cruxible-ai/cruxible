@@ -1,0 +1,44 @@
+{
+  "digest_v1": "sha256:d34f4aee86335bce4028aef2960466be0494ff8453012080f5a3ddcd1fc52f00",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 3,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": {
+      "allow_extra": false,
+      "fields": {
+        "unused": {
+          "indexed": false,
+          "optional": true,
+          "primary_key": false,
+          "type": "json"
+        },
+        "value": {
+          "indexed": false,
+          "optional": false,
+          "primary_key": false,
+          "type": "int"
+        }
+      }
+    },
+    "declared_tier": "graph_write",
+    "name": "get_task",
+    "precondition": {},
+    "returns": "result",
+    "steps": [
+      {
+        "as": "result",
+        "id": "invoke",
+        "include_source": false,
+        "input": {
+          "metadata": "{\"passthrough\": true}",
+          "value": "$input.value"
+        },
+        "params": {},
+        "provider": "exported_action"
+      }
+    ]
+  },
+  "source_label": "tests-test_lifecycle-01"
+}

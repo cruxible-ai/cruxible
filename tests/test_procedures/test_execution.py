@@ -867,7 +867,7 @@ def test_run_refuses_when_config_drifts_from_the_accepted_pins(
     service_lock(procedure_instance)
     _stub_provider(monkeypatch, should_not_run)
 
-    with pytest.raises(ConfigError, match="pinned to the config and lock") as exc_info:
+    with pytest.raises(ConfigError, match="is pinned to provider 'exported_action'") as exc_info:
         service_run_procedure(
             procedure_instance,
             procedure_id,
@@ -876,8 +876,12 @@ def test_run_refuses_when_config_drifts_from_the_accepted_pins(
         )
 
     message = str(exc_info.value)
-    assert "accepted against" in message
-    assert "cruxible procedure resolve" in message
+    # Per-node currency names WHAT moved: the node, the dependency, and the
+    # differing field. The whole-config digest could only report that something
+    # changed somewhere.
+    assert "node 'invoke'" in message
+    assert "differing: config" in message
+    assert "re-running `cruxible lock`" in message
     assert called is False
 
     run = _run(procedure_instance, getattr(exc_info.value, "procedure_run_id"))

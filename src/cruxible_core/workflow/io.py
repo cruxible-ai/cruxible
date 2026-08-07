@@ -13,6 +13,7 @@ from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.predicate import PredicateValueType, evaluate_typed_comparison
+from cruxible_core.procedure.guards import GuardSpec, parse_predicate_operand
 from cruxible_core.provider.registry import resolve_provider
 from cruxible_core.provider.types import (
     ExecutionTrace,
@@ -675,3 +676,99 @@ def _value_is_present(value: Any) -> bool:
     if isinstance(value, str) and value == "":
         return False
     return True
+
+
+def evaluate_guard_predicate(
+    guard_step_id: str,
+    spec: GuardSpec,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Evaluate one guard predicate and return ``(passed, operand trace)``.
+
+    Connectives are SHORT-CIRCUIT-FREE: every comparison is evaluated so the
+    receipt records every operand value. A guard that recorded only the
+    operands it happened to need would leave the log unable to answer "why did
+    this run take that arm", which is the one question a decision point exists
+    to answer.
+    """
+    trace: list[dict[str, Any]] = []
+    passed = _evaluate_guard(guard_step_id, spec, input_payload, step_outputs, trace)
+    return passed, trace
+
+
+def _evaluate_guard(
+    guard_step_id: str,
+    spec: GuardSpec,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+    trace: list[dict[str, Any]],
+) -> bool:
+    if spec.all_of is not None:
+        results = [
+            _evaluate_guard(guard_step_id, child, input_payload, step_outputs, trace)
+            for child in spec.all_of
+        ]
+        return all(results)
+    if spec.any_of is not None:
+        results = [
+            _evaluate_guard(guard_step_id, child, input_payload, step_outputs, trace)
+            for child in spec.any_of
+        ]
+        return any(results)
+    if spec.not_of is not None:
+        return not _evaluate_guard(guard_step_id, spec.not_of, input_payload, step_outputs, trace)
+    assert spec.op is not None
+    left = _resolve_guard_operand(guard_step_id, spec.left, input_payload, step_outputs)
+    right = _resolve_guard_operand(guard_step_id, spec.right, input_payload, step_outputs)
+    passed = _evaluate_assert(left, spec.op, right, value_type=spec.value_type)
+    entry: dict[str, Any] = {
+        "left": left,
+        "op": spec.op,
+        "right": right,
+        "passed": passed,
+    }
+    if spec.value_type is not None:
+        entry["value_type"] = spec.value_type
+    trace.append(entry)
+    return passed
+
+
+def _resolve_guard_operand(
+    guard_step_id: str,
+    raw: Any,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> Any:
+    operand = parse_predicate_operand(raw)
+    if operand.form == "literal":
+        return operand.literal
+    if operand.form in {"input_path", "steps_path"}:
+        return resolve_value(raw, input_payload, step_outputs)
+    if operand.form == "count":
+        assert operand.alias is not None and operand.selector is not None
+        source = _get_guard_source_output(guard_step_id, operand.alias, step_outputs)
+        return _resolve_guard_count(guard_step_id, operand.alias, source, operand.selector)
+    if operand.form == "exists":
+        assert operand.ref is not None
+        try:
+            resolved = resolve_value(operand.ref, input_payload, step_outputs)
+        except QueryExecutionError:
+            return False
+        return _value_is_present(resolved)
+    if operand.form == "truncated":
+        assert operand.alias is not None
+        source = _get_guard_source_output(guard_step_id, operand.alias, step_outputs)
+        metadata = extract_read_metadata(source)
+        if not metadata:
+            raise QueryExecutionError(
+                f"guard step '{guard_step_id}' cannot read truncation metadata "
+                f"from '{operand.alias}'"
+            )
+        return bool(metadata.get("truncated"))
+    raise QueryExecutionError(
+        f"guard step '{guard_step_id}' references governed parameter "
+        f"'{operand.parameter_name}', which this core cannot resolve. Governed "
+        "parameters are refused at compile time; reaching this point means a "
+        "compiled plan outlived the refusal that should have stopped it."
+    )

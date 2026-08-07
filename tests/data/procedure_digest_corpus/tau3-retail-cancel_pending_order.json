@@ -1,0 +1,105 @@
+{
+  "digest_v1": "sha256:8393893152ecd7fb0b0c8e95da6d9953203b3f06ff34f02c339cca9bb5bafeb9",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 4,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "CancelPendingOrderProcedureInput",
+    "contract_out": "TauToolResult",
+    "declared_tier": "graph_write",
+    "description": "RET-AUTH-001: \"At the beginning of the conversation, you have to authenticate the user identity by locating their user id via email, or via name + zip code. This has to be done even when the user already provides the user id.\" RET-CANCEL-001: \"An order can only be cancelled if its status is 'pending', and you should check its status before taking the action.\" RET-CONFIRM-001: \"Before taking any action that updates the database (cancel, modify, return, exchange), you must list the action details and obtain explicit user confirmation (yes) to proceed.\"",
+    "evidence_outputs": [
+      "authenticated",
+      "order",
+      "confirmation",
+      "result"
+    ],
+    "name": "governed_cancel_pending_order",
+    "precondition": {
+      "condition": {
+        "text": "An order can only be cancelled if its status is 'pending', and you should check its status before taking the action."
+      },
+      "entity_type": "PolicyRule"
+    },
+    "returns": "result",
+    "steps": [
+      {
+        "as": "authenticated",
+        "id": "authenticate",
+        "include_source": false,
+        "input": {
+          "email": "$input.email"
+        },
+        "params": {},
+        "provider": "find_user_id_by_email"
+      },
+      {
+        "as": "order",
+        "id": "read_order",
+        "include_source": false,
+        "input": {
+          "order_id": "$input.order_id"
+        },
+        "params": {},
+        "provider": "get_order_details"
+      },
+      {
+        "assert": {
+          "left": "$steps.order.result.user_id",
+          "message": "Refused because the order does not belong to the authenticated user.",
+          "op": "eq",
+          "right": "$steps.authenticated.result"
+        },
+        "id": "require_order_owner",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      },
+      {
+        "assert": {
+          "left": "$steps.order.result.status",
+          "message": "Refused because only an order with status 'pending' may be cancelled.",
+          "op": "eq",
+          "right": "pending"
+        },
+        "id": "require_pending",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      },
+      {
+        "as": "confirmation",
+        "id": "read_confirmation",
+        "include_source": false,
+        "input": {},
+        "params": {},
+        "provider": "latest_user_confirmation"
+      },
+      {
+        "assert": {
+          "left": "$steps.confirmation.result.is_affirmative",
+          "message": "Refused because the latest actual user turn was not an explicit yes-family confirmation.",
+          "op": "eq",
+          "right": true
+        },
+        "id": "require_confirmation",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      },
+      {
+        "as": "result",
+        "id": "cancel",
+        "include_source": false,
+        "input": {
+          "order_id": "$input.order_id",
+          "reason": "$input.reason"
+        },
+        "params": {},
+        "provider": "cancel_pending_order"
+      }
+    ]
+  },
+  "source_label": "tau3-retail-cancel_pending_order"
+}
