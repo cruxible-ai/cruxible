@@ -23,7 +23,7 @@ from collections import deque
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from cruxible_core.config.schema import WorkflowStepSchema, workflow_step_kind
 from cruxible_core.errors import ConfigError
@@ -601,14 +601,6 @@ class _Domain:
     excluded: set[Any] = field(default_factory=set)
     lower: tuple[Any, bool] | None = None
     upper: tuple[Any, bool] | None = None
-    enum_candidates: set[Any] | None = None
-    """The contract's declared vocabulary, narrowed by RUNTIME evaluation.
-
-    A declared enum IS the finite runtime domain, so the exact question is
-    answerable: run each constraint's own comparison, with its own declared
-    type, against every member. Whatever survives is what a caller could send
-    and still take the arm; nothing surviving means no caller can.
-    """
     granularities: set[str | None] = field(default_factory=set)
     """Per constraint: ``"int"``, ``"date"``, or ``None`` for continuous.
 
@@ -625,6 +617,25 @@ class _Domain:
     The fragment then reports nothing about it. §3.5: what the analysis cannot
     decide is not refused.
     """
+    witnesses: list[GuardConstraint] = field(default_factory=list)
+
+
+@dataclass
+class _EnumeratedDomain:
+    """One reference whose contract declares a finite vocabulary.
+
+    Keyed by REFERENCE ALONE, never by comparison class. The vocabulary is a
+    property of the field, so every conjunctive comparison on it narrows the
+    same set: a member that survives only the `int` comparison and one that
+    survives only the `string` comparison leave nothing that survives both.
+    Partitioning the candidates by class hid that and accepted a dead arm.
+
+    This is also why the class partition remains right for OPEN references --
+    there the fragment genuinely cannot say what the payload will carry, and
+    an enumerated domain is exactly the case where it can.
+    """
+
+    candidates: set[Any]
     witnesses: list[GuardConstraint] = field(default_factory=list)
 
 
@@ -726,6 +737,7 @@ def _refuse_empty_domain(
     declared_input_enums: Mapping[str, frozenset[Any]],
 ) -> None:
     domains: dict[tuple[str, str], _Domain] = {}
+    enumerated: dict[str, _EnumeratedDomain] = {}
     for source_node_id, spec in asserted:
         for comparison in conjunctive_comparisons(spec):
             _apply_comparison(
@@ -733,17 +745,27 @@ def _refuse_empty_domain(
                 source_node_id=source_node_id,
                 node_id=node_id,
                 domains=domains,
+                enumerated=enumerated,
                 declared_input_enums=declared_input_enums,
             )
-    for (key, _value_class), domain in sorted(domains.items()):
-        if not _domain_is_empty(domain):
+    # ENUMERATED references first: their verdict is exact, and it is the one a
+    # reviewer can check by hand against the vocabulary.
+    for key, enum_domain in sorted(enumerated.items()):
+        if enum_domain.candidates:
             continue
-        cited = "; ".join(constraint.rendered() for constraint in domain.witnesses)
-        raise ConfigError(  # R9
-            f"procedure guard step '{node_id}' is statically unsatisfiable: no value of "
-            f"{key} satisfies every comparison that must hold on the paths reaching it "
-            f"[{cited}]. A predicate that cannot hold is a branch that never runs."
-        )
+        _refuse_empty(node_id, key, enum_domain.witnesses)
+    for (key, _value_class), domain in sorted(domains.items()):
+        if _domain_is_empty(domain):
+            _refuse_empty(node_id, key, domain.witnesses)
+
+
+def _refuse_empty(node_id: str, key: str, witnesses: Sequence[GuardConstraint]) -> NoReturn:
+    cited = "; ".join(constraint.rendered() for constraint in witnesses)
+    raise ConfigError(  # R9
+        f"procedure guard step '{node_id}' is statically unsatisfiable: no value of "
+        f"{key} satisfies every comparison that must hold on the paths reaching it "
+        f"[{cited}]. A predicate that cannot hold is a branch that never runs."
+    )
 
 
 def _apply_comparison(
@@ -752,6 +774,7 @@ def _apply_comparison(
     source_node_id: str,
     node_id: str,
     domains: dict[tuple[str, str], _Domain],
+    enumerated: dict[str, _EnumeratedDomain],
     declared_input_enums: Mapping[str, frozenset[Any]],
 ) -> None:
     left = parse_predicate_operand(comparison.left)
@@ -782,33 +805,49 @@ def _apply_comparison(
     if value is _UNCOERCIBLE:
         return
 
-    # ONE DOMAIN PER (reference, comparison class). Two comparisons on one
-    # reference whose literals are of different classes -- `eq "1"` and `eq 1`
-    # -- narrow NOTHING about each other: the fragment cannot say which the
-    # payload will carry, so intersecting them invents a contradiction and
-    # refuses a satisfiable guard. Keeping them apart is the §3.5 fail-open
-    # rule applied to types, and it is also what keeps a `date` bound from
-    # ever being compared against a `datetime` one.
-    value_class = _comparison_class(value)
-    domain_key = (key, value_class)
+    constraint = GuardConstraint(key=key, op=op, value=value, source_node_id=source_node_id)
+
+    # AN ENUMERATED REFERENCE HAS ONE CANDIDATE SET, NOT ONE PER CLASS. The
+    # vocabulary is a property of the reference, so every conjunctive
+    # comparison on it narrows the SAME set whatever class its literal is --
+    # a member surviving only the int comparison and a member surviving only
+    # the string one leave nothing that survives both, and partitioning the
+    # candidates by class hid exactly that.
+    declared = _seeded_enum(key, declared_input_enums)
+    if declared is not None:
+        enum_domain = enumerated.get(key)
+        if enum_domain is None:
+            enum_domain = _EnumeratedDomain(candidates=declared)
+            enumerated[key] = enum_domain
+        enum_domain.witnesses.append(constraint)
+        enum_domain.candidates = _surviving_members(
+            enum_domain.candidates, op, literal, comparison.value_type
+        )
+
+    # ONE OPEN DOMAIN PER (reference, comparison class). With no declared
+    # vocabulary the fragment cannot say what the payload carries, so two
+    # comparisons whose literals are of different classes -- `eq "1"` and
+    # `eq 1` -- narrow NOTHING about each other and intersecting them would
+    # invent a contradiction. Keeping them apart is the §3.5 fail-open rule
+    # applied to types, and it is also what keeps a `date` bound from ever
+    # being compared against a `datetime` one.
+    domain_key = (key, _comparison_class(value))
     domain = domains.get(domain_key)
     if domain is None:
-        domain = _Domain(enum_candidates=_seeded_enum(key, declared_input_enums))
+        domain = _Domain()
         domains[domain_key] = domain
-    constraint = GuardConstraint(key=key, op=op, value=value, source_node_id=source_node_id)
     domain.witnesses.append(constraint)
     domain.granularities.add(_granularity(comparison.value_type, value))
-    _filter_enum_candidates(domain, op, literal, comparison.value_type)
     _narrow(domain, op, value)
 
 
-def _filter_enum_candidates(
-    domain: _Domain,
+def _surviving_members(
+    candidates: set[Any],
     op: ComparisonOp,
     literal: Any,
     value_type: PredicateValueType | None,
-) -> None:
-    """Narrow the declared vocabulary by RUNNING the comparison over it.
+) -> set[Any]:
+    """Narrow a declared vocabulary by RUNNING the comparison over it.
 
     The enum is the finite runtime domain, so this is not an approximation of
     the predicate -- it is the predicate, evaluated by the same function the
@@ -816,13 +855,10 @@ def _filter_enum_candidates(
     a cross-class comparison DECIDABLE rather than undecidable: a numeric test
     against a string vocabulary is false for `low`, false for `medium` and
     false for `high`, and a guard false on every admissible input is exactly
-    what R9 exists to refuse. Filtering the vocabulary by raw class instead
-    discarded that verdict and accepted the dead arm.
+    what R9 exists to refuse.
     """
-    if domain.enum_candidates is None:
-        return
     surviving: set[Any] = set()
-    for member in domain.enum_candidates:
+    for member in candidates:
         try:
             satisfied = evaluate_typed_comparison(member, op, literal, value_type=value_type)
         except (TypeError, ValueError):
@@ -831,7 +867,7 @@ def _filter_enum_candidates(
             continue
         if satisfied:
             surviving.add(member)
-    domain.enum_candidates = surviving
+    return surviving
 
 
 def _refuse_constant_false(
@@ -1050,11 +1086,6 @@ def _closed_bounds(domain: _Domain) -> tuple[Any, Any] | None:
 def _domain_is_empty(domain: _Domain) -> bool:
     if domain.undecidable:
         return False
-    if domain.enum_candidates is not None:
-        # The vocabulary is the whole runtime domain and every constraint has
-        # been run against it, so this verdict is exact -- no interval or
-        # equality reasoning can add to it.
-        return not domain.enum_candidates
     if domain.equals is not None:
         return not any(
             candidate not in domain.excluded and _within_bounds(candidate, domain)

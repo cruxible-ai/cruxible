@@ -41,6 +41,8 @@ relationships: []
 enums:
   Severity:
     values: [low, medium, high]
+  Code:
+    values: ["1", "2"]
 
 contracts:
   VacuityInput:
@@ -50,6 +52,9 @@ contracts:
       severity:
         type: string
         enum_ref: Severity
+      code:
+        type: string
+        enum_ref: Code
 
 providers:
   exported_action:
@@ -739,3 +744,85 @@ def test_an_open_field_still_fails_open_across_types(
         ]
     )
     _compile(vacuity_instance, definition)
+
+
+_CROSS_CLASS_ENUM_MEMBERS = [
+    {"left": "$input.code", "op": "eq", "right": 1, "value_type": "int"},
+    {"left": "$input.code", "op": "eq", "right": "2", "value_type": "string"},
+]
+"""`code` admits "1" or "2". `"1"` satisfies only the int comparison and `"2"`
+only the string one, so NO member satisfies the conjunction."""
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        pytest.param(_CROSS_CLASS_ENUM_MEMBERS, id="int-first"),
+        pytest.param(list(reversed(_CROSS_CLASS_ENUM_MEMBERS)), id="string-first"),
+    ],
+)
+def test_an_enum_is_narrowed_by_every_class_of_comparison_at_once(
+    members: list[dict[str, Any]],
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """An enumerated reference has ONE candidate set, not one per class.
+
+    The vocabulary is a property of the FIELD, so every conjunctive comparison
+    on it narrows the same set. Holding separate candidates per comparison
+    class let `"1"` survive in the int set and `"2"` in the string set, and
+    nothing anywhere noticed that no single member survived both.
+
+    Order does not matter, hence both directions.
+    """
+    definition = _definition(
+        [
+            _guard("gate", {"all_of": members}, on_true="tail", on_false="tail"),
+            _tail(),
+        ]
+    )
+    with pytest.raises(ConfigError, match="statically unsatisfiable"):
+        _compile(vacuity_instance, definition)
+
+
+def test_a_member_satisfying_every_class_of_comparison_still_compiles(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """The shared set must narrow, not empty by construction.
+
+    `"1"` coerces to 1 under the int comparison and matches `"1"` under the
+    string one, so it survives both and the guard is satisfiable.
+    """
+    definition = _definition(
+        [
+            _guard(
+                "gate",
+                {
+                    "all_of": [
+                        {"left": "$input.code", "op": "eq", "right": 1, "value_type": "int"},
+                        {"left": "$input.code", "op": "eq", "right": "1", "value_type": "string"},
+                    ]
+                },
+                on_true="tail",
+                on_false="tail",
+            ),
+            _tail(),
+        ]
+    )
+    _compile(vacuity_instance, definition)
+
+
+def test_the_cross_class_enum_refusal_cites_both_comparisons(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """One shared set means one refusal naming every constraint that emptied it."""
+    definition = _definition(
+        [
+            _guard("gate", {"all_of": _CROSS_CLASS_ENUM_MEMBERS}, on_true="tail", on_false="tail"),
+            _tail(),
+        ]
+    )
+    with pytest.raises(ConfigError) as exc_info:
+        _compile(vacuity_instance, definition)
+    message = str(exc_info.value)
+    assert "$input.code == 1" in message
+    assert "$input.code == '2'" in message
