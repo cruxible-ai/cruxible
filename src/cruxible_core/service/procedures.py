@@ -23,6 +23,7 @@ from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
 from cruxible_core.primitives import canonical_json
+from cruxible_core.procedure.digest import compute_node_digests
 from cruxible_core.procedure.graph_format import (
     DEFINITION_FORMAT_V1,
     definition_format_version,
@@ -1727,6 +1728,13 @@ def _transition_pending_procedure(
             # coarse acceptance digests: a live procedure with no pins would be
             # a procedure nobody can prove was reviewed against anything.
             ctx.uow.procedures.save_acceptance_node_pins(node_pins)
+            # Derived data, written where the definition is first known to be
+            # live. It is backfillable -- the computation is pure -- so this is
+            # a cache warm, not a commitment.
+            ctx.uow.procedures.save_node_digests(
+                procedure_id,
+                list(compute_node_digests(procedure.definition).values()),
+            )
 
         if action == "accept" and procedure.supersedes_procedure_id is not None:
             _retire_superseded_procedure(

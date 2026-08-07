@@ -19,6 +19,7 @@ from cruxible_core.governance.actors import (
     load_actor_context,
 )
 from cruxible_core.instance_protocol import ProcedureStoreProtocol
+from cruxible_core.procedure.digest import NodeDigests
 from cruxible_core.procedure.pins import AcceptanceNodePin
 from cruxible_core.procedure.types import (
     ProcedureBudgetSpent,
@@ -35,6 +36,12 @@ from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.temporal import format_datetime
 
 _SCHEMA = """\
+-- ``definition_format_version`` reaches already-populated databases through
+-- storage migration 0009, not through this statement, for the same reason
+-- ``procedure_runs.refusal_reason`` does. Kept OUT of the table body deliberately
+-- -- SQLite stores a CREATE TABLE verbatim, comments included, and rebuilds the
+-- statement on ALTER TABLE, so a comment next to the last column breaks any
+-- later DROP COLUMN.
 CREATE TABLE IF NOT EXISTS procedures (
     procedure_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -52,7 +59,8 @@ CREATE TABLE IF NOT EXISTS procedures (
     retired_at TEXT,
     reason TEXT,
     acceptance_config_digest TEXT,
-    acceptance_lock_digest TEXT
+    acceptance_lock_digest TEXT,
+    definition_format_version INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_procedures_name ON procedures(name);
 CREATE INDEX IF NOT EXISTS idx_procedures_status ON procedures(status);
@@ -121,6 +129,24 @@ CREATE TABLE IF NOT EXISTS procedure_acceptance_node_pins (
 );
 CREATE INDEX IF NOT EXISTS idx_procedure_node_pins_key
     ON procedure_acceptance_node_pins(pin_kind, pin_key, pin_digest);
+
+-- Derived, and therefore backfillable: the computation is pure, so a row that
+-- is absent can always be recomputed from the definition. It exists so a
+-- reading can be joined to a decision point by digest without re-parsing every
+-- stored definition.
+CREATE TABLE IF NOT EXISTS procedure_node_digests (
+    procedure_id TEXT NOT NULL REFERENCES procedures(procedure_id),
+    node_id TEXT NOT NULL,
+    local_digest TEXT NOT NULL,
+    subtree_digest TEXT NOT NULL,
+    structural_digest TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    PRIMARY KEY (procedure_id, node_id)
+);
+CREATE INDEX IF NOT EXISTS idx_procedure_node_digests_local
+    ON procedure_node_digests(local_digest);
+CREATE INDEX IF NOT EXISTS idx_procedure_node_digests_structural
+    ON procedure_node_digests(structural_digest);
 """
 
 _KNOWN_REFUSAL_REASONS = frozenset(get_args(ProcedureRefusalReason))
@@ -173,8 +199,9 @@ class ProcedureStore(ProcedureStoreProtocol):
             "(procedure_id, name, definition_json, definition_digest, status, version, "
             "supersedes_procedure_id, evidence_refs_json, proposed_actor_context, "
             "proposed_at, resolved_actor_context, resolved_at, retired_actor_context, "
-            "retired_at, reason, acceptance_config_digest, acceptance_lock_digest) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "retired_at, reason, acceptance_config_digest, acceptance_lock_digest, "
+            "definition_format_version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 procedure.procedure_id,
                 procedure.definition.name,
@@ -199,9 +226,47 @@ class ProcedureStore(ProcedureStoreProtocol):
                 procedure.reason,
                 procedure.acceptance_config_digest,
                 procedure.acceptance_lock_digest,
+                procedure.definition_format_version,
             ),
         )
         return procedure.procedure_id
+
+    def save_node_digests(self, procedure_id: str, digests: Sequence[NodeDigests]) -> int:
+        """Record one procedure's node digests. Does not commit."""
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO procedure_node_digests "
+            "(procedure_id, node_id, local_digest, subtree_digest, structural_digest, kind) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    procedure_id,
+                    digest.node_id,
+                    digest.local_digest,
+                    digest.subtree_digest,
+                    digest.structural_digest,
+                    digest.kind,
+                )
+                for digest in digests
+            ],
+        )
+        return len(digests)
+
+    def list_node_digests(self, procedure_id: str) -> list[NodeDigests]:
+        """Return one procedure's node digests, in stable order."""
+        rows = self._conn.execute(
+            "SELECT * FROM procedure_node_digests WHERE procedure_id = ? ORDER BY node_id",
+            (procedure_id,),
+        ).fetchall()
+        return [
+            NodeDigests(
+                node_id=row["node_id"],
+                kind=row["kind"],
+                local_digest=row["local_digest"],
+                subtree_digest=row["subtree_digest"],
+                structural_digest=row["structural_digest"],
+            )
+            for row in rows
+        ]
 
     def save_acceptance_node_pins(self, pins: Sequence[AcceptanceNodePin]) -> int:
         """Write the accepted world for one procedure. Does not commit."""
@@ -666,6 +731,7 @@ class ProcedureStore(ProcedureStoreProtocol):
             reason=row["reason"],
             acceptance_config_digest=row["acceptance_config_digest"],
             acceptance_lock_digest=row["acceptance_lock_digest"],
+            definition_format_version=int(row["definition_format_version"]),
         )
 
     @staticmethod
