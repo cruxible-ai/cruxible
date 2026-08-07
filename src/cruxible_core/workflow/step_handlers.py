@@ -48,7 +48,7 @@ from cruxible_core.workflow.transforms import (
 from cruxible_core.workflow.types import CompiledPlanStep, EntitySet, RelationshipSet
 
 VALID_STEP_KINDS: frozenset[str] = frozenset(str(kind) for kind in get_args(StepKind))
-PROCEDURE_STEP_KINDS: frozenset[str] = VALID_STEP_KINDS | {"repeat", "guard"}
+PROCEDURE_STEP_KINDS: frozenset[str] = VALID_STEP_KINDS | {"repeat", "guard", "project"}
 """Kind admission is per-commit and enforced AT IMPORT.
 
 ``required_kinds == allowed_kinds`` below, and ``validate_complete()`` runs
@@ -1062,6 +1062,29 @@ def _apply_all_preview_payload(
     }
 
 
+def execute_project_handler(
+    context: WorkflowExecutionContext,
+    compiled_step: CompiledPlanStep,
+) -> None:
+    """Assemble one output object from named alias references.
+
+    Ordinary reference resolution, deliberately: the projection is a shape, not
+    a computation, and giving it any evaluation power of its own would reopen
+    the embedded-code door the predicate grammar was closed to shut.
+    """
+    assert compiled_step.project_spec is not None
+    projected = {
+        key: resolve_value(template, context.plan.input_payload, context.step_outputs)
+        for key, template in compiled_step.project_spec.fields.items()
+    }
+    context.set_step_output(compiled_step, projected)
+    context.receipt_builder.record_plan_step(
+        compiled_step.step_id,
+        "project",
+        detail={"fields": sorted(compiled_step.project_spec.fields)},
+    )
+
+
 def execute_guard_handler(
     context: WorkflowExecutionContext,
     compiled_step: CompiledPlanStep,
@@ -1132,6 +1155,7 @@ PROCEDURE_STEP_HANDLER_REGISTRY = WorkflowStepRegistry(
         *_DEFAULT_STEP_HANDLERS,
         ("repeat", execute_repeat_handler),
         ("guard", execute_guard_handler),
+        ("project", execute_project_handler),
     ],
     allowed_kinds=PROCEDURE_STEP_KINDS,
     required_kinds=PROCEDURE_STEP_KINDS,

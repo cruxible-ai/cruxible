@@ -19,6 +19,7 @@ from cruxible_core.config.schema import WorkflowStepSchema
 from cruxible_core.procedure.types import (
     ProcedureFlowStepSchema,
     ProcedureGuardStepSchema,
+    ProcedureProjectStepSchema,
     ProcedureRepeatStepSchema,
     ProcedureStepSchema,
 )
@@ -52,6 +53,11 @@ REPRESENTATIVES: dict[type[BaseModel], dict[str, Any]] = {
     ProcedureFlowStepSchema: {
         "step": {"id": "wrapped", "provider": "scorer", "input": {}, "as": "rows"},
         "next": "gate",
+    },
+    ProcedureProjectStepSchema: {
+        "id": "shape",
+        "as": "result",
+        "project": {"fields": {"value": "$steps.rows.value"}},
     },
 }
 

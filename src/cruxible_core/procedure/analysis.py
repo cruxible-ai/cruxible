@@ -28,6 +28,7 @@ from cruxible_core.procedure.types import (
     ABORT_TARGET,
     ProcedureFlowStepSchema,
     ProcedureGuardStepSchema,
+    ProcedureProjectStepSchema,
     ProcedureRepeatStepSchema,
     unwrap_procedure_step,
 )
@@ -48,6 +49,8 @@ def procedure_node_kind(node: Any) -> str:
     """
     if isinstance(node, ProcedureGuardStepSchema):
         return "guard"
+    if isinstance(node, ProcedureProjectStepSchema):
+        return "project"
     inner = unwrap_procedure_step(node)
     if isinstance(inner, ProcedureRepeatStepSchema):
         return "repeat"

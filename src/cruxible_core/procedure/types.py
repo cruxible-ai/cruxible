@@ -272,11 +272,43 @@ class ProcedureFlowStepSchema(BaseModel):
         return self.step.as_
 
 
+class ProjectSpec(BaseModel):
+    """Assemble one output object from named alias references."""
+
+    fields: dict[str, Any]
+    contract_out: ContractReference | None = None
+    """Where wi-062's declared and enforced output contract will land.
+
+    Shipping the declaration and its enforcement is that work's own lane; this
+    is the SITE, reserved so the node does not have to change shape later.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProcedureProjectStepSchema(BaseModel):
+    """A projection node: the thing ``returns`` NAMES. Procedure-only.
+
+    It is deliberately not a replacement for ``returns``. ``returns`` stays a
+    top-level string naming one alias because the observed-output publication
+    path reads it with a literal ``$.returns`` json_extract and has no fallback
+    by design -- moving, nesting or renaming it makes that join match nothing
+    and silently publishes no envelope.
+    """
+
+    id: str
+    project: ProjectSpec
+    as_: str = Field(alias="as")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
 ProcedureStepSchema = (
     WorkflowStepSchema
     | ProcedureRepeatStepSchema
     | ProcedureGuardStepSchema
     | ProcedureFlowStepSchema
+    | ProcedureProjectStepSchema
 )
 """The procedure step union.
 
@@ -290,6 +322,7 @@ identifiability instead.
 
 register_v2_step_type(ProcedureGuardStepSchema)
 register_v2_step_type(ProcedureFlowStepSchema)
+register_v2_step_type(ProcedureProjectStepSchema)
 
 
 def unwrap_procedure_step(step: Any) -> Any:
@@ -819,6 +852,7 @@ __all__ = [
     "ProcedureGetResult",
     "ProcedureGuardStepSchema",
     "ProcedureInnerStep",
+    "ProcedureProjectStepSchema",
     "ProcedurePrecondition",
     "ProcedureReadRecord",
     "ProcedureRecord",
@@ -834,6 +868,7 @@ __all__ = [
     "ProcedureTier",
     "ProcedureTrackRecord",
     "ProcedureTransitionResult",
+    "ProjectSpec",
     "compute_procedure_definition_digest",
     "procedure_record_from_payload",
     "unwrap_procedure_step",

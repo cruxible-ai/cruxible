@@ -25,6 +25,7 @@ from cruxible_core.procedure.types import (
     ABORT_TARGET,
     ProcedureDefinition,
     ProcedureGuardStepSchema,
+    ProcedureProjectStepSchema,
     unwrap_procedure_step,
 )
 from cruxible_core.provider.registry import (
@@ -52,6 +53,7 @@ _PROCEDURE_OUTPUT_STEP_KINDS = frozenset(
     {
         "query",
         "provider",
+        "project",
         "repeat",
         "shape_items",
         "join_items",
@@ -424,6 +426,20 @@ def compile_plan_definition(
         # Read control targets BEFORE unwrapping: the wrapper owns `next`, a
         # guard owns `on_true`/`on_false`.
         control = control_edges.get(str(step.id), {})
+        if isinstance(step, ProcedureProjectStepSchema):
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="project",
+                    workflow_type="utility",
+                    as_name=step.as_,
+                    project_spec=step.project,
+                    params_preview=preview(
+                        dict(step.project.fields), step_aliases=prior_step_aliases
+                    ),
+                )
+            )
+            continue
         if isinstance(step, ProcedureGuardStepSchema):
             compiled_steps.append(
                 _compile_guard_step(

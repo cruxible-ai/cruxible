@@ -38,6 +38,7 @@ from cruxible_core.group.types import (
     SignalValue,
 )
 from cruxible_core.procedure.guards import GuardSpec
+from cruxible_core.procedure.types import ProjectSpec
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.temporal import utc_now
@@ -160,6 +161,7 @@ class CompiledPlanStep(BaseModel):
     on_false_step_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     next_step_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     guard_message: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    project_spec: ProjectSpec | None = Field(default=None, exclude_if=lambda value: value is None)
     """Control edges are RESOLVED to step ids at compile time, not chased at run
     time: the executor's successor function is a dict lookup, and R1/R2/R3 have
     already been checked when it runs."""
