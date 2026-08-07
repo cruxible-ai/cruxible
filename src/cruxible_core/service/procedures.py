@@ -23,11 +23,14 @@ from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
 from cruxible_core.primitives import canonical_json
+from cruxible_core.procedure.analysis import build_procedure_graph, has_path_avoiding
 from cruxible_core.procedure.digest import compute_node_digests
 from cruxible_core.procedure.graph_format import (
     DEFINITION_FORMAT_V1,
+    GRAPH_FORMAT_DECLARED_WITHOUT_CONSTRUCT,
     definition_format_version,
 )
+from cruxible_core.procedure.guards import PredicateOperand
 from cruxible_core.procedure.pins import (
     AcceptanceNodePin,
     build_acceptance_node_pins,
@@ -39,6 +42,7 @@ from cruxible_core.procedure.pins import (
 from cruxible_core.procedure.types import (
     MAX_PROCEDURE_EVIDENCE_BYTES,
     PROCEDURE_EVIDENCE_HEAD_BYTES,
+    ProcedureAuthoringWarning,
     ProcedureBudgetSpent,
     ProcedureContractFieldSchema,
     ProcedureContractSchema,
@@ -46,6 +50,7 @@ from cruxible_core.procedure.types import (
     ProcedureEvidenceArtifact,
     ProcedureExecutionResult,
     ProcedureGetResult,
+    ProcedureGuardStepSchema,
     ProcedurePrecondition,
     ProcedureReadRecord,
     ProcedureRecord,
@@ -106,6 +111,36 @@ _WHOLESALE_PASSTHROUGH_PARAMETER = "arguments"
 """Provider input key that conventionally carries an opaque argument bundle."""
 _PREFERRED_PROVIDER_STEP_COUNT = 5
 """Provider steps above which one procedure is doing more than one job."""
+
+WARNING_CONTRACT_FIELD_UNCONSUMED = "contract_field_unconsumed"
+WARNING_CONTRACT_FIELD_PATH_CONDITIONAL = "contract_field_path_conditional"
+WARNING_READ_IMPLYING_NAME_WRITES = "read_implying_name_writes"
+WARNING_STRINGIFIED_OBJECT_INPUT = "stringified_object_input"
+WARNING_WHOLESALE_PASSTHROUGH = "wholesale_passthrough"
+WARNING_READ_WRITE_OMNIBUS = "read_write_omnibus"
+WARNING_PROVIDER_STEP_FANOUT = "provider_step_fanout"
+WARNING_BUDGET_HEADROOM_UNREACHABLE = "budget_headroom_unreachable"
+
+PROCEDURE_AUTHORING_WARNING_CODES: frozenset[str] = frozenset(
+    {
+        WARNING_CONTRACT_FIELD_UNCONSUMED,
+        WARNING_CONTRACT_FIELD_PATH_CONDITIONAL,
+        WARNING_READ_IMPLYING_NAME_WRITES,
+        WARNING_STRINGIFIED_OBJECT_INPUT,
+        WARNING_WHOLESALE_PASSTHROUGH,
+        WARNING_READ_WRITE_OMNIBUS,
+        WARNING_PROVIDER_STEP_FANOUT,
+        WARNING_BUDGET_HEADROOM_UNREACHABLE,
+        GRAPH_FORMAT_DECLARED_WITHOUT_CONSTRUCT,
+    }
+)
+"""Every code this core emits, enumerable so a surface can group by it.
+
+Deliberately a set and never a score. Per ``dd-specificity-doctrine`` the
+warning family is a design razor: counting or weighting these would turn a
+nudge into a target, and the axes they sit on (§3.6) are independent, so no
+aggregate over them means anything.
+"""
 
 WITHDRAW_NON_AUTHOR_PERMISSION = PermissionMode.GRAPH_WRITE
 """Tier required to withdraw a proposal the actor did not author.
@@ -217,11 +252,11 @@ def _compile_procedure_definition(
     instance: InstanceProtocol,
     definition: ProcedureDefinition,
     input_payload: dict[str, Any] | None = None,
-) -> tuple[CompiledPlan, list[str]]:
+) -> tuple[CompiledPlan, list[ProcedureAuthoringWarning]]:
     """Compile a procedure and return its non-blocking authoring warnings."""
     config = instance.load_config()
     validate_procedure_definition_against_config(definition, config)
-    warnings = lint_procedure_definition_authoring(definition, config)
+    warnings = lint_procedure_definition_authoring_typed(definition, config)
     lock = load_lock(resolve_lock_path(instance))
     return (
         compile_plan_definition(
@@ -241,6 +276,22 @@ def lint_procedure_definition_authoring(
     definition: ProcedureDefinition,
     config: CoreConfig,
 ) -> list[str]:
+    """DEPRECATED string channel, removed in 0.5.0. Use the typed lint.
+
+    DERIVED, never built in parallel: two independently assembled lists would
+    drift the moment one call site gained a warning the other did not, and the
+    dual-emit window exists precisely so callers can migrate without watching
+    for that.
+    """
+    return [
+        warning.message for warning in lint_procedure_definition_authoring_typed(definition, config)
+    ]
+
+
+def lint_procedure_definition_authoring_typed(
+    definition: ProcedureDefinition,
+    config: CoreConfig,
+) -> list[ProcedureAuthoringWarning]:
     """Block impossible input refs and return deterministic authoring warnings."""
     contract = resolve_contract(config, definition.contract_in)
     if contract is None:
@@ -249,14 +300,20 @@ def lint_procedure_definition_authoring(
 
     references = _procedure_step_input_references(definition)
     consumed_fields: set[str] = set()
-    for step_id, reference in references:
+    consuming_nodes: dict[str, set[str]] = {}
+    for node_id, step_id, reference in references:
         if reference == "$input":
+            # The whole payload: every declared field is consumed HERE, so this
+            # node reads all of them for path purposes too.
             consumed_fields.update(contract.fields)
+            for declared in contract.fields:
+                consuming_nodes.setdefault(declared, set()).add(node_id)
             continue
         field_name = _input_reference_field(reference)
         if field_name is None:
             continue
         consumed_fields.add(field_name)
+        consuming_nodes.setdefault(field_name, set()).add(node_id)
         if field_name not in contract.fields and not contract.allow_extra:
             # An ``allow_extra`` contract (built-in ``cruxible.JsonObject``, or
             # any config contract that opts in) accepts keys it never declared,
@@ -270,75 +327,183 @@ def lint_procedure_definition_authoring(
                 f"contract '{contract_name}' declares: {declared_fields(contract)}"
             )
 
-    warnings: list[str] = []
+    warnings: list[ProcedureAuthoringWarning] = []
     if not contract.allow_extra:
+        # Consumed on NO path. Every node is reachable (R3), so a field no node
+        # references is a field no execution reads -- the path analysis leaves
+        # this verdict exactly where it was.
         warnings.extend(
-            f"contract_in field '{field_name}' is declared but not consumed by any procedure step"
+            ProcedureAuthoringWarning(
+                code=WARNING_CONTRACT_FIELD_UNCONSUMED,
+                message=(
+                    f"contract_in field '{field_name}' is declared but not consumed "
+                    "by any procedure step"
+                ),
+            )
             for field_name in sorted(set(contract.fields) - consumed_fields)
         )
+    warnings.extend(_path_conditional_field_warnings(definition, consuming_nodes))
 
     read_implying_name = definition.name.lower().startswith(_READ_IMPLYING_PROCEDURE_PREFIXES)
-    for step in _procedure_workflow_steps(definition):
+    for node_id, step in _procedure_node_steps(definition):
         if step.provider is not None:
             provider = config.providers.get(step.provider)
             if read_implying_name and provider is not None and provider.side_effects:
                 warnings.append(
-                    f"procedure name '{definition.name}' implies a read, but step "
-                    f"'{step.id}' uses side-effecting provider '{step.provider}'"
+                    ProcedureAuthoringWarning(
+                        code=WARNING_READ_IMPLYING_NAME_WRITES,
+                        message=(
+                            f"procedure name '{definition.name}' implies a read, but step "
+                            f"'{step.id}' uses side-effecting provider '{step.provider}'"
+                        ),
+                        node_ids=[node_id],
+                    )
                 )
-            warnings.extend(_stringified_object_input_warnings(step.id, step.input))
-            warnings.extend(_wholesale_passthrough_warnings(step.id, step.input, contract))
+            warnings.extend(_stringified_object_input_warnings(node_id, step.id, step.input))
+            warnings.extend(_wholesale_passthrough_warnings(node_id, step.id, step.input, contract))
 
     warnings.extend(_read_fanout_warnings(definition, config))
 
-    provider_call_count = definition.static_expansion().expanded_provider_calls
+    expansion = definition.static_expansion()
+    provider_call_count = expansion.expanded_provider_calls
     if definition.budget.max_provider_calls > provider_call_count:
         # Under-provisioning is refused by ``ProcedureDefinition`` itself, so the
         # only mismatch that can reach here is slack above the static maximum --
         # headroom the run can never reach, which quietly disarms the ceiling as
-        # a review signal.
+        # a review signal. The count is now the LONGEST PATH's (§3.3), so on a
+        # branching definition this reads "no arm can spend it" rather than "the
+        # sum of every arm cannot".
         warnings.append(
-            "budget.max_provider_calls "
-            f"({definition.budget.max_provider_calls}) exceeds the expanded "
-            f"provider-call count ({provider_call_count}); the extra headroom is unreachable"
+            ProcedureAuthoringWarning(
+                code=WARNING_BUDGET_HEADROOM_UNREACHABLE,
+                message=(
+                    "budget.max_provider_calls "
+                    f"({definition.budget.max_provider_calls}) exceeds the expanded "
+                    f"provider-call count ({provider_call_count}); the extra headroom "
+                    "is unreachable"
+                ),
+                node_ids=list(expansion.expanded_provider_calls_path),
+            )
         )
     return warnings
 
 
-def _procedure_workflow_steps(definition: ProcedureDefinition) -> list[WorkflowStepSchema]:
-    """Flatten a definition to the plain workflow steps a reference scan walks.
+def _path_conditional_field_warnings(
+    definition: ProcedureDefinition,
+    consuming_nodes: dict[str, set[str]],
+) -> list[ProcedureAuthoringWarning]:
+    """Warn for a contract field consumed on SOME paths but not all (§3.5).
+
+    The verdict between "consumed" and "unconsumed" that a linear grammar had
+    no room for. A caller supplying an input only the escalation arm reads gets
+    no signal today: the field is consumed, so the unconsumed warning is
+    silent, and nothing else says the value may never be looked at.
+
+    A broken control graph produces no verdict rather than an exception. The
+    compiler refuses it a moment later with the same message this would raise,
+    and an advisory pass is the wrong place to surface a structural refusal.
+    """
+    if not consuming_nodes:
+        return []
+    try:
+        graph = build_procedure_graph(definition)
+    except ConfigError:
+        return []
+    warnings: list[ProcedureAuthoringWarning] = []
+    for field_name, nodes in sorted(consuming_nodes.items()):
+        if not has_path_avoiding(graph, nodes):
+            continue
+        readers = ", ".join(sorted(nodes))
+        warnings.append(
+            ProcedureAuthoringWarning(
+                code=WARNING_CONTRACT_FIELD_PATH_CONDITIONAL,
+                message=(
+                    f"contract_in field '{field_name}' is consumed only on some control "
+                    f"paths (by: {readers}); an execution that takes another path never "
+                    "reads it"
+                ),
+                node_ids=sorted(nodes),
+            )
+        )
+    return warnings
+
+
+def _procedure_node_steps(
+    definition: ProcedureDefinition,
+) -> list[tuple[str, WorkflowStepSchema]]:
+    """Flatten to ``(owning graph node id, plain step)`` pairs.
 
     Wrappers unwrap; guards are skipped, because a guard carries no reference
     template fields -- its operands are the predicate grammar's business, not
-    the resolver's.
+    the resolver's, and they are collected separately.
+
+    A repeat's nested step is not a graph node: it has no control edges and no
+    place on any path of its own. Its findings are attributed to the repeat
+    CONTAINER, which is the node paths run through, while the message keeps
+    naming the nested step so the author can find it.
     """
-    steps: list[WorkflowStepSchema] = []
+    steps: list[tuple[str, WorkflowStepSchema]] = []
     for wrapper in definition.steps:
         step = unwrap_procedure_step(wrapper)
         if isinstance(step, ProcedureRepeatStepSchema):
-            steps.extend(step.repeat.steps)
+            steps.extend((str(step.id), nested) for nested in step.repeat.steps)
         elif isinstance(step, WorkflowStepSchema):
-            steps.append(step)
+            steps.append((str(step.id), step))
     return steps
+
+
+def _procedure_workflow_steps(definition: ProcedureDefinition) -> list[WorkflowStepSchema]:
+    """The plain workflow steps a reference scan walks, node attribution dropped."""
+    return [step for _node_id, step in _procedure_node_steps(definition)]
 
 
 def _procedure_step_input_references(
     definition: ProcedureDefinition,
-) -> list[tuple[str, str]]:
-    """Collect ``$input`` references from the fields the resolver actually walks.
+) -> list[tuple[str, str, str]]:
+    """Collect ``$input`` references as ``(node id, step id, reference)``.
 
     Scope equals resolution scope: ``iter_step_reference_templates`` selects the
     same step fields :func:`resolve_value` visits, and nothing else. Scanning the
     whole dumped step instead would read literal prose -- an assert ``message``
     quoting ``$input.foo`` to explain a failure -- as a reference and block a
     definition that runs correctly.
+
+    GUARD OPERANDS COUNT. A guard reading ``$input.tier`` consumes that field
+    as surely as a provider input does, and it is the whole reason the
+    path-conditional verdict exists -- the branch that decides whether the
+    escalation arm runs is usually the only thing that reads the escalation
+    input. Before graph nodes existed there was no such position, so the scan
+    had none to look at; leaving it that way would report a consumed field as
+    unconsumed and let an undeclared one past R10.
     """
-    references: list[tuple[str, str]] = []
-    for step in _procedure_workflow_steps(definition):
+    references: list[tuple[str, str, str]] = []
+    for node_id, step in _procedure_node_steps(definition):
         dumped = step.model_dump(mode="python", by_alias=True, exclude_none=True)
         for template in iter_step_reference_templates(dumped):
-            references.extend((step.id, ref) for ref in _input_references(template))
+            references.extend((node_id, step.id, ref) for ref in _input_references(template))
+    for wrapper in definition.steps:
+        if not isinstance(wrapper, ProcedureGuardStepSchema):
+            continue
+        node_id = str(wrapper.id)
+        for operand in wrapper.guard.operands():
+            reference = _guard_operand_input_reference(operand)
+            if reference is not None:
+                references.append((node_id, node_id, reference))
     return references
+
+
+def _guard_operand_input_reference(operand: PredicateOperand) -> str | None:
+    """Return the ``$input`` reference one parsed guard operand reads, if any.
+
+    ``exists($input.x)`` reads it too: the accessor's argument is a reference
+    parsed by the same grammar, so an existence test over an undeclared field
+    is exactly as impossible as a comparison against one.
+    """
+    if operand.form == "input_path":
+        return "$input" if operand.path is None else f"$input.{operand.path}"
+    if operand.form == "exists" and operand.ref is not None and operand.ref.startswith("$input"):
+        return operand.ref
+    return None
 
 
 def _input_references(value: Any) -> list[str]:
@@ -358,8 +523,12 @@ def _input_reference_field(reference: str) -> str | None:
     return path.split(".", 1)[0].split("[", 1)[0]
 
 
-def _stringified_object_input_warnings(step_id: str, value: Any) -> list[str]:
-    warnings: list[str] = []
+def _stringified_object_input_warnings(
+    node_id: str,
+    step_id: str,
+    value: Any,
+) -> list[ProcedureAuthoringWarning]:
+    warnings: list[ProcedureAuthoringWarning] = []
 
     def visit(item: Any, path: str) -> None:
         if isinstance(item, str):
@@ -369,8 +538,14 @@ def _stringified_object_input_warnings(step_id: str, value: Any) -> list[str]:
                 return
             if isinstance(parsed, dict):
                 warnings.append(
-                    f"step '{step_id}' input value at '{path}' is a stringified JSON "
-                    "object; pass the object directly"
+                    ProcedureAuthoringWarning(
+                        code=WARNING_STRINGIFIED_OBJECT_INPUT,
+                        message=(
+                            f"step '{step_id}' input value at '{path}' is a stringified "
+                            "JSON object; pass the object directly"
+                        ),
+                        node_ids=[node_id],
+                    )
                 )
             return
         if isinstance(item, dict):
@@ -385,10 +560,11 @@ def _stringified_object_input_warnings(step_id: str, value: Any) -> list[str]:
 
 
 def _wholesale_passthrough_warnings(
+    node_id: str,
     step_id: str,
     value: Any,
     contract: ContractSchema,
-) -> list[str]:
+) -> list[ProcedureAuthoringWarning]:
     """Flag a declared string field handed whole to an ``arguments`` parameter.
 
     Feeding one contract field entire into a parameter named ``arguments`` --
@@ -398,7 +574,7 @@ def _wholesale_passthrough_warnings(
     actually receives. The fix is to declare the individual fields the tool
     needs, so the reference is a warning rather than a refusal.
     """
-    warnings: list[str] = []
+    warnings: list[ProcedureAuthoringWarning] = []
 
     def visit(item: Any, path: str, key: str | None) -> None:
         if isinstance(item, str):
@@ -411,10 +587,17 @@ def _wholesale_passthrough_warnings(
             if field_schema is None or field_schema.type != "string":
                 return
             warnings.append(
-                f"step '{step_id}' input at '{path}' passes the whole contract_in field "
-                f"'{field_name}' into an '{_WHOLESALE_PASSTHROUGH_PARAMETER}' parameter; "
-                "the contract cannot validate what that string carries -- declare the "
-                "individual fields the provider needs"
+                ProcedureAuthoringWarning(
+                    code=WARNING_WHOLESALE_PASSTHROUGH,
+                    message=(
+                        f"step '{step_id}' input at '{path}' passes the whole contract_in "
+                        f"field '{field_name}' into an "
+                        f"'{_WHOLESALE_PASSTHROUGH_PARAMETER}' parameter; the contract "
+                        "cannot validate what that string carries -- declare the "
+                        "individual fields the provider needs"
+                    ),
+                    node_ids=[node_id],
+                )
             )
             return
         if isinstance(item, dict):
@@ -445,7 +628,7 @@ def _whole_input_reference_field(reference: str) -> str | None:
 def _read_fanout_warnings(
     definition: ProcedureDefinition,
     config: CoreConfig,
-) -> list[str]:
+) -> list[ProcedureAuthoringWarning]:
     """Prefer small, single-purpose procedures over read-plus-write omnibuses.
 
     A definition that reads widely and then writes is two procedures wearing one
@@ -456,32 +639,51 @@ def _read_fanout_warnings(
     read_steps: list[str] = []
     side_effecting_steps: list[str] = []
     provider_steps: list[str] = []
-    for step in _procedure_workflow_steps(definition):
+    read_nodes: list[str] = []
+    side_effecting_nodes: list[str] = []
+    provider_nodes: list[str] = []
+    for node_id, step in _procedure_node_steps(definition):
         if step.query is not None:
             read_steps.append(step.id)
+            read_nodes.append(node_id)
             continue
         if step.provider is None:
             continue
         provider_steps.append(step.id)
+        provider_nodes.append(node_id)
         provider = config.providers.get(step.provider)
         if provider is not None and provider.side_effects:
             side_effecting_steps.append(step.id)
+            side_effecting_nodes.append(node_id)
         else:
             read_steps.append(step.id)
+            read_nodes.append(node_id)
 
-    warnings: list[str] = []
+    warnings: list[ProcedureAuthoringWarning] = []
     if side_effecting_steps and len(read_steps) > 1:
         warnings.append(
-            f"procedure mixes {len(read_steps)} read steps "
-            f"({', '.join(read_steps)}) with {len(side_effecting_steps)} side-effecting step(s) "
-            f"({', '.join(side_effecting_steps)}); consider splitting reads into a "
-            "read-only bundle"
+            ProcedureAuthoringWarning(
+                code=WARNING_READ_WRITE_OMNIBUS,
+                message=(
+                    f"procedure mixes {len(read_steps)} read steps "
+                    f"({', '.join(read_steps)}) with {len(side_effecting_steps)} "
+                    f"side-effecting step(s) ({', '.join(side_effecting_steps)}); "
+                    "consider splitting reads into a read-only bundle"
+                ),
+                node_ids=sorted(set(read_nodes) | set(side_effecting_nodes)),
+            )
         )
     if len(provider_steps) > _PREFERRED_PROVIDER_STEP_COUNT:
         warnings.append(
-            f"procedure declares {len(provider_steps)} provider steps, above the "
-            f"{_PREFERRED_PROVIDER_STEP_COUNT}-step guidance for one procedure; "
-            "consider splitting reads into a read-only bundle"
+            ProcedureAuthoringWarning(
+                code=WARNING_PROVIDER_STEP_FANOUT,
+                message=(
+                    f"procedure declares {len(provider_steps)} provider steps, above the "
+                    f"{_PREFERRED_PROVIDER_STEP_COUNT}-step guidance for one procedure; "
+                    "consider splitting reads into a read-only bundle"
+                ),
+                node_ids=sorted(set(provider_nodes)),
+            )
         )
     return warnings
 
@@ -546,7 +748,14 @@ def service_propose_procedure(
             raise
         # The R14 warning has to reach the authoring channel, so it travels with
         # the lint's warnings rather than in a second, parallel warning list.
-        warnings = [*format_warnings, *lint_warnings]
+        typed_warnings = [
+            ProcedureAuthoringWarning(
+                code=GRAPH_FORMAT_DECLARED_WITHOUT_CONSTRUCT,
+                message=message,
+            )
+            for message in format_warnings
+        ] + lint_warnings
+        warnings = [warning.message for warning in typed_warnings]
 
         procedure = ProcedureRecord(
             definition=definition,
@@ -567,12 +776,18 @@ def service_propose_procedure(
                 "config_digest": plan.config_digest,
                 "lock_digest": plan.lock_digest,
                 "warnings": warnings,
+                # The receipt records the CODES, not a second copy of the
+                # prose: a reviewer reading the ledger can then count how often
+                # a finding class fires without re-parsing English, and the
+                # messages already ride in the line above.
+                "warning_codes": [warning.code for warning in typed_warnings],
             },
         )
         result = ProcedureTransitionResult(
             action="propose",
             procedure=procedure,
             warnings=warnings,
+            typed_warnings=typed_warnings,
         )
         ctx.set_result(result)
 

@@ -122,13 +122,29 @@ def _transition_receipt_id(result: Any) -> str | None:
     return None
 
 
-def _transition_warnings(result: Any) -> list[str]:
+def _transition_warnings(result: Any) -> list[tuple[str, str]]:
+    """Return ``(code, message)`` per authoring warning.
+
+    The typed channel is preferred and the string list is the fallback, so a
+    daemon that predates `typed_warnings` still prints its warnings -- with the
+    code rendered as `?`, which is visibly a missing code rather than a
+    silently absent one.
+    """
     if isinstance(result, ProcedureTransitionResult):
-        return result.warnings
+        if result.typed_warnings:
+            return [(warning.code, warning.message) for warning in result.typed_warnings]
+        return [("?", message) for message in result.warnings]
     if isinstance(result, dict):
+        typed = result.get("typed_warnings")
+        if isinstance(typed, list) and typed:
+            return [
+                (str(item.get("code", "?")), str(item.get("message", "")))
+                for item in typed
+                if isinstance(item, dict)
+            ]
         warnings = result.get("warnings")
         if isinstance(warnings, list) and all(isinstance(item, str) for item in warnings):
-            return warnings
+            return [("?", message) for message in warnings]
     return []
 
 
@@ -242,8 +258,8 @@ def procedure_propose(
     receipt_id = _transition_receipt_id(result)
     if receipt_id:
         click.echo(f"  Receipt: {receipt_id}")
-    for warning in _transition_warnings(result):
-        click.echo(f"  Warning: {warning}")
+    for code, message in _transition_warnings(result):
+        click.echo(f"  Warning [{code}]: {message}")
 
 
 @procedure_group.command("list")

@@ -70,6 +70,18 @@ DECISION_OPENED_BY_INPUT = DeprecationNotice(
     surface="DecisionRecord.opened_by input",
     replacement="opened_actor_context",
 )
+PROCEDURE_STRING_WARNINGS = DeprecationNotice(
+    surface="ProcedureTransitionResult.warnings string list",
+    replacement="ProcedureTransitionResult.typed_warnings",
+    removal_version="0.5.0",
+)
+"""Dual-emitted through 0.4 per ``dd-deprecation-policy`` class (3).
+
+An OUTPUT surface, so no call site can emit a notice honestly: the field is
+always populated and nothing observes whether a caller read it. The registry
+entry and the schedule row are the whole mechanism here -- the transport
+emitters exist for INPUT deprecations, where a caller's use is visible.
+"""
 
 DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
     FLAG_FEEDBACK_ACTION,
@@ -82,6 +94,7 @@ DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
     GROUP_RESOLVED_BY_INPUT,
     GROUP_PROPOSED_BY_INPUT,
     DECISION_OPENED_BY_INPUT,
+    PROCEDURE_STRING_WARNINGS,
 )
 """Every warning-emitting deprecation registered by cruxible-core."""
 

@@ -19,7 +19,7 @@ same code path, not a branch around it.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -338,6 +338,44 @@ def _produced_set(alias: str | None) -> frozenset[str]:
 
 
 # ---------------------------------------------------------------------------
+# Analysis 4 -- per-path contract checking (§3.5)
+# ---------------------------------------------------------------------------
+
+
+def has_path_avoiding(graph: ProcedureGraph, avoided: Collection[str]) -> bool:
+    """Report whether some entry-to-exit path touches NONE of ``avoided``.
+
+    The question behind ``contract_field_path_conditional``: an input consumed
+    only on the escalation arm is one a caller can be asked for and never have
+    used, and nothing says so today -- the field IS consumed, so the unconsumed
+    warning stays silent and the caller learns the difference at run time or
+    never.
+
+    An EXIT is a node with no successors. ``"$abort"`` is deliberately not one:
+    a guard's false arm ending the run is a refusal, not an execution that
+    completed without the field. Counting abort arms would make nearly every
+    input downstream of a guard "path conditional", and a warning that fires
+    on nearly everything is not a warning.
+    """
+    blocked = set(avoided)
+    if not graph.node_ids or graph.entry_id in blocked:
+        return False
+    seen = {graph.entry_id}
+    queue = deque([graph.entry_id])
+    while queue:
+        node_id = queue.popleft()
+        successors = graph.successors_of(node_id)
+        if not successors:
+            return True
+        for target in successors:
+            if target in blocked or target in seen:
+                continue
+            seen.add(target)
+            queue.append(target)
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Analysis 3 -- worst-case budget (§3.3)
 # ---------------------------------------------------------------------------
 
@@ -477,6 +515,7 @@ __all__ = [
     "control_targets_are_forward_only",
     "declared_control_targets",
     "format_witness_path",
+    "has_path_avoiding",
     "longest_weighted_path",
     "node_provider_weight",
     "node_step_weight",

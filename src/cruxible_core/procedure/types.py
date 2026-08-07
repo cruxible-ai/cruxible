@@ -373,6 +373,27 @@ class ProcedureStaticExpansion(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ProcedureAuthoringWarning(BaseModel):
+    """One non-blocking authoring diagnostic, typed (§3.6).
+
+    ``code`` is what a surface can group, filter and act on; the string list it
+    ships alongside can only be printed. ``node_ids`` names where the finding
+    lives, which a message can only spell out in prose that no caller can
+    parse.
+
+    Deliberately NOT scored and deliberately not aggregated. Per
+    ``dd-specificity-doctrine`` the warning family is a design razor, never a
+    metric: extension cardinality is uncomputable in an open world, and any
+    aggregate over these would Goodhart into vacuity.
+    """
+
+    code: str
+    message: str
+    node_ids: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 class ProcedurePrecondition(BaseModel):
     """Optional named-type property-equality authorization condition."""
 
@@ -815,6 +836,19 @@ class ProcedureTransitionResult(BaseModel):
     procedure: ProcedureRecord
     receipt_id: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    """DEPRECATED, removed in 0.5.0. Use ``typed_warnings``.
+
+    Dual-emitted per ``dd-deprecation-policy`` class (3): the two lists carry
+    the same findings in the same order, and the strings are DERIVED from the
+    typed warnings rather than built beside them, so they cannot drift.
+
+    No per-call deprecation notice is emitted. This is an output field, always
+    populated, and nothing can observe whether a caller read it -- a notice on
+    every propose would be noise on a surface the caller never asked for. The
+    registry entry and the DEPRECATIONS.md row carry the schedule.
+    """
+    typed_warnings: list[ProcedureAuthoringWarning] = Field(default_factory=list)
+    """The same findings as ``warnings``, with a code and the nodes involved."""
 
 
 class ProcedureExecutionResult(BaseModel):
@@ -913,6 +947,7 @@ __all__ = [
     "MAX_PROCEDURE_REPEAT_ATTEMPTS",
     "MAX_PROCEDURE_STEPS",
     "PROCEDURE_EVIDENCE_HEAD_BYTES",
+    "ProcedureAuthoringWarning",
     "ProcedureBudget",
     "ProcedureBudgetSpent",
     "ProcedureDefinition",
