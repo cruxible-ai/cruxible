@@ -7,6 +7,31 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **Procedure definitions can be graphs.** A definition is a typed DAG rather
+  than a flat list: guard nodes carry a closed predicate grammar and two
+  labelled successors, flow wrappers declare an unconditional successor, and a
+  projection node assembles one output object from named aliases. The format is
+  declared by one field, `graph_format: 2`, which is the ONLY signal — content
+  is never sniffed, because a valid existing definition whose provider input
+  happens to contain `next` and `parameters` would be mis-detected and routed
+  through the wrong digest rules. A definition using a graph construct without
+  declaring the format is refused; declaring it without using one warns.
+  Definitions carry two digests per node — a local digest that excludes
+  successors and control targets, and a subtree digest that folds them in — so
+  retargeting an edge no longer changes the identity of the decision point it
+  leaves. The definition digest becomes a virtual root committing every
+  definition field, closing the gap where a budget, tier or contract could
+  change without the identity changing. Acceptance now records one pin per node
+  dependency, each a payload plus its digest, verified as integrity (every kind,
+  always) and currency (only what is executable); the run receipt carries the
+  pin material in its root node's detail, so a run id recovers the exact
+  accepted world. Format v1 is untouched: its digests, execution order and
+  stored bytes are unchanged, pinned by a frozen golden corpus that includes
+  real third-party definitions, and its verifier is retained permanently as
+  archival infrastructure. A 0.3 core refuses a v2 definition loudly at every
+  parse path rather than mis-executing it; snapshots read format 1 and 2 and
+  always write 2. Storage migration `0009_procedure_graph` is additive and
+  auto-applies. See `docs/migrations/graph-definition-format.md`.
 - **Procedure blueprints have a document format.** A blueprint is a portable,
   digest-addressed document that packages a procedure library: its own fully
   qualified contracts, its reference-state/ontology dependencies, its query
