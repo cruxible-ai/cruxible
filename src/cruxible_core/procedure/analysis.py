@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from cruxible_core.config.schema import WorkflowStepSchema, workflow_step_kind
@@ -600,6 +600,20 @@ class _Domain:
     excluded: set[Any] = field(default_factory=set)
     lower: tuple[Any, bool] | None = None
     upper: tuple[Any, bool] | None = None
+    granularities: set[str | None] = field(default_factory=set)
+    """Per constraint: ``"int"``, ``"date"``, or ``None`` for continuous.
+
+    A domain is treated as discrete only when EVERY constraint on it declared
+    the same discrete type. One untyped comparison and the whole domain is
+    continuous again -- untyped, the payload may carry ``0.5`` and the bound
+    ``0 < n < 1`` is satisfiable. Conservative in the fail-open direction.
+    """
+    undecidable: bool = False
+    """Set when two constraints on this domain could not be compared at all.
+
+    The fragment then reports nothing about it. §3.5: what the analysis cannot
+    decide is not refused.
+    """
     witnesses: list[GuardConstraint] = field(default_factory=list)
 
 
@@ -700,7 +714,7 @@ def _refuse_empty_domain(
     *,
     declared_input_enums: Mapping[str, frozenset[Any]],
 ) -> None:
-    domains: dict[str, _Domain] = {}
+    domains: dict[tuple[str, str], _Domain] = {}
     for source_node_id, spec in asserted:
         for comparison in conjunctive_comparisons(spec):
             _apply_comparison(
@@ -710,7 +724,7 @@ def _refuse_empty_domain(
                 domains=domains,
                 declared_input_enums=declared_input_enums,
             )
-    for key, domain in sorted(domains.items()):
+    for (key, _value_class), domain in sorted(domains.items()):
         if not _domain_is_empty(domain):
             continue
         cited = "; ".join(constraint.rendered() for constraint in domain.witnesses)
@@ -726,7 +740,7 @@ def _apply_comparison(
     *,
     source_node_id: str,
     node_id: str,
-    domains: dict[str, _Domain],
+    domains: dict[tuple[str, str], _Domain],
     declared_input_enums: Mapping[str, frozenset[Any]],
 ) -> None:
     left = parse_predicate_operand(comparison.left)
@@ -756,12 +770,23 @@ def _apply_comparison(
     value = _coerced(literal, comparison.value_type)
     if value is _UNCOERCIBLE:
         return
-    domain = domains.get(key)
+
+    # ONE DOMAIN PER (reference, comparison class). Two comparisons on one
+    # reference whose literals are of different classes -- `eq "1"` and `eq 1`
+    # -- narrow NOTHING about each other: the fragment cannot say which the
+    # payload will carry, so intersecting them invents a contradiction and
+    # refuses a satisfiable guard. Keeping them apart is the §3.5 fail-open
+    # rule applied to types, and it is also what keeps a `date` bound from
+    # ever being compared against a `datetime` one.
+    value_class = _comparison_class(value)
+    domain_key = (key, value_class)
+    domain = domains.get(domain_key)
     if domain is None:
-        domain = _Domain(equals=_seeded_enum(key, declared_input_enums))
-        domains[key] = domain
+        domain = _Domain(equals=_seeded_enum(key, value_class, declared_input_enums))
+        domains[domain_key] = domain
     constraint = GuardConstraint(key=key, op=op, value=value, source_node_id=source_node_id)
     domain.witnesses.append(constraint)
+    domain.granularities.add(_granularity(comparison.value_type, value))
     _narrow(domain, op, value)
 
 
@@ -806,8 +831,45 @@ def _coerced(value: Any, value_type: PredicateValueType | None) -> Any:
         return _UNCOERCIBLE
 
 
+def _comparison_class(value: Any) -> str:
+    """The class within which two literals are meaningfully comparable.
+
+    ``bool`` is its own class despite being an ``int`` subclass, and ``date``
+    is kept apart from ``datetime`` -- Python refuses to order the two, which
+    is how an unguarded bound comparison became a TypeError escaping the
+    analysis rather than a verdict.
+    """
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, datetime):
+        return "datetime"
+    if isinstance(value, date):
+        return "date"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return "other"
+
+
+def _granularity(value_type: PredicateValueType | None, value: Any) -> str | None:
+    """The step size the DECLARED type imposes, or ``None`` for continuous.
+
+    Read off the declaration, not the literal: ``n > 0`` with no declared type
+    admits ``0.5``, so its bound is continuous even though ``0`` is an int.
+    Only an explicit ``int``/``integer``/``date`` narrows the domain to
+    representable steps.
+    """
+    if value_type in {"int", "integer"} and isinstance(value, int) and not isinstance(value, bool):
+        return "int"
+    if value_type == "date" and isinstance(value, date) and not isinstance(value, datetime):
+        return "date"
+    return None
+
+
 def _seeded_enum(
     key: str,
+    value_class: str,
     declared_input_enums: Mapping[str, frozenset[Any]],
 ) -> set[Any] | None:
     """Seed a domain with the vocabulary the CONTRACT declares, if any.
@@ -815,9 +877,18 @@ def _seeded_enum(
     This is the "declared enum sets" half of §3.5: a guard demanding a value
     the contract's own enumeration does not contain can never hold, whatever
     the caller sends.
+
+    Only members of the DOMAIN'S OWN class seed it, and a vocabulary with no
+    member of that class seeds nothing at all. An enum of strings says nothing
+    decidable about a numeric comparison on the same field, and pretending
+    otherwise would refuse across types -- the same unsoundness as
+    intersecting `eq "1"` with `eq 1`.
     """
     declared = declared_input_enums.get(key)
-    return None if declared is None else set(declared)
+    if declared is None:
+        return None
+    matching = {value for value in declared if _comparison_class(value) == value_class}
+    return matching or None
 
 
 def _narrow(domain: _Domain, op: ComparisonOp, value: Any) -> None:
@@ -834,23 +905,47 @@ def _narrow(domain: _Domain, op: ComparisonOp, value: Any) -> None:
         return
     if op in {"gt", "gte"}:
         candidate = (value, op == "gte")
-        if domain.lower is None or _tighter_lower(candidate, domain.lower):
+        tighter = _tighter_lower(candidate, domain.lower, domain)
+        if tighter:
             domain.lower = candidate
         return
     candidate = (value, op == "lte")
-    if domain.upper is None or _tighter_upper(candidate, domain.upper):
+    if _tighter_upper(candidate, domain.upper, domain):
         domain.upper = candidate
 
 
-def _tighter_lower(candidate: tuple[Any, bool], current: tuple[Any, bool]) -> bool:
-    if candidate[0] != current[0]:
-        return bool(candidate[0] > current[0])
+def _tighter_lower(
+    candidate: tuple[Any, bool],
+    current: tuple[Any, bool] | None,
+    domain: _Domain,
+) -> bool:
+    if current is None:
+        return True
+    try:
+        if candidate[0] != current[0]:
+            return bool(candidate[0] > current[0])
+    except TypeError:
+        # Two bounds that cannot be ordered against each other. The fragment
+        # has nothing to say about this domain, and saying it anyway is how a
+        # comparison error escapes an advisory analysis as a crash.
+        domain.undecidable = True
+        return False
     return not candidate[1] and current[1]
 
 
-def _tighter_upper(candidate: tuple[Any, bool], current: tuple[Any, bool]) -> bool:
-    if candidate[0] != current[0]:
-        return bool(candidate[0] < current[0])
+def _tighter_upper(
+    candidate: tuple[Any, bool],
+    current: tuple[Any, bool] | None,
+    domain: _Domain,
+) -> bool:
+    if current is None:
+        return True
+    try:
+        if candidate[0] != current[0]:
+            return bool(candidate[0] < current[0])
+    except TypeError:
+        domain.undecidable = True
+        return False
     return not candidate[1] and current[1]
 
 
@@ -860,12 +955,50 @@ def _is_orderable(value: Any) -> bool:
     return isinstance(value, int | float | date | datetime)
 
 
+def _discrete_step(domain: _Domain) -> str | None:
+    """The domain's step size, or ``None`` unless every constraint agrees."""
+    if domain.granularities == {"int"}:
+        return "int"
+    if domain.granularities == {"date"}:
+        return "date"
+    return None
+
+
+def _closed_bounds(domain: _Domain) -> tuple[Any, Any] | None:
+    """Normalise the interval to INCLUSIVE bounds, granularity respected.
+
+    On a discrete domain an exclusive bound has a nearest representable
+    neighbour, so ``0 < n < 1`` over the integers closes to ``[1, 0]`` -- and
+    an interval whose lower bound exceeds its upper is empty. Reasoning
+    continuously accepted it, and the arm was dead in every run.
+    """
+    if domain.lower is None or domain.upper is None:
+        return None
+    low, low_inclusive = domain.lower
+    high, high_inclusive = domain.upper
+    step = _discrete_step(domain)
+    if step == "int":
+        return (low if low_inclusive else low + 1, high if high_inclusive else high - 1)
+    if step == "date":
+        day = timedelta(days=1)
+        return (low if low_inclusive else low + day, high if high_inclusive else high - day)
+    return None
+
+
 def _domain_is_empty(domain: _Domain) -> bool:
+    if domain.undecidable:
+        return False
     if domain.equals is not None:
         return not any(
             candidate not in domain.excluded and _within_bounds(candidate, domain)
             for candidate in domain.equals
         )
+    closed = _closed_bounds(domain)
+    if closed is not None:
+        try:
+            return bool(closed[0] > closed[1])
+        except TypeError:
+            return False
     if domain.lower is None or domain.upper is None:
         return False
     low, low_inclusive = domain.lower

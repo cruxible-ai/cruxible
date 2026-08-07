@@ -104,6 +104,18 @@ def _compile(instance: CruxibleInstance, definition: ProcedureDefinition) -> Non
     compile_procedure_definition(instance, definition)
 
 
+def _typed_probe(guard: dict[str, Any]) -> ProcedureDefinition:
+    """One guard over an OPEN contract, so any `$input` path is declarable.
+
+    The type probes are about the domain algebra, not about R10, so they read
+    fields a closed contract would have to enumerate.
+    """
+    return _definition(
+        [_guard("gate", guard, on_true="tail", on_false="tail"), _tail()],
+        contract_in="cruxible.JsonObject",
+    )
+
+
 def test_a_self_contradictory_all_of_is_refused(vacuity_instance: CruxibleInstance) -> None:
     definition = _definition(
         [
@@ -385,3 +397,227 @@ def test_a_guard_with_an_abort_arm_dominates_everything_after_it() -> None:
     )
     graph = build_procedure_graph(definition)
     assert true_arm_dominators(graph)["tail"] == ("gate",)
+
+
+# ---------------------------------------------------------------------------
+# Granularity: an interval empty over the integers is empty (P1-1)
+# ---------------------------------------------------------------------------
+
+
+def test_an_integer_interval_with_no_integer_in_it_is_refused(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """`0 < n < 1` declared `int` admits nothing.
+
+    Reasoning continuously accepted it -- the bounds do not cross -- and the
+    arm was dead in every run. The declared type is what makes the domain
+    discrete: the runtime coercion admits only integral values, so the two
+    exclusive bounds close to `[1, 0]`.
+    """
+    definition = _typed_probe(
+        {
+            "all_of": [
+                {"left": "$input.n", "op": "gt", "right": 0, "value_type": "int"},
+                {"left": "$input.n", "op": "lt", "right": 1, "value_type": "int"},
+            ]
+        }
+    )
+    with pytest.raises(ConfigError, match="statically unsatisfiable"):
+        _compile(vacuity_instance, definition)
+
+
+def test_adjacent_date_bounds_are_refused(vacuity_instance: CruxibleInstance) -> None:
+    """The same defect at day granularity: no date lies strictly between them."""
+    definition = _typed_probe(
+        {
+            "all_of": [
+                {"left": "$input.d", "op": "gt", "right": "2026-01-01", "value_type": "date"},
+                {"left": "$input.d", "op": "lt", "right": "2026-01-02", "value_type": "date"},
+            ]
+        }
+    )
+    with pytest.raises(ConfigError, match="statically unsatisfiable"):
+        _compile(vacuity_instance, definition)
+
+
+def test_an_integer_interval_with_room_in_it_compiles(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    _compile(
+        vacuity_instance,
+        _typed_probe(
+            {
+                "all_of": [
+                    {"left": "$input.n", "op": "gt", "right": 0, "value_type": "int"},
+                    {"left": "$input.n", "op": "lt", "right": 5, "value_type": "int"},
+                ]
+            }
+        ),
+    )
+
+
+def test_an_untyped_open_interval_stays_continuous(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """Granularity is read off the DECLARATION, not off the literal.
+
+    Untyped, `0 < n < 1` admits 0.5 -- the payload is free to carry it, and
+    refusing here would refuse a guard that runs.
+    """
+    _compile(
+        vacuity_instance,
+        _typed_probe(
+            {
+                "all_of": [
+                    {"left": "$input.n", "op": "gt", "right": 0},
+                    {"left": "$input.n", "op": "lt", "right": 1},
+                ]
+            }
+        ),
+    )
+
+
+def test_a_float_open_interval_stays_continuous(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    _compile(
+        vacuity_instance,
+        _typed_probe(
+            {
+                "all_of": [
+                    {"left": "$input.n", "op": "gt", "right": 0, "value_type": "float"},
+                    {"left": "$input.n", "op": "lt", "right": 1, "value_type": "float"},
+                ]
+            }
+        ),
+    )
+
+
+def test_one_untyped_bound_makes_the_whole_domain_continuous(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """Discreteness needs EVERY constraint to agree; conservative on purpose."""
+    _compile(
+        vacuity_instance,
+        _typed_probe(
+            {
+                "all_of": [
+                    {"left": "$input.n", "op": "gt", "right": 0, "value_type": "int"},
+                    {"left": "$input.n", "op": "lt", "right": 1},
+                ]
+            }
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Types are never intersected across classes (P1-2)
+# ---------------------------------------------------------------------------
+
+
+def test_equalities_of_different_types_do_not_refuse(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """`eq "1"` and `eq 1` narrow NOTHING about each other.
+
+    Intersecting {"1"} with {1} produced an empty set and refused a guard that
+    is satisfiable -- the fragment cannot say which the payload carries, and
+    §3.5 says what it cannot decide it does not refuse.
+    """
+    _compile(
+        vacuity_instance,
+        _typed_probe(
+            {
+                "all_of": [
+                    {"left": "$input.v", "op": "eq", "right": "1", "value_type": "string"},
+                    {"left": "$input.v", "op": "eq", "right": 1, "value_type": "int"},
+                ]
+            }
+        ),
+    )
+
+
+def test_a_date_bound_and_a_datetime_bound_compile(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """The TypeError escape: Python refuses to order date against datetime.
+
+    The comparison reached an unguarded `>` and raised out of an advisory
+    analysis as a crash. It must COMPILE -- one domain per class, and any
+    incomparable pair degrades to undecidable rather than raising.
+    """
+    _compile(
+        vacuity_instance,
+        _typed_probe(
+            {
+                "all_of": [
+                    {
+                        "left": "$input.t",
+                        "op": "gt",
+                        "right": "2026-01-01",
+                        "value_type": "date",
+                    },
+                    {
+                        "left": "$input.t",
+                        "op": "gt",
+                        "right": "2026-01-01T00:00:00Z",
+                        "value_type": "datetime",
+                    },
+                ]
+            }
+        ),
+    )
+
+
+def test_same_type_bounds_still_intersect_across_nodes(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """Keying by type must not cost the analysis its reach.
+
+    Both bounds coerce into the number class, so they share one domain and the
+    contradiction is still found -- including when one is typed and the other
+    is not.
+    """
+    definition = _definition(
+        [
+            _guard(
+                "gate",
+                {
+                    "all_of": [
+                        {"left": "$input.n", "op": "gte", "right": 10, "value_type": "int"},
+                        {"left": "$input.n", "op": "lt", "right": 5},
+                    ]
+                },
+                on_true="tail",
+                on_false="tail",
+            ),
+            _tail(),
+        ],
+        contract_in="cruxible.JsonObject",
+    )
+    with pytest.raises(ConfigError, match="statically unsatisfiable"):
+        _compile(vacuity_instance, definition)
+
+
+def test_a_numeric_comparison_against_a_string_enum_does_not_refuse(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """The declared vocabulary seeds only its OWN class.
+
+    `severity` is a string enum. A numeric comparison on it is not something
+    the fragment can decide, and seeding a numeric domain from a string
+    vocabulary would refuse across types -- the same unsoundness as
+    intersecting `eq "1"` with `eq 1`.
+    """
+    definition = _definition(
+        [
+            _guard(
+                "gate",
+                {"left": "$input.severity", "op": "eq", "right": 5},
+                on_true="tail",
+                on_false="tail",
+            ),
+            _tail(),
+        ]
+    )
+    _compile(vacuity_instance, definition)
