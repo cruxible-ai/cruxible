@@ -23,7 +23,11 @@ from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
 from cruxible_core.primitives import canonical_json
-from cruxible_core.procedure.analysis import build_procedure_graph, has_path_avoiding
+from cruxible_core.procedure.analysis import (
+    build_procedure_graph,
+    enumerate_control_paths,
+    has_path_avoiding,
+)
 from cruxible_core.procedure.digest import compute_node_digests
 from cruxible_core.procedure.graph_format import (
     DEFINITION_FORMAT_V1,
@@ -40,6 +44,7 @@ from cruxible_core.procedure.pins import (
     verify_pin_integrity,
 )
 from cruxible_core.procedure.types import (
+    MAX_PROCEDURE_ENUMERATED_PATHS,
     MAX_PROCEDURE_EVIDENCE_BYTES,
     PROCEDURE_EVIDENCE_HEAD_BYTES,
     ProcedureAuthoringWarning,
@@ -51,6 +56,7 @@ from cruxible_core.procedure.types import (
     ProcedureExecutionResult,
     ProcedureGetResult,
     ProcedureGuardStepSchema,
+    ProcedurePathEnumeration,
     ProcedurePrecondition,
     ProcedureReadRecord,
     ProcedureRecord,
@@ -975,6 +981,25 @@ def _backfill_node_digests(instance: InstanceProtocol, procedure: ProcedureRecor
         )
 
 
+def _procedure_control_paths(definition: ProcedureDefinition) -> ProcedurePathEnumeration | None:
+    """Enumerate the definition's control paths for the review surface (§3.1).
+
+    Degrades to ``None`` rather than raising. A stored definition whose graph
+    does not resolve still has to be readable -- refusing the whole read is how
+    a reviewer loses the one view that would show them what is wrong with it.
+    """
+    try:
+        graph = build_procedure_graph(definition)
+        paths, truncated = enumerate_control_paths(graph)
+    except ConfigError:
+        return None
+    return ProcedurePathEnumeration(
+        paths=[list(path) for path in paths],
+        truncated=truncated,
+        cap=MAX_PROCEDURE_ENUMERATED_PATHS,
+    )
+
+
 def service_get_procedure_details(
     instance: InstanceProtocol,
     procedure_id: str,
@@ -982,11 +1007,17 @@ def service_get_procedure_details(
     """Read a procedure with the active config's resolved input field schema."""
     procedure = service_get_procedure(instance, procedure_id)
     config = instance.load_config()
+    control_paths = _procedure_control_paths(procedure.definition)
     contract = resolve_contract(config, procedure.definition.contract_in)
     if contract is None:
-        return ProcedureGetResult(procedure=procedure, contract_in_schema=None)
+        return ProcedureGetResult(
+            procedure=procedure,
+            contract_in_schema=None,
+            control_paths=control_paths,
+        )
     return ProcedureGetResult(
         procedure=procedure,
+        control_paths=control_paths,
         contract_in_schema=ProcedureContractSchema(
             description=contract.description,
             fields=[

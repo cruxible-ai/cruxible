@@ -38,6 +38,7 @@ from cruxible_core.predicate import (
 from cruxible_core.procedure.guards import GuardSpec, PredicateOperand, parse_predicate_operand
 from cruxible_core.procedure.types import (
     ABORT_TARGET,
+    MAX_PROCEDURE_ENUMERATED_PATHS,
     ProcedureFlowStepSchema,
     ProcedureGuardStepSchema,
     ProcedureProjectStepSchema,
@@ -384,6 +385,54 @@ def has_path_avoiding(graph: ProcedureGraph, avoided: Collection[str]) -> bool:
             seen.add(target)
             queue.append(target)
     return False
+
+
+# ---------------------------------------------------------------------------
+# Analysis 7 -- path enumeration, DISPLAY ONLY (§3.1)
+# ---------------------------------------------------------------------------
+
+
+def enumerate_control_paths(
+    graph: ProcedureGraph,
+    *,
+    cap: int = MAX_PROCEDURE_ENUMERATED_PATHS,
+) -> tuple[tuple[tuple[str, ...], ...], bool]:
+    """Return ``(paths, truncated)`` for the reviewer surfaces.
+
+    The one analysis here that is exponential, and the one no correctness
+    check may consult. Everything a refusal depends on runs in ``O(V+E)`` over
+    the graph; this walks the paths themselves because a reviewer asked to
+    authorise a branching definition is being asked about its BEHAVIOURS, and
+    a topology is not a list of behaviours.
+
+    Two independent bounds keep it finite: R11 caps branch nodes at twelve, and
+    the cap here stops the walk. Truncation is REPORTED rather than silently
+    absorbed -- a reviewer who is seeing part of the picture has to be told,
+    and a surface that quietly showed the first 64 of 300 paths would be worse
+    than one that showed none.
+
+    Paths are enumerated in canonical successor order, so two calls on one
+    definition return the same list in the same order.
+    """
+    if not graph.node_ids:
+        return (), False
+    paths: list[tuple[str, ...]] = []
+    truncated = False
+    stack: list[tuple[str, tuple[str, ...]]] = [(graph.entry_id, (graph.entry_id,))]
+    while stack:
+        node_id, prefix = stack.pop()
+        successors = graph.successors_of(node_id)
+        if not successors:
+            if len(paths) >= cap:
+                truncated = True
+                break
+            paths.append(prefix)
+            continue
+        # Reversed, because a LIFO stack pops last-pushed first: this makes the
+        # walk visit `on_true` before `on_false` before `next`.
+        for target in reversed(successors):
+            stack.append((target, (*prefix, target)))
+    return tuple(paths), truncated
 
 
 # ---------------------------------------------------------------------------
@@ -894,6 +943,7 @@ __all__ = [
     "control_successors",
     "control_targets_are_forward_only",
     "declared_control_targets",
+    "enumerate_control_paths",
     "format_witness_path",
     "conjunctive_comparisons",
     "has_path_avoiding",

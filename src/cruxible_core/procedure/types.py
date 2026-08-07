@@ -777,6 +777,26 @@ class ProcedureContractSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ProcedurePathEnumeration(BaseModel):
+    """Every control path through one definition, capped for display (§3.1).
+
+    Display only, and never consulted by a correctness check -- every refusal
+    in the analysis suite is ``O(V+E)`` over the graph and none of them looks
+    at this. It exists because authorising a branching definition is
+    authorising its BEHAVIOURS, and a topology is not a list of behaviours.
+
+    ``truncated`` is reported rather than absorbed. A surface that quietly
+    showed the first 64 of 300 paths would be worse than one that showed none:
+    the reviewer would believe they had seen the definition.
+    """
+
+    paths: list[list[str]]
+    truncated: bool
+    cap: int
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 class ProcedureGetResult(BaseModel):
     """One procedure record plus its currently resolved input field schema.
 
@@ -787,6 +807,13 @@ class ProcedureGetResult(BaseModel):
 
     procedure: ProcedureReadRecord
     contract_in_schema: ProcedureContractSchema | None
+    control_paths: ProcedurePathEnumeration | None = None
+    """``None`` when the stored definition's control graph does not resolve.
+
+    A read verb does not raise over derived data: a definition accepted under
+    an older core, or one whose graph a later refusal would reject, still has
+    to be READABLE -- that is how a reviewer finds out what is wrong with it.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -960,6 +987,7 @@ __all__ = [
     "ProcedureGuardStepSchema",
     "ProcedureInnerStep",
     "ProcedureProjectStepSchema",
+    "ProcedurePathEnumeration",
     "ProcedurePrecondition",
     "ProcedureReadRecord",
     "ProcedureRecord",

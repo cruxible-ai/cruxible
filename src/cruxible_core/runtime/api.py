@@ -4317,6 +4317,12 @@ def get_procedure(instance_id: str, procedure_id: str) -> dict[str, Any]:
             if result.contract_in_schema is None
             else result.contract_in_schema.model_dump(mode="json", exclude_none=True)
         ),
+        # Display only (§3.1 analysis 7). `null` means the stored definition's
+        # control graph does not resolve, which is itself the thing a reviewer
+        # needs to see rather than a reason to fail the read.
+        "control_paths": (
+            None if result.control_paths is None else result.control_paths.model_dump(mode="json")
+        ),
     }
 
 
