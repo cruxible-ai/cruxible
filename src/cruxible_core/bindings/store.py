@@ -6,6 +6,12 @@ ever had, including the current one. History is therefore readable without
 reconstructing it from receipts, and a rebind never destroys the record of what
 the install was running on before.
 
+The PINNED SLOT INTERFACE (``contract_in``, ``contract_out``,
+``allowed_billing_modes``, ``requires_third_party_consent``) lives on the
+current row only. It is written once, at bind time, and every later revision is
+checked against the stored copy — so it belongs where it can be read as the
+binding's own fact, not restated per revision as though it could vary.
+
 THE PARTIAL UNIQUE INDEX IS THE INVARIANT. "One active binding per slot per
 install" is enforced by ``idx_slot_bindings_active`` at the database, not by a
 read-then-write in the service: two concurrent binds against the same slot on
@@ -44,6 +50,8 @@ CREATE TABLE IF NOT EXISTS slot_bindings (
     provider_name TEXT NOT NULL,
     contract_in TEXT NOT NULL,
     contract_out TEXT NOT NULL,
+    allowed_billing_modes TEXT,
+    requires_third_party_consent INTEGER NOT NULL DEFAULT 0,
     billing_mode TEXT NOT NULL,
     third_party_consent INTEGER NOT NULL DEFAULT 0,
     consent_actor_id TEXT,
@@ -165,10 +173,11 @@ class BindingStore(BindingStoreProtocol):
         self._conn.execute(
             "INSERT INTO slot_bindings "
             "(binding_id, install_id, slot_name, provider_name, contract_in, "
-            "contract_out, billing_mode, third_party_consent, consent_actor_id, "
+            "contract_out, allowed_billing_modes, requires_third_party_consent, "
+            "billing_mode, third_party_consent, consent_actor_id, "
             "consent_org_id, consent_at, revision, status, bound_at, updated_at, "
             "retired_at, actor_context_json, receipt_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 binding.binding_id,
                 binding.install_id,
@@ -176,6 +185,8 @@ class BindingStore(BindingStoreProtocol):
                 binding.provider_name,
                 binding.contract_in,
                 binding.contract_out,
+                _dump_modes(binding.allowed_billing_modes),
+                int(binding.requires_third_party_consent),
                 binding.billing_mode,
                 int(binding.third_party_consent),
                 binding.consent_actor_id,
@@ -193,17 +204,23 @@ class BindingStore(BindingStoreProtocol):
         return binding.binding_id
 
     def update_binding(self, binding: SlotBinding) -> None:
-        """Replace the current row for an existing binding, without committing."""
+        """Replace the mutable part of an existing binding row, without committing.
+
+        THE PINNED SLOT INTERFACE IS NOT IN THIS STATEMENT. ``contract_in``,
+        ``contract_out``, ``allowed_billing_modes`` and
+        ``requires_third_party_consent`` are written once by
+        :meth:`save_binding` and never again, so no update path — including one
+        handed a model whose fields were tampered with — can move the interface
+        a rebind is supposed to be checked against.
+        """
         self._conn.execute(
-            "UPDATE slot_bindings SET provider_name = ?, contract_in = ?, "
-            "contract_out = ?, billing_mode = ?, third_party_consent = ?, "
+            "UPDATE slot_bindings SET provider_name = ?, "
+            "billing_mode = ?, third_party_consent = ?, "
             "consent_actor_id = ?, consent_org_id = ?, consent_at = ?, revision = ?, "
             "status = ?, updated_at = ?, retired_at = ?, actor_context_json = ?, "
             "receipt_id = ? WHERE binding_id = ?",
             (
                 binding.provider_name,
-                binding.contract_in,
-                binding.contract_out,
                 binding.billing_mode,
                 int(binding.third_party_consent),
                 binding.consent_actor_id,
@@ -260,7 +277,7 @@ class BindingStore(BindingStoreProtocol):
         return None if row is None else _row_to_binding(row)
 
     def get_active_binding(self, *, install_id: str, slot_name: str) -> SlotBinding | None:
-        """Return the one active binding for a slot. This is what run-start calls."""
+        """Return the one active binding for a slot, or ``None`` if it is unbound."""
         row = self._conn.execute(
             "SELECT * FROM slot_bindings "
             "WHERE install_id = ? AND slot_name = ? AND status = 'active'",
@@ -356,6 +373,21 @@ def _dump_actor(record: SlotBinding | SlotBindingRevision) -> str | None:
     return None if actor is None else canonical_json(actor)
 
 
+def _dump_modes(modes: tuple[str, ...] | None) -> str | None:
+    """Serialize the slot's billing allowlist. NULL means unconstrained.
+
+    ``None`` and an empty list are different claims — "any mode is fine" versus
+    "no mode is" — so the absent case stays NULL rather than becoming ``[]``.
+    :class:`SlotInterface` refuses the empty declaration outright, but the
+    column must not be the place that quietly conflates the two.
+    """
+    return None if modes is None else canonical_json(list(modes))
+
+
+def _load_modes(value: str | None) -> tuple[str, ...] | None:
+    return None if value is None else tuple(json.loads(value))
+
+
 def _require_time(value: str) -> datetime:
     """Parse a NOT NULL timestamp column, refusing a row that lost one."""
     parsed = parse_datetime(value)
@@ -376,6 +408,8 @@ def _row_to_binding(row: sqlite3.Row) -> SlotBinding:
         provider_name=row["provider_name"],
         contract_in=row["contract_in"],
         contract_out=row["contract_out"],
+        allowed_billing_modes=_load_modes(row["allowed_billing_modes"]),
+        requires_third_party_consent=bool(row["requires_third_party_consent"]),
         billing_mode=row["billing_mode"],
         third_party_consent=bool(row["third_party_consent"]),
         consent_actor_id=row["consent_actor_id"],

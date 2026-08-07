@@ -414,15 +414,21 @@ re-running an acceptance that already happened.
 - **Third-party providers record consent, not permission.** When a slot
   requires it, the binding stores *which actor* consented and *when* — the
   record an audit actually asks for, rather than a config flag saying third
-  parties were acceptable in general.
+  parties were acceptable in general. Consent asserted with no actor to
+  attribute it to is refused, not stamped: an approval naming no approver
+  answers the audit question with a null while claiming to answer it.
+- **The slot interface is pinned once, at bind time.** The contracts, the
+  billing allowlist, and the consent requirement are stored on the binding and
+  are never revised. Every later rebind is checked against that stored copy,
+  and a rebind request that restates the interface differently is refused and
+  told what the ledger holds. Otherwise a "change the provider" call could
+  redefine the constraints it was about to be judged against. Changing the
+  interface means retiring the binding and creating a new one — a decision with
+  its own record.
 - **Rebinding is a revision, never a rewrite.** The binding keeps its identity
   and gains a revision; the previous revision stays readable in history with
   its own receipt. Retiring a binding is likewise a revision, so what an
   install *used to* run on survives the decision to stop.
-- **Runs in flight are never rewritten.** A run resolves its slots once at
-  start and records the resolved binding on its receipt. A rebind five minutes
-  later changes what the *next* run resolves and nothing about the one already
-  executing.
 
 ### When a slot cannot be bound
 
@@ -458,6 +464,15 @@ envelope; the history route returns every revision of one binding, oldest
 first, each with the receipt that wrote it. The bind, rebind, and retire verbs
 are service-level in this release and have no CLI or MCP surface yet.
 
+### Not yet wired into procedure runs
+
+The ledger is complete and the resolution verb exists, but **nothing resolves a
+binding when a procedure run starts yet**, and runs do not record which binding
+they used. That integration — resolving each bound slot at run start and
+recording the binding's id and revision on the run — is separate work. Until it
+lands, a rebind changes what a *future* resolution returns and makes no claim
+about runs already executing, because no run consults the ledger at all.
+
 ## Summary: Who Wins
 
 - **Pipelines and agents never overwrite each other silently.** Live edges and
@@ -471,5 +486,5 @@ are service-level in this release and have no CLI or MCP surface yet.
   tells you when the backlog, evidence debt, or provenance mix needs
   attention.
 - **Where a procedure runs is state, not config** — compute-slot bindings are
-  deployment records with revisions and receipts, and a rebind never touches a
-  run already in flight.
+  deployment records with revisions and receipts, and a rebind moves the
+  provider without touching the interface it was pinned to.

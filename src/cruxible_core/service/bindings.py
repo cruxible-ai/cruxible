@@ -8,16 +8,25 @@ governed update against the ledger — no config file changes, and no acceptance
 is re-run, because nothing the procedure pinned has moved.
 
 WHAT THIS MODULE DELIBERATELY DOES NOT DO. It never reads config and never
-resolves a provider registry. Both sides of every compatibility check are
-supplied BY THE CALLER: the slot interface as the procedure pinned it, and the
-provider's own declaration. That keeps the ledger honest about what it verified
-(two declarations it was handed, recorded on the row) and keeps the slot
-identity opaque — plain strings, no dependency on whatever schema declares them.
+resolves a provider registry. The provider side of every compatibility check is
+supplied BY THE CALLER — the provider's own declaration — which keeps the ledger
+honest about what it verified (a declaration it was handed, recorded on the row)
+and keeps the slot identity opaque: plain strings, no dependency on whatever
+schema declares them.
 
-IN-FLIGHT RUNS ARE NOT AFFECTED by a rebind. Run start resolves the slot once,
-records the resolved binding on the run receipt, and the run finishes on that
-binding whatever the ledger does afterwards. Nothing here reaches into a running
-executor; wiring resolution into run start is the integration phase.
+THE SLOT SIDE IS CALLER-SUPPLIED EXACTLY ONCE, AT BIND TIME. The interface a
+binding was created against is stored on the ledger row, and every later rebind
+is checked against the STORED copy — a rebind request that restates the
+interface differently is refused, not adopted. A rebind is a deployment
+decision about which provider fills a slot; letting it also redefine what the
+slot is would make the check it passes meaningless.
+
+NOTHING HERE IS WIRED INTO PROCEDURE EXECUTION YET. ``service_resolve_slot_binding``
+is the resolution verb an executor will call at run start, and the binding id
+and revision it returns are what a run receipt will have to record so that a
+later rebind is not retroactive. That integration — resolving bound slots at run
+start and recording the resolved binding on the run — is a separate batch and is
+not attempted here; no caller in this repo resolves a binding for a run.
 """
 
 from __future__ import annotations
@@ -42,9 +51,11 @@ from cruxible_core.bindings.types import (
 )
 from cruxible_core.errors import (
     BindingBillingModeRefusedError,
+    BindingConsentNotAttributableError,
     BindingConsentRequiredError,
     BindingContractMismatchError,
     BindingNotFoundError,
+    BindingSlotInterfaceMismatchError,
     ConfigError,
     SlotAlreadyBoundError,
 )
@@ -152,9 +163,13 @@ def _check_bindable(
     install_id: str,
     candidates: Sequence[ProviderDescriptor],
     third_party_consent: bool,
+    actor_context: GovernedActorContext | None,
     builder: ReceiptBuilder,
 ) -> None:
     """Refuse an unbindable provider, ordered so the report is the best answer.
+
+    *slot* is always the interface the LEDGER holds — pinned at bind time and
+    re-read on every rebind — never a rebind request's restatement of it.
 
     Contract equality is checked FIRST and reported with near matches, because
     a contract mismatch means the operator must pick a different provider and
@@ -223,6 +238,25 @@ def _check_bindable(
             provider_name=provider.provider_name,
         )
 
+    if provider.third_party and third_party_consent and actor_context is None:
+        # Asserting consent is asserting that SOMEBODY accepted this vendor.
+        # With no actor to name, the stamp would record an approval and no
+        # approver -- an audit trail that answers its own question with a null.
+        builder.record_validation(
+            passed=False,
+            detail={
+                "reason": "binding_consent_not_attributable",
+                "slot_name": slot.slot_name,
+                "install_id": install_id,
+                "provider_name": provider.provider_name,
+            },
+        )
+        raise BindingConsentNotAttributableError(
+            install_id=install_id,
+            slot_name=slot.slot_name,
+            provider_name=provider.provider_name,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Writes
@@ -242,10 +276,14 @@ def service_create_slot_binding(
 ) -> BindingWriteResult:
     """Bind one compute slot on one install to a provider, receipted.
 
-    The binding records the SLOT INTERFACE it was validated against, not the
-    provider's declaration of it. They are equal at bind time by construction;
-    keeping the slot's copy is what lets a later rebind be checked against what
-    the pinned procedures actually expect.
+    THIS IS THE ONE CALL THAT MAY DEFINE THE INTERFACE. The whole slot interface
+    — both contracts, the billing allowlist, and whether third parties need
+    consent — is pinned onto the row here and is immutable from this point on.
+    It is the slot's declaration that is recorded, never the provider's
+    restatement of it: they are equal at bind time by construction, and keeping
+    the slot's copy is what lets a later rebind be checked against what the
+    pinned procedures actually expect rather than against whatever that rebind
+    claims the slot is.
     """
     _require_identifiers(install_id=install_id, slot_name=slot.slot_name)
     with mutation_receipt(
@@ -291,6 +329,7 @@ def service_create_slot_binding(
             install_id=install_id,
             candidates=candidates,
             third_party_consent=third_party_consent,
+            actor_context=actor_context,
             builder=ctx.builder,
         )
 
@@ -301,8 +340,12 @@ def service_create_slot_binding(
             provider_name=provider.provider_name,
             contract_in=slot.contract_in,
             contract_out=slot.contract_out,
+            allowed_billing_modes=slot.allowed_billing_modes,
+            requires_third_party_consent=slot.requires_third_party_consent,
             billing_mode=provider.billing_mode,
             **_consent_fields(
+                install_id=install_id,
+                slot_name=slot.slot_name,
                 provider=provider,
                 third_party_consent=third_party_consent,
                 actor_context=actor_context,
@@ -368,7 +411,15 @@ def service_rebind_slot(
     The ledger row keeps its identity and gains a revision; the previous
     revision stays readable in history. Nothing about the procedure changes and
     nothing is re-accepted — a rebind is a deployment decision, recorded as one.
-    Runs already in flight keep the binding they resolved at start.
+
+    *slot* IS AN ASSERTION, NOT A DEFINITION. The interface this binding is
+    checked against is the one stored on the ledger row at bind time; the
+    supplied interface is compared to it and a divergence is refused, naming
+    what the ledger holds. A rebind that could restate the contracts, the
+    billing allowlist, or the consent requirement would be validating a provider
+    against constraints of its own choosing while presenting itself as a
+    provider-only change. Changing the interface means retiring this binding and
+    binding the new one, which is a decision with its own record.
     """
     _require_identifiers(install_id=install_id, slot_name=slot.slot_name)
     with mutation_receipt(
@@ -378,10 +429,12 @@ def service_rebind_slot(
             "install_id": install_id,
             "slot_name": slot.slot_name,
             "provider_name": provider.provider_name,
-            "contract_in": slot.contract_in,
-            "contract_out": slot.contract_out,
             "billing_mode": provider.billing_mode,
             "third_party": provider.third_party,
+            # The interface is NOT an input to this operation: it is read from
+            # the ledger. What the caller asserted is recorded on the validation
+            # node below, alongside the stored interface it was checked against.
+            "asserted_slot_interface": slot.model_dump(mode="json"),
         },
         actor_context=actor_context,
     ) as ctx:
@@ -401,23 +454,35 @@ def service_rebind_slot(
             )
             raise BindingNotFoundError(install_id=install_id, slot_name=slot.slot_name)
 
-        _check_bindable(
+        pinned = current.pinned_slot()
+        _require_asserted_interface_matches(
+            pinned,
             slot,
+            install_id=install_id,
+            binding_id=current.binding_id,
+            builder=ctx.builder,
+        )
+        _check_bindable(
+            pinned,
             provider,
             install_id=install_id,
             candidates=candidates,
             third_party_consent=third_party_consent,
+            actor_context=actor_context,
             builder=ctx.builder,
         )
 
         now = utc_now()
         rebound = current.model_copy(
             update={
+                # The pinned interface is absent on purpose: a rebind moves the
+                # provider and nothing else. ``BindingStore.update_binding``
+                # does not write those columns either.
                 "provider_name": provider.provider_name,
-                "contract_in": slot.contract_in,
-                "contract_out": slot.contract_out,
                 "billing_mode": provider.billing_mode,
                 **_consent_fields(
+                    install_id=install_id,
+                    slot_name=pinned.slot_name,
                     provider=provider,
                     third_party_consent=third_party_consent,
                     actor_context=actor_context,
@@ -442,6 +507,7 @@ def service_rebind_slot(
                 "previous_provider_name": current.provider_name,
                 "provider_name": provider.provider_name,
                 "revision": rebound.revision,
+                "checked_against_pinned_interface": pinned.model_dump(mode="json"),
             },
         )
         result = BindingWriteResult(
@@ -536,13 +602,17 @@ def service_resolve_slot_binding(
     install_id: str,
     slot_name: str,
 ) -> SlotBinding:
-    """Resolve one slot to the provider bound on this install. Run start calls this.
+    """Resolve one slot to the provider bound on this install.
 
     Raises rather than returning ``None``: an unbound slot cannot be executed,
     and returning a null here would push the same refusal into the executor with
-    less to say about it. The caller records the returned binding (its id AND
-    its revision) on the run receipt, which is what makes a later rebind
-    non-retroactive — the run states the binding it ran on.
+    less to say about it.
+
+    This is the verb procedure run start will call once the two are wired
+    together, and the caller will have to record the returned binding's id AND
+    revision on the run — that is what makes a later rebind non-retroactive,
+    because the run states the binding it ran on. NOTHING CALLS IT FOR A RUN
+    TODAY; that wiring is a separate batch.
     """
     _require_identifiers(install_id=install_id, slot_name=slot_name)
     store = instance.get_bindings_store()
@@ -640,6 +710,76 @@ def _require_identifiers(*, install_id: str, slot_name: str) -> None:
         raise ConfigError("slot_name must not be blank")
 
 
+def _describe_modes(modes: tuple[str, ...] | None) -> str:
+    return "unconstrained" if modes is None else "[" + ", ".join(modes) + "]"
+
+
+def _interface_differences(pinned: SlotInterface, asserted: SlotInterface) -> list[str]:
+    """Name every way an asserted interface departs from the pinned one.
+
+    Every difference, not the first: the caller is being told what the ledger
+    holds so they can reconcile their view of the slot in one pass.
+    """
+    differences: list[str] = []
+    if asserted.contract_in != pinned.contract_in:
+        differences.append(
+            f"contract_in is pinned as '{pinned.contract_in}' "
+            f"(request said '{asserted.contract_in}')"
+        )
+    if asserted.contract_out != pinned.contract_out:
+        differences.append(
+            f"contract_out is pinned as '{pinned.contract_out}' "
+            f"(request said '{asserted.contract_out}')"
+        )
+    if asserted.allowed_billing_modes != pinned.allowed_billing_modes:
+        differences.append(
+            f"allowed_billing_modes is pinned as "
+            f"{_describe_modes(pinned.allowed_billing_modes)} "
+            f"(request said {_describe_modes(asserted.allowed_billing_modes)})"
+        )
+    if asserted.requires_third_party_consent != pinned.requires_third_party_consent:
+        differences.append(
+            f"requires_third_party_consent is pinned as "
+            f"{pinned.requires_third_party_consent} "
+            f"(request said {asserted.requires_third_party_consent})"
+        )
+    return differences
+
+
+def _require_asserted_interface_matches(
+    pinned: SlotInterface,
+    asserted: SlotInterface,
+    *,
+    install_id: str,
+    binding_id: str,
+    builder: ReceiptBuilder,
+) -> None:
+    """Refuse a rebind whose slot interface is not the one the binding pinned."""
+    differences = _interface_differences(pinned, asserted)
+    if not differences:
+        return
+    builder.record_validation(
+        passed=False,
+        detail={
+            "reason": "binding_slot_interface_mismatch",
+            "install_id": install_id,
+            "slot_name": pinned.slot_name,
+            "binding_id": binding_id,
+            "pinned_interface": pinned.model_dump(mode="json"),
+            "asserted_interface": asserted.model_dump(mode="json"),
+            "differences": differences,
+        },
+    )
+    raise BindingSlotInterfaceMismatchError(
+        install_id=install_id,
+        slot_name=pinned.slot_name,
+        binding_id=binding_id,
+        stored_interface=pinned.model_dump(mode="json"),
+        supplied_interface=asserted.model_dump(mode="json"),
+        differences=differences,
+    )
+
+
 def _validate_page(*, limit: int | None, offset: int) -> None:
     if offset < 0:
         raise ConfigError("offset must be >= 0")
@@ -658,6 +798,8 @@ _NO_CONSENT: dict[str, Any] = {
 
 def _consent_fields(
     *,
+    install_id: str,
+    slot_name: str,
     provider: ProviderDescriptor,
     third_party_consent: bool,
     actor_context: GovernedActorContext | None,
@@ -673,6 +815,11 @@ def _consent_fields(
     stamp across a provider change would record an approval of a vendor nobody
     approved; on a slot that does not DEMAND consent, that is exactly the silent
     case where nothing else would catch it.
+
+    A NEW STAMP IS NEVER MINTED WITHOUT AN ACTOR. ``_check_bindable`` refuses
+    unattributable consent first and with a receipted validation node; the raise
+    here is the guarantee, at the one place a stamp comes into existence, that
+    no path can produce an approval naming no approver.
     """
     if not provider.third_party:
         return dict(_NO_CONSENT)
@@ -688,10 +835,16 @@ def _consent_fields(
             "consent_org_id": previous.consent_org_id,
             "consent_at": previous.consent_at,
         }
+    if actor_context is None:
+        raise BindingConsentNotAttributableError(
+            install_id=install_id,
+            slot_name=slot_name,
+            provider_name=provider.provider_name,
+        )
     return {
         "third_party_consent": True,
-        "consent_actor_id": None if actor_context is None else actor_context.actor_id,
-        "consent_org_id": None if actor_context is None else actor_context.org_id,
+        "consent_actor_id": actor_context.actor_id,
+        "consent_org_id": actor_context.org_id,
         "consent_at": now,
     }
 

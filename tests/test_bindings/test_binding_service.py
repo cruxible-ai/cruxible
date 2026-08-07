@@ -8,9 +8,11 @@ from cruxible_core.bindings.types import ProviderDescriptor, SlotInterface
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import (
     BindingBillingModeRefusedError,
+    BindingConsentNotAttributableError,
     BindingConsentRequiredError,
     BindingContractMismatchError,
     BindingNotFoundError,
+    BindingSlotInterfaceMismatchError,
     ConfigError,
     SlotAlreadyBoundError,
 )
@@ -383,6 +385,331 @@ class TestThirdPartyConsent:
         assert rebound.binding.billing_mode == "included"
         assert rebound.binding.third_party_consent is True
         assert rebound.binding.consent_actor_id == "agent-alpha"
+
+
+class TestConsentAttribution:
+    """Consent that names no consenting actor is refused, never stamped.
+
+    An unattributed stamp is the worst of both: the row claims an approval and
+    the audit question it exists to answer ("who accepted this vendor") comes
+    back null. These go through the SERVICE path with no actor context at all,
+    which is what an auth-off local instance hands the ledger.
+    """
+
+    def test_bind_refuses_anonymous_third_party_consent(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+    ) -> None:
+        provider = ProviderDescriptor(
+            provider_name="vendor-summarize",
+            contract_in="doc.v1",
+            contract_out="summary.v1",
+            billing_mode="metered",
+            third_party=True,
+        )
+        with pytest.raises(BindingConsentNotAttributableError) as exc_info:
+            service_create_slot_binding(
+                instance,
+                install_id=INSTALL,
+                slot=summarize_slot,
+                provider=provider,
+                third_party_consent=True,
+                actor_context=None,
+            )
+        assert exc_info.value.provider_name == "vendor-summarize"
+        assert "without an actor context" in str(exc_info.value)
+
+    def test_a_refused_anonymous_consent_writes_no_ledger_row(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+    ) -> None:
+        provider = ProviderDescriptor(
+            provider_name="vendor-summarize",
+            contract_in="doc.v1",
+            contract_out="summary.v1",
+            billing_mode="metered",
+            third_party=True,
+        )
+        with pytest.raises(BindingConsentNotAttributableError):
+            service_create_slot_binding(
+                instance,
+                install_id=INSTALL,
+                slot=summarize_slot,
+                provider=provider,
+                third_party_consent=True,
+                actor_context=None,
+            )
+        assert service_list_slot_bindings(instance).total == 0
+
+    def test_rebind_refuses_anonymous_third_party_consent(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+        fitting_provider: ProviderDescriptor,
+        actor: GovernedActorContext,
+    ) -> None:
+        service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=summarize_slot,
+            provider=fitting_provider,
+            actor_context=actor,
+        )
+        with pytest.raises(BindingConsentNotAttributableError):
+            service_rebind_slot(
+                instance,
+                install_id=INSTALL,
+                slot=summarize_slot,
+                provider=fitting_provider.model_copy(
+                    update={"provider_name": "vendor-summarize", "third_party": True}
+                ),
+                third_party_consent=True,
+                actor_context=None,
+            )
+
+        still = service_resolve_slot_binding(instance, install_id=INSTALL, slot_name="summarize")
+        assert still.provider_name == "summarizer-core"
+        assert still.third_party_consent is False
+
+    def test_a_recorded_consent_always_names_an_actor(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+        actor: GovernedActorContext,
+    ) -> None:
+        """The only way to a true stamp is through an attributable request."""
+        provider = ProviderDescriptor(
+            provider_name="vendor-summarize",
+            contract_in="doc.v1",
+            contract_out="summary.v1",
+            billing_mode="metered",
+            third_party=True,
+        )
+        service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=summarize_slot,
+            provider=provider,
+            third_party_consent=True,
+            actor_context=actor,
+        )
+        for row in service_list_slot_bindings(instance).items:
+            if row.third_party_consent:
+                assert row.consent_actor_id
+                assert row.consent_org_id
+                assert row.consent_at is not None
+
+
+class TestPinnedSlotInterface:
+    """A rebind moves the provider. It may not move the interface.
+
+    The interface is pinned at bind time and every rebind is judged against the
+    STORED copy — otherwise a request could widen the constraints it was about
+    to be judged against, while presenting itself as a provider-only change.
+    """
+
+    def test_bind_pins_the_whole_interface_onto_the_row(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+        fitting_provider: ProviderDescriptor,
+        actor: GovernedActorContext,
+    ) -> None:
+        result = service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=summarize_slot,
+            provider=fitting_provider,
+            actor_context=actor,
+        )
+        assert result.binding.allowed_billing_modes == ("included", "metered")
+        assert result.binding.requires_third_party_consent is True
+        assert result.binding.pinned_slot() == summarize_slot
+
+        resolved = service_resolve_slot_binding(instance, install_id=INSTALL, slot_name="summarize")
+        assert resolved.pinned_slot() == summarize_slot
+
+    def test_rebind_refuses_a_redefined_contract_naming_the_stored_one(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+        fitting_provider: ProviderDescriptor,
+        actor: GovernedActorContext,
+    ) -> None:
+        created = service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=summarize_slot,
+            provider=fitting_provider,
+            actor_context=actor,
+        )
+        with pytest.raises(BindingSlotInterfaceMismatchError) as exc_info:
+            service_rebind_slot(
+                instance,
+                install_id=INSTALL,
+                slot=summarize_slot.model_copy(update={"contract_out": "summary.v2"}),
+                provider=fitting_provider.model_copy(
+                    update={"provider_name": "summarizer-next", "contract_out": "summary.v2"}
+                ),
+                actor_context=actor,
+            )
+
+        error = exc_info.value
+        assert error.binding_id == created.binding.binding_id
+        assert error.stored_interface["contract_out"] == "summary.v1"
+        assert "contract_out is pinned as 'summary.v1'" in str(error)
+        assert "request said 'summary.v2'" in str(error)
+
+    def test_rebind_cannot_widen_the_billing_allowlist(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+        fitting_provider: ProviderDescriptor,
+        actor: GovernedActorContext,
+    ) -> None:
+        """The constraint a rebind is judged against is not the rebind's to set."""
+        service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=summarize_slot,
+            provider=fitting_provider,
+            actor_context=actor,
+        )
+        with pytest.raises(BindingSlotInterfaceMismatchError) as exc_info:
+            service_rebind_slot(
+                instance,
+                install_id=INSTALL,
+                slot=summarize_slot.model_copy(
+                    update={"allowed_billing_modes": ("included", "metered", "byo_key")}
+                ),
+                provider=fitting_provider.model_copy(
+                    update={"provider_name": "summarizer-byok", "billing_mode": "byo_key"}
+                ),
+                actor_context=actor,
+            )
+        assert "allowed_billing_modes is pinned as [included, metered]" in str(exc_info.value)
+
+    def test_rebind_cannot_drop_the_consent_requirement(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+        fitting_provider: ProviderDescriptor,
+        actor: GovernedActorContext,
+    ) -> None:
+        service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=summarize_slot,
+            provider=fitting_provider,
+            actor_context=actor,
+        )
+        with pytest.raises(BindingSlotInterfaceMismatchError) as exc_info:
+            service_rebind_slot(
+                instance,
+                install_id=INSTALL,
+                slot=summarize_slot.model_copy(update={"requires_third_party_consent": False}),
+                provider=fitting_provider.model_copy(
+                    update={"provider_name": "vendor-summarize", "third_party": True}
+                ),
+                actor_context=actor,
+            )
+        assert "requires_third_party_consent is pinned as True" in str(exc_info.value)
+
+    def test_the_stored_constraints_still_bind_a_rebind_that_asserts_them_honestly(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+        fitting_provider: ProviderDescriptor,
+        actor: GovernedActorContext,
+    ) -> None:
+        """Passing the interface check is not passing the provider check."""
+        service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=summarize_slot,
+            provider=fitting_provider,
+            actor_context=actor,
+        )
+        with pytest.raises(BindingBillingModeRefusedError):
+            service_rebind_slot(
+                instance,
+                install_id=INSTALL,
+                slot=summarize_slot,
+                provider=fitting_provider.model_copy(
+                    update={"provider_name": "summarizer-byok", "billing_mode": "byo_key"}
+                ),
+                actor_context=actor,
+            )
+        with pytest.raises(BindingConsentRequiredError):
+            service_rebind_slot(
+                instance,
+                install_id=INSTALL,
+                slot=summarize_slot,
+                provider=fitting_provider.model_copy(
+                    update={"provider_name": "vendor-summarize", "third_party": True}
+                ),
+                actor_context=actor,
+            )
+
+    def test_a_refused_interface_change_leaves_the_binding_exactly_as_it_was(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+        fitting_provider: ProviderDescriptor,
+        actor: GovernedActorContext,
+    ) -> None:
+        created = service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=summarize_slot,
+            provider=fitting_provider,
+            actor_context=actor,
+        )
+        with pytest.raises(BindingSlotInterfaceMismatchError):
+            service_rebind_slot(
+                instance,
+                install_id=INSTALL,
+                slot=summarize_slot.model_copy(update={"contract_in": "doc.v2"}),
+                provider=fitting_provider.model_copy(update={"contract_in": "doc.v2"}),
+                actor_context=actor,
+            )
+
+        still = service_resolve_slot_binding(instance, install_id=INSTALL, slot_name="summarize")
+        assert still.model_dump(mode="json") == created.binding.model_dump(mode="json")
+        assert (
+            service_slot_binding_history(instance, binding_id=created.binding.binding_id).total == 1
+        )
+
+    def test_a_permitted_rebind_leaves_the_pinned_interface_untouched(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+        fitting_provider: ProviderDescriptor,
+        actor: GovernedActorContext,
+    ) -> None:
+        service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=summarize_slot,
+            provider=fitting_provider,
+            actor_context=actor,
+        )
+        rebound = service_rebind_slot(
+            instance,
+            install_id=INSTALL,
+            slot=summarize_slot,
+            provider=fitting_provider.model_copy(
+                update={"provider_name": "summarizer-fast", "billing_mode": "metered"}
+            ),
+            actor_context=actor,
+        )
+        assert rebound.binding.pinned_slot() == summarize_slot
+
+        reloaded = service_resolve_slot_binding(instance, install_id=INSTALL, slot_name="summarize")
+        assert reloaded.pinned_slot() == summarize_slot
+        assert reloaded.billing_mode == "metered"
 
 
 class TestRebind:

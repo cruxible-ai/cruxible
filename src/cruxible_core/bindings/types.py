@@ -141,11 +141,18 @@ class NearMatchReport(BaseModel):
 class SlotBinding(BaseModel):
     """The current binding row for one install+slot.
 
-    ``contract_in``/``contract_out`` are the SLOT INTERFACE this binding was
-    validated against, not a copy of the provider's declaration. They are what
-    makes a later rebind checkable: a provider whose contracts differ from the
-    interface the running procedures were pinned to is a different interface,
-    and the ledger can say so without re-reading whatever declared the slot.
+    THE PINNED SLOT INTERFACE IS PART OF THE ROW. ``contract_in``,
+    ``contract_out``, ``allowed_billing_modes`` and ``requires_third_party_consent``
+    are the slot interface this binding was FIRST validated against — recorded
+    at bind time, never a copy of the provider's declaration, and never revised.
+    They are what makes a later rebind checkable without trusting the rebind
+    request: the ledger re-reads its own pinned interface (:meth:`pinned_slot`)
+    rather than whatever the caller says the slot is now, so a rebind cannot
+    redefine the contract it is supposedly being checked against.
+
+    They are deliberately absent from :class:`SlotBindingRevision`: a revision
+    row records what CHANGED, and the pinned interface is the one thing that
+    cannot.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -156,6 +163,8 @@ class SlotBinding(BaseModel):
     provider_name: str
     contract_in: str
     contract_out: str
+    allowed_billing_modes: tuple[str, ...] | None = None
+    requires_third_party_consent: bool = False
     billing_mode: str
     third_party_consent: bool = False
     consent_actor_id: str | None = None
@@ -168,6 +177,21 @@ class SlotBinding(BaseModel):
     retired_at: datetime | None = None
     actor_context: GovernedActorContext | None = None
     receipt_id: str | None = None
+
+    def pinned_slot(self) -> SlotInterface:
+        """Return the slot interface this binding was pinned to at bind time.
+
+        This — never the rebind request — is what a rebind is validated against.
+        A caller who supplies a different interface is describing a different
+        slot, and the ledger says so rather than adopting it.
+        """
+        return SlotInterface(
+            slot_name=self.slot_name,
+            contract_in=self.contract_in,
+            contract_out=self.contract_out,
+            allowed_billing_modes=self.allowed_billing_modes,
+            requires_third_party_consent=self.requires_third_party_consent,
+        )
 
 
 class SlotBindingRevision(BaseModel):

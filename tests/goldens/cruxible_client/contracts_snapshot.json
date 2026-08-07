@@ -28964,6 +28964,29 @@
             "title": "Actor Context"
           }
         },
+        "allowed_billing_modes": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "allowed_billing_modes",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Allowed Billing Modes"
+          }
+        },
         "billing_mode": {
           "has_default": false,
           "has_default_factory": false,
@@ -29114,6 +29137,19 @@
             "title": "Receipt Id"
           }
         },
+        "requires_third_party_consent": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "requires_third_party_consent",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Requires Third Party Consent",
+            "type": "boolean"
+          }
+        },
         "retired_at": {
           "default": null,
           "default_json_serializable": true,
@@ -29192,7 +29228,7 @@
         }
       },
       "json_schema": {
-        "description": "One compute-slot binding: which provider this install resolved a slot to.\n\n``contract_in``/``contract_out`` are the SLOT INTERFACE the binding was\nvalidated against — what the pinned procedures expect — not the provider's\nrestatement of it. ``revision`` counts every governed change to this\nbinding, so a run receipt naming a binding id AND revision states exactly\nwhat it ran on, even after a later rebind.",
+        "description": "One compute-slot binding: which provider this install resolved a slot to.\n\n``contract_in``, ``contract_out``, ``allowed_billing_modes`` and\n``requires_third_party_consent`` are the SLOT INTERFACE the binding was\npinned to at bind time — what the pinned procedures expect, not the\nprovider's restatement of it. They never change: a rebind is checked against\nthem and moves the provider only. ``revision`` counts every governed change\nto this binding, so a caller that records a binding id AND revision can\nstate exactly which binding it used, even after a later rebind.",
         "properties": {
           "actor_context": {
             "anyOf": [
@@ -29206,6 +29242,21 @@
             ],
             "default": null,
             "title": "Actor Context"
+          },
+          "allowed_billing_modes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Allowed Billing Modes"
           },
           "billing_mode": {
             "title": "Billing Mode",
@@ -29282,6 +29333,11 @@
             ],
             "default": null,
             "title": "Receipt Id"
+          },
+          "requires_third_party_consent": {
+            "default": false,
+            "title": "Requires Third Party Consent",
+            "type": "boolean"
           },
           "retired_at": {
             "anyOf": [
@@ -29441,7 +29497,7 @@
       "json_schema": {
         "$defs": {
           "SlotBindingItem": {
-            "description": "One compute-slot binding: which provider this install resolved a slot to.\n\n``contract_in``/``contract_out`` are the SLOT INTERFACE the binding was\nvalidated against — what the pinned procedures expect — not the provider's\nrestatement of it. ``revision`` counts every governed change to this\nbinding, so a run receipt naming a binding id AND revision states exactly\nwhat it ran on, even after a later rebind.",
+            "description": "One compute-slot binding: which provider this install resolved a slot to.\n\n``contract_in``, ``contract_out``, ``allowed_billing_modes`` and\n``requires_third_party_consent`` are the SLOT INTERFACE the binding was\npinned to at bind time — what the pinned procedures expect, not the\nprovider's restatement of it. They never change: a rebind is checked against\nthem and moves the provider only. ``revision`` counts every governed change\nto this binding, so a caller that records a binding id AND revision can\nstate exactly which binding it used, even after a later rebind.",
             "properties": {
               "actor_context": {
                 "anyOf": [
@@ -29455,6 +29511,21 @@
                 ],
                 "default": null,
                 "title": "Actor Context"
+              },
+              "allowed_billing_modes": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Allowed Billing Modes"
               },
               "billing_mode": {
                 "title": "Billing Mode",
@@ -29531,6 +29602,11 @@
                 ],
                 "default": null,
                 "title": "Receipt Id"
+              },
+              "requires_third_party_consent": {
+                "default": false,
+                "title": "Requires Third Party Consent",
+                "type": "boolean"
               },
               "retired_at": {
                 "anyOf": [

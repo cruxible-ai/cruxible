@@ -34,7 +34,9 @@ errors (runtime data), making it easy to catch by category.
     ├── SlotBindingRefusedError (provider does not satisfy the slot interface)
     │   ├── BindingContractMismatchError (contracts differ; carries near matches)
     │   ├── BindingBillingModeRefusedError (billing mode outside the allowed set)
-    │   └── BindingConsentRequiredError (third-party bind without recorded consent)
+    │   ├── BindingConsentRequiredError (third-party bind without recorded consent)
+    │   ├── BindingConsentNotAttributableError (consent asserted with no actor)
+    │   └── BindingSlotInterfaceMismatchError (rebind restated the pinned interface)
     ├── RuntimeCredentialNotFoundError (server credential store lookup)
     ├── AuthenticationError (HTTP/API credential failure)
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
@@ -424,9 +426,9 @@ class SourceArtifactNotFoundError(CoreError):
 class BindingNotFoundError(CoreError):
     """No binding ledger row for the requested slot, install, or binding ID.
 
-    Distinct from an unbound slot being an ordinary empty read: run-start
-    resolution asks for a binding it needs, so "this install never bound this
-    slot" is the answer to a question that had to have one.
+    Distinct from an unbound slot being an ordinary empty read: resolution asks
+    for a binding the caller needs in order to proceed, so "this install never
+    bound this slot" is the answer to a question that had to have one.
     """
 
     error_code = "binding_not_found"
@@ -566,6 +568,73 @@ class BindingConsentRequiredError(SlotBindingRefusedError):
             f"slot '{slot_name}' requires recorded third-party consent to bind "
             f"provider '{provider_name}'; pass third_party_consent=True with an actor "
             "context, so the consenting actor and timestamp are recorded on the binding"
+        )
+
+
+class BindingConsentNotAttributableError(SlotBindingRefusedError):
+    """Third-party consent was asserted with nobody to attribute it to.
+
+    An unattributed consent stamp is worse than no stamp: it reads as an
+    approval on the binding while naming no approver, so the audit question the
+    stamp exists to answer ("who accepted this vendor, and when") comes back
+    empty from a record that claims to hold it. Consent is refused rather than
+    recorded anonymously.
+    """
+
+    error_code = "binding_consent_not_attributable"
+
+    def __init__(
+        self,
+        *,
+        install_id: str,
+        slot_name: str,
+        provider_name: str,
+    ) -> None:
+        self.install_id = install_id
+        self.slot_name = slot_name
+        self.provider_name = provider_name
+        super().__init__(
+            f"third-party consent for provider '{provider_name}' on slot '{slot_name}' "
+            "was asserted without an actor context; consent is recorded with the actor "
+            "who gave it, so an unattributable consent is refused rather than stamped"
+        )
+
+
+class BindingSlotInterfaceMismatchError(SlotBindingRefusedError):
+    """A rebind described a different slot interface than the binding pinned.
+
+    A rebind is a DEPLOYMENT decision: it moves a slot to another provider and
+    changes nothing about what the slot is. The interface a binding was created
+    against is stored on the ledger row and is what every later rebind is
+    checked against — a request that restates it differently is refused, and
+    told what the ledger actually holds, rather than being allowed to redefine
+    the contract it is being checked against.
+    """
+
+    error_code = "binding_slot_interface_mismatch"
+
+    def __init__(
+        self,
+        *,
+        install_id: str,
+        slot_name: str,
+        binding_id: str,
+        stored_interface: dict[str, Any],
+        supplied_interface: dict[str, Any],
+        differences: list[str],
+    ) -> None:
+        self.install_id = install_id
+        self.slot_name = slot_name
+        self.binding_id = binding_id
+        self.stored_interface = stored_interface
+        self.supplied_interface = supplied_interface
+        self.differences = differences
+        super().__init__(
+            f"rebind of slot '{slot_name}' on install '{install_id}' supplied a different "
+            f"slot interface than binding '{binding_id}' pinned at bind time: "
+            + "; ".join(differences)
+            + ". A rebind moves the provider, never the interface; to change the "
+            "interface, retire this binding and bind the new one."
         )
 
 

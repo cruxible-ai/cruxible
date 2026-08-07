@@ -14,19 +14,25 @@ the project's own state instance.
   Binding refuses a provider whose declared contracts are not exactly the slot's,
   a billing mode outside the slot's allowed set (echoing the allowed values), and
   a third-party provider without recorded consent — the consenting actor and
-  timestamp land on the binding, not in a config flag. An unbindable slot reports
-  every candidate that nearly matched, ranked by contract sides matched and then
-  by failure count, naming every reason each one failed rather than only the
-  first; the ranking rides on the error as structured data as well as in its
-  text. Rebinding mints a new revision on the same binding and keeps the previous
-  one readable — no config edit, no re-acceptance — and a run already in flight
-  finishes on the binding it resolved at start. One active binding per slot per
-  install is a database guarantee (partial unique index), so two concurrent binds
-  cannot both leave an active row behind. Readable over HTTP at
-  `GET /slot-bindings` and `GET /slot-bindings/{binding_id}/history`; the bind,
-  rebind, and retire verbs are service-level in this release with no CLI or MCP
-  surface yet, and wiring slot resolution into procedure run start is separate
-  work. Storage migration `0006_binding_ledger`.
+  timestamp land on the binding, not in a config flag, and consent asserted with
+  no actor context to attribute it to is refused rather than stamped
+  anonymously. An unbindable slot reports every candidate that nearly matched,
+  ranked by contract sides matched and then by failure count, naming every reason
+  each one failed rather than only the first; the ranking rides on the error as
+  structured data as well as in its text. The whole slot interface — both
+  contracts, the billing allowlist, and the consent requirement — is pinned onto
+  the binding at bind time and never revised: rebinding mints a new revision on
+  the same binding, keeps the previous one readable, and is validated against the
+  STORED interface, so a rebind that supplies a different one is refused naming
+  what the ledger holds instead of redefining the constraints it is being checked
+  against. One active binding per slot per install is a database guarantee
+  (partial unique index), so two concurrent binds cannot both leave an active row
+  behind. Readable over HTTP at `GET /slot-bindings` and
+  `GET /slot-bindings/{binding_id}/history`; the bind, rebind, and retire verbs
+  are service-level in this release with no CLI or MCP surface yet. Procedure
+  runs do not resolve or record bindings yet — wiring slot resolution into run
+  start is separate work, so nothing about run behaviour changes in this release.
+  Storage migration `0006_binding_ledger`.
 
 - **A Procedure author can withdraw their own pending proposal.** `withdraw`
   moves a pending definition to the new terminal `withdrawn` status through the

@@ -13,8 +13,10 @@ import pytest
 from cruxible_core.bindings.types import ProviderDescriptor, SlotInterface
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import (
+    BindingConsentNotAttributableError,
     BindingConsentRequiredError,
     BindingContractMismatchError,
+    BindingSlotInterfaceMismatchError,
     SlotAlreadyBoundError,
 )
 from cruxible_core.governance.actors import GovernedActorContext
@@ -203,6 +205,78 @@ class TestRefusalReceipts:
             assert store.count_bindings() == 0
         finally:
             store.close()
+
+    def test_a_redefined_interface_leaves_a_refusal_receipt_holding_both_readings(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+        fitting_provider: ProviderDescriptor,
+        actor: GovernedActorContext,
+    ) -> None:
+        """The receipt must show what was asserted AND what the ledger pinned."""
+        service_create_slot_binding(
+            instance,
+            install_id=INSTALL,
+            slot=summarize_slot,
+            provider=fitting_provider,
+            actor_context=actor,
+        )
+        with pytest.raises(BindingSlotInterfaceMismatchError) as exc_info:
+            service_rebind_slot(
+                instance,
+                install_id=INSTALL,
+                slot=summarize_slot.model_copy(
+                    update={"allowed_billing_modes": ("included", "metered", "byo_key")}
+                ),
+                provider=fitting_provider.model_copy(
+                    update={"provider_name": "summarizer-byok", "billing_mode": "byo_key"}
+                ),
+                actor_context=actor,
+            )
+
+        receipt = _receipt(instance, exc_info.value.mutation_receipt_id)
+        assert receipt.operation_type == "slot_binding_rebind"
+        assert receipt.committed is False
+        details = [node.detail for node in receipt.nodes if node.detail]
+        refusal = next(
+            detail
+            for detail in details
+            if detail.get("reason") == "binding_slot_interface_mismatch"
+        )
+        assert refusal["pinned_interface"]["allowed_billing_modes"] == ["included", "metered"]
+        assert refusal["asserted_interface"]["allowed_billing_modes"] == [
+            "included",
+            "metered",
+            "byo_key",
+        ]
+
+    def test_anonymous_consent_leaves_a_refusal_receipt(
+        self,
+        instance: CruxibleInstance,
+        summarize_slot: SlotInterface,
+        actor: GovernedActorContext,
+    ) -> None:
+        provider = ProviderDescriptor(
+            provider_name="vendor-summarize",
+            contract_in="doc.v1",
+            contract_out="summary.v1",
+            billing_mode="metered",
+            third_party=True,
+        )
+        with pytest.raises(BindingConsentNotAttributableError) as exc_info:
+            service_create_slot_binding(
+                instance,
+                install_id=INSTALL,
+                slot=summarize_slot,
+                provider=provider,
+                third_party_consent=True,
+                actor_context=None,
+            )
+
+        receipt = _receipt(instance, exc_info.value.mutation_receipt_id)
+        assert receipt.committed is False
+        details = [node.detail for node in receipt.nodes if node.detail]
+        assert any(detail.get("reason") == "binding_consent_not_attributable" for detail in details)
 
     def test_a_duplicate_bind_refusal_names_the_incumbent(
         self,

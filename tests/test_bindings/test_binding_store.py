@@ -98,6 +98,69 @@ class TestOneActiveBindingInvariant:
         assert store.count_bindings(slot_name="summarize", status="active") == 2
 
 
+class TestPinnedInterfaceIsWriteOnce:
+    """The pinned interface is immutable at the STORAGE layer, not by convention.
+
+    The service refuses a rebind that redefines the interface, but the update
+    statement is what makes the immutability true: even handed a model whose
+    interface fields were altered, no update path can move them.
+    """
+
+    def test_the_pinned_interface_survives_the_round_trip(self, store: BindingStore) -> None:
+        original = _binding(
+            allowed_billing_modes=("included", "metered"),
+            requires_third_party_consent=True,
+        )
+        store.save_binding(original)
+        loaded = store.get_binding(original.binding_id)
+        assert loaded is not None
+        assert loaded.allowed_billing_modes == ("included", "metered")
+        assert loaded.requires_third_party_consent is True
+
+    def test_an_unconstrained_allowlist_stays_null_rather_than_empty(
+        self, store: BindingStore
+    ) -> None:
+        """``None`` means "any mode"; ``()`` would mean "no mode". Not the same."""
+        binding = _binding()
+        store.save_binding(binding)
+        row = store._conn.execute(
+            "SELECT allowed_billing_modes FROM slot_bindings WHERE binding_id = ?",
+            (binding.binding_id,),
+        ).fetchone()
+        assert row["allowed_billing_modes"] is None
+        loaded = store.get_binding(binding.binding_id)
+        assert loaded is not None
+        assert loaded.allowed_billing_modes is None
+
+    def test_update_binding_cannot_move_the_pinned_interface(self, store: BindingStore) -> None:
+        original = _binding(
+            allowed_billing_modes=("included",),
+            requires_third_party_consent=True,
+        )
+        store.save_binding(original)
+
+        tampered = original.model_copy(
+            update={
+                "provider_name": "summarizer-fast",
+                "contract_in": "doc.v2",
+                "contract_out": "summary.v2",
+                "allowed_billing_modes": ("included", "byo_key"),
+                "requires_third_party_consent": False,
+                "revision": 2,
+            }
+        )
+        store.update_binding(tampered)
+
+        loaded = store.get_binding(original.binding_id)
+        assert loaded is not None
+        assert loaded.provider_name == "summarizer-fast"
+        assert loaded.revision == 2
+        assert loaded.contract_in == "doc.v1"
+        assert loaded.contract_out == "summary.v1"
+        assert loaded.allowed_billing_modes == ("included",)
+        assert loaded.requires_third_party_consent is True
+
+
 class TestRevisionHistory:
     def test_revisions_are_unique_per_binding(self, store: BindingStore) -> None:
         binding = _binding()
