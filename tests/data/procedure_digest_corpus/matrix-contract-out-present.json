@@ -1,0 +1,26 @@
+{
+  "digest_v1": "sha256:35cb470cad378c3681318a86ca111e3f228b1ef66d640af0ed35cf7b50aefade",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 5,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "cruxible.EmptyInput",
+    "contract_out": "cruxible.JsonObject",
+    "declared_tier": "governed_write",
+    "name": "matrix_contract_out",
+    "precondition": {},
+    "returns": "rows",
+    "steps": [
+      {
+        "as": "rows",
+        "id": "call",
+        "include_source": false,
+        "input": {},
+        "params": {},
+        "provider": "scorer"
+      }
+    ]
+  },
+  "source_label": "matrix-contract-out-present"
+}

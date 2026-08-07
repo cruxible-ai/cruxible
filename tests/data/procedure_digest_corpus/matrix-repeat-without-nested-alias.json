@@ -1,0 +1,40 @@
+{
+  "digest_v1": "sha256:97d98cdeca98e4a07073ac11e0653a79bcc38c94593fbe93b81fec90132c3efc",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 5,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "cruxible.EmptyInput",
+    "declared_tier": "governed_write",
+    "name": "matrix_repeat_bare",
+    "precondition": {},
+    "returns": "rows",
+    "steps": [
+      {
+        "as": "rows",
+        "id": "loop",
+        "repeat": {
+          "max_attempts": 2,
+          "steps": [
+            {
+              "as": "attempt",
+              "id": "attempt",
+              "include_source": false,
+              "input": {},
+              "params": {},
+              "provider": "scorer"
+            }
+          ],
+          "until": {
+            "left": "$steps.attempt.done",
+            "message": "not done",
+            "op": "eq",
+            "right": true
+          }
+        }
+      }
+    ]
+  },
+  "source_label": "matrix-repeat-without-nested-alias"
+}

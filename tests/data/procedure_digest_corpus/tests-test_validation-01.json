@@ -1,0 +1,26 @@
+{
+  "digest_v1": "sha256:e3b6f76f27dcd853f688a9ef5b0ef83cb7801a67bb88baa1720e855fd51de8e9",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 0,
+      "wall_clock_s": 10.0
+    },
+    "contract_in": "cruxible.EmptyInput",
+    "declared_tier": "governed_write",
+    "name": "bounded_action",
+    "precondition": {},
+    "returns": "present",
+    "steps": [
+      {
+        "assert_exists": {
+          "ref": "$input.value"
+        },
+        "id": "present",
+        "include_source": false,
+        "input": {},
+        "params": {}
+      }
+    ]
+  },
+  "source_label": "tests-test_validation-01"
+}

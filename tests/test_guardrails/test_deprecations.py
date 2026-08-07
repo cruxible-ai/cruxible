@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from cruxible_core import __version__
 from cruxible_core.deprecation import (
     DEPRECATION_REGISTRY,
     attach_mcp_deprecations,
@@ -79,3 +80,26 @@ def test_emitters_use_existing_warning_envelopes_without_renaming_them() -> None
 def test_registry_surfaces_are_unique() -> None:
     surfaces = [notice.surface for notice in DEPRECATION_REGISTRY]
     assert len(surfaces) == len(set(surfaces))
+
+
+def _release_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split(".")[:3])
+
+
+@pytest.mark.parametrize("notice", DEPRECATION_REGISTRY)
+def test_no_registered_surface_is_past_its_removal_window(notice: Any) -> None:
+    """The removal window is a commitment; this is the gate that collects on it.
+
+    The registry->table check above runs in one direction only and never
+    compares ``removal_version`` against the version actually being shipped, so
+    nothing failed when a release carried surfaces whose removal date had
+    already passed. A removal version is a promise about the release it names:
+    once ``__version__`` reaches it, the surface must be gone from the registry,
+    not still warning.
+    """
+    assert _release_tuple(__version__) < _release_tuple(notice.removal_version), (
+        f"'{notice.surface}' promised removal in {notice.removal_version} and this tree "
+        f"is version {__version__}. Remove the surface and its registry entry (keeping "
+        "the DEPRECATIONS.md and CHANGELOG rows as the historical record), or move the "
+        "removal version deliberately -- a commitment change, not a version bump."
+    )

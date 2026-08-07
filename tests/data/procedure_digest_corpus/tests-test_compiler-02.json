@@ -1,0 +1,27 @@
+{
+  "digest_v1": "sha256:99a6bbcec9ae11c73e3c19d77dcbae65fe72da5670b9e4d6359345a64c5328f5",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 1,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "ProcedureInput",
+    "declared_tier": "graph_write",
+    "name": "invalid_return_reference",
+    "precondition": {},
+    "returns": "$steps.transactions.result",
+    "steps": [
+      {
+        "as": "transactions",
+        "id": "load_transactions",
+        "include_source": false,
+        "input": {
+          "value": "$input.value"
+        },
+        "params": {},
+        "provider": "exported_action"
+      }
+    ]
+  },
+  "source_label": "tests-test_compiler-02"
+}

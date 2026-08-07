@@ -1,0 +1,28 @@
+{
+  "digest_v1": "sha256:a3e39a4ec6c7307abd052cfdce94bf0952775a3f7defb4c478b4591b15a5f27e",
+  "normalized_dump_v032": {
+    "budget": {
+      "max_provider_calls": 2,
+      "wall_clock_s": 30.0
+    },
+    "contract_in": "cruxible.EmptyInput",
+    "declared_tier": "governed_write",
+    "name": "collision_query_params",
+    "precondition": {},
+    "returns": "rows",
+    "steps": [
+      {
+        "as": "rows",
+        "id": "read",
+        "include_source": false,
+        "input": {},
+        "params": {
+          "on_false": "$abort",
+          "on_true": "next_step"
+        },
+        "query": "named_query"
+      }
+    ]
+  },
+  "source_label": "collision-query-params-arm-keys"
+}
