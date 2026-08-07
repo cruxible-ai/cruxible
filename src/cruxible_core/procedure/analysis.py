@@ -93,7 +93,19 @@ class ProcedureGraph:
     terminates rather than continuing."""
     predecessors: dict[str, tuple[str, ...]]
     available_aliases: dict[str, frozenset[str]]
-    """Per node, the aliases available on EVERY control path reaching it."""
+    """Per node, the aliases available on EVERY control path reaching it.
+
+    MUST-availability: the intersection over predecessors. This is the right
+    question for REFERENCE VALIDITY -- an alias produced on one arm only is
+    genuinely unavailable to a node both arms reach."""
+    reachable_aliases: dict[str, frozenset[str]]
+    """Per node, the aliases produced on AT LEAST ONE control path reaching it.
+
+    MAY-reachability: the union over predecessors, and a different question
+    from the one above. It is the right question for DUPLICATE PRODUCTION,
+    because "two producers of one alias on the same path" is satisfied by ONE
+    such path -- the intersection would have dropped the alias at the join and
+    called the collision legal."""
     produced_alias: dict[str, str | None]
 
     @property
@@ -156,7 +168,7 @@ def build_procedure_graph(
 
     _refuse_unreachable_nodes(node_ids, successors)
 
-    produced_alias, available = _resolve_alias_availability(
+    produced_alias, available, reachable = _resolve_alias_availability(
         definition,
         node_ids=node_ids,
         predecessors=predecessors,
@@ -170,6 +182,7 @@ def build_procedure_graph(
         successors=successors,
         predecessors={node_id: tuple(values) for node_id, values in predecessors.items()},
         available_aliases=available,
+        reachable_aliases=reachable,
         produced_alias=produced_alias,
     )
 
@@ -227,15 +240,20 @@ def _resolve_alias_availability(
     node_ids: tuple[str, ...],
     predecessors: dict[str, list[str]],
     initial_aliases: frozenset[str],
-) -> tuple[dict[str, str | None], dict[str, frozenset[str]]]:
-    """Forward MUST-dataflow: ``avail(n) = intersection over preds of avail|produced``.
+) -> tuple[dict[str, str | None], dict[str, frozenset[str]], dict[str, frozenset[str]]]:
+    """Compute BOTH dataflow directions, because two rules need two questions.
 
-    Intersection, not union, is the whole point: an alias produced on ONE arm
-    is not available to a node both arms reach, and reading it there is a
-    runtime failure that no per-step check can see.
+    ``avail(n)`` is MUST: the intersection over predecessors. An alias produced
+    on ONE arm is not available to a node both arms reach, and reading it there
+    is a runtime failure that no per-step check can see. Under linearity this
+    reduces to "every earlier step's alias", which is byte-identical to the
+    compiler's existing prior-alias walk.
 
-    Under linearity this reduces to "every earlier step's alias", which is
-    byte-identical to the compiler's existing prior-alias walk.
+    ``reach(n)`` is MAY: the union. Duplicate production needs it, because the
+    hazard is satisfied by ONE path carrying two producers. Guard arms that
+    produce different aliases make the intersection at the join drop BOTH, so a
+    must-only check declares a genuine same-path collision legal and lets the
+    second producer silently overwrite the first.
     """
     produced: dict[str, str | None] = {}
     for step in definition.steps:
@@ -244,21 +262,31 @@ def _resolve_alias_availability(
 
     refuse_shadowing = definition.graph_format == 2
     available: dict[str, frozenset[str]] = {}
+    reachable: dict[str, frozenset[str]] = {}
     for position, node_id in enumerate(node_ids):
         preds = predecessors[node_id]
         if position == 0 or not preds:
             available[node_id] = initial_aliases
+            reachable[node_id] = initial_aliases
         else:
-            sets = [available[pred] | _produced_set(produced[pred]) for pred in preds]
-            available[node_id] = frozenset.intersection(*sets)
+            contributions = [
+                (available[pred] | _produced_set(produced[pred]), pred) for pred in preds
+            ]
+            available[node_id] = frozenset.intersection(
+                *[contribution for contribution, _pred in contributions]
+            )
+            reachable[node_id] = frozenset().union(
+                *[reachable[pred] | _produced_set(produced[pred]) for pred in preds]
+            )
         alias = produced[node_id]
-        if refuse_shadowing and alias is not None and alias in available[node_id]:
+        if refuse_shadowing and alias is not None and alias in reachable[node_id]:
             raise ConfigError(  # R15
                 f"procedure step '{node_id}' produces alias '{alias}', which is "
-                "already produced on every path reaching it. Two producers of one "
-                "alias on the same path make every downstream reference ambiguous."
+                "already produced on at least one path reaching it. Two producers of "
+                "one alias on the same path make every downstream reference "
+                "ambiguous, and the second silently overwrites the first."
             )
-    return produced, available
+    return produced, available, reachable
 
 
 def _produced_set(alias: str | None) -> frozenset[str]:

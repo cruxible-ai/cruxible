@@ -31,6 +31,7 @@ from cruxible_core.procedure.graph_format import (
 from cruxible_core.procedure.pins import (
     AcceptanceNodePin,
     build_acceptance_node_pins,
+    expected_pin_keys,
     receipt_pin_material,
     verify_pin_currency,
     verify_pin_integrity,
@@ -1257,23 +1258,38 @@ def _verify_acceptance_pins(
             f"(`cruxible procedure propose <file> --supersedes {procedure.procedure_id}`, "
             "then `cruxible procedure resolve <new-id> --action accept`)."
         )
-    # A format-v2 procedure only comes into existence through an acceptance
-    # that writes per-node pins, so their absence is a refusal. A format-v1
-    # procedure with none is NOT refused: its coarse acceptance digests remain
-    # authoritative, exactly as before. That case is finite and the convergence
-    # sweep drains it.
-    # Read from the DEFINITION, which is authoritative: the record column is
-    # a convenience for readers, and a row restored from an older snapshot
-    # can carry the default while its definition says otherwise.
+    # COMPLETENESS is a set question. A count, or a non-emptiness test, misses
+    # both halves of it: a stored set missing one row of two is incomplete
+    # while still being non-empty and still matching its coarse digests, and a
+    # v2 graph of guards and projections alone has no external dependencies at
+    # all, so the EMPTY set is the correct and complete answer for it.
+    #
+    # Read the format from the DEFINITION, which is authoritative: the record
+    # column is a convenience for readers, and a row restored from an older
+    # snapshot can carry the default while its definition says otherwise.
     stored_format = definition_format_version(procedure.definition)[0]
-    if not node_pins and stored_format != DEFINITION_FORMAT_V1:
-        raise ConfigError(
-            f"Procedure '{procedure.procedure_id}' is format v2 but has no recorded "
-            "per-node acceptance pins. A v2 procedure only becomes live through an "
-            "acceptance that writes them, so their absence means the row was not "
-            "produced by one; the run is refused rather than executed against a "
-            "world no reviewer is known to have approved."
-        )
+    stored_keys: set[tuple[str, str, str]] = {
+        (pin.node_id, str(pin.pin_kind), pin.pin_key) for pin in node_pins
+    }
+    check_completeness = stored_format != DEFINITION_FORMAT_V1 or bool(stored_keys)
+    if check_completeness:
+        expected_keys = expected_pin_keys(definition=procedure.definition, config=config, lock=lock)
+        missing_pins = sorted(expected_keys - stored_keys)
+        unexpected_pins = sorted(stored_keys - expected_keys)
+        if missing_pins or unexpected_pins:
+            parts: list[str] = []
+            if missing_pins:
+                parts.append(f"missing {missing_pins}")
+            if unexpected_pins:
+                parts.append(f"unrecorded {unexpected_pins}")
+            raise ConfigError(
+                f"Procedure '{procedure.procedure_id}' has an incomplete set of "
+                f"per-node acceptance pins ({'; '.join(parts)}). A pin set that does "
+                "not cover every dependency the definition declares cannot show the "
+                "run was reviewed against the world it is about to execute in, so "
+                "the run is refused. Recover by re-proposing the definition for an "
+                "independent reviewer to accept."
+            )
     verify_pin_integrity(node_pins)
 
     mismatches = [

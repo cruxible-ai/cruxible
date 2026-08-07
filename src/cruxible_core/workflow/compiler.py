@@ -239,8 +239,8 @@ def _prior_step_aliases_by_index(
     return per_index
 
 
-def _resolved_control_edges(workflow: Any, definition_label: str) -> dict[str, dict[str, str]]:
-    """Resolve every control edge once, refusing R1/R2/R3/R15 in the process.
+def _resolved_procedure_graph(workflow: Any, definition_label: str) -> ProcedureGraph | None:
+    """Resolve the control graph once, refusing R1/R2/R3/R15 in the process.
 
     Only procedures have a control graph. A configured workflow cannot parse a
     guard node or a flow wrapper -- the type system already refused it -- so
@@ -248,12 +248,40 @@ def _resolved_control_edges(workflow: Any, definition_label: str) -> dict[str, d
     cannot be violated.
     """
     if definition_label != "Procedure":
-        return {}
+        return None
     if not isinstance(workflow, ProcedureDefinition):
-        return {}
+        return None
     graph = build_procedure_graph(workflow)
     _refuse_unresolvable_parameter_operands(graph, workflow)
-    return graph.edges
+    _bind_guard_operands(graph, workflow)
+    return graph
+
+
+def _bind_guard_operands(graph: ProcedureGraph, definition: ProcedureDefinition) -> None:
+    """Bind every guard alias operand to a real producer, or refuse.
+
+    MUST-availability is the correct question here: a guard reading an alias
+    that only one incoming arm produced would fail at RUN time, on the arm that
+    did not. Without this a first-node guard reading `count(missing, items)`
+    compiles clean and accepts clean, and the definition is not discovered to be
+    broken until it is executing -- which is precisely the outcome acceptance
+    exists to rule out.
+    """
+    for step in definition.steps:
+        if not isinstance(step, ProcedureGuardStepSchema):
+            continue
+        available = graph.available_aliases[str(step.id)]
+        for operand in step.guard.operands():
+            alias = operand.alias
+            if alias is None or operand.form == "param":
+                continue
+            if alias not in available:
+                offered = ", ".join(sorted(available)) or "(none)"
+                raise ConfigError(
+                    f"Procedure guard step '{step.id}' reads step alias '{alias}', "
+                    "which is not produced on every path reaching it. Available "
+                    f"there: {offered}."
+                )
 
 
 def _refuse_unresolvable_parameter_operands(
@@ -420,7 +448,8 @@ def compile_plan_definition(
         workflow.steps,
         initial_aliases=_initial_step_aliases,
     )
-    control_edges = _resolved_control_edges(workflow, definition_label)
+    procedure_graph = _resolved_procedure_graph(workflow, definition_label)
+    control_edges = {} if procedure_graph is None else procedure_graph.edges
     for step_index, step in enumerate(workflow.steps):
         prior_step_aliases = prior_aliases_by_index[step_index]
         # Read control targets BEFORE unwrapping: the wrapper owns `next`, a

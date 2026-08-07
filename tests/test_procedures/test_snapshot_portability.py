@@ -214,3 +214,44 @@ def test_the_reader_registry_accepts_version_one_and_refuses_the_unknown(
     future = json.dumps({"format_version": 3, "procedures": []}).encode("utf-8")
     with pytest.raises(ConfigError, match="supported: 1, 2"):
         _load_snapshot_procedures(future, snapshot_id="SNP-future")
+
+
+def test_restore_backfills_node_digests_for_every_restored_procedure(
+    procedure_instance: CruxibleInstance,
+    tmp_path: Path,
+) -> None:
+    """Derived data is not carried in the artifact, so restore must recompute it.
+
+    Nothing else ever would: digests are written at acceptance, and a restored
+    row never passes through one. A procedure whose decision points have no
+    digests cannot be joined to any reading about them, which is the entire
+    point of recording them.
+    """
+    v2_id = _accepted(procedure_instance, _v2_definition("backfill_v2"), "backfill-author")
+    v1_id = _accepted(procedure_instance, provider_definition("backfill_v1"), "backfill-v1")
+
+    source_store = procedure_instance.get_procedure_store()
+    try:
+        expected = {
+            procedure_id: source_store.list_node_digests(procedure_id)
+            for procedure_id in (v2_id, v1_id)
+        }
+    finally:
+        source_store.close()
+    assert all(digests for digests in expected.values())
+
+    snapshot = procedure_instance.create_snapshot(label="digest-backfill")
+    clone, _ = CruxibleInstance.clone_from_snapshot(
+        procedure_instance,
+        snapshot.snapshot_id,
+        tmp_path / "backfill-clone",
+    )
+    clone_store = clone.get_procedure_store()
+    try:
+        for procedure_id, digests in expected.items():
+            restored = clone_store.list_node_digests(procedure_id)
+            assert restored == digests, (
+                f"restored node digests for {procedure_id} do not match the source"
+            )
+    finally:
+        clone_store.close()

@@ -52,6 +52,14 @@ _EXISTS_PATTERN = re.compile(r"^exists\(\s*([^()]+?)\s*\)$")
 _TRUNCATED_PATTERN = re.compile(r"^truncated\(\s*([^,()\s]+)\s*\)$")
 _ACCESSOR_PREFIX = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\(")
 _PARAMETER_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+_ALIAS_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+"""A step alias is a bare name.
+
+The accessor regexes below match a permissive character class so a
+malformed argument produces a NAMED refusal instead of a confusing
+"is not count(<alias>, <selector>)"; the name itself is checked here.
+Without this, ``count(rows+1, items)`` parses and the arithmetic rides
+through the one position that took free text."""
 _REFERENCE_PATH = re.compile(
     r"^[A-Za-z_][A-Za-z0-9_]*(\[\d+\])*(\.[A-Za-z_][A-Za-z0-9_]*(\[\d+\])*)*$"
 )
@@ -142,6 +150,7 @@ def parse_predicate_operand(raw: Any) -> PredicateOperand:
         if matched is None:
             raise PredicateGrammarError(f"'{raw}' is not 'count(<alias>, <selector>)'")
         alias, selector = matched.group(1), matched.group(2)
+        _require_alias_name(raw, alias)
         if selector not in {"returned_results", "total_results", "items", "results"}:
             raise PredicateGrammarError(
                 f"'{selector}' is not a count selector; the selectors are "
@@ -152,11 +161,33 @@ def parse_predicate_operand(raw: Any) -> PredicateOperand:
         matched = _EXISTS_PATTERN.match(raw)
         if matched is None:
             raise PredicateGrammarError(f"'{raw}' is not 'exists(<ref>)'")
-        return PredicateOperand(form="exists", ref=matched.group(1))
+        ref = matched.group(1)
+        # The argument is a REFERENCE, parsed by the same grammar as any other
+        # operand. Without this, `exists(always_true)` reads its argument as a
+        # bare literal that resolves to itself and is therefore always
+        # present -- a constant-true branch wearing the costume of a test.
+        inner = parse_predicate_operand(ref)
+        if inner.form not in {"input_path", "steps_path"}:
+            raise PredicateGrammarError(
+                f"'{raw}' must test a $input or $steps reference; '{ref}' is a "
+                f"{inner.form}, and asking whether a literal exists is a constant, "
+                "not a predicate"
+            )
+        return PredicateOperand(form="exists", ref=ref, alias=inner.alias)
     matched = _TRUNCATED_PATTERN.match(raw)
     if matched is None:
         raise PredicateGrammarError(f"'{raw}' is not 'truncated(<alias>)'")
-    return PredicateOperand(form="truncated", alias=matched.group(1))
+    alias = matched.group(1)
+    _require_alias_name(raw, alias)
+    return PredicateOperand(form="truncated", alias=alias)
+
+
+def _require_alias_name(raw: str, alias: str) -> None:
+    if not _ALIAS_NAME.match(alias):
+        raise PredicateGrammarError(
+            f"'{raw}' names step alias '{alias}', which is not a bare name. "
+            "An accessor argument is an alias, not an expression."
+        )
 
 
 def _require_reference_path(raw: str, path: str) -> None:

@@ -30,8 +30,10 @@ from cruxible_core.workflow.step_handlers import PROCEDURE_STEP_HANDLER_REGISTRY
 from tests.test_procedures.test_definition_digest_corpus import ENTRIES, IDS
 from tests.test_procedures.test_execution import _accept, _receipt, _stub_provider
 
-_VOLATILE_RECEIPT_KEYS = {
-    # Minted or advanced per run, in both executors alike.
+_RUN_IDENTITY_KEYS = {
+    # Minted or advanced ONCE PER RUN by construction, in both executors alike:
+    # ids, clocks, and the monotonic read revision. Two sequential runs cannot
+    # agree on these and no executor change could make them.
     "receipt_id",
     "created_at",
     "duration_ms",
@@ -39,8 +41,14 @@ _VOLATILE_RECEIPT_KEYS = {
     "read_revision",
     "trace_id",
     "head_snapshot_id",
-    "query_receipt_ids",
 }
+_PLACEHOLDER = "<run-identity>"
+"""Run-identity values are REPLACED, not deleted.
+
+Deleting a key hides the difference between "this field is per-run" and "this
+field vanished". The oracle has to fail when the successor walk stops emitting
+something the flat loop emitted, so every key survives the normalization and
+only its value is neutralized."""
 
 
 @pytest.mark.parametrize("entry", ENTRIES, ids=IDS)
@@ -63,16 +71,35 @@ def _flat_loop(context: WorkflowExecutionContext) -> None:
         PROCEDURE_STEP_HANDLER_REGISTRY.execute(context, compiled_step)
 
 
-def _strip_volatile(value: Any) -> Any:
+def _normalize_run_identity(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            key: _strip_volatile(item)
+            key: (
+                _PLACEHOLDER
+                if key in _RUN_IDENTITY_KEYS
+                else _normalize_query_receipt_ids(key, item)
+            )
             for key, item in value.items()
-            if key not in _VOLATILE_RECEIPT_KEYS
         }
     if isinstance(value, list):
-        return [_strip_volatile(item) for item in value]
+        return [_normalize_run_identity(item) for item in value]
     return value
+
+
+def _normalize_query_receipt_ids(key: str, value: Any) -> Any:
+    """Per-execution measurements, collapsed to the part that is comparable.
+
+    Query receipt ids are minted per execution; their COUNT is not, and how
+    many query receipts a run produced is exactly the kind of thing an
+    executor change could alter. Spent wall-clock is a measurement of this
+    run's elapsed time; the provider-call count beside it is not, so only the
+    clock is neutralized.
+    """
+    if key == "query_receipt_ids" and isinstance(value, list):
+        return f"<{len(value)} query receipts>"
+    if key == "spent" and isinstance(value, dict):
+        return {**_normalize_run_identity(value), "wall_clock_s": _PLACEHOLDER}
+    return _normalize_run_identity(value)
 
 
 def _receipt_modulo_ids(instance: CruxibleInstance, receipt_id: str) -> dict[str, Any]:
@@ -92,11 +119,12 @@ def _receipt_modulo_ids(instance: CruxibleInstance, receipt_id: str) -> dict[str
         }
         for edge in dumped["edges"]
     ]
-    result = _strip_volatile(dumped)
+    result = _normalize_run_identity(dumped)
     assert isinstance(result, dict)
-    # Run ids and receipt ids leak into the root detail; drop the whole run
-    # coordinate rather than guess at which key carries it.
-    result["nodes"][0].pop("detail", None)
+    # The root detail is COMPARED, not dropped: it carries the accepted/executed
+    # digests, the precondition, the budget, the verdict and the pin material,
+    # and every one of those is a thing an executor change could disturb. Only
+    # the per-run coordinates inside it are normalized, by the same walk.
     return result
 
 
@@ -125,6 +153,33 @@ _LINEAR_SHAPES: dict[str, list[dict[str, Any]]] = {
                 "items": [{"value": 1}],
                 "fields": {"value": "$item.value"},
             },
+            "as": "result",
+        },
+    ],
+    "query-then-assert": [
+        {
+            "id": "read",
+            "query": {
+                "mode": "collection",
+                "returns": "Task",
+                "result_shape": "entity",
+                "limit": 10,
+            },
+            "as": "rows",
+        },
+        {
+            "id": "guard_count",
+            "assert_count": {
+                "step": "rows",
+                "count": "returned_results",
+                "op": "gte",
+                "value": 0,
+                "message": "read must succeed",
+            },
+        },
+        {
+            "id": "assemble",
+            "shape_items": {"items": [{"value": 1}], "fields": {"value": "$item.value"}},
             "as": "result",
         },
     ],
@@ -188,8 +243,64 @@ def test_t3_a_linear_definition_runs_identically_through_both_executors(
         actor_context=None,
     )
 
-    assert walked.step_outputs == flat.step_outputs
-    assert walked.output == flat.output
+    # A query step's own output embeds the receipt id of the read that produced
+    # it, which is minted per execution; the same normalization applies.
+    assert _normalize_run_identity(walked.step_outputs) == _normalize_run_identity(
+        flat.step_outputs
+    )
+    assert _normalize_run_identity(walked.output) == _normalize_run_identity(flat.output)
+    # Read metadata is derived from what the run READ, not from run identity,
+    # so it must match exactly. It was previously not compared at all.
+    assert _read_metadata(procedure_instance, walked) == _read_metadata(procedure_instance, flat)
     assert _receipt_modulo_ids(
         procedure_instance, walked.run.receipt_id or ""
     ) == _receipt_modulo_ids(procedure_instance, flat.run.receipt_id or "")
+
+
+def _read_metadata(instance: CruxibleInstance, result: Any) -> Any:
+    """The aggregated read metadata, with per-execution ids neutralized.
+
+    Everything else in it -- which steps read, their counts, every truncation
+    flag and reason -- is derived from what the run READ and must match
+    exactly. It was previously not compared at all.
+    """
+    receipt = _receipt(instance, result.run.receipt_id or "")
+    for node in receipt.nodes:
+        if "read_metadata" in node.detail:
+            return _normalize_run_identity(node.detail["read_metadata"])
+    return {}
+
+
+def test_the_oracle_compares_the_root_detail_rather_than_discarding_it(
+    procedure_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guard on the guard.
+
+    An oracle that strips the root detail cannot see a change to the pin
+    material, the accepted/executed digests or the verdict -- so this asserts
+    the normalized receipt still carries them.
+    """
+    _stub_provider(monkeypatch, lambda payload: {"value": int(payload.get("value", 0))})
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "oracle_selfcheck",
+            "contract_in": "ProcedureInput",
+            "steps": _LINEAR_SHAPES["single-provider"],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 5},
+            "declared_tier": "graph_write",
+        }
+    )
+    procedure_id = _accept(procedure_instance, definition)
+    result = service_run_procedure(
+        procedure_instance, procedure_id, input_payload={"value": 1}, actor_context=None
+    )
+    normalized = _receipt_modulo_ids(procedure_instance, result.run.receipt_id or "")
+    root_detail = normalized["nodes"][0]["detail"]
+    for key in ("node_pins", "pin_payloads", "accepted_against", "executed_against", "verdict"):
+        assert key in root_detail
+    # Run-identity keys survive as placeholders, so a field that DISAPPEARS is
+    # still a failure rather than a silent match.
+    assert normalized["read_revision"] == _PLACEHOLDER

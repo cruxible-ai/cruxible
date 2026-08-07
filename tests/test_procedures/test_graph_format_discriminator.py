@@ -170,3 +170,24 @@ def test_the_legal_wire_spellings_are_exactly_absent_and_two() -> None:
     assert SUPPORTED_DECLARED_FORMATS == frozenset({None, 2})
     assert definition_format_version(_definition())[0] == 1
     assert definition_format_version(_definition(graph_format=2))[0] == 2
+
+
+@pytest.mark.parametrize("declared", ["2", 2.0, "banana", "1", True, [2], {"v": 2}])
+def test_a_coerced_wire_spelling_is_refused_before_pydantic_can_normalize_it(
+    declared: Any,
+) -> None:
+    """Coercion IS the fail-open.
+
+    ``int | None`` is non-strict, so ``"2"`` and ``2.0`` become ``2`` and reach
+    the value check already looking legal. An artifact whose discriminator
+    arrives as a different JSON type was not written by a core that agrees with
+    this one about what the field is, so it is refused rather than normalized
+    into agreement.
+    """
+    with pytest.raises(ConfigError, match="supported: 1, 2"):
+        _definition(graph_format=declared)
+
+
+def test_the_integer_two_is_still_the_one_accepted_declaration() -> None:
+    assert _definition(graph_format=2).graph_format == 2
+    assert _definition().graph_format is None

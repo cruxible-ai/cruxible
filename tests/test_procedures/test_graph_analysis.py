@@ -152,8 +152,68 @@ def test_r15_two_producers_of_one_alias_on_the_same_path_are_refused() -> None:
         graph_format=2,
         returns="rows",
     )
-    with pytest.raises(ConfigError, match="already produced on every path"):
+    with pytest.raises(ConfigError, match="already produced on at least one path"):
         build_procedure_graph(definition)
+
+
+def test_r15_uses_may_reachability_not_must_availability() -> None:
+    """The collision a MUST-availability check calls legal.
+
+    The true arm produces `x` and the false arm produces `y`, so the
+    intersection at the join drops BOTH -- and a node after the join that also
+    produces `x` looks clean, while the true path plainly carries two
+    producers of it and the second silently overwrites the first. Duplicate
+    production is a MAY question; reference validity is a MUST question. They
+    are not the same analysis.
+    """
+    definition = _definition(
+        [
+            _provider("read", "rows"),
+            {
+                "id": "gate",
+                "guard": {"left": "count(rows, items)", "op": "gt", "right": 0},
+                "on_true": "hot",
+                "on_false": "cold",
+                "message": "no rows",
+            },
+            {"step": _provider("hot", "decision"), "next": "tail"},
+            _provider("cold", "other"),
+            _provider("tail", "decision"),
+        ],
+        graph_format=2,
+        returns="decision",
+    )
+    with pytest.raises(ConfigError, match="already produced on at least one path"):
+        build_procedure_graph(definition)
+
+
+def test_reference_validity_still_uses_must_availability() -> None:
+    """The two analyses are kept apart, not merged.
+
+    `decision` is produced on both arms, so it IS available after the join;
+    `other` is produced on one, so it is not. May-reachability would have said
+    both were fine.
+    """
+    definition = _definition(
+        [
+            _provider("read", "rows"),
+            {
+                "id": "gate",
+                "guard": {"left": "count(rows, items)", "op": "gt", "right": 0},
+                "on_true": "hot",
+                "on_false": "cold",
+                "message": "no rows",
+            },
+            {"step": _provider("hot", "decision"), "next": "tail"},
+            _provider("cold", "decision"),
+            _provider("tail", "final"),
+        ],
+        graph_format=2,
+        returns="final",
+    )
+    graph = build_procedure_graph(definition)
+    assert graph.available_aliases["tail"] == frozenset({"rows", "decision"})
+    assert graph.reachable_aliases["tail"] == frozenset({"rows", "decision"})
 
 
 def test_r15_does_not_retroactively_refuse_a_format_v1_definition() -> None:

@@ -42,6 +42,7 @@ from cruxible_core.group.store import GroupStore
 from cruxible_core.installs.store import InstallLedgerStore
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
 from cruxible_core.primitives import new_id
+from cruxible_core.procedure.digest import compute_node_digests
 from cruxible_core.procedure.graph_format import refuse_unknown_artifact_format
 from cruxible_core.procedure.pins import AcceptanceNodePin
 from cruxible_core.procedure.store import ProcedureStore
@@ -761,6 +762,17 @@ class CruxibleInstance(InstanceProtocol):
             uow.graph.save_graph(graph)
             for procedure in procedures:
                 uow.procedures.save_procedure(procedure)
+                # BACKFILL. Node digests are derived and the computation is
+                # pure, so they are not carried in the artifact -- but nothing
+                # else would ever write them for a restored row, and a
+                # procedure whose decision points have no digests cannot be
+                # joined to any reading about them. Restore is the canonical
+                # moment: it is the one write path definitions enter by
+                # without passing through acceptance.
+                uow.procedures.save_node_digests(
+                    procedure.procedure_id,
+                    list(compute_node_digests(procedure.definition).values()),
+                )
             # Same unit of work as the definitions they pin: a clone that
             # committed procedures without their pins would produce v2 rows
             # that refuse to run.

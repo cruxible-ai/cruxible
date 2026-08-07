@@ -12,6 +12,7 @@ from pydantic import (
     Field,
     SerializationInfo,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -29,6 +30,7 @@ from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.primitives import new_id
 from cruxible_core.procedure.graph_format import (
     DEFINITION_FORMAT_V1,
+    coerce_declared_format,
     definition_format_version,
     register_v2_step_type,
 )
@@ -417,6 +419,16 @@ class ProcedureDefinition(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("graph_format", mode="before")
+    @classmethod
+    def refuse_coerced_format_spellings(cls, value: Any) -> Any:
+        """Ahead of coercion, because coercion is the fail-open.
+
+        ``int | None`` is non-strict, so ``"2"`` and ``2.0`` would arrive at
+        the value check already looking like a legal ``2``.
+        """
+        return coerce_declared_format(value)
 
     @model_validator(mode="after")
     def validate_definition(self) -> ProcedureDefinition:

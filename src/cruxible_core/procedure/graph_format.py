@@ -125,6 +125,31 @@ def _uses_v2_construct(definition: ProcedureDefinition) -> bool:
     return any(isinstance(step, step_types) for step in definition.steps)
 
 
+def coerce_declared_format(value: Any) -> Any:
+    """Refuse a ``graph_format`` that is not LITERALLY absent or the integer 2.
+
+    Runs in ``mode="before"``, ahead of pydantic's coercion, because coercion
+    is the fail-open: ``int | None`` is non-strict, so ``"2"`` and ``2.0``
+    become ``2`` and reach the value check already looking legal. The wire has
+    one spelling per format, and a JSON string is not it -- an artifact whose
+    discriminator arrives as a different JSON type was not written by a core
+    that agrees with this one about what the field is.
+
+    ``bool`` is excluded on purpose despite being an ``int`` subclass: ``True``
+    would otherwise read as the explicit ``1`` it is not.
+    """
+    if value is None:
+        return None
+    if type(value) is not int:
+        raise refuse_unknown_artifact_format(
+            artifact_class="ProcedureDefinition",
+            declared_version=value,
+            supported_versions=(DEFINITION_FORMAT_V1, DEFINITION_FORMAT_V2),
+        )
+    _refuse_unreadable_declaration(value)
+    return value
+
+
 def _refuse_unreadable_declaration(declared: int | None) -> None:
     """Refuse any ``graph_format`` outside the legal wire spellings.
 
@@ -187,6 +212,7 @@ def definition_format_version(definition: ProcedureDefinition) -> tuple[int, lis
 
 __all__ = [
     "DEFINITION_FORMAT_V1",
+    "coerce_declared_format",
     "DEFINITION_FORMAT_V2",
     "SUPPORTED_DECLARED_FORMATS",
     "definition_format_version",

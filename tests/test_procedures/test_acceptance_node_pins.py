@@ -167,7 +167,7 @@ def test_a_v2_procedure_with_its_pins_deleted_is_refused(
         store._conn.commit()
     finally:
         store.close()
-    with pytest.raises(ConfigError, match="format v2 but has no recorded per-node"):
+    with pytest.raises(ConfigError, match="incomplete set of per-node acceptance pins"):
         service_run_procedure(procedure_instance, procedure_id, {"value": 5}, actor("runner"))
 
 
@@ -234,10 +234,118 @@ def test_pins_ride_a_repeat_body(procedure_instance: CruxibleInstance) -> None:
     )
     procedure_id = _accept(procedure_instance, definition)
     pins = _pins(procedure_instance, procedure_id)
-    # The nested provider is pinned under the CONTAINER node: the repeat is one
-    # node in the control graph, and its body is its own content.
-    assert [(pin.node_id, pin.pin_key) for pin in pins] == [("retry", "exported_action")]
+    # The nested provider is pinned under the NAMESPACED nested node id -- the
+    # same id its Merkle identity carries. Attributing it to the container
+    # would leave the pin naming a node whose digest does not exist, so no pin
+    # could be joined to the digest of the node it actually pins.
+    assert [(pin.node_id, pin.pin_key) for pin in pins] == [("retry/attempt", "exported_action")]
+
+    store = procedure_instance.get_procedure_store()
+    try:
+        digest_ids = {digest.node_id for digest in store.list_node_digests(procedure_id)}
+    finally:
+        store.close()
+    assert {pin.node_id for pin in pins} <= digest_ids, (
+        "every pin must name a node that has a Merkle identity, or it cannot be "
+        "joined to the decision point it pins"
+    )
 
 
 def _payload_of(pins: list[AcceptanceNodePin], key: str) -> dict[str, Any]:
     return next(pin.pin_payload for pin in pins if pin.pin_key == key)
+
+
+def test_a_partially_deleted_pin_set_is_refused_though_the_coarse_digests_still_match(
+    procedure_instance: CruxibleInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Completeness is a SET question, not a non-emptiness test.
+
+    Nothing about the config or the lock moved, so the coarse digests agree and
+    every remaining pin verifies against itself. One dependency of two is
+    simply unaccounted for -- and a receipt built from that set would look
+    complete while describing half the world the run executed in.
+    """
+    _stub_provider(monkeypatch, lambda payload: {"value": int(payload.get("value", 0))})
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "two_dependencies",
+            "contract_in": "ProcedureInput",
+            "steps": [
+                {
+                    "id": "first",
+                    "provider": "exported_action",
+                    "input": {"value": "$input.value"},
+                    "as": "a",
+                },
+                {
+                    "id": "second",
+                    "provider": "exported_action",
+                    "input": {"value": "$input.value"},
+                    "as": "result",
+                },
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 4},
+            "declared_tier": "graph_write",
+        }
+    )
+    procedure_id = _accept(procedure_instance, definition)
+    assert len(_pins(procedure_instance, procedure_id)) == 2
+
+    store = procedure_instance.get_procedure_store()
+    try:
+        store._conn.execute(
+            "DELETE FROM procedure_acceptance_node_pins WHERE procedure_id = ? AND node_id = ?",
+            (procedure_id, "first"),
+        )
+        store._conn.commit()
+    finally:
+        store.close()
+
+    with pytest.raises(ConfigError, match=r"missing \[\('first', 'provider'") as exc_info:
+        service_run_procedure(procedure_instance, procedure_id, {"value": 5}, actor("runner"))
+    assert "incomplete set of per-node acceptance pins" in str(exc_info.value)
+
+
+def test_a_v2_graph_with_no_external_dependencies_expects_the_empty_pin_set(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """The empty expected set is legal, and a run under it is not refused.
+
+    A graph of guards and projections over `$input` alone declares no provider,
+    no query and no artifact. Its complete pin set is empty, and treating
+    emptiness as evidence of a missing acceptance would make an entire legal
+    shape of v2 procedure unrunnable.
+    """
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "input_only_graph",
+            "contract_in": "ProcedureInput",
+            "graph_format": 2,
+            "steps": [
+                {
+                    "id": "gate",
+                    "guard": {"left": "$input.value", "op": "gte", "right": 0},
+                    "on_false": "$abort",
+                    "message": "value must be non-negative",
+                },
+                {
+                    "id": "shape",
+                    "project": {"fields": {"echoed": "$input.value"}},
+                    "as": "result",
+                },
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 0},
+            "declared_tier": "graph_write",
+        }
+    )
+    procedure_id = _accept(procedure_instance, definition)
+    assert _pins(procedure_instance, procedure_id) == []
+
+    result = service_run_procedure(procedure_instance, procedure_id, {"value": 7}, actor("runner"))
+    assert result.run.verdict == "succeeded"
+    assert result.output == {"echoed": 7}

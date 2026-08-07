@@ -139,3 +139,43 @@ def test_operands_walks_connectives() -> None:
 
 def test_the_accessor_set_is_the_pinned_three() -> None:
     assert DERIVED_ACCESSORS == frozenset({"count", "exists", "truncated"})
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("count(rows+1, items)", "not a bare name"),
+        ("count(rows.total, items)", "not a bare name"),
+        ("count($steps.rows, items)", "not a bare name"),
+        ("truncated(rows-1)", "not a bare name"),
+        ("truncated(rows.deep)", "not a bare name"),
+    ],
+)
+def test_accessor_arguments_are_aliases_not_expressions(raw: str, expected: str) -> None:
+    """The accessor regexes match a permissive class so the refusal can NAME the
+    bad argument; the argument itself is held to the alias grammar."""
+    with pytest.raises(PredicateGrammarError, match=expected):
+        parse_predicate_operand(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["exists(always_true)", "exists(1)", "exists(true)"],
+)
+def test_exists_must_test_a_reference_not_a_constant(raw: str) -> None:
+    """`exists(always_true)` was a constant-true branch wearing the costume of a
+    test: the bare word resolved to itself, and a literal is always present."""
+    with pytest.raises(PredicateGrammarError, match="must test a \\$input or \\$steps"):
+        parse_predicate_operand(raw)
+
+
+def test_exists_carries_the_alias_it_tests_so_it_can_be_bound() -> None:
+    operand = parse_predicate_operand("exists($steps.rows.items)")
+    assert operand.form == "exists"
+    assert operand.alias == "rows"
+
+
+def test_a_nested_accessor_inside_exists_does_not_parse() -> None:
+    """Composition beyond the three connectives stays out."""
+    with pytest.raises(PredicateGrammarError, match="is not 'exists"):
+        parse_predicate_operand("exists(count(rows, items))")

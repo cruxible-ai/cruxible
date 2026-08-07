@@ -135,21 +135,59 @@ def build_acceptance_node_pins(
     One row finer than the coarse config/lock digests the record already
     carries, which is what lets a mismatch name the provider or query that
     moved instead of reporting that "the config changed".
+
+    A repeat body's dependencies are attributed to the NAMESPACED nested node
+    id (``"<repeat_id>/<nested_id>"``), the same id the node digests use.
+    Attributing them to the container instead would leave two nested providers
+    contributing rows that name a node whose Merkle identity does not exist, so
+    no pin could be joined to the digest of the node it actually pins.
     """
     graph = build_procedure_graph(definition)
     pins: list[AcceptanceNodePin] = []
     for step in definition.steps:
         node_id = str(step.id)
         inner = unwrap_procedure_step(step)
-        targets = [inner]
         if isinstance(inner, ProcedureRepeatStepSchema):
-            targets = list(inner.repeat.steps)
-        for target in targets:
-            pins.extend(_pins_for_step(procedure_id, node_id, target, config, lock))
+            for nested in inner.repeat.steps:
+                pins.extend(
+                    _pins_for_step(procedure_id, f"{node_id}/{nested.id}", nested, config, lock)
+                )
+            continue
+        pins.extend(_pins_for_step(procedure_id, node_id, inner, config, lock))
     # Deterministic order so the acceptance write and any later comparison
-    # traverse the same sequence.
-    pins.sort(key=lambda pin: (graph.node_ids.index(pin.node_id), pin.pin_kind, pin.pin_key))
+    # traverse the same sequence. Nested ids sort under their container.
+    order = {node_id: index for index, node_id in enumerate(graph.node_ids)}
+    pins.sort(
+        key=lambda pin: (
+            order.get(pin.node_id.split("/", 1)[0], len(order)),
+            pin.node_id,
+            pin.pin_kind,
+            pin.pin_key,
+        )
+    )
     return pins
+
+
+def expected_pin_keys(
+    *,
+    definition: ProcedureDefinition,
+    config: CoreConfig,
+    lock: WorkflowLock,
+) -> set[tuple[str, str, str]]:
+    """The ``(node_id, pin_kind, pin_key)`` set an acceptance of this definition writes.
+
+    Completeness is a SET question, not a count and not a non-emptiness test. A
+    definition whose nodes have no external dependencies at all -- guards,
+    projections and input alone -- legitimately expects the EMPTY set, and a
+    stored set missing one row of two is incomplete even though it is
+    non-empty and its coarse digests still match.
+    """
+    return {
+        (pin.node_id, str(pin.pin_kind), pin.pin_key)
+        for pin in build_acceptance_node_pins(
+            procedure_id="", definition=definition, config=config, lock=lock
+        )
+    }
 
 
 def _pins_for_step(
@@ -336,6 +374,7 @@ __all__ = [
     "artifact_pin_payload",
     "build_acceptance_node_pins",
     "compute_pin_digest",
+    "expected_pin_keys",
     "provider_pin_payload",
     "query_pin_payload",
     "receipt_pin_material",

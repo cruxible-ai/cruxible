@@ -14,6 +14,7 @@ touches the definition model.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -43,14 +44,54 @@ ENTRIES = corpus_entries()
 IDS = corpus_ids()
 
 
-def test_corpus_is_populated_and_covers_its_declared_sources() -> None:
+CORPUS_ENTRY_COUNT = 48
+"""FROZEN. A lower bound would let the corpus shrink silently, and a corpus
+that quietly lost its tau3 entries or its collision entries still passes every
+assertion that only counts what remains."""
+
+COLLISION_ENTRIES = frozenset(
+    {
+        "collision-provider-input-graph-keys",
+        "collision-query-params-arm-keys",
+        "collision-relationship-state-graph-keys",
+        "collision-shape-items-fields-graph-format",
+    }
+)
+"""The v1 killers, named individually.
+
+Each buries a v2 construct NAME inside a ``dict[str, Any]`` leaf. They are the
+entries a content-sniffing format detector would misroute, so losing one loses
+the regression that proves the detector does not sniff."""
+
+CORPUS_MANIFEST_SHA256 = "896e0d0d95d89a09cb8bc2b78709977dee1200931eeb48a1929790a48b7666a0"
+"""sha256 over ``<source_label>=<digest_v1>`` for every entry, in file order.
+
+Pins MEMBERSHIP as well as content: an entry that is removed, renamed or
+re-digested moves this, and any of the three is a release-blocking event
+requiring a decision record."""
+
+
+def test_the_corpus_membership_is_frozen() -> None:
+    labels = [entry["source_label"] for entry in ENTRIES]
+    assert len(ENTRIES) == CORPUS_ENTRY_COUNT
+    assert len(set(labels)) == len(labels), "duplicate source labels"
+
+    manifest = "\n".join(f"{entry['source_label']}={entry['digest_v1']}" for entry in ENTRIES)
+    assert hashlib.sha256(manifest.encode("utf-8")).hexdigest() == CORPUS_MANIFEST_SHA256, (
+        "corpus membership or content changed. Adding an entry is ordinary and "
+        "updates this digest; REMOVING or re-digesting one is a release-blocking "
+        "event requiring a decision record."
+    )
+
+
+def test_the_corpus_covers_its_declared_sources() -> None:
     labels = {entry["source_label"] for entry in ENTRIES}
-    assert len(ENTRIES) >= 40
-    assert any(label.startswith("tau3-retail-") for label in labels), (
+    assert sum(label.startswith("tau3-retail-") for label in labels) == 7, (
         "the compat promise is made to third-party definitions; keep tau3 entries"
     )
-    assert any(label.startswith("collision-") for label in labels), (
-        "namespace-collision entries are the v1 killer; keep them"
+    assert COLLISION_ENTRIES <= labels, (
+        f"missing namespace-collision entries: {sorted(COLLISION_ENTRIES - labels)}. "
+        "These are the entries a content-sniffing detector would misroute."
     )
     assert sum(label.startswith("matrix-kind-") for label in labels) == 12, (
         "one entry per admitted step kind, repeat included"

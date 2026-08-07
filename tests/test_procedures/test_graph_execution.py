@@ -335,3 +335,112 @@ def test_a_governed_parameter_operand_is_refused_at_compile(
     )
     with pytest.raises(ConfigError, match="Governed scalar parameters are not available"):
         compile_procedure_definition(procedure_instance, definition)
+
+
+@pytest.mark.parametrize(
+    ("operand", "message"),
+    [
+        ("count(missing, items)", "reads step alias 'missing'"),
+        ("truncated(missing)", "reads step alias 'missing'"),
+        ("$steps.missing.value", "reads step alias 'missing'"),
+        ("exists($steps.missing)", "reads step alias 'missing'"),
+    ],
+)
+def test_a_guard_reading_an_unproduced_alias_is_refused_at_compile(
+    operand: str,
+    message: str,
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """A first-node guard reading an alias nothing produced used to compile
+    clean, accept clean, and fail at RUN -- the outcome acceptance exists to
+    rule out."""
+    definition = _definition(
+        "unbound_guard",
+        [
+            {
+                "id": "gate",
+                "guard": {"left": operand, "op": "eq", "right": 0},
+                "on_false": "$abort",
+                "message": "unbound",
+            },
+            {
+                "id": "tail",
+                "shape_items": {"items": [{"ok": True}], "fields": {"ok": "$item.ok"}},
+                "as": "result",
+            },
+        ],
+        returns="result",
+    )
+    with pytest.raises(ConfigError, match=message):
+        compile_procedure_definition(procedure_instance, definition)
+
+
+def test_a_guard_reading_an_alias_produced_on_only_one_arm_is_refused(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """MUST-availability is the right question for a guard operand.
+
+    Reading an alias only one incoming arm produced would fail at run time on
+    the arm that did not.
+    """
+    definition = _definition(
+        "one_armed_alias",
+        [
+            {"id": "read", "provider": "exported_action", "input": {}, "as": "rows"},
+            {
+                "id": "split",
+                "guard": {"left": "count(rows, items)", "op": "gt", "right": 0},
+                "on_true": "hot",
+                "on_false": "join",
+                "message": "split",
+            },
+            {
+                "step": {
+                    "id": "hot",
+                    "provider": "exported_action",
+                    "input": {},
+                    "as": "hot_only",
+                },
+                "next": "join",
+            },
+            {
+                "id": "join",
+                "guard": {"left": "count(hot_only, items)", "op": "gt", "right": 0},
+                "on_false": "$abort",
+                "message": "reads a one-armed alias",
+            },
+            {
+                "id": "tail",
+                "shape_items": {"items": [{"ok": True}], "fields": {"ok": "$item.ok"}},
+                "as": "result",
+            },
+        ],
+        returns="result",
+    )
+    with pytest.raises(ConfigError, match="not produced on every path reaching it"):
+        compile_procedure_definition(procedure_instance, definition)
+
+
+def test_a_guard_reading_a_properly_bound_alias_compiles(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """The binding is a boundary, not a wall."""
+    definition = _definition(
+        "bound_guard",
+        [
+            {"id": "read", "provider": "exported_action", "input": {}, "as": "rows"},
+            {
+                "id": "gate",
+                "guard": {"left": "count(rows, items)", "op": "gte", "right": 0},
+                "on_false": "$abort",
+                "message": "bound",
+            },
+            {
+                "id": "tail",
+                "shape_items": {"items": [{"ok": True}], "fields": {"ok": "$item.ok"}},
+                "as": "result",
+            },
+        ],
+        returns="result",
+    )
+    assert compile_procedure_definition(procedure_instance, definition).steps[1].kind == "guard"
