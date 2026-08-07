@@ -39,6 +39,16 @@ DEFINITION_FORMAT_V1 = 1
 DEFINITION_FORMAT_V2 = 2
 """Graph-format definitions. ``graph_format: 2`` is declared on the wire."""
 
+SUPPORTED_DECLARED_FORMATS: frozenset[int | None] = frozenset({None, DEFINITION_FORMAT_V2})
+"""The ONLY legal wire spellings of ``graph_format``.
+
+Exactly one spelling per format, which is why ``1`` is absent: format v1 is
+spelled by ABSENCE. Admitting an explicit ``1`` would give one definition two
+wire forms with two digests, and the explicit form would additionally be
+refused by a 0.3 core -- on a definition that core can otherwise read
+perfectly.
+"""
+
 _V2_ONLY_POSITIONS: list[tuple[type[BaseModel], str]] = []
 _V2_ONLY_STEP_TYPES: list[type[BaseModel]] = []
 
@@ -115,6 +125,31 @@ def _uses_v2_construct(definition: ProcedureDefinition) -> bool:
     return any(isinstance(step, step_types) for step in definition.steps)
 
 
+def _refuse_unreadable_declaration(declared: int | None) -> None:
+    """Refuse any ``graph_format`` outside the legal wire spellings.
+
+    Two distinct wrongs, so two distinct messages -- an author who wrote ``1``
+    needs to be told to DELETE the key, and an operator who met a ``3`` needs
+    to be told to upgrade the core. Collapsing them into one refusal would send
+    each of them the other's instruction.
+    """
+    if declared in SUPPORTED_DECLARED_FORMATS:
+        return
+    if declared == DEFINITION_FORMAT_V1:
+        raise ConfigError(
+            "definition declares 'graph_format: 1'. Format v1 is spelled by ABSENCE: "
+            "remove the key. An explicit 1 is a second wire form for one format -- it "
+            "is emitted by exclude_none dumps, so it yields a different digest for an "
+            "otherwise identical definition, and a 0.3 core refuses it outright on a "
+            "definition it could otherwise read."
+        )
+    raise refuse_unknown_artifact_format(
+        artifact_class="ProcedureDefinition",
+        declared_version=declared,
+        supported_versions=(DEFINITION_FORMAT_V1, DEFINITION_FORMAT_V2),
+    )
+
+
 def definition_format_version(definition: ProcedureDefinition) -> tuple[int, list[str]]:
     """Return ``(format version, warnings)``. The DISCRIMINATOR decides.
 
@@ -126,7 +161,13 @@ def definition_format_version(definition: ProcedureDefinition) -> tuple[int, lis
     * a declaration with no construct yet is well-formed and sometimes
       deliberate (pre-committing a definition to the v2 digest namespace before
       adding branches) -- **warn**.
+
+    Before either, the DECLARED VALUE ITSELF is checked. ``graph_format`` is a
+    known key, so ``extra="forbid"`` refuses an unknown KEY and can say nothing
+    about an unreadable VALUE. Treating everything that is not ``2`` as v1
+    would fail open on exactly the artifact the discriminator exists to catch.
     """
+    _refuse_unreadable_declaration(definition.graph_format)
     declared = DEFINITION_FORMAT_V2 if definition.graph_format == 2 else DEFINITION_FORMAT_V1
     structural = DEFINITION_FORMAT_V2 if _uses_v2_construct(definition) else DEFINITION_FORMAT_V1
 
@@ -147,6 +188,7 @@ def definition_format_version(definition: ProcedureDefinition) -> tuple[int, lis
 __all__ = [
     "DEFINITION_FORMAT_V1",
     "DEFINITION_FORMAT_V2",
+    "SUPPORTED_DECLARED_FORMATS",
     "definition_format_version",
     "refuse_unknown_artifact_format",
     "register_v2_definition_field",

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from cruxible_core.errors import ConfigError
 from cruxible_core.procedure import graph_format
 from cruxible_core.procedure.graph_format import (
+    SUPPORTED_DECLARED_FORMATS,
     definition_format_version,
     refuse_unknown_artifact_format,
     register_v2_definition_field,
@@ -113,3 +114,59 @@ def test_record_carries_a_format_version_defaulting_to_one() -> None:
         proposed_actor_context=None,
     )
     assert record.definition_format_version == 1
+
+
+@pytest.mark.parametrize("declared", [3, 4, 0, -1, 99])
+def test_an_unreadable_declared_format_is_refused_rather_than_read_as_v1(
+    declared: int,
+) -> None:
+    """The fail-open this closes.
+
+    ``graph_format`` is a KNOWN key, so ``extra="forbid"`` refuses an unknown
+    KEY and can say nothing about an unreadable VALUE. Treating everything that
+    is not 2 as v1 would take a definition authored by a future core, digest it
+    under v1 rules and execute it with v1 semantics -- silently, and with a
+    different digest on each side. That is the exact disease the discriminator
+    exists to prevent, arriving through the discriminator itself.
+    """
+    with pytest.raises(ConfigError, match=r"supported: 1, 2"):
+        _definition(graph_format=declared)
+
+
+def test_the_unreadable_format_refusal_names_the_artifact_class_and_the_remedy() -> None:
+    with pytest.raises(ConfigError) as exc_info:
+        _definition(graph_format=3)
+    message = str(exc_info.value)
+    assert "ProcedureDefinition declares format version 3" in message
+    assert "Upgrade cruxible-core" in message
+
+
+def test_an_explicit_graph_format_one_is_refused_because_v1_is_spelled_by_absence() -> None:
+    """One format, one wire spelling.
+
+    An explicit 1 is not unreadable -- it is a SECOND spelling for a format
+    that already has one. It survives an exclude_none dump, so it yields a
+    different digest for an otherwise identical definition, and it makes a 0.3
+    core raise extra_forbidden on a definition that core could otherwise read
+    perfectly.
+    """
+    with pytest.raises(ConfigError, match="spelled by ABSENCE"):
+        _definition(graph_format=1)
+
+
+def test_the_two_refusals_send_different_instructions() -> None:
+    """An author who wrote 1 must DELETE the key; an operator who met a 3 must
+    upgrade. One shared message would hand each of them the other's remedy."""
+    with pytest.raises(ConfigError) as explicit_v1:
+        _definition(graph_format=1)
+    with pytest.raises(ConfigError) as unknown:
+        _definition(graph_format=3)
+    assert "remove the key" in str(explicit_v1.value)
+    assert "Upgrade cruxible-core" not in str(explicit_v1.value)
+    assert "remove the key" not in str(unknown.value)
+
+
+def test_the_legal_wire_spellings_are_exactly_absent_and_two() -> None:
+    assert SUPPORTED_DECLARED_FORMATS == frozenset({None, 2})
+    assert definition_format_version(_definition())[0] == 1
+    assert definition_format_version(_definition(graph_format=2))[0] == 2

@@ -395,6 +395,12 @@ class ProcedureDefinition(BaseModel):
     graph_format: int | None = None
     """The format discriminator, and the ONLY signal of definition format.
 
+    Legal wire spellings are exactly ABSENT and ``2``; every other value is
+    refused at parse. The annotation is left open rather than
+    ``Literal[2] | None`` because the refusal has to REPORT the unreadable
+    value it met: a Literal collapses "this core cannot read format 3" into a
+    generic type error that names no version and offers no remedy.
+
     ``None`` means format v1; ``2`` means the graph format. It defaults to
     ``None`` so ``exclude_none=True`` drops it from every existing definition
     and no v1 byte moves. It is deliberately explicit rather than inferred:

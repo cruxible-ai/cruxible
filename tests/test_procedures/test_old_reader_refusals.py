@@ -25,6 +25,7 @@ from cruxible_core.procedure.types import ProcedureDefinition, ProcedureRecord
 from cruxible_core.receipt.types import OperationType, Receipt
 from cruxible_core.runtime.instance import _load_snapshot_procedures
 from cruxible_core.service import service_run_procedure
+from cruxible_core.service.state_diff import ResolvedStateCoordinate
 from tests.test_procedures.conftest import actor, provider_definition
 from tests.test_procedures.test_execution import _accept, _receipt, _stub_provider
 
@@ -173,3 +174,114 @@ def test_t8_a_calibration_finding_operation_type_is_refused_loudly() -> None:
     with pytest.raises(ValidationError):
         Receipt.model_validate(payload)
     assert "calibration_finding" not in str(OperationType)
+
+
+def _future_format_dump() -> dict[str, Any]:
+    """A definition a FUTURE core authored, in a format this one cannot read."""
+    dump = provider_definition("future_format").model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
+    return {**dump, "graph_format": 3}
+
+
+def _record_payload(definition_dump: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "procedure_id": "PRC-future",
+        "definition": definition_dump,
+        "definition_digest": "sha256:unverifiable",
+        "status": "live",
+        "version": 1,
+        "proposed_actor_context": None,
+        "proposed_at": "2026-08-07T00:00:00Z",
+    }
+
+
+def test_an_unreadable_format_is_refused_by_the_store_row_reader(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """Parse path 1 of 3.
+
+    The row is written with raw SQL on purpose: the store's own save path
+    verifies the digest and would refuse first, which is not the path under
+    test. What is under test is a row that ALREADY EXISTS -- written by a newer
+    core, or restored from one -- being read back.
+    """
+    store = procedure_instance.get_procedure_store()
+    try:
+        store._conn.execute(
+            "INSERT INTO procedures (procedure_id, name, definition_json, "
+            "definition_digest, status, version, evidence_refs_json, "
+            "proposed_actor_context, proposed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "PRC-future",
+                "future_format",
+                json.dumps(_future_format_dump()),
+                "sha256:unverifiable",
+                "live",
+                1,
+                "[]",
+                json.dumps(None),
+                "2026-08-07T00:00:00Z",
+            ),
+        )
+        store._conn.commit()
+        with pytest.raises(ConfigError, match="supported: 1, 2"):
+            store.get_procedure("PRC-future")
+    finally:
+        store.close()
+
+
+def test_an_unreadable_format_is_refused_by_the_snapshot_loader() -> None:
+    """Parse path 2 of 3."""
+    artifact = json.dumps(
+        {"format_version": 2, "procedures": [_record_payload(_future_format_dump())]}
+    ).encode("utf-8")
+    with pytest.raises(ConfigError, match="supported: 1, 2"):
+        _load_snapshot_procedures(artifact, snapshot_id="SNP-future-definition")
+
+
+def test_an_unreadable_format_is_refused_by_the_state_diff_reader() -> None:
+    """Parse path 3 of 3.
+
+    `load_procedures` never checks a format version of its own, and does not
+    need to: the refusal rides the model every one of these paths validates
+    through, so all three fail closed without three separate checks to keep in
+    step.
+    """
+    coordinate = ResolvedStateCoordinate(
+        kind="snapshot",
+        spec="SNP-future-definition",
+        identity={"snapshot_id": "SNP-future-definition"},
+        sections={},
+        digests={},
+        ownership="unowned",
+        procedures_source=json.dumps(
+            {"format_version": 2, "procedures": [_record_payload(_future_format_dump())]}
+        ).encode("utf-8"),
+    )
+    with pytest.raises(ConfigError, match="supported: 1, 2"):
+        coordinate.load_procedures()
+
+
+def test_an_explicit_format_one_is_refused_on_every_parse_path() -> None:
+    """A second wire spelling for one format is refused wherever it is read."""
+    dump = provider_definition("explicit_v1").model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
+    payload = _record_payload({**dump, "graph_format": 1})
+    artifact = json.dumps({"format_version": 2, "procedures": [payload]}).encode("utf-8")
+    with pytest.raises(ConfigError, match="spelled by ABSENCE"):
+        _load_snapshot_procedures(artifact, snapshot_id="SNP-explicit-v1")
+    with pytest.raises(ConfigError, match="spelled by ABSENCE"):
+        ProcedureRecord.model_validate(payload)
+
+
+def test_a_readable_v2_definition_still_loads_on_every_parse_path() -> None:
+    """The refusal is targeted at unreadable VALUES, not at v2."""
+    payload = _record_payload(_v2_dump())
+    artifact = json.dumps({"format_version": 2, "procedures": [payload]}).encode("utf-8")
+    assert _load_snapshot_procedures(artifact, snapshot_id="SNP-v2")[0].procedure_id == (
+        "PRC-future"
+    )
+    assert ProcedureRecord.model_validate(payload).definition.graph_format == 2
