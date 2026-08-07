@@ -23,7 +23,17 @@ from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
 from cruxible_core.primitives import canonical_json
-from cruxible_core.procedure.graph_format import definition_format_version
+from cruxible_core.procedure.graph_format import (
+    DEFINITION_FORMAT_V1,
+    definition_format_version,
+)
+from cruxible_core.procedure.pins import (
+    AcceptanceNodePin,
+    build_acceptance_node_pins,
+    receipt_pin_material,
+    verify_pin_currency,
+    verify_pin_integrity,
+)
 from cruxible_core.procedure.types import (
     MAX_PROCEDURE_EVIDENCE_BYTES,
     PROCEDURE_EVIDENCE_HEAD_BYTES,
@@ -77,7 +87,7 @@ from cruxible_core.workflow.executor import (
     execute_procedure_plan,
 )
 from cruxible_core.workflow.refs import iter_step_reference_templates
-from cruxible_core.workflow.types import CompiledPlan
+from cruxible_core.workflow.types import CompiledPlan, WorkflowLock
 
 _logger = logging.getLogger(__name__)
 
@@ -913,10 +923,14 @@ def service_run_procedure(
         # config drift is one those checks already name precisely (a provider
         # de-exported, removed, or tier-raised), the operator is better served by
         # that specific refusal than by the generic pin mismatch.
+        stored_node_pins = _load_acceptance_node_pins(instance, procedure)
         _verify_acceptance_pins(
             procedure,
             executed_config_digest=executed_config_digest,
             executed_lock_digest=executed_lock_digest,
+            node_pins=stored_node_pins,
+            config=config,
+            lock=lock,
         )
         plan = compile_plan_definition(
             config,
@@ -1128,6 +1142,7 @@ def service_run_procedure(
             executed_config_digest=plan.config_digest,
             executed_lock_digest=plan.lock_digest,
             error=failure,
+            node_pins=stored_node_pins,
         )
         _tag_procedure_exception(failure, finalized_run, receipt)
         if failure is original_exc:
@@ -1148,6 +1163,7 @@ def service_run_procedure(
             executed_config_digest=plan.config_digest,
             executed_lock_digest=plan.lock_digest,
             error=None,
+            node_pins=stored_node_pins,
         )
         # Evidence rows commit atomically with the run finalize: a crash here
         # rolls back both, leaving the run 'started' (crash-visible) instead of
@@ -1181,11 +1197,26 @@ def service_run_procedure(
     )
 
 
+def _load_acceptance_node_pins(
+    instance: InstanceProtocol,
+    procedure: ProcedureRecord,
+) -> list[AcceptanceNodePin]:
+    store = instance.get_procedure_store()
+    try:
+        pins: list[AcceptanceNodePin] = store.list_acceptance_node_pins(procedure.procedure_id)
+        return pins
+    finally:
+        store.close()
+
+
 def _verify_acceptance_pins(
     procedure: ProcedureRecord,
     *,
     executed_config_digest: str,
     executed_lock_digest: str,
+    node_pins: list[AcceptanceNodePin],
+    config: CoreConfig,
+    lock: WorkflowLock,
 ) -> None:
     """Refuse a run whose config/lock differ from the ones acceptance pinned.
 
@@ -1225,6 +1256,25 @@ def _verify_acceptance_pins(
             f"(`cruxible procedure propose <file> --supersedes {procedure.procedure_id}`, "
             "then `cruxible procedure resolve <new-id> --action accept`)."
         )
+    # A format-v2 procedure only comes into existence through an acceptance
+    # that writes per-node pins, so their absence is a refusal. A format-v1
+    # procedure with none is NOT refused: its coarse acceptance digests remain
+    # authoritative, exactly as before. That case is finite and the convergence
+    # sweep drains it.
+    # Read from the DEFINITION, which is authoritative: the record column is
+    # a convenience for readers, and a row restored from an older snapshot
+    # can carry the default while its definition says otherwise.
+    stored_format = definition_format_version(procedure.definition)[0]
+    if not node_pins and stored_format != DEFINITION_FORMAT_V1:
+        raise ConfigError(
+            f"Procedure '{procedure.procedure_id}' is format v2 but has no recorded "
+            "per-node acceptance pins. A v2 procedure only becomes live through an "
+            "acceptance that writes them, so their absence means the row was not "
+            "produced by one; the run is refused rather than executed against a "
+            "world no reviewer is known to have approved."
+        )
+    verify_pin_integrity(node_pins)
+
     mismatches = [
         (label, accepted, executed)
         for label, accepted, executed in (
@@ -1235,6 +1285,15 @@ def _verify_acceptance_pins(
     ]
     if not mismatches:
         return
+    # The coarse digests moved. Name WHAT moved before reporting that something
+    # did: a per-node currency mismatch says "provider X's entrypoint changed at
+    # node Y", which the whole-config digest never could.
+    verify_pin_currency(
+        node_pins,
+        definition=procedure.definition,
+        config=config,
+        lock=lock,
+    )
     detail = "; ".join(
         f"{label}: accepted against {accepted}, now {executed}"
         for label, accepted, executed in mismatches
@@ -1430,6 +1489,7 @@ def _persist_built_procedure_receipt(
     executed_lock_digest: str | None,
     error: BaseException | None,
     refusal_reason: ProcedureRefusalReason | None = None,
+    node_pins: Sequence[AcceptanceNodePin] = (),
 ) -> tuple[Receipt, ProcedureRun]:
     with instance.write_transaction() as uow:
         return _persist_built_procedure_receipt_in_uow(
@@ -1446,6 +1506,7 @@ def _persist_built_procedure_receipt(
             executed_lock_digest=executed_lock_digest,
             error=error,
             refusal_reason=refusal_reason,
+            node_pins=node_pins,
         )
 
 
@@ -1464,6 +1525,7 @@ def _persist_built_procedure_receipt_in_uow(
     executed_lock_digest: str | None,
     error: BaseException | None,
     refusal_reason: ProcedureRefusalReason | None = None,
+    node_pins: Sequence[AcceptanceNodePin] = (),
 ) -> tuple[Receipt, ProcedureRun]:
     budget_spent = _procedure_budget_spent(budget)
     root_detail = receipt.nodes[0].detail
@@ -1487,6 +1549,17 @@ def _persist_built_procedure_receipt_in_uow(
             "verdict": verdict,
         }
     )
+    if node_pins:
+        # In the ROOT NODE's detail, never as a new top-level Receipt field. A
+        # top-level field is silently DROPPED by a 0.3 reader -- the worst of
+        # the three forward-compatibility behaviours, because the receipt would
+        # look complete and be incomplete. `detail` is arbitrary by contract, so
+        # this joins `accepted_against`/`executed_against` where they already
+        # live. Payloads are deduplicated by digest, so a run id recovers the
+        # exact accepted world without consulting a config that may have drifted.
+        pin_map, pin_payloads = receipt_pin_material(list(node_pins))
+        root_detail["node_pins"] = pin_map
+        root_detail["pin_payloads"] = pin_payloads
     if error is not None:
         root_detail.update(
             {
@@ -1596,6 +1669,7 @@ def _transition_pending_procedure(
         now = utc_now()
         config_digest: str | None = None
         lock_digest: str | None = None
+        node_pins: list[AcceptanceNodePin] = []
         if action == "accept":
             try:
                 plan = compile_procedure_definition(instance, procedure.definition)
@@ -1607,6 +1681,12 @@ def _transition_pending_procedure(
                 raise
             config_digest = plan.config_digest
             lock_digest = plan.lock_digest
+            node_pins = build_acceptance_node_pins(
+                procedure_id=procedure_id,
+                definition=procedure.definition,
+                config=instance.load_config(),
+                lock=load_lock(resolve_lock_path(instance)),
+            )
             allowed_live_ids = {procedure.procedure_id, procedure.supersedes_procedure_id}
             conflicting = sorted(
                 row.procedure_id
@@ -1642,6 +1722,12 @@ def _transition_pending_procedure(
                 else "procedure changed during review",
             )
 
+        if action == "accept":
+            # Written in the SAME transaction as the status change, beside the
+            # coarse acceptance digests: a live procedure with no pins would be
+            # a procedure nobody can prove was reviewed against anything.
+            ctx.uow.procedures.save_acceptance_node_pins(node_pins)
+
         if action == "accept" and procedure.supersedes_procedure_id is not None:
             _retire_superseded_procedure(
                 ctx.uow.procedures,
@@ -1663,6 +1749,8 @@ def _transition_pending_procedure(
             "acceptance_lock_digest": lock_digest,
             "reason": normalized_reason,
         }
+        if action == "accept":
+            detail["acceptance_node_pins"] = len(node_pins)
         if format_warnings:
             # Recorded, not returned: acceptance has no authoring channel, and a
             # warning the reviewer acted under belongs on the receipt.

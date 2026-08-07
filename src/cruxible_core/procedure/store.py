@@ -19,6 +19,7 @@ from cruxible_core.governance.actors import (
     load_actor_context,
 )
 from cruxible_core.instance_protocol import ProcedureStoreProtocol
+from cruxible_core.procedure.pins import AcceptanceNodePin
 from cruxible_core.procedure.types import (
     ProcedureBudgetSpent,
     ProcedureEvidenceArtifact,
@@ -104,6 +105,22 @@ CREATE TABLE IF NOT EXISTS procedure_run_evidence (
 );
 CREATE INDEX IF NOT EXISTS idx_procedure_run_evidence_artifact
     ON procedure_run_evidence(artifact_id);
+
+-- One row per (node, resolved dependency) as ACCEPTED. A pin is a payload plus
+-- its digest, never a bare digest: a bare digest can be compared and cannot be
+-- read, so a mismatch would say only "something changed" and a receipt carrying
+-- one could not reconstruct the accepted world at all.
+CREATE TABLE IF NOT EXISTS procedure_acceptance_node_pins (
+    procedure_id TEXT NOT NULL REFERENCES procedures(procedure_id),
+    node_id TEXT NOT NULL,
+    pin_kind TEXT NOT NULL CHECK (pin_kind IN ('provider', 'query', 'parameter', 'artifact')),
+    pin_key TEXT NOT NULL,
+    pin_payload_json TEXT NOT NULL,
+    pin_digest TEXT NOT NULL,
+    PRIMARY KEY (procedure_id, node_id, pin_kind, pin_key)
+);
+CREATE INDEX IF NOT EXISTS idx_procedure_node_pins_key
+    ON procedure_acceptance_node_pins(pin_kind, pin_key, pin_digest);
 """
 
 _KNOWN_REFUSAL_REASONS = frozenset(get_args(ProcedureRefusalReason))
@@ -185,6 +202,46 @@ class ProcedureStore(ProcedureStoreProtocol):
             ),
         )
         return procedure.procedure_id
+
+    def save_acceptance_node_pins(self, pins: Sequence[AcceptanceNodePin]) -> int:
+        """Write the accepted world for one procedure. Does not commit."""
+        rows = [
+            (
+                pin.procedure_id,
+                pin.node_id,
+                pin.pin_kind,
+                pin.pin_key,
+                json.dumps(pin.pin_payload, sort_keys=True),
+                pin.pin_digest,
+            )
+            for pin in pins
+        ]
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO procedure_acceptance_node_pins "
+            "(procedure_id, node_id, pin_kind, pin_key, pin_payload_json, pin_digest) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        return len(rows)
+
+    def list_acceptance_node_pins(self, procedure_id: str) -> list[AcceptanceNodePin]:
+        """Return the accepted world for one procedure, in stable order."""
+        rows = self._conn.execute(
+            "SELECT * FROM procedure_acceptance_node_pins WHERE procedure_id = ? "
+            "ORDER BY node_id, pin_kind, pin_key",
+            (procedure_id,),
+        ).fetchall()
+        return [
+            AcceptanceNodePin(
+                procedure_id=row["procedure_id"],
+                node_id=row["node_id"],
+                pin_kind=row["pin_kind"],
+                pin_key=row["pin_key"],
+                pin_payload=json.loads(row["pin_payload_json"]),
+                pin_digest=row["pin_digest"],
+            )
+            for row in rows
+        ]
 
     def get_procedure(self, procedure_id: str) -> ProcedureRecord | None:
         """Load one procedure by ID."""
