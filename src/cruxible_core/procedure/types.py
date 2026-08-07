@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -27,7 +26,7 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef
-from cruxible_core.primitives import canonical_json, new_id
+from cruxible_core.primitives import new_id
 from cruxible_core.procedure.graph_format import (
     DEFINITION_FORMAT_V1,
     definition_format_version,
@@ -750,10 +749,19 @@ class ProcedureEvidenceArtifact(BaseModel):
 
 
 def compute_procedure_definition_digest(definition: ProcedureDefinition) -> str:
-    """Return the stable content digest of one validated definition."""
-    payload = definition.model_dump(mode="json", by_alias=True, exclude_none=True)
-    digest = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
-    return f"sha256:{digest}"
+    """Return the stable content digest of one validated definition.
+
+    The signature is UNCHANGED: one argument, no instance, no lock, no pins.
+    That is what lets all five existing call sites -- propose, both run
+    preflights, transition, and the store's round-trip verification -- keep
+    working untouched while the dispatcher underneath grows a second format.
+
+    The import is deferred because the digest layer sits ON TOP of this module:
+    it reads the step types and the control graph declared here.
+    """
+    from cruxible_core.procedure.digest import compute_definition_digest
+
+    return compute_definition_digest(definition)
 
 
 def _step_output_alias(step: Any) -> str | None:
