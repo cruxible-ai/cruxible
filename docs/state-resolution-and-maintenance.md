@@ -506,6 +506,92 @@ creating an install, claiming ownership, and advancing a phase are steps of an
 ordered sequence, and exposing them individually would invite half-installs
 that no preflight has cleared. They become reachable when the installer ships.
 
+## 6. Compute-Slot Bindings: Deployment Records, Not Config
+
+A procedure that needs compute names a **slot** and pins that slot's
+**interface** — the contract it feeds in and the contract it expects back.
+It does not name a provider. Which provider fills that slot on *this* install
+is a **binding**: a deployment record held in state, alongside your graph, with
+the same receipts and the same history as every other governed write.
+
+That split is the point. Configuration is what the procedure means; a binding
+is where it runs. Moving a slot to a different provider is an operational
+decision, so it must not require editing config, re-validating a procedure, or
+re-running an acceptance that already happened.
+
+### The rules the ledger enforces
+
+- **One active binding per slot per install.** Enforced by a partial unique
+  index in the state database, not by a check in application code — two
+  concurrent binds cannot both leave an active row behind.
+- **A provider satisfies a slot only by equality.** Its declared
+  `contract_in`/`contract_out` must be exactly the slot's. "Close enough" is
+  refused, and the refusal reports every near match (see below).
+- **Billing modes are constrained when the slot says so.** A slot may declare
+  an allowed set; a provider outside it is refused with the allowed values
+  echoed back, so the next attempt is informed.
+- **Third-party providers record consent, not permission.** When a slot
+  requires it, the binding stores *which actor* consented and *when* — the
+  record an audit actually asks for, rather than a config flag saying third
+  parties were acceptable in general. Consent asserted with no actor to
+  attribute it to is refused, not stamped: an approval naming no approver
+  answers the audit question with a null while claiming to answer it.
+- **The slot interface is pinned once, at bind time.** The contracts, the
+  billing allowlist, and the consent requirement are stored on the binding and
+  are never revised. Every later rebind is checked against that stored copy,
+  and a rebind request that restates the interface differently is refused and
+  told what the ledger holds. Otherwise a "change the provider" call could
+  redefine the constraints it was about to be judged against. Changing the
+  interface means retiring the binding and creating a new one — a decision with
+  its own record.
+- **Rebinding is a revision, never a rewrite.** The binding keeps its identity
+  and gains a revision; the previous revision stays readable in history with
+  its own receipt. Retiring a binding is likewise a revision, so what an
+  install *used to* run on survives the decision to stop.
+
+### When a slot cannot be bound
+
+An unbindable slot does not just say no. The refusal ranks every candidate
+provider offered, best fit first, and names every reason each one failed —
+not just the first:
+
+```text
+no provider satisfies slot 'summarize' (contract_in='doc.v1', contract_out='summary.v1'); 3 candidate(s) nearly matched:
+  1. 'summarizer-pro' [1/2 contract sides matched]: contract_out mismatch (declares 'summary.v2', slot requires 'summary.v1')
+  2. 'legacy-summarizer' [1/2 contract sides matched]: contract_out mismatch (declares 'summary.v0', slot requires 'summary.v1'); billing_mode 'metered' not in the slot's allowed set [included]
+  3. 'doc-classifier' [0/2 contract sides matched]: contract_in mismatch (declares 'doc.v2', slot requires 'doc.v1'); contract_out mismatch (declares 'label.v1', slot requires 'summary.v1')
+```
+
+Ranking is by contract sides matched, then by how many reasons the candidate
+failed, then by name — a total order, so the same inputs always produce the
+same report regardless of the order candidates were offered in. The same
+ranking is available as structured data on the error, so an agent can choose a
+provider without parsing the text.
+
+### Inspecting the ledger
+
+The binding ledger is readable over HTTP:
+
+```text
+GET /api/v1/{instance_id}/slot-bindings
+    ?install_id=...&slot_name=...&status=active|retired
+GET /api/v1/{instance_id}/slot-bindings/{binding_id}/history
+```
+
+The list route returns the current row per binding with the standard list
+envelope; the history route returns every revision of one binding, oldest
+first, each with the receipt that wrote it. The bind, rebind, and retire verbs
+are service-level in this release and have no CLI or MCP surface yet.
+
+### Not yet wired into procedure runs
+
+The ledger is complete and the resolution verb exists, but **nothing resolves a
+binding when a procedure run starts yet**, and runs do not record which binding
+they used. That integration — resolving each bound slot at run start and
+recording the binding's id and revision on the run — is separate work. Until it
+lands, a rebind changes what a *future* resolution returns and makes no claim
+about runs already executing, because no run consults the ledger at all.
+
 ## Summary: Who Wins
 
 - **Pipelines and agents never overwrite each other silently.** Live edges and
@@ -518,3 +604,6 @@ that no preflight has cleared. They become reachable when the installer ships.
 - **Time is handled by pinned workflows, not decay** — and `state health`
   tells you when the backlog, evidence debt, or provenance mix needs
   attention.
+- **Where a procedure runs is state, not config** — compute-slot bindings are
+  deployment records with revisions and receipts, and a rebind moves the
+  provider without touching the interface it was pinned to.

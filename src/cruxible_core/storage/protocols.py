@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping
 from contextlib import AbstractContextManager
 from typing import Any, Protocol
 
+from cruxible_core.bindings.store import BindingStoreProtocol
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import (
@@ -62,6 +63,7 @@ class UnitOfWorkProtocol(Protocol):
     decisions: DecisionStoreProtocol
     source_artifacts: SourceArtifactStoreProtocol
     installs: InstallLedgerStoreProtocol
+    bindings: BindingStoreProtocol
 
     def register_after_commit(self, callback: Any) -> None: ...
     def register_after_rollback(self, callback: Any) -> None: ...

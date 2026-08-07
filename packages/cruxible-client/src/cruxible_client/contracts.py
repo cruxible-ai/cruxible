@@ -870,6 +870,72 @@ class SourceArtifactListResult(ListEnvelopeFields):
     items: list[SourceArtifactListItem] = Field(default_factory=list)
 
 
+class SlotBindingItem(BaseModel):
+    """One compute-slot binding: which provider this install resolved a slot to.
+
+    ``contract_in``, ``contract_out``, ``allowed_billing_modes`` and
+    ``requires_third_party_consent`` are the SLOT INTERFACE the binding was
+    pinned to at bind time — what the pinned procedures expect, not the
+    provider's restatement of it. They never change: a rebind is checked against
+    them and moves the provider only. ``revision`` counts every governed change
+    to this binding, so a caller that records a binding id AND revision can
+    state exactly which binding it used, even after a later rebind.
+    """
+
+    binding_id: str
+    install_id: str
+    slot_name: str
+    provider_name: str
+    contract_in: str
+    contract_out: str
+    allowed_billing_modes: list[str] | None = None
+    requires_third_party_consent: bool = False
+    billing_mode: str
+    third_party_consent: bool = False
+    consent_actor_id: str | None = None
+    consent_org_id: str | None = None
+    consent_at: str | None = None
+    revision: int = 1
+    status: str
+    bound_at: str
+    updated_at: str
+    retired_at: str | None = None
+    actor_context: dict[str, Any] | None = None
+    receipt_id: str | None = None
+
+
+class SlotBindingListResult(ListEnvelopeFields):
+    items: list[SlotBindingItem] = Field(default_factory=list)
+
+
+class SlotBindingRevisionItem(BaseModel):
+    """One revision in a binding's history, as it stood at that revision."""
+
+    binding_id: str
+    revision: int
+    change_kind: str
+    install_id: str
+    slot_name: str
+    provider_name: str
+    contract_in: str
+    contract_out: str
+    billing_mode: str
+    third_party_consent: bool = False
+    consent_actor_id: str | None = None
+    consent_org_id: str | None = None
+    consent_at: str | None = None
+    status: str
+    note: str | None = None
+    recorded_at: str
+    actor_context: dict[str, Any] | None = None
+    receipt_id: str | None = None
+
+
+class SlotBindingHistoryResult(ListEnvelopeFields):
+    binding_id: str
+    items: list[SlotBindingRevisionItem] = Field(default_factory=list)
+
+
 class QueryEntityItem(BaseModel):
     """Entity-shaped row returned by entity result queries."""
 

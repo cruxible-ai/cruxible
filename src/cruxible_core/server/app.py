@@ -33,6 +33,7 @@ from cruxible_core.server.errors import (
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.server.request_logging import configure_request_logging
 from cruxible_core.server.routes.attestations import router as attestations_router
+from cruxible_core.server.routes.bindings import router as bindings_router
 from cruxible_core.server.routes.decision_records import router as decision_records_router
 from cruxible_core.server.routes.feedback import router as feedback_router
 from cruxible_core.server.routes.gates import router as gates_router
@@ -214,6 +215,7 @@ def create_app() -> FastAPI:
     app.include_router(snapshots_router)
     app.include_router(source_artifacts_router)
     app.include_router(installs_router)
+    app.include_router(bindings_router)
     app.mount("/ui", StaticFiles(directory=UI_STATIC_DIR, html=True), name="ui")
     return app
 

@@ -13,6 +13,7 @@ from types import TracebackType
 from typing import Any, Literal
 
 from cruxible_core.attestation.store import AttestationStore
+from cruxible_core.bindings.store import BindingStore
 from cruxible_core.decision.store import DecisionStore
 from cruxible_core.errors import MutationError
 from cruxible_core.feedback.store import FeedbackStore
@@ -206,6 +207,21 @@ CLAIM_IDENTITY_MIGRATION = "0004_claim_identity"
 PROCEDURE_REFUSAL_REASON_MIGRATION = "0005_procedure_refusal_reason"
 BOUNDARY_TELEMETRY_MIGRATION = "0006_boundary_telemetry"
 INSTALL_LEDGER_MIGRATION = "0007_install_ledger"
+BINDING_LEDGER_MIGRATION = "0008_binding_ledger"
+"""Compute-slot binding ledger tables (``slot_bindings`` + revisions).
+
+Migration ids are stamped rows rather than a dense sequence -- nothing reads the
+number, ``_ALL_STORAGE_MIGRATIONS`` reads the SET. Two different migrations
+sharing one id is the failure that matters: the first to land silently satisfies
+the other's steady-state check. This one was authored against 0006 while the
+telemetry and install-ledger migrations were on unmerged parallel branches, and
+took 0008 on merge -- safe only because none of the three had shipped in a
+release yet. Once an id can exist in a user's database it is never renumbered.
+
+The DDL itself lives in ``bindings/store.py`` (``CREATE TABLE IF NOT EXISTS``),
+so this id records that a database has been through the upgrade path; the tables
+are created by the store construction below, as every other store does.
+"""
 
 # Every migration ``_initialize_connection`` knows how to apply. The steady-state
 # pre-check compares against this set to decide whether it needs the write lock
@@ -220,6 +236,7 @@ _ALL_STORAGE_MIGRATIONS = frozenset(
         PROCEDURE_REFUSAL_REASON_MIGRATION,
         BOUNDARY_TELEMETRY_MIGRATION,
         INSTALL_LEDGER_MIGRATION,
+        BINDING_LEDGER_MIGRATION,
     }
 )
 
@@ -1147,6 +1164,11 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
             connection=self._conn,
             initialize_schema=False,
         )
+        self.bindings = BindingStore(
+            self.db_path,
+            connection=self._conn,
+            initialize_schema=False,
+        )
         self._entered = False
         self._started_transaction = False
         self._after_commit: list[Any] = []
@@ -1413,6 +1435,7 @@ class SQLiteStorageBackend:
         SQLiteSourceArtifactStore(self.db_path, connection=conn)
         execute_schema_script(conn, BOUNDARY_TELEMETRY_SCHEMA)
         InstallLedgerStore(self.db_path, connection=conn)
+        BindingStore(self.db_path, connection=conn)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):
             row = conn.execute(
                 "SELECT migration_id FROM storage_migrations WHERE migration_id = ?",
@@ -1445,6 +1468,13 @@ class SQLiteStorageBackend:
             # existing database needs no data rewrite -- only the stamp that
             # records the schema is now present.
             self.mark_migration_on_connection(conn, INSTALL_LEDGER_MIGRATION)
+        # Additive: the binding tables are created by the store construction
+        # above on every path, so the stamp is all this migration owes. It is
+        # still required -- ``_schema_is_current`` gates the whole upgrade on the
+        # stamped SET, so an unstamped database would take the write lock on
+        # every single connect.
+        if not self.has_migration_on_connection(conn, BINDING_LEDGER_MIGRATION):
+            self.mark_migration_on_connection(conn, BINDING_LEDGER_MIGRATION)
 
     @staticmethod
     def _migrate_procedure_refusal_reason(conn: sqlite3.Connection) -> None:

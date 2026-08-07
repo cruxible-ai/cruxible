@@ -247,6 +247,12 @@
   "/api/v1/{instance_id}/schema": {
     "GET": null
   },
+  "/api/v1/{instance_id}/slot-bindings": {
+    "GET": "SlotBindingListResult"
+  },
+  "/api/v1/{instance_id}/slot-bindings/{binding_id}/history": {
+    "GET": "SlotBindingHistoryResult"
+  },
   "/api/v1/{instance_id}/snapshots": {
     "GET": "SnapshotListResult",
     "POST": "SnapshotCreateResult"

@@ -27,6 +27,16 @@ from cruxible_core.service.attestations import (
     service_list_attestations,
     service_resolve_attestation,
 )
+from cruxible_core.service.bindings import (
+    build_near_match_report,
+    evaluate_candidate,
+    service_create_slot_binding,
+    service_list_slot_bindings,
+    service_rebind_slot,
+    service_resolve_slot_binding,
+    service_retire_slot_binding,
+    service_slot_binding_history,
+)
 from cruxible_core.service.config_mutations import (
     service_add_constraint,
     service_add_decision_policy,
@@ -460,6 +470,15 @@ __all__ = [
     "service_run_procedure",
     "service_withdraw_procedure",
     "validate_procedure_definition_against_config",
+    # Compute-slot bindings
+    "build_near_match_report",
+    "evaluate_candidate",
+    "service_create_slot_binding",
+    "service_list_slot_bindings",
+    "service_rebind_slot",
+    "service_resolve_slot_binding",
+    "service_retire_slot_binding",
+    "service_slot_binding_history",
     # Attestations
     "attach_corroboration_summaries",
     "service_attest",

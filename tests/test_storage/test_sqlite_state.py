@@ -78,6 +78,7 @@ DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
         # exemption is spelled out in
         # ``tests/test_guardrails/test_store_registration.py``.
         Path("src/cruxible_core/telemetry/store.py"),
+        Path("src/cruxible_core/bindings/store.py"),
         Path("src/cruxible_core/server/registry.py"),
         Path("src/cruxible_core/server/credentials.py"),
     }

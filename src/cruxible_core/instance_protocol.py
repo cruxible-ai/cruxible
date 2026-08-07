@@ -22,6 +22,7 @@ if TYPE_CHECKING:
         ClaimKey,
         CorroborationSummary,
     )
+    from cruxible_core.bindings.store import BindingStoreProtocol
     from cruxible_core.config.provenance import ConfigProvenanceMetadata
     from cruxible_core.config.schema import CoreConfig
     from cruxible_core.decision.types import DecisionEvent, DecisionRecord
@@ -896,5 +897,7 @@ class InstanceProtocol(ABC):
     def get_resolution_contract_store(self) -> ResolutionContractStoreProtocol: ...
     @abstractmethod
     def get_install_ledger_store(self) -> InstallLedgerStoreProtocol: ...
+    @abstractmethod
+    def get_bindings_store(self) -> BindingStoreProtocol: ...
     @abstractmethod
     def get_source_artifact_store(self) -> SourceArtifactStoreProtocol: ...

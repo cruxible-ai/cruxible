@@ -52,6 +52,33 @@ the project's own state instance.
   and there is no MCP tool: the installer that drives the sequence is not built
   yet.
 
+- **Compute slots bind to providers through a ledger in state, not config.** A
+  procedure pins a slot's INTERFACE (the contracts in and out); which provider
+  fills that slot on a given install is now a receipted deployment record in
+  `state.db`, with a monotonic revision per binding and full history retained.
+  Binding refuses a provider whose declared contracts are not exactly the slot's,
+  a billing mode outside the slot's allowed set (echoing the allowed values), and
+  a third-party provider without recorded consent — the consenting actor and
+  timestamp land on the binding, not in a config flag, and consent asserted with
+  no actor context to attribute it to is refused rather than stamped
+  anonymously. An unbindable slot reports every candidate that nearly matched,
+  ranked by contract sides matched and then by failure count, naming every reason
+  each one failed rather than only the first; the ranking rides on the error as
+  structured data as well as in its text. The whole slot interface — both
+  contracts, the billing allowlist, and the consent requirement — is pinned onto
+  the binding at bind time and never revised: rebinding mints a new revision on
+  the same binding, keeps the previous one readable, and is validated against the
+  STORED interface, so a rebind that supplies a different one is refused naming
+  what the ledger holds instead of redefining the constraints it is being checked
+  against. One active binding per slot per install is a database guarantee
+  (partial unique index), so two concurrent binds cannot both leave an active row
+  behind. Readable over HTTP at `GET /slot-bindings` and
+  `GET /slot-bindings/{binding_id}/history`; the bind, rebind, and retire verbs
+  are service-level in this release with no CLI or MCP surface yet. Procedure
+  runs do not resolve or record bindings yet — wiring slot resolution into run
+  start is separate work, so nothing about run behaviour changes in this release.
+  Storage migration `0008_binding_ledger`.
+
 ## [0.3.2] - 2026-08-06
 
 - **Procedure reads show their run-ledger track record.** List and detail

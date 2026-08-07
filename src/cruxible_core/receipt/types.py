@@ -59,6 +59,14 @@ OperationType = Literal[
     "decision_record_finalize",
     "decision_record_abandon",
     "source_artifact_register",
+    # Compute-slot binding ledger. Bindings are deployment records in state, so
+    # every change to one is a governed mutation with its own receipt: which
+    # provider a slot resolved to, when, on whose authority, and what it moved
+    # from. The run receipt that later records a RESOLVED binding is a
+    # ``procedure`` receipt and is not listed here.
+    "slot_binding_bind",
+    "slot_binding_rebind",
+    "slot_binding_retire",
     "snapshot_create",
     "lifecycle_supersede",
     "lifecycle_retract",
