@@ -165,6 +165,27 @@ the project's own state instance.
   post-push job pulls that digest and runs the runtime image suite against
   the published artifact via the new `CRUXIBLE_RUNTIME_IMAGE_REF` test
   override. Deployments pin the digest, not the tag.
+- **Procedure blueprints have a document format.** A blueprint is a portable,
+  digest-addressed document that packages a procedure library: its own fully
+  qualified contracts, its reference-state/ontology dependencies, its query
+  slots (read sockets that install a default named query), its compute slots
+  (swappable stages declared by contract, with billing-mode compatibility
+  constraints and an opt-in outcome-metric hook), and its procedures. The new
+  `cruxible_core.blueprint` module parses and validates a document, computes a
+  content digest over a canonical form plus an ordered attachment manifest, and
+  lowers it into the artifacts an installer submits: a config-overlay fragment
+  and concrete `ProcedureDefinition`s with slot references resolved from a
+  caller-supplied binding map, checked against a caller-supplied provider
+  catalog. Binding is fail-closed: a provider missing from the catalog is
+  refused rather than assumed compatible, and a bound provider must match the
+  slot's contract names, intersect its billing modes, and claim every
+  capability tag it requires. Refusals are typed and field-pathed — one issue
+  per violated constraint — and an unbindable slot lists the near-matching
+  providers and why each failed. This
+  release ships the artifact only — there is no installer, no trigger runtime,
+  and no binding registry. `triggers:` and `pipelines:` parse and validate but
+  refuse to lower; `invocation: manual` procedure libraries are the executable
+  slice. Format reference: `docs/blueprints.md`.
 
 ## [0.3.1] - 2026-08-05
 
