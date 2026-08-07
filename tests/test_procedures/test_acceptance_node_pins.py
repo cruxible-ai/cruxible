@@ -15,7 +15,11 @@ from cruxible_core.procedure.pins import (
     verify_pin_integrity,
 )
 from cruxible_core.procedure.types import ProcedureDefinition
-from cruxible_core.service import service_run_procedure
+from cruxible_core.service import (
+    service_get_procedure,
+    service_propose_procedure,
+    service_run_procedure,
+)
 from cruxible_core.workflow.compiler import load_lock, resolve_lock_path
 from tests.test_procedures.conftest import actor, provider_definition
 from tests.test_procedures.test_execution import _accept, _receipt, _run, _stub_provider
@@ -349,3 +353,77 @@ def test_a_v2_graph_with_no_external_dependencies_expects_the_empty_pin_set(
     result = service_run_procedure(procedure_instance, procedure_id, {"value": 7}, actor("runner"))
     assert result.run.verdict == "succeeded"
     assert result.output == {"echoed": 7}
+
+
+def test_an_upgraded_database_backfills_node_digests_on_first_read(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """The upgrade path, which restore-time recompute does not reach.
+
+    A procedure accepted before migration 0009 has digest rows created BESIDE
+    it -- the table exists, empty -- and it never passes through an acceptance
+    or a restore again. Nothing else would ever write them, so without a lazy
+    backfill it stays digest-less forever and cannot be joined to any reading
+    about its decision points.
+    """
+    procedure_id = _accept(procedure_instance, provider_definition("pre_migration"))
+
+    # Reproduce the upgraded-database state: a live, accepted row whose derived
+    # digests were never written.
+    store = procedure_instance.get_procedure_store()
+    try:
+        store._conn.execute(
+            "DELETE FROM procedure_node_digests WHERE procedure_id = ?", (procedure_id,)
+        )
+        store._conn.commit()
+        assert store.list_node_digests(procedure_id) == []
+    finally:
+        store.close()
+
+    read = service_get_procedure(procedure_instance, procedure_id)
+    assert read.procedure_id == procedure_id
+
+    store = procedure_instance.get_procedure_store()
+    try:
+        backfilled = store.list_node_digests(procedure_id)
+    finally:
+        store.close()
+    assert [digest.node_id for digest in backfilled] == ["invoke"]
+    assert backfilled[0].local_digest.startswith("sha256:")
+    # No re-acceptance happened: the row is still at the version acceptance left.
+    assert read.version == 2
+
+
+def test_the_backfill_is_idempotent_and_does_not_refire(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    procedure_id = _accept(procedure_instance, provider_definition("idempotent_backfill"))
+    first = service_get_procedure(procedure_instance, procedure_id)
+    second = service_get_procedure(procedure_instance, procedure_id)
+    assert first.procedure_id == second.procedure_id
+    store = procedure_instance.get_procedure_store()
+    try:
+        assert len(store.list_node_digests(procedure_id)) == 1
+    finally:
+        store.close()
+
+
+def test_a_pending_procedure_is_not_backfilled(
+    procedure_instance: CruxibleInstance,
+) -> None:
+    """Lazy backfill covers LIVE procedures, per the spec's letter.
+
+    A pending proposal has no accepted world yet; writing derived identity for
+    one would assert a decision point exists before anyone approved it.
+    """
+    proposed = service_propose_procedure(
+        procedure_instance,
+        provider_definition("still_pending"),
+        actor_context=actor("proposer"),
+    )
+    service_get_procedure(procedure_instance, proposed.procedure.procedure_id)
+    store = procedure_instance.get_procedure_store()
+    try:
+        assert store.list_node_digests(proposed.procedure.procedure_id) == []
+    finally:
+        store.close()

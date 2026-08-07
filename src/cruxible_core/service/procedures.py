@@ -715,14 +715,49 @@ def service_get_procedure(
     instance: InstanceProtocol,
     procedure_id: str,
 ) -> ProcedureReadRecord:
-    """Read one procedure record."""
+    """Read one procedure record, backfilling its node digests if absent."""
     store = instance.get_procedure_store()
     try:
         procedure = _get_procedure(store, procedure_id)
         track_records = store.get_run_track_records([procedure_id])
-        return _procedure_read_record(procedure, track_records.get(procedure_id))
+        needs_backfill = procedure.status == "live" and not store.list_node_digests(procedure_id)
     finally:
         store.close()
+    if needs_backfill:
+        _backfill_node_digests(instance, procedure)
+    return _procedure_read_record(procedure, track_records.get(procedure_id))
+
+
+def _backfill_node_digests(instance: InstanceProtocol, procedure: ProcedureRecord) -> None:
+    """Lazily populate node digests for a procedure that predates the table.
+
+    A procedure accepted BEFORE migration 0009 has no digest rows and never
+    passes through an acceptance or a restore again, so nothing else would ever
+    write them and it would stay digest-less forever -- unjoinable to any
+    reading about its decision points.
+
+    Lazy rather than a migration sweep, per the spec's letter, and the reasons
+    are structural: the migration runs under a write lock that forbids the kind
+    of work parsing every stored definition requires, and a torn sweep would
+    leave a stamped database half-populated with no record of which half. This
+    fires once per procedure and only for LIVE ones, so a read pays the cost at
+    most once and the write lock is taken only when there is something to write.
+
+    The computation is pure and the write is idempotent, so a failure here
+    costs a later retry and nothing else -- which is why it degrades to a
+    logged warning rather than failing a read verb over derived data.
+    """
+    try:
+        digests = list(compute_node_digests(procedure.definition).values())
+        with instance.write_transaction() as uow:
+            uow.procedures.save_node_digests(procedure.procedure_id, digests)
+    except Exception:  # noqa: BLE001 - derived data must not break a read
+        _logger.warning(
+            "could not backfill node digests for procedure %s; "
+            "the rows stay absent and the next read retries",
+            procedure.procedure_id,
+            exc_info=True,
+        )
 
 
 def service_get_procedure_details(

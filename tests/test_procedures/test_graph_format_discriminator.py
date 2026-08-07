@@ -40,8 +40,21 @@ def test_absent_discriminator_is_format_v1_and_leaves_the_wire_untouched() -> No
     )
 
 
-def test_explicit_null_discriminator_is_still_v1_and_still_absent_from_the_dump() -> None:
-    definition = _definition(graph_format=None)
+def test_an_explicit_null_is_refused_because_absence_is_the_whole_spelling() -> None:
+    """Explicit null and absence dump identically and are NOT the same wire form.
+
+    A 0.3 core refuses `"graph_format": null` outright, so a reader that accepts
+    it takes something the format's own old-reader lock rejected -- and the
+    acceptance is invisible afterwards, because by the time the model exists
+    both spellings are ``None`` and both dumps have dropped the key.
+    """
+    with pytest.raises(ConfigError, match="spelled by ABSENCE") as exc_info:
+        _definition(graph_format=None)
+    assert "supported: 1, 2" in str(exc_info.value)
+
+
+def test_an_absent_discriminator_is_v1_and_the_key_never_reaches_the_wire() -> None:
+    definition = _definition()
     assert definition_format_version(definition) == (1, [])
     assert "graph_format" not in definition.model_dump(
         mode="json", by_alias=True, exclude_none=True

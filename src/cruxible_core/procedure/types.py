@@ -30,7 +30,7 @@ from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.primitives import new_id
 from cruxible_core.procedure.graph_format import (
     DEFINITION_FORMAT_V1,
-    coerce_declared_format,
+    coerce_present_declared_format,
     definition_format_version,
     register_v2_step_type,
 )
@@ -422,13 +422,17 @@ class ProcedureDefinition(BaseModel):
 
     @field_validator("graph_format", mode="before")
     @classmethod
-    def refuse_coerced_format_spellings(cls, value: Any) -> Any:
-        """Ahead of coercion, because coercion is the fail-open.
+    def refuse_non_canonical_format_spellings(cls, value: Any) -> Any:
+        """Ahead of coercion, and only when the KEY IS PRESENT.
 
-        ``int | None`` is non-strict, so ``"2"`` and ``2.0`` would arrive at
-        the value check already looking like a legal ``2``.
+        Two things this position buys, neither available later. Coercion is the
+        fail-open: ``int | None`` is non-strict, so ``"2"`` and ``2.0`` would
+        arrive at the value check already looking like a legal ``2``. And a
+        before-validator on a defaulted field runs ONLY when the key was
+        supplied, which is the only place explicit null can still be told apart
+        from absence -- by the time the model exists both are ``None``.
         """
-        return coerce_declared_format(value)
+        return coerce_present_declared_format(value)
 
     @model_validator(mode="after")
     def validate_definition(self) -> ProcedureDefinition:

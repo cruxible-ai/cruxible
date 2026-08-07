@@ -21,47 +21,95 @@ from typing import Any
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.procedure.analysis import build_procedure_graph
 from cruxible_core.procedure.types import ProcedureDefinition
 from cruxible_core.service import service_run_procedure
 from cruxible_core.workflow import executor as executor_module
 from cruxible_core.workflow.execution_context import WorkflowExecutionContext
 from cruxible_core.workflow.step_handlers import PROCEDURE_STEP_HANDLER_REGISTRY
-from tests.test_procedures.test_definition_digest_corpus import ENTRIES, IDS
 from tests.test_procedures.test_execution import _accept, _receipt, _stub_provider
 
-_RUN_IDENTITY_KEYS = {
-    # Minted or advanced ONCE PER RUN by construction, in both executors alike:
-    # ids, clocks, and the monotonic read revision. Two sequential runs cannot
-    # agree on these and no executor change could make them.
-    "receipt_id",
-    "created_at",
-    "duration_ms",
-    "timestamp",
-    "read_revision",
-    "trace_id",
-    "head_snapshot_id",
-}
+_NORMALIZED_RECEIPT_PATHS: frozenset[tuple[str, ...]] = frozenset(
+    {
+        # Receipt envelope: minted or advanced once per run by construction.
+        ("receipt_id",),
+        ("created_at",),
+        ("duration_ms",),
+        ("read_revision",),
+        ("head_snapshot_id",),
+        ("nodes", "*", "timestamp"),
+        # Per-step provider trace, minted per invocation.
+        ("nodes", "*", "detail", "trace_id"),
+        # A query plan step records the id of the read receipt it produced.
+        ("nodes", "*", "detail", "receipt_id"),
+        # The precondition records the revision it evaluated at, both as a
+        # bare validation node and nested in the root detail's summary.
+        ("nodes", "*", "detail", "read_revision"),
+        ("nodes", "*", "detail", "precondition", "read_revision"),
+        # A measurement of THIS run's elapsed time. `provider_calls` beside it
+        # is not a measurement and stays compared.
+        ("nodes", "*", "detail", "budget", "spent", "wall_clock_s"),
+        # Per-query receipt ids, at every place the aggregate republishes them.
+        ("nodes", "*", "detail", "read_metadata", "query_receipt_ids"),
+        ("nodes", "*", "detail", "read_metadata", "read_steps", "*", "metadata", "receipt_id"),
+    }
+)
+"""EXACT PATHS, not key names.
+
+A key-name-global rule reaches into user data: a step output or a returned
+object with a field called `read_revision` or `timestamp` would be neutralized
+too, and two runs producing genuinely different outputs would compare equal --
+which is the one thing this oracle exists to detect. Every entry below names
+where in the RECEIPT the value lives; `*` matches a list index.
+"""
+
 _PLACEHOLDER = "<run-identity>"
 """Run-identity values are REPLACED, not deleted.
 
 Deleting a key hides the difference between "this field is per-run" and "this
 field vanished". The oracle has to fail when the successor walk stops emitting
-something the flat loop emitted, so every key survives the normalization and
-only its value is neutralized."""
+something the flat loop emitted, so every key survives normalization and only
+its value is neutralized."""
 
 
-@pytest.mark.parametrize("entry", ENTRIES, ids=IDS)
-def test_the_successor_walk_visits_the_flat_list_order(entry: dict[str, Any]) -> None:
-    definition = ProcedureDefinition.model_validate(entry["normalized_dump_v032"])
-    graph = build_procedure_graph(definition)
-    walked: list[str] = []
-    current: str | None = graph.entry_id
-    while current is not None:
-        walked.append(current)
-        successors = graph.successors_of(current)
-        current = successors[0] if successors else None
-    assert walked == list(graph.node_ids)
+def _strip_query_receipt_ids(step_outputs: dict[str, Any]) -> dict[str, Any]:
+    """Drop the ONE per-execution value a query step publishes in its output.
+
+    A query step's output carries `receipt_id`, the id of the read receipt that
+    produced it, minted per execution. It is removed at that exact path -- one
+    key, one level, in a step output that is otherwise compared byte for byte,
+    including every count, every truncation flag and every result row.
+    """
+    return {
+        alias: (
+            {key: item for key, item in value.items() if key != "receipt_id"}
+            if isinstance(value, dict) and "receipt_id" in value and "results" in value
+            else value
+        )
+        for alias, value in step_outputs.items()
+    }
+
+
+def _path_is_normalized(path: tuple[str, ...]) -> bool:
+    return any(
+        len(pattern) == len(path)
+        and all(part == "*" or part == actual for part, actual in zip(pattern, path))
+        for pattern in _NORMALIZED_RECEIPT_PATHS
+    )
+
+
+def _normalize_receipt(value: Any, path: tuple[str, ...] = ()) -> Any:
+    """Neutralize run identity at known receipt paths, and nowhere else."""
+    if _path_is_normalized(path):
+        if path[-1] == "query_receipt_ids" and isinstance(value, list):
+            # Ids are minted per execution; the COUNT is the property an
+            # executor change could alter, so it is what survives.
+            return f"<{len(value)} query receipts>"
+        return _PLACEHOLDER
+    if isinstance(value, dict):
+        return {key: _normalize_receipt(item, (*path, key)) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_receipt(item, (*path, "*")) for item in value]
+    return value
 
 
 def _flat_loop(context: WorkflowExecutionContext) -> None:
@@ -69,37 +117,6 @@ def _flat_loop(context: WorkflowExecutionContext) -> None:
     for compiled_step in context.plan.steps:
         context.check_procedure_wall_clock()
         PROCEDURE_STEP_HANDLER_REGISTRY.execute(context, compiled_step)
-
-
-def _normalize_run_identity(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: (
-                _PLACEHOLDER
-                if key in _RUN_IDENTITY_KEYS
-                else _normalize_query_receipt_ids(key, item)
-            )
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_normalize_run_identity(item) for item in value]
-    return value
-
-
-def _normalize_query_receipt_ids(key: str, value: Any) -> Any:
-    """Per-execution measurements, collapsed to the part that is comparable.
-
-    Query receipt ids are minted per execution; their COUNT is not, and how
-    many query receipts a run produced is exactly the kind of thing an
-    executor change could alter. Spent wall-clock is a measurement of this
-    run's elapsed time; the provider-call count beside it is not, so only the
-    clock is neutralized.
-    """
-    if key == "query_receipt_ids" and isinstance(value, list):
-        return f"<{len(value)} query receipts>"
-    if key == "spent" and isinstance(value, dict):
-        return {**_normalize_run_identity(value), "wall_clock_s": _PLACEHOLDER}
-    return _normalize_run_identity(value)
 
 
 def _receipt_modulo_ids(instance: CruxibleInstance, receipt_id: str) -> dict[str, Any]:
@@ -119,7 +136,7 @@ def _receipt_modulo_ids(instance: CruxibleInstance, receipt_id: str) -> dict[str
         }
         for edge in dumped["edges"]
     ]
-    result = _normalize_run_identity(dumped)
+    result = _normalize_receipt(dumped)
     assert isinstance(result, dict)
     # The root detail is COMPARED, not dropped: it carries the accepted/executed
     # digests, the precondition, the budget, the verdict and the pin material,
@@ -243,12 +260,14 @@ def test_t3_a_linear_definition_runs_identically_through_both_executors(
         actor_context=None,
     )
 
-    # A query step's own output embeds the receipt id of the read that produced
-    # it, which is minted per execution; the same normalization applies.
-    assert _normalize_run_identity(walked.step_outputs) == _normalize_run_identity(
+    # EXACT equality. Step outputs and the returned output are user data and
+    # get no normalization at all -- T3 promises they are identical, and
+    # neutralizing anything inside them would let two genuinely different
+    # outputs pass.
+    assert _strip_query_receipt_ids(walked.step_outputs) == _strip_query_receipt_ids(
         flat.step_outputs
     )
-    assert _normalize_run_identity(walked.output) == _normalize_run_identity(flat.output)
+    assert walked.output == flat.output
     # Read metadata is derived from what the run READ, not from run identity,
     # so it must match exactly. It was previously not compared at all.
     assert _read_metadata(procedure_instance, walked) == _read_metadata(procedure_instance, flat)
@@ -265,9 +284,13 @@ def _read_metadata(instance: CruxibleInstance, result: Any) -> Any:
     exactly. It was previously not compared at all.
     """
     receipt = _receipt(instance, result.run.receipt_id or "")
-    for node in receipt.nodes:
+    for index, node in enumerate(receipt.nodes):
         if "read_metadata" in node.detail:
-            return _normalize_run_identity(node.detail["read_metadata"])
+            normalized = _normalize_receipt(
+                receipt.model_dump(mode="json")["nodes"][index]["detail"]["read_metadata"],
+                ("nodes", "*", "detail", "read_metadata"),
+            )
+            return normalized
     return {}
 
 
@@ -304,3 +327,36 @@ def test_the_oracle_compares_the_root_detail_rather_than_discarding_it(
     # Run-identity keys survive as placeholders, so a field that DISAPPEARS is
     # still a failure rather than a silent match.
     assert normalized["read_revision"] == _PLACEHOLDER
+
+
+def test_the_oracle_does_not_neutralize_user_data() -> None:
+    """The defect a key-name-global normalization introduces.
+
+    Two runs whose OUTPUT differs only at a field called `read_revision` are
+    two runs that produced different answers. An oracle that neutralizes the
+    field by name compares them equal and reports T3 satisfied -- which is the
+    exact opposite of what T3 asserts.
+    """
+    walked = {"result": {"read_revision": 1, "timestamp": "A", "value": 7}}
+    flat = {"result": {"read_revision": 999, "timestamp": "B", "value": 7}}
+    assert _strip_query_receipt_ids(walked) != _strip_query_receipt_ids(flat)
+
+    # And inside the receipt, user data rides in `results` -- also untouched.
+    receipt = {"results": [{"output": {"read_revision": 1}}], "nodes": [], "edges": []}
+    other = {"results": [{"output": {"read_revision": 999}}], "nodes": [], "edges": []}
+    assert _normalize_receipt(receipt) != _normalize_receipt(other)
+
+
+def test_the_oracle_still_neutralizes_run_identity_at_its_own_paths() -> None:
+    receipt = {
+        "receipt_id": "RCP-a",
+        "read_revision": 4,
+        "nodes": [{"detail": {"trace_id": "TRC-a", "read_revision": 4}}],
+    }
+    other = {
+        "receipt_id": "RCP-b",
+        "read_revision": 6,
+        "nodes": [{"detail": {"trace_id": "TRC-b", "read_revision": 6}}],
+    }
+    assert _normalize_receipt(receipt) == _normalize_receipt(other)
+    assert _normalize_receipt(receipt)["nodes"][0]["detail"]["trace_id"] == _PLACEHOLDER

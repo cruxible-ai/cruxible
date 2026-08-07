@@ -70,15 +70,10 @@ def test_a_project_node_parses_and_reports_its_kind() -> None:
 
 
 def test_a_project_node_is_a_v2_construct() -> None:
+    undeclared = _projecting_definition().model_dump(mode="json", by_alias=True, exclude_none=True)
+    undeclared.pop("graph_format")
     with pytest.raises(Exception, match="does not declare 'graph_format: 2'"):
-        ProcedureDefinition.model_validate(
-            {
-                **_projecting_definition().model_dump(
-                    mode="json", by_alias=True, exclude_none=True
-                ),
-                "graph_format": None,
-            }
-        )
+        ProcedureDefinition.model_validate(undeclared)
 
 
 def test_a_projection_may_be_the_returns_alias(procedure_instance: CruxibleInstance) -> None:

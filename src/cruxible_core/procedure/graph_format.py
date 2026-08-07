@@ -125,8 +125,15 @@ def _uses_v2_construct(definition: ProcedureDefinition) -> bool:
     return any(isinstance(step, step_types) for step in definition.steps)
 
 
-def coerce_declared_format(value: Any) -> Any:
-    """Refuse a ``graph_format`` that is not LITERALLY absent or the integer 2.
+def coerce_present_declared_format(value: Any) -> Any:
+    """Refuse a ``graph_format`` KEY that is present with anything but the integer 2.
+
+    Called only when the key IS on the wire, which is what lets explicit null
+    be told apart from absence. They are not the same wire form even though
+    they dump identically: a 0.3 core refuses `"graph_format": null` outright,
+    so accepting it here is a reader silently taking something the format's own
+    old-reader lock rejected. Format v1 is spelled by ABSENCE -- that is the
+    whole spelling, key included.
 
     Runs in ``mode="before"``, ahead of pydantic's coercion, because coercion
     is the fail-open: ``int | None`` is non-strict, so ``"2"`` and ``2.0``
@@ -139,7 +146,18 @@ def coerce_declared_format(value: Any) -> Any:
     would otherwise read as the explicit ``1`` it is not.
     """
     if value is None:
-        return None
+        # The unknown-format refusal, plus the remedy the generic wording
+        # cannot carry: this key should not be here at all.
+        unreadable = refuse_unknown_artifact_format(
+            artifact_class="ProcedureDefinition",
+            declared_version=None,
+            supported_versions=(DEFINITION_FORMAT_V1, DEFINITION_FORMAT_V2),
+        )
+        raise ConfigError(
+            f"{unreadable} Format v1 is spelled by ABSENCE: omit the key entirely "
+            "rather than sending an explicit null, which a 0.3 core refuses outright "
+            "and which is therefore not the same wire form as omitting it."
+        )
     if type(value) is not int:
         raise refuse_unknown_artifact_format(
             artifact_class="ProcedureDefinition",
@@ -212,7 +230,7 @@ def definition_format_version(definition: ProcedureDefinition) -> tuple[int, lis
 
 __all__ = [
     "DEFINITION_FORMAT_V1",
-    "coerce_declared_format",
+    "coerce_present_declared_format",
     "DEFINITION_FORMAT_V2",
     "SUPPORTED_DECLARED_FORMATS",
     "definition_format_version",

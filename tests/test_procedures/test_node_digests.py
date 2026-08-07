@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from cruxible_core.errors import ConfigError
 from cruxible_core.procedure.digest import (
     BASE_ENVELOPE_FIELDS,
     DIGEST_FUNCTIONS,
@@ -67,13 +68,23 @@ def _root(payload: dict[str, Any]) -> str:
 
 
 @pytest.mark.parametrize("entry", ENTRIES, ids=IDS)
-def test_g4_setting_a_v2_field_to_none_does_not_move_the_digest(entry: dict[str, Any]) -> None:
+def test_g4_an_absent_v2_field_moves_no_byte_and_an_explicit_null_is_refused(
+    entry: dict[str, Any],
+) -> None:
+    """G4, in the stronger form the discriminator now permits.
+
+    The property G4 pins is that an optional v2 field cannot move a v1 digest.
+    For `graph_format` that is now guaranteed by REFUSAL rather than by
+    normalization: absence is the only spelling of v1, so there is no second
+    authored form to compare against. That is strictly better than "both
+    spellings digest the same", because the two spellings were never
+    equivalent -- a 0.3 core refuses the explicit null and accepts the absence.
+    """
     baseline = ProcedureDefinition.model_validate(entry["normalized_dump_v032"])
-    explicit = ProcedureDefinition.model_validate(
-        {**entry["normalized_dump_v032"], "graph_format": None}
-    )
-    assert compute_procedure_definition_digest(explicit) == entry["digest_v1"]
     assert compute_procedure_definition_digest(baseline) == entry["digest_v1"]
+    assert "graph_format" not in baseline.model_dump(mode="json", by_alias=True, exclude_none=True)
+    with pytest.raises(ConfigError, match="spelled by ABSENCE"):
+        ProcedureDefinition.model_validate({**entry["normalized_dump_v032"], "graph_format": None})
 
 
 # --- G5 --------------------------------------------------------------------
