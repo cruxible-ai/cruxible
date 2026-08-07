@@ -1265,6 +1265,20 @@ class DecisionEventListResult(ListEnvelopeFields):
     items: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class InstallDetailResult(BaseModel):
+    """One install ledger record with its owned objects and phase history.
+
+    The three payloads stay open dicts on purpose: the install ledger's write
+    surface is service-internal until the installer ships, so pinning its field
+    shapes into the frozen client contract now would freeze a record whose
+    consumers do not exist yet.
+    """
+
+    install: dict[str, Any]
+    owned_objects: list[dict[str, Any]] = Field(default_factory=list)
+    phase_history: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class FeedbackResult(BaseModel):
     feedback_id: str
     applied: bool

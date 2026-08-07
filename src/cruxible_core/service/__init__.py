@@ -72,6 +72,19 @@ from cruxible_core.service.groups import (
     service_resolve_group,
     service_update_trust_status,
 )
+from cruxible_core.service.installs import (
+    service_advance_install_phase,
+    service_check_ownership_collision,
+    service_create_install,
+    service_detect_object_customization,
+    service_get_install,
+    service_install_owning_object,
+    service_list_installs,
+    service_objects_owned_by_install,
+    service_record_object_customization,
+    service_record_owned_object,
+    service_uninstall_preconditions,
+)
 from cruxible_core.service.lifecycle import (
     service_config_status,
     service_init,
@@ -422,6 +435,18 @@ __all__ = [
     "service_propose_group_inputs",
     "service_resolve_group",
     "service_update_trust_status",
+    # Install ledger
+    "service_advance_install_phase",
+    "service_check_ownership_collision",
+    "service_create_install",
+    "service_detect_object_customization",
+    "service_get_install",
+    "service_install_owning_object",
+    "service_list_installs",
+    "service_objects_owned_by_install",
+    "service_record_object_customization",
+    "service_record_owned_object",
+    "service_uninstall_preconditions",
     # Procedures
     "compile_procedure_definition",
     "service_get_procedure",

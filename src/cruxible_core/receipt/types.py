@@ -62,6 +62,15 @@ OperationType = Literal[
     "snapshot_create",
     "lifecycle_supersede",
     "lifecycle_retract",
+    # Install ledger. Creating an install, claiming ownership of an object,
+    # advancing a phase, and recording a customization verdict each mint their
+    # own receipt rather than riding on one install-wide receipt: a
+    # crash-recoverable install must be reconstructible step by step, not
+    # attempt by attempt.
+    "install_create",
+    "install_record_owned_object",
+    "install_phase_advance",
+    "install_object_customization",
 ]
 """Coarse-grained category of operation that produced a receipt."""
 

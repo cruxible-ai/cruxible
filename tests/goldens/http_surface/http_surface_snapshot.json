@@ -129,6 +129,12 @@
   "/api/v1/{instance_id}/inspect/{view}": {
     "GET": "CanonicalViewResult"
   },
+  "/api/v1/{instance_id}/installs": {
+    "GET": "ListResult"
+  },
+  "/api/v1/{instance_id}/installs/{install_id}": {
+    "GET": "InstallDetailResult"
+  },
   "/api/v1/{instance_id}/instance/backup": {
     "POST": "InstanceBackupResult"
   },

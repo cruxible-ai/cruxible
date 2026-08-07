@@ -229,6 +229,13 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_telemetry_summary": PermissionMode.READ_ONLY,
     "cruxible_list_source_artifacts": PermissionMode.READ_ONLY,
     "cruxible_get_source_artifact": PermissionMode.READ_ONLY,
+    # Install-ledger reads: exposed over HTTP (GET /installs and
+    # /installs/{install_id}) and deliberately NOT MCP tools. The ledger's
+    # write surface stays service-internal until the installer exists, so
+    # there is nothing here for an agent to drive -- only an operator surface
+    # for seeing what an install owns and how far it got.
+    "cruxible_list_installs": PermissionMode.READ_ONLY,
+    "cruxible_get_install": PermissionMode.READ_ONLY,
     # Adjudicating a claim (feedback accept / reject / correct). See
     # FEEDBACK_ACTION_PERMISSIONS below: the feedback TOOLS sit at
     # GOVERNED_WRITE, but the adjudication ACTIONS they carry are GRAPH_WRITE.

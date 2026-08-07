@@ -38,6 +38,7 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.legacy_identity import backfill_legacy_graph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
+from cruxible_core.installs.store import InstallLedgerStore
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
 from cruxible_core.primitives import new_id
 from cruxible_core.procedure.store import ProcedureStore
@@ -807,6 +808,19 @@ class CruxibleInstance(InstanceProtocol):
             return self._active_uow.resolution_contracts
         self._ensure_state_initialized()
         return ResolutionContractStore(self._state_db_path())
+
+    def get_install_ledger_store(self) -> InstallLedgerStore:
+        """Get or create the install ledger SQLite store.
+
+        Ownership claims MUST come from the active unit of work when one is
+        open: the collision check and the ownership insert that follows it have
+        to be atomic, or two installs racing for one contract name can both
+        pass the check before either writes.
+        """
+        if self._active_uow is not None:
+            return self._active_uow.installs
+        self._ensure_state_initialized()
+        return InstallLedgerStore(self._state_db_path())
 
     def get_source_artifact_store(self) -> SQLiteSourceArtifactStore:
         """Get or create the source artifact SQLite store."""

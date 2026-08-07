@@ -396,6 +396,116 @@ edge links its `resolution_id`; every resolution stores the thesis and
 analysis state it was judged on. If you cannot reconstruct why an edge exists,
 that is a bug worth reporting, not a gap you should paper over.
 
+## 5. Install Ownership: Which Artifact Owns Which Config Object
+
+Config composition tells you whether a contract, named query, procedure, or
+enum came from *upstream* or from your *local* layer. That is enough to decide
+what an overlay may write, and not enough to remove anything: once two
+installable artifacts have each contributed a contract and a query to the same
+local layer, the composed config no longer records which artifact put which
+name there.
+
+The **install ledger** is that record. It lives in `state.db` beside receipts
+and governance state, and it is written only through receipted service calls.
+
+### The install phase machine
+
+An install is preflighted, ordered, and crash-recoverable — deliberately not
+one transaction, because config is a file, the compile lock is a file,
+governance state is SQLite, and human acceptance is asynchronous. The ledger
+records how far each attempt got:
+
+```
+preparing ──► pending_acceptance ──► active        (terminal: installed)
+    │                 │
+    └──────► failed ◄─┘
+               │
+               ▼
+          rolling_back ──► rolled_back             (terminal: undone)
+```
+
+| Phase | Holds its ownership claims? |
+|---|---|
+| `preparing` | yes |
+| `pending_acceptance` | yes |
+| `active` | yes |
+| `failed` | yes — failing is not undoing |
+| `rolling_back` | yes — cleanup in flight |
+| `rolled_back` | **no**, released in the same transaction |
+
+Every advance is receipted and appended to the install's phase history, in the
+same transaction as the phase change. An illegal advance is refused with a
+typed error naming the phase the install is **actually** in and the phases that
+may legally follow it — an installer resuming after a crash reads its position
+off the refusal instead of guessing.
+
+`active` and `rolled_back` are terminal today. Uninstall, which would move an
+`active` install onward, is not built yet and deliberately has no transition.
+
+### Ownership claims
+
+While an install is `preparing`, it claims the objects it is installing:
+`(install, object kind, object name, installed content digest)`. Object kinds
+are `contract`, `named_query`, `procedure`, and `enum`. Ownership may only be
+claimed during `preparing` — preflight has to finish before anything mutates,
+so an install already proposed for acceptance cannot quietly widen what it
+owns.
+
+One live owner per `(kind, name)` is a database guarantee, not a service
+convention: two installs racing for the same contract name cannot both leave a
+claim behind.
+
+An install **releases** its names only when it reaches `rolled_back`, in the
+same transaction as that phase change. A `failed` install keeps them, because
+failing is not undoing: an install that failed out of `pending_acceptance` may
+already have written config and procedure objects, and it still has to traverse
+`rolling_back` to take them back. If the names freed at `failed`, a fresh
+install could claim them and the first install's rollback would then remove or
+overwrite objects the second one now owns.
+
+The cost is deliberate: an install that mutated nothing still walks a no-op
+`rolling_back` → `rolled_back` before its names are reusable. The ledger cannot
+tell the two failures apart, so it charges the harmless one a rollback rather
+than letting the harmful one race. "This name is free" therefore means "nobody
+still owes cleanup on it", not "nobody intends to finish".
+
+### Customized objects
+
+A blueprint's named queries are its customization point: you are meant to edit
+them. The ledger keeps the digest of what the install originally wrote, so
+comparing it against the object's current digest says whether you changed it.
+An update that overwrites a customized object destroys your work, so the flag
+exists to make that a decision rather than an accident. The comparison takes
+the current digest as an argument — the ledger never reads your config itself.
+
+### Uninstall preconditions, and what they cannot see
+
+Given an install, the ledger reports the objects that other installs still
+holding their claims have **declared** a dependency on. That is a real,
+checkable blocker, and it is what makes dependency-blocked removal possible.
+
+**`blocked: false` does not mean "safe to delete."** The check sees only
+references recorded in the ledger. It cannot see:
+
+- config objects the ledger did not install (hand-written or upstream) that
+  reference an installed object;
+- accepted procedure definitions pinned against an installed object;
+- graph state and governed groups produced by an installed object.
+
+Every report carries that list in `unobservable_reference_sources` so silence
+cannot be mistaken for safety. Closing those gaps belongs to the uninstaller,
+not to a query these tables can answer.
+
+### Surface
+
+Read-only for now: `GET /api/v1/{instance_id}/installs` lists install records
+(filterable by `phase` and `artifact_id`, standard list envelope), and
+`GET /api/v1/{instance_id}/installs/{install_id}` returns one install with its
+owned objects and full phase history. There is no write route and no MCP tool:
+creating an install, claiming ownership, and advancing a phase are steps of an
+ordered sequence, and exposing them individually would invite half-installs
+that no preflight has cleared. They become reachable when the installer ships.
+
 ## Summary: Who Wins
 
 - **Pipelines and agents never overwrite each other silently.** Live edges and
