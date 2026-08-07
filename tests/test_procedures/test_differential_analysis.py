@@ -38,13 +38,12 @@ from cruxible_core.procedure.types import (
 from cruxible_core.service.procedures import (
     WARNING_CONTRACT_FIELD_PATH_CONDITIONAL,
     WARNING_CONTRACT_FIELD_UNCONSUMED,
-    _input_reference_field,
-    _procedure_step_input_references,
     lint_procedure_definition_authoring,
     lint_procedure_definition_authoring_typed,
 )
 from cruxible_core.workflow.compiler import _prior_step_aliases_by_index
 from cruxible_core.workflow.contracts import resolve_contract
+from cruxible_core.workflow.refs import iter_step_reference_templates
 from tests.test_procedures.conftest import CONFIG_YAML
 from tests.test_procedures.test_definition_digest_corpus import ENTRIES, IDS
 
@@ -106,27 +105,76 @@ def _pre_graph_static_expansion(definition: ProcedureDefinition) -> dict[str, in
     }
 
 
+def _pre_graph_workflow_steps(definition: ProcedureDefinition) -> list[WorkflowStepSchema]:
+    """`_procedure_workflow_steps` at b283e1d8, carried verbatim."""
+    steps: list[WorkflowStepSchema] = []
+    for wrapper in definition.steps:
+        step = unwrap_procedure_step(wrapper)
+        if isinstance(step, ProcedureRepeatStepSchema):
+            steps.extend(step.repeat.steps)
+        elif isinstance(step, WorkflowStepSchema):
+            steps.append(step)
+    return steps
+
+
+def _pre_graph_input_references(definition: ProcedureDefinition) -> list[tuple[str, str]]:
+    """`_procedure_step_input_references` at b283e1d8, carried verbatim.
+
+    CARRIED, not imported. C2 widened the production scanner to read guard
+    operands; importing it here would put the same code on both sides of the
+    differential, so a scanner regression would corrupt the oracle and the
+    subject together and the equality would hold while both were wrong.
+
+    ``iter_step_reference_templates`` IS imported: batch C did not touch it
+    (`git diff b283e1d8..HEAD -- workflow/refs.py` is empty), and copying an
+    untouched shared module would pin a snapshot of something no longer under
+    test.
+    """
+    references: list[tuple[str, str]] = []
+    for step in _pre_graph_workflow_steps(definition):
+        dumped = step.model_dump(mode="python", by_alias=True, exclude_none=True)
+        for template in iter_step_reference_templates(dumped):
+            references.extend((step.id, ref) for ref in _pre_graph_scan(template))
+    return references
+
+
+def _pre_graph_scan(value: Any) -> list[str]:
+    """`_input_references` at b283e1d8, carried verbatim."""
+    if isinstance(value, str):
+        return [value] if value == "$input" or value.startswith("$input.") else []
+    if isinstance(value, dict):
+        return [ref for item in value.values() for ref in _pre_graph_scan(item)]
+    if isinstance(value, list):
+        return [ref for item in value for ref in _pre_graph_scan(item)]
+    return []
+
+
+def _pre_graph_reference_field(reference: str) -> str | None:
+    """`_input_reference_field` at b283e1d8, carried verbatim."""
+    if not reference.startswith("$input."):
+        return None
+    path = reference[len("$input.") :]
+    return path.split(".", 1)[0].split("[", 1)[0]
+
+
 def _pre_graph_unconsumed_warnings(
     definition: ProcedureDefinition,
     config: CoreConfig,
 ) -> list[str]:
-    """The pre-change contract-field warning slice, carried verbatim.
+    """The pre-change contract-field rule, over the pre-change scanner.
 
-    The reference SCAN is shared with the implementation deliberately: C2
-    widened it to read guard operands, and on a definition with no guards that
-    widening is the identity. What is carried here is the RULE the scan feeds
-    -- declared minus consumed, no path analysis -- which is the thing C2
-    replaced.
+    Declared minus consumed, no path analysis, no guard operands -- the whole
+    of what C2 replaced, reconstructed from the tree as it stood at AB's tip.
     """
     contract = resolve_contract(config, definition.contract_in)
     if contract is None:
         return []
     consumed_fields: set[str] = set()
-    for _node_id, _step_id, reference in _procedure_step_input_references(definition):
+    for _step_id, reference in _pre_graph_input_references(definition):
         if reference == "$input":
             consumed_fields.update(contract.fields)
             continue
-        field_name = _input_reference_field(reference)
+        field_name = _pre_graph_reference_field(reference)
         if field_name is not None:
             consumed_fields.add(field_name)
     if contract.allow_extra:
@@ -208,19 +256,53 @@ def test_the_budget_diverges_from_the_sum_once_arms_exist() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("entry", ENTRIES, ids=IDS)
+R10_REFUSED_ENTRIES = frozenset(
+    {
+        "tests-test_lifecycle-02",
+        "tests-test_lifecycle-06",
+        "tests-test_validation-01",
+    }
+)
+"""The three corpus entries this config refuses under R10, PINNED BY NAME.
+
+Each was harvested from a test whose own config declared the field it reads;
+against the procedure test config the reference is undeclared and the
+pre-existing refusal fires. The refusal is unchanged by batch C.
+
+A NAMED allow-list rather than a bare `except: skip`, because a skip is
+indistinguishable from a pass in a summary line: a change that made a fourth
+entry refuse would otherwise remove it from T4 silently, and T4 would report
+green while covering less than it did.
+"""
+
+
+def _lint_or_refusal(
+    definition: ProcedureDefinition,
+    config: CoreConfig,
+    label: str,
+) -> list[Any] | None:
+    """Lint one corpus entry, tolerating ONLY the pinned R10 refusals."""
+    try:
+        return lint_procedure_definition_authoring_typed(definition, config)
+    except ConfigError as exc:
+        assert label in R10_REFUSED_ENTRIES, (
+            f"corpus entry '{label}' newly refuses against the test config: {exc}. "
+            "A new refusal removes an entry from T4's coverage -- add it to "
+            "R10_REFUSED_ENTRIES deliberately, or fix what started refusing it."
+        )
+        return None
+
+
+@pytest.mark.parametrize("entry,label", zip(ENTRIES, IDS), ids=IDS)
 def test_t4_the_contract_lint_matches_the_pre_graph_rule(
     entry: dict[str, Any],
+    label: str,
     lint_config: CoreConfig,
 ) -> None:
     definition = _corpus_definition(entry)
-    try:
-        typed = lint_procedure_definition_authoring_typed(definition, lint_config)
-    except ConfigError:
-        # R10 on a contract this config resolves differently than the source
-        # instance did. The refusal is unchanged by C2 and is not what T4 is
-        # about.
-        pytest.skip("definition is refused against this config")
+    typed = _lint_or_refusal(definition, lint_config, label)
+    if typed is None:
+        return
     unconsumed = [
         warning.message for warning in typed if warning.code == WARNING_CONTRACT_FIELD_UNCONSUMED
     ]
@@ -230,42 +312,35 @@ def test_t4_the_contract_lint_matches_the_pre_graph_rule(
     )
 
 
-@pytest.mark.parametrize("entry", ENTRIES, ids=IDS)
+@pytest.mark.parametrize("entry,label", zip(ENTRIES, IDS), ids=IDS)
 def test_t4_the_string_channel_still_mirrors_the_typed_one(
     entry: dict[str, Any],
+    label: str,
     lint_config: CoreConfig,
 ) -> None:
     """Dual-emit over the whole corpus, not just the cases C2 exercised."""
     definition = _corpus_definition(entry)
-    try:
-        typed = lint_procedure_definition_authoring_typed(definition, lint_config)
-        strings = lint_procedure_definition_authoring(definition, lint_config)
-    except ConfigError:
-        pytest.skip("definition is refused against this config")
-    assert strings == [warning.message for warning in typed]
+    typed = _lint_or_refusal(definition, lint_config, label)
+    if typed is None:
+        return
+    assert lint_procedure_definition_authoring(definition, lint_config) == [
+        warning.message for warning in typed
+    ]
 
 
-def test_the_corpus_actually_exercises_the_contract_lint(lint_config: CoreConfig) -> None:
-    """Guard on the guard: a suite that skips every entry proves nothing.
+def test_every_pinned_refusal_still_refuses(lint_config: CoreConfig) -> None:
+    """The allow-list is exact in BOTH directions.
 
-    Most corpus entries carry an inline or built-in contract, so the lint runs
-    on them for real. If a config change ever made them all unresolvable, the
-    two assertions above would go green while testing nothing.
+    An entry that stops refusing has to leave the list, or the list slowly
+    becomes a place where entries are excused for reasons that no longer exist.
     """
-    resolved = 0
-    warned = 0
-    for entry in ENTRIES:
-        definition = _corpus_definition(entry)
-        if resolve_contract(lint_config, definition.contract_in) is None:
-            continue
-        resolved += 1
+    still_refusing = set()
+    for entry, label in zip(ENTRIES, IDS):
         try:
-            if lint_procedure_definition_authoring_typed(definition, lint_config):
-                warned += 1
+            lint_procedure_definition_authoring_typed(_corpus_definition(entry), lint_config)
         except ConfigError:
-            continue
-    assert resolved >= 30, f"only {resolved} corpus contracts resolve"
-    assert warned >= 1, "no corpus entry produced a warning; the lint may be short-circuiting"
+            still_refusing.add(label)
+    assert still_refusing == R10_REFUSED_ENTRIES
 
 
 def test_the_contract_lint_diverges_once_arms_exist(lint_config: CoreConfig) -> None:
@@ -275,6 +350,38 @@ def test_the_contract_lint_diverges_once_arms_exist(lint_config: CoreConfig) -> 
     assert [warning.code for warning in typed if "contract_in field" in warning.message] == [
         WARNING_CONTRACT_FIELD_PATH_CONDITIONAL
     ]
+    assert _pre_graph_unconsumed_warnings(definition, lint_config) == []
+
+
+@pytest.mark.parametrize(
+    "definition_factory,reader",
+    [
+        pytest.param(lambda: _repeat_body_input_definition(), "retry", id="repeat-body"),
+        pytest.param(lambda: _query_params_input_definition(), "read", id="query-params"),
+    ],
+)
+def test_the_scanner_reaches_every_reference_position_it_used_to(
+    definition_factory: Any,
+    reader: str,
+    lint_config: CoreConfig,
+) -> None:
+    """Kind-specific counter-cases: a reference the scanner must still find.
+
+    The two positions the flat step list reaches only by descending -- a
+    reference inside a REPEAT BODY, and one in a query's PARAMS map. A scanner
+    regression that stopped descending into either would report the field
+    unconsumed; here it must instead be found, attributed to the CONTAINER
+    node, and reported path-conditional because only one arm reaches it.
+    """
+    definition = definition_factory()
+    typed = lint_procedure_definition_authoring_typed(definition, lint_config)
+    conditional = [
+        warning for warning in typed if warning.code == WARNING_CONTRACT_FIELD_PATH_CONDITIONAL
+    ]
+    assert [warning.node_ids for warning in conditional] == [[reader]]
+    assert "'value'" in conditional[0].message
+    # And the pre-change oracle finds the same reference, so the divergence is
+    # the VERDICT rather than the scan.
     assert _pre_graph_unconsumed_warnings(definition, lint_config) == []
 
 
@@ -382,6 +489,95 @@ def _branching_input_definition() -> ProcedureDefinition:
             "returns": "final",
             "precondition": {},
             "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+
+
+def _repeat_body_input_definition() -> ProcedureDefinition:
+    """`$input.value` read from inside a REPEAT BODY, on one arm only.
+
+    The nested step is not a graph node, so the finding is attributed to the
+    repeat container -- the node paths actually run through.
+    """
+    return ProcedureDefinition.model_validate(
+        {
+            "name": "differential_repeat_body",
+            "contract_in": "ProcedureInput",
+            "graph_format": 2,
+            "steps": [
+                {
+                    "id": "gate",
+                    "guard": {"left": 1, "op": "gt", "right": 0},
+                    "on_true": "retry",
+                    "on_false": "tail",
+                    "message": "no",
+                },
+                {
+                    "id": "retry",
+                    "as": "retried",
+                    "repeat": {
+                        "max_attempts": 2,
+                        "until": {
+                            "left": "$steps.attempt.value",
+                            "op": "gte",
+                            "right": 0,
+                            "message": "settled",
+                        },
+                        "steps": [
+                            {
+                                "id": "attempt",
+                                "provider": "exported_action",
+                                "input": {"value": "$input.value"},
+                                "as": "attempt",
+                            }
+                        ],
+                    },
+                },
+                _shape("tail", "final"),
+            ],
+            "returns": "final",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 2},
+            "declared_tier": "graph_write",
+        }
+    )
+
+
+def _query_params_input_definition() -> ProcedureDefinition:
+    """`$input.value` read from a query's PARAMS map, on one arm only."""
+    return ProcedureDefinition.model_validate(
+        {
+            "name": "differential_query_params",
+            "contract_in": "ProcedureInput",
+            "graph_format": 2,
+            "steps": [
+                {
+                    "id": "gate",
+                    "guard": {"left": 1, "op": "gt", "right": 0},
+                    "on_true": "read",
+                    "on_false": "tail",
+                    "message": "no",
+                },
+                {
+                    "step": {
+                        "id": "read",
+                        "query": {
+                            "mode": "collection",
+                            "returns": "Task",
+                            "result_shape": "entity",
+                            "limit": 10,
+                        },
+                        "params": {"status": "$input.value"},
+                        "as": "rows",
+                    },
+                    "next": "tail",
+                },
+                _shape("tail", "final"),
+            ],
+            "returns": "final",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 0},
             "declared_tier": "graph_write",
         }
     )
