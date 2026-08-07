@@ -332,6 +332,10 @@ def test_static_expansion_counts_repeat_provider_calls() -> None:
         "total_steps": 4,
         "expanded_steps": 10,
         "expanded_provider_calls": 5,
+        # Linear: the one path is the whole body, so each maximum equals the
+        # sum the pre-graph implementation computed.
+        "expanded_steps_path": ("provider_0", "retry"),
+        "expanded_provider_calls_path": ("provider_0", "retry"),
     }
 
 

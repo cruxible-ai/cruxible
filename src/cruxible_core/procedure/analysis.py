@@ -19,6 +19,7 @@ same code path, not a branch around it.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -79,6 +80,73 @@ def declared_control_targets(node: Any) -> dict[str, str]:
     return {}
 
 
+def resolve_control_edges(steps: Sequence[Any]) -> dict[str, dict[str, str]]:
+    """Resolve every node's outgoing edges, fallthrough included. NO refusals.
+
+    Split out of :func:`build_procedure_graph` because the budget DP (§3.3)
+    needs the same resolution on a definition that is being VALIDATED, where
+    the structural refusals do not belong: R1/R2/R3/R15 are compile-time
+    refusals with their own messages and their own call site, and firing them
+    from a pydantic validator would move them to parse time and change what a
+    v1 definition does today.
+    """
+    node_ids = [str(step.id) for step in steps]
+    edges: dict[str, dict[str, str]] = {}
+    for position, step in enumerate(steps):
+        resolved = dict(declared_control_targets(step))
+        fallthrough = node_ids[position + 1] if position + 1 < len(node_ids) else None
+        if isinstance(step, ProcedureGuardStepSchema):
+            # A guard with no `on_true` falls through, exactly as an assert
+            # does on success. With no next step there is nothing to fall
+            # through TO, so the true arm simply ends the walk.
+            if TRUE_ARM not in resolved and fallthrough is not None:
+                resolved[TRUE_ARM] = fallthrough
+        elif FALLTHROUGH not in resolved and fallthrough is not None:
+            resolved[FALLTHROUGH] = fallthrough
+        # Canonical label order, so successor tuples and the digest's successor
+        # map are stable regardless of which edges were declared.
+        edges[node_ids[position]] = {
+            label: resolved[label]
+            for label in (TRUE_ARM, FALSE_ARM, FALLTHROUGH)
+            if label in resolved
+        }
+    return edges
+
+
+def control_successors(edges: dict[str, dict[str, str]]) -> dict[str, tuple[str, ...]]:
+    """Return the real successor ids per node -- ``"$abort"`` excluded.
+
+    Abort terminates rather than continuing, so it is not a successor: no
+    availability flows through it, no path continues past it, and no budget
+    accumulates beyond it.
+    """
+    return {
+        node_id: tuple(
+            dict.fromkeys(target for target in targets.values() if target != ABORT_TARGET)
+        )
+        for node_id, targets in edges.items()
+    }
+
+
+def control_targets_are_forward_only(steps: Sequence[Any]) -> bool:
+    """Report whether every declared target is a known, strictly later step.
+
+    The precondition of every analysis here. When it does not hold the
+    definition is structurally broken and the compiler refuses it (R1/R2); the
+    budget DP consults this so it can fall back to a sound over-approximation
+    instead of walking a graph that is not a DAG.
+    """
+    node_ids = [str(step.id) for step in steps]
+    index_of = {node_id: index for index, node_id in enumerate(node_ids)}
+    for position, step in enumerate(steps):
+        for target in declared_control_targets(step).values():
+            if target == ABORT_TARGET:
+                continue
+            if target not in index_of or index_of[target] <= position:
+                return False
+    return True
+
+
 @dataclass(frozen=True)
 class ProcedureGraph:
     """The resolved control graph of one definition."""
@@ -127,40 +195,16 @@ def build_procedure_graph(
     index_of = {node_id: index for index, node_id in enumerate(node_ids)}
     kinds = {str(step.id): procedure_node_kind(step) for step in steps}
 
-    edges: dict[str, dict[str, str]] = {}
     for position, step in enumerate(steps):
-        node_id = node_ids[position]
-        declared = declared_control_targets(step)
         _refuse_unknown_or_backward_targets(
-            node_id=node_id,
-            declared=declared,
+            node_id=node_ids[position],
+            declared=declared_control_targets(step),
             index_of=index_of,
             position=position,
         )
-        resolved = dict(declared)
-        fallthrough = node_ids[position + 1] if position + 1 < len(node_ids) else None
-        if isinstance(step, ProcedureGuardStepSchema):
-            # A guard with no `on_true` falls through, exactly as an assert
-            # does on success. With no next step there is nothing to fall
-            # through TO, so the true arm simply ends the walk.
-            if TRUE_ARM not in resolved and fallthrough is not None:
-                resolved[TRUE_ARM] = fallthrough
-        elif FALLTHROUGH not in resolved and fallthrough is not None:
-            resolved[FALLTHROUGH] = fallthrough
-        # Canonical label order, so successor tuples and the digest's successor
-        # map are stable regardless of which edges were declared.
-        edges[node_id] = {
-            label: resolved[label]
-            for label in (TRUE_ARM, FALSE_ARM, FALLTHROUGH)
-            if label in resolved
-        }
 
-    successors = {
-        node_id: tuple(
-            dict.fromkeys(target for target in targets.values() if target != ABORT_TARGET)
-        )
-        for node_id, targets in edges.items()
-    }
+    edges = resolve_control_edges(steps)
+    successors = control_successors(edges)
     predecessors: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
     for node_id, targets in successors.items():
         for target in targets:
@@ -293,12 +337,150 @@ def _produced_set(alias: str | None) -> frozenset[str]:
     return frozenset() if alias is None else frozenset({alias})
 
 
+# ---------------------------------------------------------------------------
+# Analysis 3 -- worst-case budget (§3.3)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WorstCasePath:
+    """One worst-case weighted count and the path that realises it."""
+
+    count: int
+    path: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class WorstCaseExpansion:
+    """The two path-maximal execution counts of one definition.
+
+    ``total_steps`` is deliberately absent: it counts STORED definitions, not
+    executed ones, so it stays a sum over the whole body and lives where it
+    always did.
+    """
+
+    expanded_steps: WorstCasePath
+    expanded_provider_calls: WorstCasePath
+
+
+def node_step_weight(node: Any) -> int:
+    """Steps one node contributes to a single execution, repeat expanded."""
+    inner = unwrap_procedure_step(node)
+    if isinstance(inner, ProcedureRepeatStepSchema):
+        return 1 + inner.repeat.max_attempts * len(inner.repeat.steps)
+    return 1
+
+
+def node_provider_weight(node: Any) -> int:
+    """Provider calls one node contributes to a single execution.
+
+    A guard is zero: it decides where control goes, it does not call out.
+    """
+    inner = unwrap_procedure_step(node)
+    if isinstance(inner, ProcedureRepeatStepSchema):
+        nested = sum(workflow_step_kind(step) == "provider" for step in inner.repeat.steps)
+        return inner.repeat.max_attempts * nested
+    if isinstance(inner, WorkflowStepSchema) and workflow_step_kind(inner) == "provider":
+        return 1
+    return 0
+
+
+def longest_weighted_path(
+    node_ids: Sequence[str],
+    successors: dict[str, tuple[str, ...]],
+    weights: dict[str, int],
+) -> WorstCasePath:
+    """Return the heaviest entry-to-exit path and its weight. ``O(V+E)``.
+
+    Forward-only edges (R2) make the step list a topological order, so ONE
+    reverse pass computes the maximum -- no iteration to a fixpoint, no
+    enumeration of paths. Ties break on the first successor in canonical edge
+    order, which is what makes the reported witness deterministic rather than
+    dictionary-order noise.
+    """
+    if not node_ids:
+        return WorstCasePath(count=0, path=())
+    best: dict[str, int] = {}
+    via: dict[str, str | None] = {}
+    for node_id in reversed(node_ids):
+        chosen: str | None = None
+        downstream = 0
+        for target in successors.get(node_id, ()):
+            if chosen is None or best[target] > downstream:
+                chosen = target
+                downstream = best[target]
+        best[node_id] = weights[node_id] + downstream
+        via[node_id] = chosen
+    entry = node_ids[0]
+    path: list[str] = []
+    current: str | None = entry
+    while current is not None:
+        path.append(current)
+        current = via[current]
+    return WorstCasePath(count=best[entry], path=tuple(path))
+
+
+def worst_case_expansion(steps: Sequence[Any]) -> WorstCaseExpansion:
+    """Return the longest-path step and provider-call counts, with witnesses.
+
+    §3.3's ``longest_path_provider_calls``, run once per weight function over
+    one resolution of the control graph. The two maxima are computed
+    INDEPENDENTLY because they are maxima of different weightings: the path
+    that runs the most steps need not be the path that makes the most provider
+    calls, and reporting one path's count beside the other path's node list
+    would be a number nothing realises.
+
+    Under linearity every node is on the one path and each maximum equals the
+    sum the pre-graph implementation computed -- the regression obligation of
+    §3.2, asserted over the corpus by T4 rather than promised here.
+
+    A definition whose declared targets are unknown or backward has no
+    topological order to maximise over. It is refused by the compiler a moment
+    later (R1/R2), and until then the SUM is returned: it is an
+    over-approximation of any path's weight, so the ceilings can only refuse
+    more, never less, and the fallback cannot admit something the graph
+    analysis would have caught.
+    """
+    node_ids = [str(step.id) for step in steps]
+    step_weights = {node_id: node_step_weight(step) for node_id, step in zip(node_ids, steps)}
+    provider_weights = {
+        node_id: node_provider_weight(step) for node_id, step in zip(node_ids, steps)
+    }
+    if not control_targets_are_forward_only(steps):
+        return WorstCaseExpansion(
+            expanded_steps=WorstCasePath(count=sum(step_weights.values()), path=tuple(node_ids)),
+            expanded_provider_calls=WorstCasePath(
+                count=sum(provider_weights.values()), path=tuple(node_ids)
+            ),
+        )
+    successors = control_successors(resolve_control_edges(steps))
+    return WorstCaseExpansion(
+        expanded_steps=longest_weighted_path(node_ids, successors, step_weights),
+        expanded_provider_calls=longest_weighted_path(node_ids, successors, provider_weights),
+    )
+
+
+def format_witness_path(path: Sequence[str]) -> str:
+    """Render a witness path for a refusal message."""
+    return " -> ".join(path) if path else "(empty)"
+
+
 __all__ = [
     "FALLTHROUGH",
     "FALSE_ARM",
     "TRUE_ARM",
     "ProcedureGraph",
+    "WorstCaseExpansion",
+    "WorstCasePath",
     "build_procedure_graph",
+    "control_successors",
+    "control_targets_are_forward_only",
     "declared_control_targets",
+    "format_witness_path",
+    "longest_weighted_path",
+    "node_provider_weight",
+    "node_step_weight",
     "procedure_node_kind",
+    "resolve_control_edges",
+    "worst_case_expansion",
 ]
