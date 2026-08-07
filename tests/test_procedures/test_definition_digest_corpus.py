@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 from cruxible_core.primitives import canonical_json
+from cruxible_core.procedure.graph_format import definition_format_version
 from cruxible_core.procedure.types import (
     ProcedureDefinition,
     compute_procedure_definition_digest,
@@ -60,6 +61,20 @@ def test_corpus_is_populated_and_covers_its_declared_sources() -> None:
 def test_g1_frozen_v1_digest_reproduces(entry: dict[str, Any]) -> None:
     definition = ProcedureDefinition.model_validate(entry["normalized_dump_v032"])
     assert compute_procedure_definition_digest(definition) == entry["digest_v1"]
+
+
+@pytest.mark.parametrize("entry", ENTRIES, ids=IDS)
+def test_g2_every_corpus_entry_is_format_v1(entry: dict[str, Any]) -> None:
+    """Including every namespace-collision entry.
+
+    A collision entry buries `next`, `parameters`, `guard`, `project`,
+    `measurements`, `on_true`, `on_false` or `graph_format` inside a
+    ``dict[str, Any]`` leaf. Each is an ordinary v1 definition, and any format
+    detector that reads those leaves would route it through v2 digest rules --
+    breaking perpetual v1 reproduction on live data.
+    """
+    definition = ProcedureDefinition.model_validate(entry["normalized_dump_v032"])
+    assert definition_format_version(definition) == (1, [])
 
 
 @pytest.mark.parametrize("entry", ENTRIES, ids=IDS)

@@ -23,6 +23,7 @@ from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
 from cruxible_core.primitives import canonical_json
+from cruxible_core.procedure.graph_format import definition_format_version
 from cruxible_core.procedure.types import (
     MAX_PROCEDURE_EVIDENCE_BYTES,
     PROCEDURE_EVIDENCE_HEAD_BYTES,
@@ -475,6 +476,7 @@ def service_propose_procedure(
 ) -> ProcedureTransitionResult:
     """Validate, compile, and persist one pending procedure proposal."""
     definition_digest = compute_procedure_definition_digest(definition)
+    format_version, format_warnings = definition_format_version(definition)
     with mutation_receipt(
         instance,
         "procedure_transition",
@@ -515,13 +517,16 @@ def service_propose_procedure(
         try:
             # One compile, one lint: the compile helper already runs the
             # authoring lint and hands back its warnings.
-            plan, warnings = _compile_procedure_definition(instance, definition)
+            plan, lint_warnings = _compile_procedure_definition(instance, definition)
         except ConfigError as exc:
             ctx.builder.record_validation(
                 passed=False,
                 detail={"action": "propose", "reason": str(exc)},
             )
             raise
+        # The R14 warning has to reach the authoring channel, so it travels with
+        # the lint's warnings rather than in a second, parallel warning list.
+        warnings = [*format_warnings, *lint_warnings]
 
         procedure = ProcedureRecord(
             definition=definition,
@@ -529,6 +534,7 @@ def service_propose_procedure(
             supersedes_procedure_id=supersedes_procedure_id,
             evidence_refs=[normalize_evidence_ref(ref) for ref in evidence_refs],
             proposed_actor_context=proposer,
+            definition_format_version=format_version,
         )
         ctx.uow.procedures.save_procedure(procedure)
         ctx.builder.record_validation(
@@ -537,6 +543,7 @@ def service_propose_procedure(
                 "action": "propose",
                 "procedure_id": procedure.procedure_id,
                 "definition_digest": definition_digest,
+                "definition_format_version": format_version,
                 "config_digest": plan.config_digest,
                 "lock_digest": plan.lock_digest,
                 "warnings": warnings,
@@ -1569,6 +1576,7 @@ def _transition_pending_procedure(
             # Optional: an author retracting their own proposal owes no verdict.
             normalized_reason = (reason or "").strip() or None
 
+        format_version, format_warnings = definition_format_version(procedure.definition)
         current_digest = compute_procedure_definition_digest(procedure.definition)
         if current_digest != procedure.definition_digest:
             _refuse(
@@ -1642,10 +1650,15 @@ def _transition_pending_procedure(
             "from_version": procedure.version,
             "to_version": transitioned.version,
             "definition_digest": procedure.definition_digest,
+            "definition_format_version": format_version,
             "acceptance_config_digest": config_digest,
             "acceptance_lock_digest": lock_digest,
             "reason": normalized_reason,
         }
+        if format_warnings:
+            # Recorded, not returned: acceptance has no authoring channel, and a
+            # warning the reviewer acted under belongs on the receipt.
+            detail["format_warnings"] = format_warnings
         if withdrawn_by is not None:
             detail["withdrawn_by"] = withdrawn_by
         ctx.builder.record_validation(passed=True, detail=detail)

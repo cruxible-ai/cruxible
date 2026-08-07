@@ -27,6 +27,10 @@ from cruxible_core.config.schema import (
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.primitives import canonical_json, new_id
+from cruxible_core.procedure.graph_format import (
+    DEFINITION_FORMAT_V1,
+    definition_format_version,
+)
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.temporal import utc_now
 
@@ -217,6 +221,23 @@ class ProcedureDefinition(BaseModel):
     budget: ProcedureBudget
     declared_tier: ProcedureTier = "governed_write"
     evidence_outputs: list[str] | None = None
+    graph_format: int | None = None
+    """The format discriminator, and the ONLY signal of definition format.
+
+    ``None`` means format v1; ``2`` means the graph format. It defaults to
+    ``None`` so ``exclude_none=True`` drops it from every existing definition
+    and no v1 byte moves. It is deliberately explicit rather than inferred:
+    procedure steps carry arbitrary ``dict[str, Any]`` payloads, so a valid,
+    current v1 definition whose provider input happens to contain ``next`` and
+    ``parameters`` would be mis-detected by any content sniffer and routed
+    through v2 digest rules.
+
+    It is also the old-reader lock. ``ProcedureDefinition`` is
+    ``extra="forbid"``, so a 0.3 core raises ``extra_forbidden`` on this key at
+    all three definition parse paths -- the store row reader, the snapshot
+    loader, and the state-diff artifact reader -- rather than silently
+    mis-executing a definition whose control flow it cannot follow.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -224,6 +245,9 @@ class ProcedureDefinition(BaseModel):
     def validate_definition(self) -> ProcedureDefinition:
         if not self.name.strip():
             raise ValueError("procedure name must be non-empty")
+        # R13/R14. Refuses an undeclared graph construct at PARSE, so no
+        # downstream stage has to remember to look.
+        definition_format_version(self)
 
         disallowed = sorted(
             {
@@ -334,6 +358,14 @@ class ProcedureRecord(BaseModel):
     reason: str | None = None
     acceptance_config_digest: str | None = None
     acceptance_lock_digest: str | None = None
+    definition_format_version: int = DEFINITION_FORMAT_V1
+    """Which format the stored definition was parsed under.
+
+    A non-``None`` default is safe HERE and only here: the record is not part
+    of the definition digest, so emitting it moves no stored commitment. It is
+    the record-level answer to "which verifier proves this row", which a reader
+    must not have to re-derive from the definition it is about to trust.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
