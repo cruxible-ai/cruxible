@@ -22,6 +22,7 @@ from cruxible_core.workflow.apply import (
 from cruxible_core.workflow.execution_context import WorkflowExecutionContext
 from cruxible_core.workflow.io import (
     evaluate_assert_condition,
+    evaluate_guard_predicate,
     execute_assert_count_step,
     execute_assert_exists_step,
     execute_assert_not_truncated_step,
@@ -47,7 +48,14 @@ from cruxible_core.workflow.transforms import (
 from cruxible_core.workflow.types import CompiledPlanStep, EntitySet, RelationshipSet
 
 VALID_STEP_KINDS: frozenset[str] = frozenset(str(kind) for kind in get_args(StepKind))
-PROCEDURE_STEP_KINDS: frozenset[str] = VALID_STEP_KINDS | {"repeat"}
+PROCEDURE_STEP_KINDS: frozenset[str] = VALID_STEP_KINDS | {"repeat", "guard"}
+"""Kind admission is per-commit and enforced AT IMPORT.
+
+``required_kinds == allowed_kinds`` below, and ``validate_complete()`` runs
+at module import, so adding a kind here without its handler breaks the
+import of this module and fails the entire suite rather than one test. Kind
+and handler therefore land in the same commit -- a hard constraint, not a
+preference."""
 
 
 def procedure_runtime_reference_error(
@@ -1054,6 +1062,45 @@ def _apply_all_preview_payload(
     }
 
 
+def execute_guard_handler(
+    context: WorkflowExecutionContext,
+    compiled_step: CompiledPlanStep,
+) -> None:
+    """Evaluate one guard and record which arm the run took.
+
+    A guard produces NO step output: it is a decision point, not a producer.
+    What it produces is a receipted answer -- every operand value, and the arm
+    -- which is what makes the branch auditable after the fact.
+    """
+    assert compiled_step.guard_spec is not None
+    passed, operand_trace = evaluate_guard_predicate(
+        compiled_step.step_id,
+        compiled_step.guard_spec,
+        context.plan.input_payload,
+        context.step_outputs,
+    )
+    arm = "on_true" if passed else "on_false"
+    context.guard_outcomes[compiled_step.step_id] = arm
+    target = compiled_step.on_true_step_id if passed else compiled_step.on_false_step_id
+    detail: dict[str, Any] = {
+        "guard": "guard",
+        "arm": arm,
+        "target": target,
+        "comparisons": operand_trace,
+        "message": compiled_step.guard_message,
+    }
+    step_node = context.receipt_builder.record_plan_step(
+        compiled_step.step_id,
+        "guard",
+        detail=detail,
+    )
+    context.receipt_builder.record_validation(
+        passed=passed,
+        detail=detail,
+        parent_id=step_node,
+    )
+
+
 _DEFAULT_STEP_HANDLERS: list[tuple[str, WorkflowStepHandler]] = [
     ("query", execute_query_handler),
     ("provider", execute_provider_handler),
@@ -1081,7 +1128,11 @@ DEFAULT_STEP_HANDLER_REGISTRY = WorkflowStepRegistry(_DEFAULT_STEP_HANDLERS)
 DEFAULT_STEP_HANDLER_REGISTRY.validate_complete()
 
 PROCEDURE_STEP_HANDLER_REGISTRY = WorkflowStepRegistry(
-    [*_DEFAULT_STEP_HANDLERS, ("repeat", execute_repeat_handler)],
+    [
+        *_DEFAULT_STEP_HANDLERS,
+        ("repeat", execute_repeat_handler),
+        ("guard", execute_guard_handler),
+    ],
     allowed_kinds=PROCEDURE_STEP_KINDS,
     required_kinds=PROCEDURE_STEP_KINDS,
 )

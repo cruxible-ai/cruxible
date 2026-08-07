@@ -16,6 +16,17 @@ from cruxible_core.config.schema import CoreConfig, ProviderSchema, WorkflowType
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import compute_kit_provider_sha256, is_kit_provider_ref
+from cruxible_core.procedure.analysis import (
+    ProcedureGraph,
+    build_procedure_graph,
+    declared_control_targets,
+)
+from cruxible_core.procedure.types import (
+    ABORT_TARGET,
+    ProcedureDefinition,
+    ProcedureGuardStepSchema,
+    unwrap_procedure_step,
+)
 from cruxible_core.provider.registry import (
     get_provider_entrypoint_path,
     resolve_command_provider_target,
@@ -214,12 +225,81 @@ def _prior_step_aliases_by_index(
     """
     per_index: list[frozenset[str]] = []
     seen = set(initial_aliases)
-    for step in steps:
+    for wrapper in steps:
+        # UNWRAP. A flow wrapper has only `step` and `next`, so reading `as_`
+        # off it would make a wrapped step's alias invisible to every
+        # downstream reference check.
+        step = unwrap_procedure_step(wrapper)
         per_index.append(frozenset(seen))
         alias = getattr(step, "as_", None)
         if alias is not None:
             seen.add(alias)
     return per_index
+
+
+def _resolved_control_edges(workflow: Any, definition_label: str) -> dict[str, dict[str, str]]:
+    """Resolve every control edge once, refusing R1/R2/R3/R15 in the process.
+
+    Only procedures have a control graph. A configured workflow cannot parse a
+    guard node or a flow wrapper -- the type system already refused it -- so
+    running the graph analysis over one would be checking a property that
+    cannot be violated.
+    """
+    if definition_label != "Procedure":
+        return {}
+    if not isinstance(workflow, ProcedureDefinition):
+        return {}
+    graph = build_procedure_graph(workflow)
+    _refuse_unresolvable_parameter_operands(graph, workflow)
+    return graph.edges
+
+
+def _refuse_unresolvable_parameter_operands(
+    graph: ProcedureGraph,
+    definition: ProcedureDefinition,
+) -> None:
+    """Refuse `@param` until governed parameters exist.
+
+    The grammar admits the operand form so the parser and the digest are stable
+    across the batch that introduces parameters. Admitting it into a COMPILED
+    plan before there is anything to resolve it against would produce a
+    procedure that accepts and then fails at run time, which is the one outcome
+    acceptance is supposed to rule out.
+    """
+    for step in definition.steps:
+        if not isinstance(step, ProcedureGuardStepSchema):
+            continue
+        for operand in step.guard.operands():
+            if operand.form == "param":
+                raise ConfigError(
+                    f"Procedure guard step '{step.id}' references governed parameter "
+                    f"'{operand.parameter_name}', which this core cannot resolve. "
+                    "Governed scalar parameters are not available yet; use a literal."
+                )
+
+
+def _compile_guard_step(
+    step: ProcedureGuardStepSchema,
+    *,
+    workflow_name: str,
+    definition_label: str,
+    control: dict[str, str],
+) -> CompiledPlanStep:
+    for operand in step.guard.operands():
+        if operand.form in {"count", "truncated"} and operand.alias is None:
+            raise ConfigError(
+                f"{definition_label} '{workflow_name}' guard step '{step.id}' has an "
+                "accessor with no alias"
+            )
+    return CompiledPlanStep(
+        step_id=step.id,
+        kind="guard",
+        workflow_type="utility",
+        guard_spec=step.guard,
+        guard_message=step.message,
+        on_true_step_id=control.get("on_true"),
+        on_false_step_id=control.get("on_false", ABORT_TARGET),
+    )
 
 
 def compile_workflow(
@@ -338,8 +418,26 @@ def compile_plan_definition(
         workflow.steps,
         initial_aliases=_initial_step_aliases,
     )
+    control_edges = _resolved_control_edges(workflow, definition_label)
     for step_index, step in enumerate(workflow.steps):
         prior_step_aliases = prior_aliases_by_index[step_index]
+        # Read control targets BEFORE unwrapping: the wrapper owns `next`, a
+        # guard owns `on_true`/`on_false`.
+        control = control_edges.get(str(step.id), {})
+        if isinstance(step, ProcedureGuardStepSchema):
+            compiled_steps.append(
+                _compile_guard_step(
+                    step,
+                    workflow_name=workflow_name,
+                    definition_label=definition_label,
+                    control=control,
+                )
+            )
+            continue
+        # UNWRAP. After this the existing field-by-field chain is unchanged,
+        # which is why the wrapper design costs one line rather than a parallel
+        # compile path.
+        step = unwrap_procedure_step(step)
         repeat_spec = getattr(step, "repeat", None)
         if repeat_spec is not None:
             nested_aliases = [nested.as_ for nested in repeat_spec.steps if nested.as_ is not None]
@@ -698,6 +796,18 @@ def compile_plan_definition(
                 assert_spec=step.assert_spec,
             )
         )
+
+    compiled_by_id = {compiled.step_id: compiled for compiled in compiled_steps}
+    for step in workflow.steps:
+        # Only a DECLARED edge is carried. Implicit fallthrough stays implicit,
+        # so a compiled linear plan is byte-identical to the one this compiler
+        # produced before the graph existed.
+        declared = declared_control_targets(step)
+        if "next" not in declared:
+            continue
+        compiled = compiled_by_id.get(str(step.id))
+        if compiled is not None:
+            compiled.next_step_id = declared["next"]
 
     if input_payload is None and definition_label == "Procedure":
         produced_outputs = {
