@@ -21,8 +21,9 @@ from typing import Any
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.config.schema import WorkflowStepSchema
 from cruxible_core.procedure.analysis import build_procedure_graph
-from cruxible_core.procedure.types import ProcedureDefinition
+from cruxible_core.procedure.types import ProcedureDefinition, unwrap_procedure_step
 from cruxible_core.service import service_run_procedure
 from cruxible_core.workflow import executor as executor_module
 from cruxible_core.workflow.execution_context import WorkflowExecutionContext
@@ -73,18 +74,40 @@ something the flat loop emitted, so every key survives normalization and only
 its value is neutralized."""
 
 
-def _strip_query_receipt_ids(step_outputs: dict[str, Any]) -> dict[str, Any]:
+def _query_step_aliases(definition: ProcedureDefinition) -> frozenset[str]:
+    """The aliases published by QUERY steps, read from the definition.
+
+    The oracle knows which steps are queries -- the definition says so -- and
+    that is the only sound way to ask. Recognising a query output by its SHAPE
+    instead (a dict carrying `receipt_id` and `results`) is content-sniffing,
+    and a provider is free to return exactly those two keys: its `receipt_id`
+    would then be neutralized and two genuinely different provider outputs
+    would compare equal.
+    """
+    aliases: set[str] = set()
+    for wrapper in definition.steps:
+        step = unwrap_procedure_step(wrapper)
+        if isinstance(step, WorkflowStepSchema) and step.query is not None:
+            aliases.add(step.as_ or str(step.id))
+    return frozenset(aliases)
+
+
+def _strip_query_receipt_ids(
+    step_outputs: dict[str, Any],
+    query_aliases: frozenset[str],
+) -> dict[str, Any]:
     """Drop the ONE per-execution value a query step publishes in its output.
 
     A query step's output carries `receipt_id`, the id of the read receipt that
     produced it, minted per execution. It is removed at that exact path -- one
-    key, one level, in a step output that is otherwise compared byte for byte,
-    including every count, every truncation flag and every result row.
+    key, at one level, under an alias the DEFINITION declares to be a query --
+    in a step output otherwise compared byte for byte, including every count,
+    every truncation flag and every result row.
     """
     return {
         alias: (
             {key: item for key, item in value.items() if key != "receipt_id"}
-            if isinstance(value, dict) and "receipt_id" in value and "results" in value
+            if alias in query_aliases and isinstance(value, dict)
             else value
         )
         for alias, value in step_outputs.items()
@@ -286,8 +309,9 @@ def test_t3_a_linear_definition_runs_identically_through_both_executors(
     # get no normalization at all -- T3 promises they are identical, and
     # neutralizing anything inside them would let two genuinely different
     # outputs pass.
-    assert _strip_query_receipt_ids(walked.step_outputs) == _strip_query_receipt_ids(
-        flat.step_outputs
+    query_aliases = _query_step_aliases(definition)
+    assert _strip_query_receipt_ids(walked.step_outputs, query_aliases) == _strip_query_receipt_ids(
+        flat.step_outputs, query_aliases
     )
     assert walked.output == flat.output
     # Read metadata is derived from what the run READ, not from run identity,
@@ -361,7 +385,9 @@ def test_the_oracle_does_not_neutralize_user_data() -> None:
     """
     walked = {"result": {"read_revision": 1, "timestamp": "A", "value": 7}}
     flat = {"result": {"read_revision": 999, "timestamp": "B", "value": 7}}
-    assert _strip_query_receipt_ids(walked) != _strip_query_receipt_ids(flat)
+    assert _strip_query_receipt_ids(walked, frozenset()) != _strip_query_receipt_ids(
+        flat, frozenset()
+    )
 
     # And inside the receipt, user data rides in `results` -- also untouched.
     receipt = {"results": [{"output": {"read_revision": 1}}], "nodes": [], "edges": []}
@@ -382,3 +408,113 @@ def test_the_oracle_still_neutralizes_run_identity_at_its_own_paths() -> None:
     }
     assert _normalize_receipt(receipt) == _normalize_receipt(other)
     assert _normalize_receipt(receipt)["nodes"][0]["detail"]["trace_id"] == _PLACEHOLDER
+
+
+def _shape_colliding_definition() -> ProcedureDefinition:
+    """A definition whose PROVIDER output shape collides with a query's.
+
+    Nothing stops a provider returning `receipt_id` and `results`; they are
+    ordinary keys in an ordinary JSON object.
+    """
+    return ProcedureDefinition.model_validate(
+        {
+            "name": "shape_collision",
+            "contract_in": "ProcedureInput",
+            "steps": [
+                {
+                    "id": "call",
+                    "provider": "exported_action",
+                    "input": {"value": "$input.value"},
+                    "as": "result",
+                }
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 1},
+            "declared_tier": "graph_write",
+        }
+    )
+
+
+def test_a_provider_output_shaped_like_a_query_output_compares_exactly() -> None:
+    """The collision a shape-sniffing exception introduces.
+
+    A provider that returns `receipt_id` and `results` is not a query, and its
+    `receipt_id` is its own data. Recognising query outputs by payload shape
+    neutralized it, so two runs whose provider returned `provider-A` and
+    `provider-B` compared EQUAL -- an executor difference reported as
+    identical.
+    """
+    definition = _shape_colliding_definition()
+    query_aliases = _query_step_aliases(definition)
+    assert query_aliases == frozenset(), "this definition declares no query step"
+
+    walked = {"result": {"receipt_id": "provider-A", "results": [{"value": 1}]}}
+    flat = {"result": {"receipt_id": "provider-B", "results": [{"value": 1}]}}
+    assert _strip_query_receipt_ids(walked, query_aliases) != _strip_query_receipt_ids(
+        flat, query_aliases
+    )
+    # And the key survives untouched, rather than merely differing.
+    assert _strip_query_receipt_ids(walked, query_aliases)["result"]["receipt_id"] == ("provider-A")
+
+
+def test_a_real_query_steps_alias_is_still_recognised_from_the_definition() -> None:
+    """The exception is kept, just keyed to what the definition declares."""
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "query_alias_probe",
+            "contract_in": "ProcedureInput",
+            "steps": _LINEAR_SHAPES["query-then-assert"],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 5},
+            "declared_tier": "graph_write",
+        }
+    )
+    query_aliases = _query_step_aliases(definition)
+    assert query_aliases == frozenset({"rows"})
+
+    walked = {"rows": {"receipt_id": "RCP-a", "results": []}}
+    flat = {"rows": {"receipt_id": "RCP-b", "results": []}}
+    assert _strip_query_receipt_ids(walked, query_aliases) == _strip_query_receipt_ids(
+        flat, query_aliases
+    )
+
+
+def test_a_query_alias_is_read_through_a_flow_wrapper() -> None:
+    """Wrappers unwrap here too, or a wrapped query's alias goes unrecognised."""
+    definition = ProcedureDefinition.model_validate(
+        {
+            "name": "wrapped_query_alias",
+            "contract_in": "ProcedureInput",
+            "graph_format": 2,
+            "steps": [
+                {
+                    "step": {
+                        "id": "read",
+                        "query": {
+                            "mode": "collection",
+                            "returns": "Task",
+                            "result_shape": "entity",
+                            "limit": 10,
+                        },
+                        "as": "rows",
+                    },
+                    "next": "assemble",
+                },
+                {
+                    "id": "assemble",
+                    "shape_items": {
+                        "items": [{"value": 1}],
+                        "fields": {"value": "$item.value"},
+                    },
+                    "as": "result",
+                },
+            ],
+            "returns": "result",
+            "precondition": {},
+            "budget": {"wall_clock_s": 30, "max_provider_calls": 0},
+            "declared_tier": "graph_write",
+        }
+    )
+    assert _query_step_aliases(definition) == frozenset({"rows"})
