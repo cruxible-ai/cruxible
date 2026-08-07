@@ -493,17 +493,59 @@ def test_a_float_open_interval_stays_continuous(
     )
 
 
-def test_one_untyped_bound_makes_the_whole_domain_continuous(
+@pytest.mark.parametrize(
+    "members",
+    [
+        pytest.param(
+            [
+                {"left": "$input.n", "op": "gt", "right": 0, "value_type": "int"},
+                {"left": "$input.n", "op": "lt", "right": 1},
+            ],
+            id="typed-first",
+        ),
+        pytest.param(
+            [
+                {"left": "$input.n", "op": "gt", "right": 0},
+                {"left": "$input.n", "op": "lt", "right": 1, "value_type": "int"},
+            ],
+            id="untyped-first",
+        ),
+    ],
+)
+def test_discreteness_is_contagious_across_one_untyped_bound(
+    members: list[dict[str, Any]],
     vacuity_instance: CruxibleInstance,
 ) -> None:
-    """Discreteness needs EVERY constraint to agree; conservative on purpose."""
+    """ONE int-declared constraint confines the whole conjunction.
+
+    A value satisfying an `int`-declared comparison has to survive integer
+    coercion -- 0.5 makes that comparison FALSE, not true -- so the satisfying
+    set is a subset of the integers and the untyped bound applies within it.
+    No integer is both `> 0` and `< 1`, and no runtime witness exists.
+
+    Requiring every constraint to agree accepted this. Order does not matter,
+    hence both directions.
+    """
+    with pytest.raises(ConfigError, match="statically unsatisfiable"):
+        _compile(vacuity_instance, _typed_probe({"all_of": members}))
+
+
+def test_contagion_does_not_round_away_the_smallest_witness(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """Contagion admits a NON-INTEGRAL bound into an integer domain.
+
+    `0.5 < n` (float) with `n < 5` (int) is satisfied by 1 through 4. Closing
+    the exclusive lower bound by adding one would put it at 1.5 and lose the
+    smallest witness, so bounds are floored and ceiled instead.
+    """
     _compile(
         vacuity_instance,
         _typed_probe(
             {
                 "all_of": [
-                    {"left": "$input.n", "op": "gt", "right": 0, "value_type": "int"},
-                    {"left": "$input.n", "op": "lt", "right": 1},
+                    {"left": "$input.n", "op": "gt", "right": 0.5, "value_type": "float"},
+                    {"left": "$input.n", "op": "lt", "right": 5, "value_type": "int"},
                 ]
             }
         ),
@@ -599,21 +641,97 @@ def test_same_type_bounds_still_intersect_across_nodes(
         _compile(vacuity_instance, definition)
 
 
-def test_a_numeric_comparison_against_a_string_enum_does_not_refuse(
+def test_a_numeric_comparison_against_a_string_enum_is_refused(
     vacuity_instance: CruxibleInstance,
 ) -> None:
-    """The declared vocabulary seeds only its OWN class.
+    """A declared enum is the FINITE runtime domain, so this is decidable.
 
-    `severity` is a string enum. A numeric comparison on it is not something
-    the fragment can decide, and seeding a numeric domain from a string
-    vocabulary would refuse across types -- the same unsoundness as
-    intersecting `eq "1"` with `eq 1`.
+    `severity` admits low, medium or high and nothing else. `== 5` is false
+    for every one of them, so the arm is dead on every input a caller is
+    permitted to send. Filtering the vocabulary by raw class discarded that
+    verdict and accepted it -- but cross-class is only undecidable when the
+    domain is open, and here it is enumerated.
     """
     definition = _definition(
         [
             _guard(
                 "gate",
                 {"left": "$input.severity", "op": "eq", "right": 5},
+                on_true="tail",
+                on_false="tail",
+            ),
+            _tail(),
+        ]
+    )
+    with pytest.raises(ConfigError, match="statically unsatisfiable"):
+        _compile(vacuity_instance, definition)
+
+
+def test_a_typed_comparison_no_enum_member_can_satisfy_is_refused(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """Coercion is run per member, exactly as the executor runs it.
+
+    `severity > 5` declared `int` coerces `low`/`medium`/`high` and fails on
+    each, so every member evaluates false -- which is what the run would do,
+    on every input, forever.
+    """
+    definition = _definition(
+        [
+            _guard(
+                "gate",
+                {"left": "$input.severity", "op": "gt", "right": 5, "value_type": "int"},
+                on_true="tail",
+                on_false="tail",
+            ),
+            _tail(),
+        ]
+    )
+    with pytest.raises(ConfigError, match="statically unsatisfiable"):
+        _compile(vacuity_instance, definition)
+
+
+def test_a_disequality_over_an_enum_leaves_room_and_compiles(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """Evaluation narrows the vocabulary; it does not empty it by default.
+
+    `!= high` leaves low and medium, so the guard is satisfiable and must
+    compile -- the enum path must not become a refusal machine.
+    """
+    definition = _definition(
+        [
+            _guard(
+                "gate",
+                {"left": "$input.severity", "op": "ne", "right": "high"},
+                on_true="tail",
+                on_false="tail",
+            ),
+            _tail(),
+        ]
+    )
+    _compile(vacuity_instance, definition)
+
+
+def test_an_open_field_still_fails_open_across_types(
+    vacuity_instance: CruxibleInstance,
+) -> None:
+    """The P1-2 property, kept exactly where it is still right.
+
+    `value` has no declared vocabulary, so its domain is open and a cross-type
+    pair on it stays undecidable. Only an ENUMERATED domain makes cross-class
+    comparison decidable.
+    """
+    definition = _definition(
+        [
+            _guard(
+                "gate",
+                {
+                    "all_of": [
+                        {"left": "$input.value", "op": "eq", "right": "1", "value_type": "string"},
+                        {"left": "$input.value", "op": "eq", "right": 1, "value_type": "int"},
+                    ]
+                },
                 on_true="tail",
                 on_false="tail",
             ),

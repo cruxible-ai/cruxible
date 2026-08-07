@@ -18,6 +18,7 @@ same code path, not a branch around it.
 
 from __future__ import annotations
 
+import math
 from collections import deque
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -600,13 +601,23 @@ class _Domain:
     excluded: set[Any] = field(default_factory=set)
     lower: tuple[Any, bool] | None = None
     upper: tuple[Any, bool] | None = None
+    enum_candidates: set[Any] | None = None
+    """The contract's declared vocabulary, narrowed by RUNTIME evaluation.
+
+    A declared enum IS the finite runtime domain, so the exact question is
+    answerable: run each constraint's own comparison, with its own declared
+    type, against every member. Whatever survives is what a caller could send
+    and still take the arm; nothing surviving means no caller can.
+    """
     granularities: set[str | None] = field(default_factory=set)
     """Per constraint: ``"int"``, ``"date"``, or ``None`` for continuous.
 
-    A domain is treated as discrete only when EVERY constraint on it declared
-    the same discrete type. One untyped comparison and the whole domain is
-    continuous again -- untyped, the payload may carry ``0.5`` and the bound
-    ``0 < n < 1`` is satisfiable. Conservative in the fail-open direction.
+    Discreteness is CONTAGIOUS, not unanimous. A value satisfying an
+    ``int``-declared comparison must survive integer coercion, so the whole
+    conjunction's satisfying set is a subset of the integers as soon as ONE
+    constraint declares it -- untyped bounds then apply within that set. A
+    domain with no discrete constraint at all stays continuous, because
+    untyped the payload may carry ``0.5``.
     """
     undecidable: bool = False
     """Set when two constraints on this domain could not be compared at all.
@@ -782,12 +793,45 @@ def _apply_comparison(
     domain_key = (key, value_class)
     domain = domains.get(domain_key)
     if domain is None:
-        domain = _Domain(equals=_seeded_enum(key, value_class, declared_input_enums))
+        domain = _Domain(enum_candidates=_seeded_enum(key, declared_input_enums))
         domains[domain_key] = domain
     constraint = GuardConstraint(key=key, op=op, value=value, source_node_id=source_node_id)
     domain.witnesses.append(constraint)
     domain.granularities.add(_granularity(comparison.value_type, value))
+    _filter_enum_candidates(domain, op, literal, comparison.value_type)
     _narrow(domain, op, value)
+
+
+def _filter_enum_candidates(
+    domain: _Domain,
+    op: ComparisonOp,
+    literal: Any,
+    value_type: PredicateValueType | None,
+) -> None:
+    """Narrow the declared vocabulary by RUNNING the comparison over it.
+
+    The enum is the finite runtime domain, so this is not an approximation of
+    the predicate -- it is the predicate, evaluated by the same function the
+    executor uses, over every value a caller is permitted to send. That makes
+    a cross-class comparison DECIDABLE rather than undecidable: a numeric test
+    against a string vocabulary is false for `low`, false for `medium` and
+    false for `high`, and a guard false on every admissible input is exactly
+    what R9 exists to refuse. Filtering the vocabulary by raw class instead
+    discarded that verdict and accepted the dead arm.
+    """
+    if domain.enum_candidates is None:
+        return
+    surviving: set[Any] = set()
+    for member in domain.enum_candidates:
+        try:
+            satisfied = evaluate_typed_comparison(member, op, literal, value_type=value_type)
+        except (TypeError, ValueError):
+            # Undecidable for this member: keep it. §3.5 fail-open.
+            surviving.add(member)
+            continue
+        if satisfied:
+            surviving.add(member)
+    domain.enum_candidates = surviving
 
 
 def _refuse_constant_false(
@@ -869,26 +913,21 @@ def _granularity(value_type: PredicateValueType | None, value: Any) -> str | Non
 
 def _seeded_enum(
     key: str,
-    value_class: str,
     declared_input_enums: Mapping[str, frozenset[Any]],
 ) -> set[Any] | None:
     """Seed a domain with the vocabulary the CONTRACT declares, if any.
 
     This is the "declared enum sets" half of §3.5: a guard demanding a value
-    the contract's own enumeration does not contain can never hold, whatever
-    the caller sends.
+    the contract's own enumeration cannot carry can never hold, whatever the
+    caller sends.
 
-    Only members of the DOMAIN'S OWN class seed it, and a vocabulary with no
-    member of that class seeds nothing at all. An enum of strings says nothing
-    decidable about a numeric comparison on the same field, and pretending
-    otherwise would refuse across types -- the same unsoundness as
-    intersecting `eq "1"` with `eq 1`.
+    Seeded WHOLE, every member regardless of class. Narrowing is
+    :func:`_filter_enum_candidates`'s job and it does it by evaluation, which
+    is exact over a finite domain -- class filtering here would throw away
+    members before anyone asked whether they satisfy the comparison.
     """
     declared = declared_input_enums.get(key)
-    if declared is None:
-        return None
-    matching = {value for value in declared if _comparison_class(value) == value_class}
-    return matching or None
+    return None if declared is None else set(declared)
 
 
 def _narrow(domain: _Domain, op: ComparisonOp, value: Any) -> None:
@@ -956,10 +995,21 @@ def _is_orderable(value: Any) -> bool:
 
 
 def _discrete_step(domain: _Domain) -> str | None:
-    """The domain's step size, or ``None`` unless every constraint agrees."""
-    if domain.granularities == {"int"}:
+    """The domain's step size. Discreteness is CONTAGIOUS, not unanimous.
+
+    A value satisfying an ``int``-declared comparison has to survive integer
+    coercion -- a non-integral payload makes that comparison false, not true
+    -- so ONE such constraint confines the whole conjunction's satisfying set
+    to the integers, and every other bound on the domain, declared or not,
+    then applies within that set. Requiring unanimity accepted
+    ``0 < n (int)`` with ``n < 1`` (untyped): 0.5 fails the first, every
+    positive integer fails the second, and no runtime witness exists.
+
+    A domain with no discrete constraint at all stays continuous.
+    """
+    if "int" in domain.granularities:
         return "int"
-    if domain.granularities == {"date"}:
+    if "date" in domain.granularities:
         return "date"
     return None
 
@@ -967,27 +1017,44 @@ def _discrete_step(domain: _Domain) -> str | None:
 def _closed_bounds(domain: _Domain) -> tuple[Any, Any] | None:
     """Normalise the interval to INCLUSIVE bounds, granularity respected.
 
-    On a discrete domain an exclusive bound has a nearest representable
-    neighbour, so ``0 < n < 1`` over the integers closes to ``[1, 0]`` -- and
-    an interval whose lower bound exceeds its upper is empty. Reasoning
-    continuously accepted it, and the arm was dead in every run.
+    On a discrete domain every bound has a nearest representable neighbour, so
+    ``0 < n < 1`` over the integers closes to ``[1, 0]`` -- and an interval
+    whose lower bound exceeds its upper is empty. Reasoning continuously
+    accepted it, and the arm was dead in every run.
+
+    Bounds are floored and ceiled rather than nudged by one, because contagion
+    admits a NON-INTEGRAL bound into an integer domain: ``0.5 < n (float)``
+    with ``n < 5 (int)`` is satisfied by 1 through 4, and ``0.5 + 1`` would
+    have moved the lower bound to 1.5 and lost the smallest witness.
     """
     if domain.lower is None or domain.upper is None:
         return None
     low, low_inclusive = domain.lower
     high, high_inclusive = domain.upper
     step = _discrete_step(domain)
-    if step == "int":
-        return (low if low_inclusive else low + 1, high if high_inclusive else high - 1)
-    if step == "date":
-        day = timedelta(days=1)
-        return (low if low_inclusive else low + day, high if high_inclusive else high - day)
+    try:
+        if step == "int":
+            return (
+                math.ceil(low) if low_inclusive else math.floor(low) + 1,
+                math.floor(high) if high_inclusive else math.ceil(high) - 1,
+            )
+        if step == "date":
+            day = timedelta(days=1)
+            return (low if low_inclusive else low + day, high if high_inclusive else high - day)
+    except (TypeError, ValueError, OverflowError):
+        # A bound the step size cannot be applied to says nothing decidable.
+        return None
     return None
 
 
 def _domain_is_empty(domain: _Domain) -> bool:
     if domain.undecidable:
         return False
+    if domain.enum_candidates is not None:
+        # The vocabulary is the whole runtime domain and every constraint has
+        # been run against it, so this verdict is exact -- no interval or
+        # equality reasoning can add to it.
+        return not domain.enum_candidates
     if domain.equals is not None:
         return not any(
             candidate not in domain.excluded and _within_bounds(candidate, domain)
