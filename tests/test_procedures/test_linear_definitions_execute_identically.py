@@ -21,11 +21,13 @@ from typing import Any
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.procedure.analysis import build_procedure_graph
 from cruxible_core.procedure.types import ProcedureDefinition
 from cruxible_core.service import service_run_procedure
 from cruxible_core.workflow import executor as executor_module
 from cruxible_core.workflow.execution_context import WorkflowExecutionContext
 from cruxible_core.workflow.step_handlers import PROCEDURE_STEP_HANDLER_REGISTRY
+from tests.test_procedures.test_definition_digest_corpus import ENTRIES, IDS
 from tests.test_procedures.test_execution import _accept, _receipt, _stub_provider
 
 _NORMALIZED_RECEIPT_PATHS: frozenset[tuple[str, ...]] = frozenset(
@@ -110,6 +112,26 @@ def _normalize_receipt(value: Any, path: tuple[str, ...] = ()) -> Any:
     if isinstance(value, list):
         return [_normalize_receipt(item, (*path, "*")) for item in value]
     return value
+
+
+@pytest.mark.parametrize("entry", ENTRIES, ids=IDS)
+def test_the_successor_walk_visits_the_flat_list_order(entry: dict[str, Any]) -> None:
+    """T3's corpus-wide half: order equivalence over every frozen definition.
+
+    The dual-execution half below runs a handful of shapes end to end; this one
+    runs EVERY entry, because "the successor function degenerates to the flat
+    list on a linear definition" is a claim about all of them, not about the
+    ones that happen to be executable against the test config.
+    """
+    definition = ProcedureDefinition.model_validate(entry["normalized_dump_v032"])
+    graph = build_procedure_graph(definition)
+    walked: list[str] = []
+    current: str | None = graph.entry_id
+    while current is not None:
+        walked.append(current)
+        successors = graph.successors_of(current)
+        current = successors[0] if successors else None
+    assert walked == list(graph.node_ids)
 
 
 def _flat_loop(context: WorkflowExecutionContext) -> None:
