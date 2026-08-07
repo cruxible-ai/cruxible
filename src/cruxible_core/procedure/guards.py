@@ -52,6 +52,15 @@ _EXISTS_PATTERN = re.compile(r"^exists\(\s*([^()]+?)\s*\)$")
 _TRUNCATED_PATTERN = re.compile(r"^truncated\(\s*([^,()\s]+)\s*\)$")
 _ACCESSOR_PREFIX = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\(")
 _PARAMETER_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+_REFERENCE_PATH = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(\[\d+\])*(\.[A-Za-z_][A-Za-z0-9_]*(\[\d+\])*)*$"
+)
+"""A reference path is a dotted chain of names with optional integer indices.
+
+Nothing else. Without this the operand ``"$steps.rows.count + 1"`` parses
+happily as a path named ``count + 1`` -- an arithmetic expression admitted
+through the one operand form that takes free text, which is exactly how a
+closed grammar stops being closed."""
 
 PredicateOperandForm = Literal[
     "literal", "input_path", "steps_path", "count", "exists", "truncated", "param"
@@ -95,15 +104,18 @@ def parse_predicate_operand(raw: Any) -> PredicateOperand:
             "'$item' is not a guard operand: per-item payloads do not exist at "
             "branch time, so a predicate over one cannot be evaluated or analysed"
         )
-    if raw == "$input" or raw.startswith("$input."):
-        return PredicateOperand(form="input_path", path=raw[len("$input.") :] or None)
+    if raw == "$input":
+        return PredicateOperand(form="input_path", path=None)
+    if raw.startswith("$input."):
+        path = raw[len("$input.") :]
+        _require_reference_path(raw, path)
+        return PredicateOperand(form="input_path", path=path)
     if raw.startswith("$steps."):
         remainder = raw[len("$steps.") :]
+        _require_reference_path(raw, remainder)
         alias = remainder.split(".", 1)[0].split("[", 1)[0]
-        if not alias:
-            raise PredicateGrammarError(f"'{raw}' names no step alias")
-        path = remainder[len(alias) :].lstrip(".") or None
-        return PredicateOperand(form="steps_path", alias=alias, path=path)
+        tail = remainder[len(alias) :].lstrip(".")
+        return PredicateOperand(form="steps_path", alias=alias, path=tail or None)
     if raw.startswith("$"):
         raise PredicateGrammarError(
             f"'{raw}' is not a guard operand; only $input and $steps references exist"
@@ -145,6 +157,15 @@ def parse_predicate_operand(raw: Any) -> PredicateOperand:
     if matched is None:
         raise PredicateGrammarError(f"'{raw}' is not 'truncated(<alias>)'")
     return PredicateOperand(form="truncated", alias=matched.group(1))
+
+
+def _require_reference_path(raw: str, path: str) -> None:
+    if not _REFERENCE_PATH.match(path):
+        raise PredicateGrammarError(
+            f"'{raw}' is not a reference path. A path is a dotted chain of names "
+            "with optional integer indices; there is no arithmetic and no "
+            "expression syntax in this grammar."
+        )
 
 
 def cast_count_selector(value: str) -> CountSelector:
