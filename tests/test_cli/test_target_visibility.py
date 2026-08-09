@@ -62,6 +62,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("procedure", "resolve"): "active",
     ("procedure", "retire"): "active",
     ("procedure", "run"): "active",
+    ("migrate",): "active",
 }
 
 
