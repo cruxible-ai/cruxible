@@ -141,7 +141,6 @@ async def run_procedure(
 @router.post(
     "/{instance_id}/procedures/{procedure_id}/readings",
     response_model=dict[str, Any],
-    include_in_schema=False,
 )
 async def record_procedure_reading(
     instance_id: str,
