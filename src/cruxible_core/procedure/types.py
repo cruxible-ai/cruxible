@@ -20,6 +20,7 @@ from pydantic import (
 from cruxible_core.config.schema import (
     AssertSpec,
     ContractReference,
+    CountComparisonOp,
     PropertyType,
     WorkflowStepSchema,
     reject_reserved_property_equality_condition_keys,
@@ -32,12 +33,14 @@ from cruxible_core.procedure.graph_format import (
     DEFINITION_FORMAT_V1,
     coerce_present_declared_format,
     definition_format_version,
+    register_v2_definition_field,
     register_v2_step_type,
 )
 from cruxible_core.procedure.guards import GuardSpec
 from cruxible_core.procedure.proposal import ProcedureProposeGroupSpec
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.temporal import utc_now
+from cruxible_core.resolution_contracts.types import ContractMeasurement
+from cruxible_core.temporal import ensure_utc, utc_now
 
 ProcedureStatus = Literal["pending", "live", "rejected", "retired", "withdrawn"]
 """Lifecycle states. ``withdrawn`` is the author's own retraction of a pending
@@ -46,6 +49,9 @@ says which one happened. Neither is live, so neither holds a name."""
 ProcedureTier = Literal["governed_write", "graph_write", "admin"]
 ProcedureRunStatus = Literal["started", "finalized"]
 ProcedureRunVerdict = Literal["succeeded", "failed", "refused", "budget_exceeded"]
+ProcedureSubjectGrain = Literal["procedure_unit", "node", "arm"]
+ProcedureReadingGrade = Literal["contract", "attestation"]
+ProcedureReadingVerdict = Literal["satisfied", "contradicted", "indeterminate"]
 ProcedureRefusalReason = Literal[
     "procedure_not_live",
     "definition_digest_changed",
@@ -438,6 +444,103 @@ class ProcedurePrecondition(BaseModel):
         return self.entity_type is None
 
 
+class SituationShape(BaseModel):
+    """Coarse situation coordinates, excluding task ids and answer content."""
+
+    entity_types: list[str] | None = None
+    task_category: str | None = None
+    tags: list[str] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CalibrationTrigger(BaseModel):
+    """A declared threshold that can later mint a calibration finding."""
+
+    name: str
+    metric: Literal["contradicted_rate", "satisfied_rate", "arm_contrast"]
+    op: CountComparisonOp
+    value: float
+    min_readings: int = Field(ge=1)
+    window_days: int | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("name")
+    @classmethod
+    def require_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("calibration trigger name must be non-empty")
+        return value
+
+
+class ProcedureMeasurementDeclaration(BaseModel):
+    """Digest-covered declaration of one contract-grade procedure measurement."""
+
+    name: str
+    granularity: ProcedureSubjectGrain
+    node_id: str | None = None
+    from_node_id: str | None = None
+    arm_label: Literal["on_true", "on_false"] | None = None
+    measurement: ContractMeasurement
+    check_after_days: int = Field(ge=0)
+    expires_after_days: int = Field(ge=1)
+    situation_shape: SituationShape | None = None
+    review_when: list[CalibrationTrigger] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def refuse_procedure_measurement_kind(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            measurement = data.get("measurement")
+            if isinstance(measurement, dict) and measurement.get("kind") == "procedure":
+                raise ValueError(
+                    "M5: procedure measurement declarations cannot use kind 'procedure'; "
+                    "a procedure measuring itself is a cycle"
+                )
+        return data
+
+    @field_validator("name")
+    @classmethod
+    def require_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("procedure measurement name must be non-empty")
+        return value
+
+    @model_validator(mode="after")
+    def validate_declaration_shape(self) -> ProcedureMeasurementDeclaration:
+        if self.granularity == "procedure_unit":
+            if (
+                self.node_id is not None
+                or self.from_node_id is not None
+                or self.arm_label is not None
+            ):
+                raise ValueError(
+                    "procedure_unit measurements require node_id, from_node_id, and arm_label null"
+                )
+        elif self.granularity == "node":
+            if self.node_id is None:
+                raise ValueError("M1: non-unit measurement granularity requires node_id")
+            if self.from_node_id is not None or self.arm_label is not None:
+                raise ValueError("node measurements require from_node_id and arm_label null")
+        else:
+            if self.node_id is None:
+                raise ValueError("M1: non-unit measurement granularity requires node_id")
+            if self.from_node_id is None or self.arm_label is None:
+                raise ValueError("M2: arm measurements require from_node_id and arm_label")
+        if self.check_after_days >= self.expires_after_days:
+            raise ValueError("measurement check_after_days must be less than expires_after_days")
+        if self.review_when is not None:
+            if len({trigger.name for trigger in self.review_when}) != len(self.review_when):
+                raise ValueError("calibration trigger names must be unique per measurement")
+            if any(trigger.metric == "arm_contrast" for trigger in self.review_when):
+                if self.granularity != "arm":
+                    raise ValueError("M4: arm_contrast requires granularity 'arm'")
+        return self
+
+
 class ProcedureDefinition(BaseModel):
     """Agent-proposable utility plan constrained to the procedure step subset.
 
@@ -458,6 +561,7 @@ class ProcedureDefinition(BaseModel):
     budget: ProcedureBudget
     declared_tier: ProcedureTier = "governed_write"
     evidence_outputs: list[str] | None = None
+    measurements: list[ProcedureMeasurementDeclaration] | None = None
     graph_format: int | None = None
     """The format discriminator, and the ONLY signal of definition format.
 
@@ -550,6 +654,36 @@ class ProcedureDefinition(BaseModel):
                 f"procedure steps may only use {allowed}; found disallowed kinds {disallowed}"
             )
         _validate_unique_step_ids(self.steps, context="procedure steps")
+        if self.measurements is not None:
+            names = [measurement.name for measurement in self.measurements]
+            if len(set(names)) != len(names):
+                raise ValueError("M3: measurement names must be unique per definition")
+
+            from cruxible_core.procedure.analysis import build_procedure_graph
+            from cruxible_core.procedure.digest import compute_node_digests
+
+            node_ids = set(compute_node_digests(self))
+            graph = build_procedure_graph(self)
+            for measurement in self.measurements:
+                if measurement.granularity == "procedure_unit":
+                    continue
+                assert measurement.node_id is not None
+                if measurement.node_id not in node_ids:
+                    raise ValueError(
+                        "M1: non-unit measurement node_id "
+                        f"'{measurement.node_id}' does not name a node in this definition"
+                    )
+                if measurement.granularity != "arm":
+                    continue
+                assert measurement.from_node_id is not None
+                assert measurement.arm_label is not None
+                successor = graph.edges.get(measurement.from_node_id, {}).get(measurement.arm_label)
+                if successor != measurement.node_id:
+                    raise ValueError(
+                        "M2: arm measurement from_node_id "
+                        f"'{measurement.from_node_id}' does not name a guard whose "
+                        f"{measurement.arm_label} successor is '{measurement.node_id}'"
+                    )
         if self.evidence_outputs is not None:
             if len(set(self.evidence_outputs)) != len(self.evidence_outputs):
                 raise ValueError("evidence_outputs must not contain duplicate aliases")
@@ -651,6 +785,29 @@ class ProcedureDefinition(BaseModel):
         return names
 
 
+register_v2_definition_field(ProcedureDefinition, "measurements")
+
+
+def _register_measurements_envelope_field() -> None:
+    """Register after the schema is complete, avoiding a module import cycle."""
+    from cruxible_core.procedure.digest import register_envelope_field
+
+    register_envelope_field(
+        "measurements",
+        lambda definition: (
+            None
+            if definition.measurements is None
+            else [
+                declaration.model_dump(mode="json", by_alias=True, exclude_none=True)
+                for declaration in definition.measurements
+            ]
+        ),
+    )
+
+
+_register_measurements_envelope_field()
+
+
 class ProcedureRecord(BaseModel):
     """Persisted immutable procedure definition plus governance state."""
 
@@ -682,6 +839,36 @@ class ProcedureRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class LinkedOutcomeGradeSummary(BaseModel):
+    """Verdict buckets for one evidentiary grade, never mixed with another."""
+
+    readings: int = Field(default=0, ge=0)
+    satisfied: int = Field(default=0, ge=0)
+    contradicted: int = Field(default=0, ge=0)
+    indeterminate: int = Field(default=0, ge=0)
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="after")
+    def validate_buckets_cover_readings(self) -> LinkedOutcomeGradeSummary:
+        bucketed = self.satisfied + self.contradicted + self.indeterminate
+        if bucketed != self.readings:
+            raise ValueError(
+                "linked outcome grade buckets must cover every reading: "
+                f"readings={self.readings}, bucketed={bucketed}"
+            )
+        return self
+
+
+class LinkedOutcomeSummary(BaseModel):
+    """Own-procedure outcomes, with contract and attestation grades kept apart."""
+
+    contract_grade: LinkedOutcomeGradeSummary = Field(default_factory=LinkedOutcomeGradeSummary)
+    attestation_grade: LinkedOutcomeGradeSummary = Field(default_factory=LinkedOutcomeGradeSummary)
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 class ProcedureTrackRecord(BaseModel):
     """Run-ledger summary attached to procedure read records.
 
@@ -701,7 +888,12 @@ class ProcedureTrackRecord(BaseModel):
     in_flight: int = Field(default=0, ge=0)
     last_succeeded_at: datetime | None = None
     top_refusal_reason: ProcedureRefusalReason | None = None
-    linked_outcomes: None = None
+    linked_outcomes: LinkedOutcomeSummary | None = None
+    """Readings whose own lineage handle equals this procedure_id.
+
+    Superseded ancestors are deliberately not folded in: choosing which
+    ancestors receive credit is a query policy, not a storage aggregate.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -715,6 +907,95 @@ class ProcedureTrackRecord(BaseModel):
                 "procedure track-record buckets must cover every run: "
                 f"runs={self.runs}, bucketed={bucketed}"
             )
+        return self
+
+
+class ProcedureReading(BaseModel):
+    """One immutable outcome observation attached to authored procedure grain."""
+
+    reading_id: str = Field(default_factory=lambda: new_id("PRD"))
+    subject_grain: ProcedureSubjectGrain
+    procedure_id: str
+    definition_digest: str | None = None
+    node_id: str | None = None
+    node_local_digest: str | None = None
+    from_node_id: str | None = None
+    from_node_local_digest: str | None = None
+    arm_label: Literal["on_true", "on_false"] | None = None
+    arm_subtree_digest: str | None = None
+    parameter_pins: dict[str, str] = Field(default_factory=dict)
+    grade: ProcedureReadingGrade
+    measurement_name: str | None = None
+    contract_id: str | None = None
+    resolution_id: str | None = None
+    verdict: ProcedureReadingVerdict
+    value: Any | None = None
+    run_id: str | None = None
+    episode_ref: str | None = None
+    situation_shape: dict[str, Any] | None = None
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    observed_at: datetime
+    recorded_at: datetime = Field(default_factory=utc_now)
+    actor_context: GovernedActorContext
+    note: str | None = None
+    idempotency_key: str | None = None
+    receipt_id: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("observed_at", "recorded_at")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_validator("procedure_id")
+    @classmethod
+    def require_procedure_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("procedure reading procedure_id must be non-empty")
+        return value
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("idempotency_key must be non-empty when provided")
+        return value
+
+    @model_validator(mode="after")
+    def validate_reading_shape(self) -> ProcedureReading:
+        node_coordinates = (self.node_id, self.node_local_digest)
+        arm_coordinates = (
+            self.from_node_id,
+            self.from_node_local_digest,
+            self.arm_label,
+            self.arm_subtree_digest,
+        )
+        if self.subject_grain == "procedure_unit":
+            if self.definition_digest is None:
+                raise ValueError("procedure_unit readings require definition_digest")
+            if any(value is not None for value in (*node_coordinates, *arm_coordinates)):
+                raise ValueError("procedure_unit readings require all node and arm pointers null")
+        elif self.subject_grain == "node":
+            if any(value is None for value in node_coordinates):
+                raise ValueError("node readings require node_id and node_local_digest")
+            if self.definition_digest is not None:
+                raise ValueError("node readings require definition_digest null")
+            if any(value is not None for value in arm_coordinates):
+                raise ValueError("node readings require all arm pointers null")
+        else:
+            required = (*node_coordinates, *arm_coordinates)
+            if any(value is None for value in required):
+                raise ValueError(
+                    "arm readings require from-node, node, arm_label, and arm_subtree coordinates"
+                )
+            if self.definition_digest is not None:
+                raise ValueError("arm readings require definition_digest null")
+
+        if self.grade == "contract" and not (self.measurement_name or "").strip():
+            raise ValueError("contract-grade readings require measurement_name")
+        if self.observed_at > self.recorded_at:
+            raise ValueError("observed_at must be less than or equal to recorded_at")
         return self
 
 
@@ -895,6 +1176,31 @@ class ProcedureRun(BaseModel):
         return self
 
 
+class ProcedureRunFiredNode(BaseModel):
+    """One authored procedure node reached by an invocation, in execution order."""
+
+    run_id: str
+    sequence: int = Field(ge=0)
+    node_id: str
+    node_local_digest: str
+    node_subtree_digest: str
+    from_node_id: str | None = None
+    from_node_local_digest: str | None = None
+    arm_label: Literal["on_true", "on_false", "next"] | None = None
+    attempt_count: int | None = Field(default=None, ge=1)
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="after")
+    def validate_incoming_edge(self) -> ProcedureRunFiredNode:
+        incoming = (self.from_node_id, self.from_node_local_digest, self.arm_label)
+        if any(value is not None for value in incoming) and any(
+            value is None for value in incoming
+        ):
+            raise ValueError("fired-node incoming-edge coordinates must be all present or all null")
+        return self
+
+
 class ProcedureTransitionResult(BaseModel):
     """Service result for one receipted procedure lifecycle transition."""
 
@@ -1014,6 +1320,7 @@ __all__ = [
     "MAX_PROCEDURE_REPEAT_ATTEMPTS",
     "MAX_PROCEDURE_STEPS",
     "PROCEDURE_EVIDENCE_HEAD_BYTES",
+    "CalibrationTrigger",
     "ProcedureAuthoringWarning",
     "ProcedureBudget",
     "ProcedureBridgeStepSchema",
@@ -1027,7 +1334,13 @@ __all__ = [
     "ProcedureGetResult",
     "ProcedureGuardStepSchema",
     "ProcedureInnerStep",
+    "ProcedureMeasurementDeclaration",
+    "LinkedOutcomeGradeSummary",
+    "LinkedOutcomeSummary",
     "ProcedureProjectStepSchema",
+    "ProcedureReading",
+    "ProcedureReadingGrade",
+    "ProcedureReadingVerdict",
     "ProcedurePathEnumeration",
     "ProcedurePrecondition",
     "ProcedureReadRecord",
@@ -1036,8 +1349,10 @@ __all__ = [
     "ProcedureRepeatSpec",
     "ProcedureRepeatStepSchema",
     "ProcedureRun",
+    "ProcedureRunFiredNode",
     "ProcedureRunStatus",
     "ProcedureRunVerdict",
+    "ProcedureSubjectGrain",
     "ProcedureStaticExpansion",
     "ProcedureStatus",
     "ProcedureStepSchema",
@@ -1045,6 +1360,7 @@ __all__ = [
     "ProcedureTrackRecord",
     "ProcedureTransitionResult",
     "ProjectSpec",
+    "SituationShape",
     "compute_procedure_definition_digest",
     "procedure_record_from_payload",
     "unwrap_procedure_step",

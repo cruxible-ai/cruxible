@@ -24,6 +24,7 @@ OperationType = Literal[
     "workflow",
     "procedure",
     "procedure_transition",
+    "procedure_reading",
     "attestation",
     "attestation_disposition",
     "resolution_contract_open",

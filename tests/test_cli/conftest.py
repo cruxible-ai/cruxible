@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -91,7 +92,7 @@ constraints: []
 
 
 @pytest.fixture(autouse=True)
-def reset_server_mode_env(monkeypatch):
+def reset_server_mode_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Clear server-mode env and caches between CLI tests."""
     monkeypatch.delenv("CRUXIBLE_REQUIRE_SERVER", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)

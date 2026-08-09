@@ -9,13 +9,14 @@ whether canonical apply previews stay isolated or become committed graph state.
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any
+from typing import Any, Literal, cast
 
 from cruxible_core.config.schema import CoreConfig, WorkflowSchema
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.procedure.digest import compute_node_digests
 from cruxible_core.procedure.types import ABORT_TARGET
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
@@ -67,6 +68,7 @@ _TRUNCATION_REASON_ORDER = (
 )
 FAILED_WORKFLOW_RECEIPT_ATTR = "_cruxible_failed_workflow_receipt"
 FAILED_WORKFLOW_RECEIPT_PERSISTED_ATTR = "_cruxible_failed_workflow_receipt_persisted"
+FAILED_PROCEDURE_FIRED_NODES_ATTR = "_cruxible_failed_procedure_fired_nodes"
 
 
 def execute_workflow(
@@ -288,6 +290,7 @@ def execute_procedure_plan(
         procedure_definition_digest=procedure_definition_digest,
         procedure_run_id=procedure_run_id,
         procedure_dry_run=procedure_dry_run,
+        procedure_node_digests=compute_node_digests(definition),
     )
     results_recorded = False
 
@@ -329,6 +332,7 @@ def execute_procedure_plan(
             query_receipt_ids=context.query_receipt_ids,
         )
         setattr(exc, FAILED_WORKFLOW_RECEIPT_ATTR, failed_receipt)
+        setattr(exc, FAILED_PROCEDURE_FIRED_NODES_ATTR, list(context.fired_nodes))
         raise
 
     return WorkflowExecutionResult(
@@ -345,6 +349,7 @@ def execute_procedure_plan(
         alias_step_ids=context.alias_step_ids,
         step_trace_ids=context.step_trace_ids,
         procedure_group_proposals=context.procedure_group_proposals,
+        fired_nodes=context.fired_nodes,
     )
 
 
@@ -371,21 +376,31 @@ def _walk_procedure_successors(context: WorkflowExecutionContext) -> None:
         if index + 1 < len(steps)
     }
     current: str | None = steps[0].step_id
+    from_node_id: str | None = None
+    arm_label: Literal["on_true", "on_false", "next"] | None = None
     while current is not None:
         compiled_step = by_id[current]
         context.check_procedure_wall_clock()
+        context.record_fired_node(
+            compiled_step.step_id,
+            from_node_id=from_node_id,
+            arm_label=arm_label,
+        )
         PROCEDURE_STEP_HANDLER_REGISTRY.execute(context, compiled_step)
-        current = _procedure_successor(context, compiled_step, next_in_order)
+        successor, successor_arm = _procedure_successor(context, compiled_step, next_in_order)
+        from_node_id = compiled_step.step_id
+        arm_label = successor_arm
+        current = successor
 
 
 def _procedure_successor(
     context: WorkflowExecutionContext,
     compiled_step: CompiledPlanStep,
     next_in_order: dict[str, str],
-) -> str | None:
+) -> tuple[str | None, Literal["on_true", "on_false", "next"] | None]:
     fallthrough = next_in_order.get(compiled_step.step_id)
     if compiled_step.kind == "guard":
-        arm = context.guard_outcomes[compiled_step.step_id]
+        arm = cast(Literal["on_true", "on_false"], context.guard_outcomes[compiled_step.step_id])
         target = (
             compiled_step.on_true_step_id if arm == "on_true" else compiled_step.on_false_step_id
         )
@@ -396,10 +411,11 @@ def _procedure_successor(
             raise QueryExecutionError(
                 compiled_step.guard_message or f"guard step '{compiled_step.step_id}' failed"
             )
-        return target if target is not None else fallthrough
+        successor = target if target is not None else fallthrough
+        return successor, arm if successor is not None else None
     if compiled_step.next_step_id is not None:
-        return compiled_step.next_step_id
-    return fallthrough
+        return compiled_step.next_step_id, "next"
+    return fallthrough, "next" if fallthrough is not None else None
 
 
 def _resolve_procedure_output(context: WorkflowExecutionContext) -> Any:

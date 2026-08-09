@@ -264,14 +264,14 @@ def test_the_dispatcher_routes_each_format_to_its_own_function() -> None:
     assert DIGEST_FUNCTIONS[1](linear) != DIGEST_FUNCTIONS[2](declared)
 
 
-def test_the_envelope_registry_starts_with_the_base_fields_only() -> None:
+def test_the_envelope_registry_contains_measurements_after_f2() -> None:
     definition = ProcedureDefinition.model_validate(_branching_payload())
-    assert tuple(definition_envelope(definition)) == BASE_ENVELOPE_FIELDS
-    assert registered_envelope_fields() == ()
+    assert tuple(definition_envelope(definition)) == (*BASE_ENVELOPE_FIELDS, "measurements")
+    assert registered_envelope_fields() == ("measurements",)
 
 
 def test_a_repeat_body_lives_in_the_repeat_nodes_local_content() -> None:
-    payload = {
+    payload: dict[str, Any] = {
         "name": "repeat_digest_probe",
         "graph_format": 2,
         "steps": [

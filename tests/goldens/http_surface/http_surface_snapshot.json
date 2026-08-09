@@ -180,6 +180,9 @@
   "/api/v1/{instance_id}/procedures/{procedure_id}": {
     "GET": null
   },
+  "/api/v1/{instance_id}/procedures/{procedure_id}/readings": {
+    "POST": null
+  },
   "/api/v1/{instance_id}/procedures/{procedure_id}/resolve": {
     "POST": null
   },

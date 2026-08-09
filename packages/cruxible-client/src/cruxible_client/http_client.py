@@ -2175,6 +2175,58 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ListResult)
 
+    def record_procedure_reading(
+        self,
+        instance_id: str,
+        procedure_id: str,
+        *,
+        subject_grain: str,
+        grade: str,
+        verdict: str,
+        observed_at: str,
+        node_id: str | None = None,
+        from_node_id: str | None = None,
+        arm_label: str | None = None,
+        measurement_name: str | None = None,
+        contract_id: str | None = None,
+        resolution_id: str | None = None,
+        value: Any | None = None,
+        run_id: str | None = None,
+        episode_ref: str | None = None,
+        situation_shape: dict[str, Any] | None = None,
+        evidence_refs: Sequence[contracts.EvidenceRef | dict[str, Any]] = (),
+        note: str | None = None,
+        idempotency_key: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "subject_grain": subject_grain,
+            "grade": grade,
+            "verdict": verdict,
+            "observed_at": observed_at,
+            "node_id": node_id,
+            "from_node_id": from_node_id,
+            "arm_label": arm_label,
+            "measurement_name": measurement_name,
+            "contract_id": contract_id,
+            "resolution_id": resolution_id,
+            "value": value,
+            "run_id": run_id,
+            "episode_ref": episode_ref,
+            "situation_shape": situation_shape,
+            "evidence_refs": [
+                ref.model_dump(mode="json") if isinstance(ref, BaseModel) else ref
+                for ref in evidence_refs
+            ],
+            "note": note,
+            "idempotency_key": idempotency_key,
+        }
+        response = self._client.post(
+            f"/api/v1/{instance_id}/procedures/{procedure_id}/readings",
+            json=self._with_actor_context(payload, actor_context),
+        )
+        return self._parse_json(response)
+
     def propose_group(
         self,
         instance_id: str,

@@ -24,6 +24,7 @@ from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint
 from cruxible_core.group.store import GroupStore
 from cruxible_core.installs.store import InstallLedgerStore
 from cruxible_core.primitives import canonical_json
+from cruxible_core.procedure.reading_store import ProcedureReadingStore
 from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.resolution_contracts.store import ResolutionContractStore
@@ -209,6 +210,7 @@ BOUNDARY_TELEMETRY_MIGRATION = "0006_boundary_telemetry"
 INSTALL_LEDGER_MIGRATION = "0007_install_ledger"
 BINDING_LEDGER_MIGRATION = "0008_binding_ledger"
 PROCEDURE_GRAPH_MIGRATION = "0009_procedure_graph"
+PROCEDURE_READINGS_MIGRATION = "0010_procedure_readings"
 """Compute-slot binding ledger tables (``slot_bindings`` + revisions).
 
 Migration ids are stamped rows rather than a dense sequence -- nothing reads the
@@ -239,6 +241,7 @@ _ALL_STORAGE_MIGRATIONS = frozenset(
         INSTALL_LEDGER_MIGRATION,
         BINDING_LEDGER_MIGRATION,
         PROCEDURE_GRAPH_MIGRATION,
+        PROCEDURE_READINGS_MIGRATION,
     }
 )
 
@@ -270,6 +273,11 @@ _AUDIT_ONLY_TABLES = frozenset(
         "execution_traces",
         "procedure_evidence_artifacts",
         "procedure_run_evidence",
+        # Fired-node rows are written only inside the run-finalization unit of
+        # work. The procedure_runs update advances the revision once for the
+        # whole commit; if fired nodes ever gain an independent write path,
+        # this audit-only classification must be revisited.
+        "procedure_run_fired_nodes",
         "decision_events",
         "boundary_telemetry",
         "boundary_telemetry_drops",
@@ -1141,6 +1149,11 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
             connection=self._conn,
             initialize_schema=False,
         )
+        self.procedure_readings = ProcedureReadingStore(
+            self.db_path,
+            connection=self._conn,
+            initialize_schema=False,
+        )
         self.attestations = AttestationStore(
             self.db_path,
             connection=self._conn,
@@ -1434,6 +1447,7 @@ class SQLiteStorageBackend:
         FeedbackStore(self.db_path, connection=conn)
         GroupStore(self.db_path, connection=conn)
         ProcedureStore(self.db_path, connection=conn)
+        ProcedureReadingStore(self.db_path, connection=conn)
         AttestationStore(self.db_path, connection=conn)
         ResolutionContractStore(self.db_path, connection=conn)
         DecisionStore(self.db_path, connection=conn)
@@ -1483,6 +1497,9 @@ class SQLiteStorageBackend:
         if not self.has_migration_on_connection(conn, PROCEDURE_GRAPH_MIGRATION):
             self._migrate_procedure_graph(conn)
             self.mark_migration_on_connection(conn, PROCEDURE_GRAPH_MIGRATION)
+        if not self.has_migration_on_connection(conn, PROCEDURE_READINGS_MIGRATION):
+            # Purely additive: ProcedureReadingStore created both tables above.
+            self.mark_migration_on_connection(conn, PROCEDURE_READINGS_MIGRATION)
 
     @staticmethod
     def _migrate_procedure_graph(conn: sqlite3.Connection) -> None:

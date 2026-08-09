@@ -15,6 +15,7 @@ from cruxible_core.instance_protocol import (
     FeedbackStoreProtocol,
     GroupStoreProtocol,
     InstallLedgerStoreProtocol,
+    ProcedureReadingStoreProtocol,
     ProcedureStoreProtocol,
     ReceiptStoreProtocol,
     ResolutionContractStoreProtocol,
@@ -58,6 +59,7 @@ class UnitOfWorkProtocol(Protocol):
     feedback: FeedbackStoreProtocol
     groups: GroupStoreProtocol
     procedures: ProcedureStoreProtocol
+    procedure_readings: ProcedureReadingStoreProtocol
     attestations: AttestationStoreProtocol
     resolution_contracts: ResolutionContractStoreProtocol
     decisions: DecisionStoreProtocol

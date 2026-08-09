@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ProcedureBudgetExceededError
@@ -13,6 +13,8 @@ from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.procedure.digest import NodeDigests
+from cruxible_core.procedure.types import ProcedureRunFiredNode
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.workflow.types import CompiledPlan, CompiledPlanStep, WorkflowLock
@@ -99,6 +101,39 @@ class WorkflowExecutionContext:
     procedure_run_id: str | None = None
     procedure_dry_run: bool = False
     procedure_group_proposals: list[dict[str, Any]] = field(default_factory=list)
+    procedure_node_digests: dict[str, NodeDigests] = field(default_factory=dict)
+    fired_nodes: list[ProcedureRunFiredNode] = field(default_factory=list)
+
+    def record_fired_node(
+        self,
+        node_id: str,
+        *,
+        from_node_id: str | None,
+        arm_label: Literal["on_true", "on_false", "next"] | None,
+        attempt_count: int | None = None,
+    ) -> None:
+        """Append one fully digest-addressed procedure execution fact."""
+        if self.procedure_run_id is None:
+            return
+        digest = self.procedure_node_digests[node_id]
+        from_digest = (
+            self.procedure_node_digests[from_node_id].local_digest
+            if from_node_id is not None
+            else None
+        )
+        self.fired_nodes.append(
+            ProcedureRunFiredNode(
+                run_id=self.procedure_run_id,
+                sequence=len(self.fired_nodes),
+                node_id=node_id,
+                node_local_digest=digest.local_digest,
+                node_subtree_digest=digest.subtree_digest,
+                from_node_id=from_node_id,
+                from_node_local_digest=from_digest,
+                arm_label=arm_label,
+                attempt_count=attempt_count,
+            )
+        )
 
     def output_key(self, compiled_step: CompiledPlanStep) -> str:
         """Return the public output key for a step, honoring aliases."""

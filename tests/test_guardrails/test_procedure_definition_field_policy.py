@@ -33,6 +33,11 @@ LEGACY_NON_NONE_DEFAULTS: dict[tuple[str, str], Any] = {
     ("AggregateItemsSpec", "group_by"): {},
     ("ApplyAllSpec", "entities_from"): [],
     ("ApplyAllSpec", "relationships_from"): [],
+    # These pre-existing resolution-contract models become reachable from a
+    # procedure definition only through F2's optional v2-only measurements
+    # field. No historical definition can contain that subtree, and the field
+    # is registered in the envelope in the same commit.
+    ("AttestationMeasurement", "kind"): "attestation",
     ("ContractSchema", "allow_extra"): False,
     ("DedupeItemsSpec", "strategy"): "first",
     ("FilterItemsSpec", "comparisons"): [],
@@ -42,6 +47,7 @@ LEGACY_NON_NONE_DEFAULTS: dict[tuple[str, str], Any] = {
     ("MakeCandidatesSpec", "properties"): {},
     ("MakeEntitiesSpec", "properties"): {},
     ("MakeRelationshipsSpec", "properties"): {},
+    ("MeasurementExpectation", "condition_scope"): "all",
     ("NamedQuerySchema", "allow_relationship_state_override"): False,
     ("NamedQuerySchema", "dedupe"): "path",
     ("NamedQuerySchema", "include"): {},
@@ -64,6 +70,8 @@ LEGACY_NON_NONE_DEFAULTS: dict[tuple[str, str], Any] = {
     ("QueryIncludeSpec", "required"): False,
     ("QueryIncludeSpec", "where_not_related"): [],
     ("QueryIncludeSpec", "where_related"): [],
+    ("QueryMeasurement", "kind"): "query",
+    ("QueryMeasurement", "params"): {},
     ("QueryOrderSpec", "direction"): "asc",
     ("RelatedExclusionSpec", "direction"): "outgoing",
     ("RelatedPredicateSpec", "direction"): "outgoing",
