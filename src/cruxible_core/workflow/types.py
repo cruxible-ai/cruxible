@@ -38,6 +38,7 @@ from cruxible_core.group.types import (
     SignalValue,
 )
 from cruxible_core.procedure.guards import GuardSpec
+from cruxible_core.procedure.proposal import ProcedureProposeGroupSpec
 from cruxible_core.procedure.types import ProjectSpec
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
@@ -162,6 +163,9 @@ class CompiledPlanStep(BaseModel):
     next_step_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     guard_message: str | None = Field(default=None, exclude_if=lambda value: value is None)
     project_spec: ProjectSpec | None = Field(default=None, exclude_if=lambda value: value is None)
+    propose_group_from_spec: ProcedureProposeGroupSpec | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     """Control edges are RESOLVED to step ids at compile time, not chased at run
     time: the executor's successor function is a dict lookup, and R1/R2/R3 have
     already been checked when it runs."""
@@ -209,6 +213,7 @@ class WorkflowExecutionResult(BaseModel):
     step_outputs: dict[str, Any] = Field(default_factory=dict)
     alias_step_ids: dict[str, str] = Field(default_factory=dict)
     step_trace_ids: dict[str, list[str]] = Field(default_factory=dict)
+    procedure_group_proposals: list[dict[str, Any]] = Field(default_factory=list)
 
     @property
     def canonical(self) -> bool:

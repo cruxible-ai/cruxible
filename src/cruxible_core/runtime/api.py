@@ -4421,6 +4421,7 @@ def run_procedure(
     *,
     input_payload: dict[str, Any],
     actor_context: Any | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run one live procedure after floor and effective-tier authorization."""
     check_permission("cruxible_run_procedure", instance_id=instance_id)
@@ -4431,6 +4432,7 @@ def run_procedure(
         procedure_id,
         input_payload,
         actor,
+        dry_run=dry_run,
     )
     return {
         "procedure": _procedure_record_payload(result.procedure),
@@ -4439,6 +4441,7 @@ def run_procedure(
         "receipt": result.receipt.model_dump(mode="json"),
         "step_outputs": result.step_outputs,
         "evidence_refs": [ref.model_dump(mode="json") for ref in result.evidence_refs],
+        "dry_run": result.dry_run,
     }
 
 

@@ -35,6 +35,7 @@ from cruxible_core.procedure.graph_format import (
     register_v2_step_type,
 )
 from cruxible_core.procedure.guards import GuardSpec
+from cruxible_core.procedure.proposal import ProcedureProposeGroupSpec
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.temporal import utc_now
 
@@ -323,12 +324,23 @@ class ProcedureProjectStepSchema(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
+class ProcedureBridgeStepSchema(BaseModel):
+    """Terminal procedure-only bridge from shaped rows to a pending group."""
+
+    id: str
+    propose_group_from: ProcedureProposeGroupSpec
+    as_: str = Field(alias="as")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
 ProcedureStepSchema = (
     WorkflowStepSchema
     | ProcedureRepeatStepSchema
     | ProcedureGuardStepSchema
     | ProcedureFlowStepSchema
     | ProcedureProjectStepSchema
+    | ProcedureBridgeStepSchema
 )
 """The procedure step union.
 
@@ -343,6 +355,7 @@ identifiability instead.
 register_v2_step_type(ProcedureGuardStepSchema)
 register_v2_step_type(ProcedureFlowStepSchema)
 register_v2_step_type(ProcedureProjectStepSchema)
+register_v2_step_type(ProcedureBridgeStepSchema)
 
 
 def unwrap_procedure_step(step: Any) -> Any:
@@ -492,6 +505,32 @@ class ProcedureDefinition(BaseModel):
         # R13/R14. Refuses an undeclared graph construct at PARSE, so no
         # downstream stage has to remember to look.
         definition_format_version(self)
+
+        from cruxible_core.procedure.branch_targets import NEVER_BRANCH_TARGETABLE
+
+        never_kinds: list[tuple[str, str, str]] = []
+        for step in self.steps:
+            inner = unwrap_procedure_step(step)
+            if not isinstance(inner, WorkflowStepSchema):
+                continue
+            kind = workflow_step_kind(inner)
+            if kind in NEVER_BRANCH_TARGETABLE:
+                never_kinds.append((str(step.id), kind, NEVER_BRANCH_TARGETABLE[kind]))
+        if never_kinds:  # R8
+            details = "; ".join(
+                f"step '{step_id}' uses disallowed kind '{kind}': {reason}"
+                for step_id, kind, reason in never_kinds
+            )
+            raise ValueError(f"R8 NEVER_BRANCH_TARGETABLE refusal; disallowed kinds: {details}")
+
+        bridge_ids = [
+            str(step.id) for step in self.steps if isinstance(step, ProcedureBridgeStepSchema)
+        ]
+        if len(bridge_ids) > 1:  # R7
+            raise ValueError(
+                "R7: a procedure may declare at most one propose_group_from bridge; "
+                f"found {bridge_ids}"
+            )
 
         # Defence in depth behind ProcedureInnerStep: the whitelist UNWRAPS, so
         # it walks the inner step of every wrapper kind rather than skipping
@@ -887,6 +926,7 @@ class ProcedureExecutionResult(BaseModel):
     receipt: Receipt
     step_outputs: dict[str, Any] = Field(default_factory=dict)
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    dry_run: bool = False
 
 
 class ProcedureEvidenceArtifact(BaseModel):
@@ -976,6 +1016,7 @@ __all__ = [
     "PROCEDURE_EVIDENCE_HEAD_BYTES",
     "ProcedureAuthoringWarning",
     "ProcedureBudget",
+    "ProcedureBridgeStepSchema",
     "ProcedureBudgetSpent",
     "ProcedureDefinition",
     "ProcedureContractFieldSchema",

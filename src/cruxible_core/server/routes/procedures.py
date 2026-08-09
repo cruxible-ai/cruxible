@@ -133,6 +133,7 @@ async def run_procedure(
         procedure_id,
         input_payload=req.input_payload,
         actor_context=req.actor_context,
+        dry_run=req.dry_run,
     )
 
 

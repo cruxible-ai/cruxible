@@ -49,6 +49,8 @@ from cruxible_core.graph.legacy_identity import (
     legacy_identity_map_digest,
     load_legacy_identity_map,
 )
+from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.group.types import CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.types import ProcedureRecord
@@ -99,6 +101,37 @@ ORIGIN_COORDINATE = "origin"
 RESERVED_COORDINATES: frozenset[str] = frozenset(
     {CURRENT_COORDINATE, UPSTREAM_COORDINATE, ORIGIN_COORDINATE}
 )
+
+
+def compare_pending_relationships(
+    graph: EntityGraph,
+    relationship_type: str,
+    members: list[CandidateMember],
+) -> dict[str, Any]:
+    """Preview candidate relationships through the shared edge comparator."""
+    proposed = EntityGraph.from_dict(graph.to_dict())
+    for index, member in enumerate(members):
+        relationship = member.as_relationship()
+        identity = {
+            **relationship.identity_payload(),
+            "properties": relationship.properties,
+            "index": index,
+        }
+        claim_digest = hashlib.sha256(canonical_json(identity).encode("utf-8")).hexdigest()
+        proposed.add_relationship(
+            RelationshipInstance(
+                **relationship.model_dump(mode="python", exclude={"claim_id", "edge_key"}),
+                claim_id=f"preview-{claim_digest[:24]}",
+            )
+        )
+    basis = OwnershipBasis.unknown_basis("pending relationship preview has no ownership pin")
+    section = diff_edges(
+        GraphDiffSide(graph=graph, ownership=basis),
+        GraphDiffSide(graph=proposed, ownership=basis),
+        GraphDiffSelector(relationship_types=frozenset({relationship_type})),
+    )
+    return {"basis": "pending_group", "sections": {"edges": section.payload()}}
+
 
 _SNAPSHOT_ID_PATTERN = re.compile(r"^snap_[0-9a-f]{16}$")
 """Snapshot ids are ``snap_`` + 16 hex chars, minted by ``new_id("snap", 16, "_")``.

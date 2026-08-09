@@ -631,6 +631,7 @@ def service_propose_group(
     expected_pending_version: int | None = None,
     actor_context: GovernedActorContext | None = None,
     proposed_by: str | None = None,
+    force_review: bool = False,
 ) -> ProposeGroupResult:
     """Propose a group of candidate edges for batch review/approval."""
     if proposed_by is not None:
@@ -697,7 +698,7 @@ def service_propose_group(
     graph = instance.load_graph()
     # Workflow policy accounting intentionally reflects the original proposal set.
     # Tuple-identity filtering below may remove members before the review group is stored.
-    members, force_review = apply_workflow_policies(
+    members, policy_force_review = apply_workflow_policies(
         config=config,
         graph=graph,
         relationship_type=relationship_type,
@@ -706,6 +707,7 @@ def service_propose_group(
         thesis_facts=thesis_facts,
         policy_summary=policy_summary,
     )
+    force_review = force_review or policy_force_review
 
     proposal_policy = rel_schema.proposal_policy
 

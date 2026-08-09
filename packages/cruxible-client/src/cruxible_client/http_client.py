@@ -2151,10 +2151,13 @@ class CruxibleClient:
         *,
         input_payload: dict[str, Any],
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         response = self._client.post(
             f"/api/v1/{instance_id}/procedures/{procedure_id}/run",
-            json=self._with_actor_context({"input_payload": input_payload}, actor_context),
+            json=self._with_actor_context(
+                {"input_payload": input_payload, "dry_run": dry_run}, actor_context
+            ),
         )
         return self._parse_json(response)
 

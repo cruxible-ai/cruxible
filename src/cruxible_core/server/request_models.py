@@ -265,6 +265,7 @@ class RetireProcedureRequest(BaseModel):
 class RunProcedureRequest(BaseModel):
     input_payload: dict[str, Any]
     actor_context: contracts.GovernedActorContext | None = None
+    dry_run: bool = False
 
 
 class AttestRequest(BaseModel):

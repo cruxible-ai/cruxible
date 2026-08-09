@@ -94,6 +94,10 @@ class WorkflowExecutionContext:
     The successor walk reads it back rather than re-evaluating the predicate:
     evaluating twice could disagree, and the receipt already recorded the first
     answer as the reason the run went where it went."""
+    procedure_id: str | None = None
+    procedure_run_id: str | None = None
+    procedure_dry_run: bool = False
+    procedure_group_proposals: list[dict[str, Any]] = field(default_factory=list)
 
     def output_key(self, compiled_step: CompiledPlanStep) -> str:
         """Return the public output key for a step, honoring aliases."""
