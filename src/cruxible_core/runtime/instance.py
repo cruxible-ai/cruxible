@@ -45,6 +45,7 @@ from cruxible_core.primitives import new_id
 from cruxible_core.procedure.digest import compute_node_digests
 from cruxible_core.procedure.graph_format import refuse_unknown_artifact_format
 from cruxible_core.procedure.pins import AcceptanceNodePin
+from cruxible_core.procedure.reading_store import ProcedureReadingStore
 from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.procedure.types import ProcedureRecord
 from cruxible_core.receipt.store import SQLiteReceiptStore
@@ -824,6 +825,13 @@ class CruxibleInstance(InstanceProtocol):
             return self._active_uow.procedures
         self._ensure_state_initialized()
         return ProcedureStore(self._state_db_path())
+
+    def get_procedure_reading_store(self) -> ProcedureReadingStore:
+        """Get or create the append-only procedure-reading SQLite store."""
+        if self._active_uow is not None:
+            return self._active_uow.procedure_readings
+        self._ensure_state_initialized()
+        return ProcedureReadingStore(self._state_db_path())
 
     def get_attestation_store(self) -> AttestationStore:
         """Get or create the append-only attestation SQLite store."""

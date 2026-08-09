@@ -37,7 +37,7 @@ from cruxible_core.procedure.graph_format import (
 from cruxible_core.procedure.guards import GuardSpec
 from cruxible_core.procedure.proposal import ProcedureProposeGroupSpec
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.temporal import utc_now
+from cruxible_core.temporal import ensure_utc, utc_now
 
 ProcedureStatus = Literal["pending", "live", "rejected", "retired", "withdrawn"]
 """Lifecycle states. ``withdrawn`` is the author's own retraction of a pending
@@ -46,6 +46,9 @@ says which one happened. Neither is live, so neither holds a name."""
 ProcedureTier = Literal["governed_write", "graph_write", "admin"]
 ProcedureRunStatus = Literal["started", "finalized"]
 ProcedureRunVerdict = Literal["succeeded", "failed", "refused", "budget_exceeded"]
+ProcedureSubjectGrain = Literal["procedure_unit", "node", "arm"]
+ProcedureReadingGrade = Literal["contract", "attestation"]
+ProcedureReadingVerdict = Literal["satisfied", "contradicted", "indeterminate"]
 ProcedureRefusalReason = Literal[
     "procedure_not_live",
     "definition_digest_changed",
@@ -718,6 +721,95 @@ class ProcedureTrackRecord(BaseModel):
         return self
 
 
+class ProcedureReading(BaseModel):
+    """One immutable outcome observation attached to authored procedure grain."""
+
+    reading_id: str = Field(default_factory=lambda: new_id("PRD"))
+    subject_grain: ProcedureSubjectGrain
+    procedure_id: str
+    definition_digest: str | None = None
+    node_id: str | None = None
+    node_local_digest: str | None = None
+    from_node_id: str | None = None
+    from_node_local_digest: str | None = None
+    arm_label: Literal["on_true", "on_false"] | None = None
+    arm_subtree_digest: str | None = None
+    parameter_pins: dict[str, str] = Field(default_factory=dict)
+    grade: ProcedureReadingGrade
+    measurement_name: str | None = None
+    contract_id: str | None = None
+    resolution_id: str | None = None
+    verdict: ProcedureReadingVerdict
+    value: Any | None = None
+    run_id: str | None = None
+    episode_ref: str | None = None
+    situation_shape: dict[str, Any] | None = None
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    observed_at: datetime
+    recorded_at: datetime = Field(default_factory=utc_now)
+    actor_context: GovernedActorContext
+    note: str | None = None
+    idempotency_key: str | None = None
+    receipt_id: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("observed_at", "recorded_at")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_validator("procedure_id")
+    @classmethod
+    def require_procedure_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("procedure reading procedure_id must be non-empty")
+        return value
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("idempotency_key must be non-empty when provided")
+        return value
+
+    @model_validator(mode="after")
+    def validate_reading_shape(self) -> ProcedureReading:
+        node_coordinates = (self.node_id, self.node_local_digest)
+        arm_coordinates = (
+            self.from_node_id,
+            self.from_node_local_digest,
+            self.arm_label,
+            self.arm_subtree_digest,
+        )
+        if self.subject_grain == "procedure_unit":
+            if self.definition_digest is None:
+                raise ValueError("procedure_unit readings require definition_digest")
+            if any(value is not None for value in (*node_coordinates, *arm_coordinates)):
+                raise ValueError("procedure_unit readings require all node and arm pointers null")
+        elif self.subject_grain == "node":
+            if any(value is None for value in node_coordinates):
+                raise ValueError("node readings require node_id and node_local_digest")
+            if self.definition_digest is not None:
+                raise ValueError("node readings require definition_digest null")
+            if any(value is not None for value in arm_coordinates):
+                raise ValueError("node readings require all arm pointers null")
+        else:
+            required = (*node_coordinates, *arm_coordinates)
+            if any(value is None for value in required):
+                raise ValueError(
+                    "arm readings require from-node, node, arm_label, and arm_subtree coordinates"
+                )
+            if self.definition_digest is not None:
+                raise ValueError("arm readings require definition_digest null")
+
+        if self.grade == "contract" and not (self.measurement_name or "").strip():
+            raise ValueError("contract-grade readings require measurement_name")
+        if self.observed_at > self.recorded_at:
+            raise ValueError("observed_at must be less than or equal to recorded_at")
+        return self
+
+
 class ProcedureReadRecord(ProcedureRecord):
     """Procedure definition and governance state with its run-ledger summary."""
 
@@ -1028,6 +1120,9 @@ __all__ = [
     "ProcedureGuardStepSchema",
     "ProcedureInnerStep",
     "ProcedureProjectStepSchema",
+    "ProcedureReading",
+    "ProcedureReadingGrade",
+    "ProcedureReadingVerdict",
     "ProcedurePathEnumeration",
     "ProcedurePrecondition",
     "ProcedureReadRecord",
@@ -1038,6 +1133,7 @@ __all__ = [
     "ProcedureRun",
     "ProcedureRunStatus",
     "ProcedureRunVerdict",
+    "ProcedureSubjectGrain",
     "ProcedureStaticExpansion",
     "ProcedureStatus",
     "ProcedureStepSchema",

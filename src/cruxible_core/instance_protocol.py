@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from cruxible_core.procedure.types import (
         ProcedureBudgetSpent,
         ProcedureEvidenceArtifact,
+        ProcedureReading,
         ProcedureRecord,
         ProcedureRefusalReason,
         ProcedureRun,
@@ -516,6 +517,34 @@ class ProcedureStoreProtocol(ABC):
     def close(self) -> None: ...
 
 
+class ProcedureReadingStoreProtocol(ABC):
+    """Interface for immutable procedure outcome readings."""
+
+    @abstractmethod
+    def save_reading(self, reading: ProcedureReading) -> str: ...
+    @abstractmethod
+    def get_reading(self, reading_id: str) -> ProcedureReading | None: ...
+    @abstractmethod
+    def find_idempotent_reading(
+        self,
+        *,
+        idempotency_key: str,
+        procedure_id: str,
+        actor_org_id: str,
+        actor_id: str,
+    ) -> ProcedureReading | None: ...
+    @abstractmethod
+    def list_readings(
+        self,
+        *,
+        procedure_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ProcedureReading]: ...
+    @abstractmethod
+    def close(self) -> None: ...
+
+
 class AttestationStoreProtocol(ABC):
     """Interface for immutable claim observations and dispositions."""
 
@@ -899,6 +928,8 @@ class InstanceProtocol(ABC):
     def get_group_store(self) -> GroupStoreProtocol: ...
     @abstractmethod
     def get_procedure_store(self) -> ProcedureStoreProtocol: ...
+    @abstractmethod
+    def get_procedure_reading_store(self) -> ProcedureReadingStoreProtocol: ...
     @abstractmethod
     def get_attestation_store(self) -> AttestationStoreProtocol: ...
     @abstractmethod
