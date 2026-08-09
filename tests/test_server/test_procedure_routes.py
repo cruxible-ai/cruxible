@@ -44,7 +44,7 @@ def _init_procedure_instance(client: TestClient, root: Path) -> str:
         json={"root_dir": str(root), "config_yaml": CONFIG_YAML},
     )
     assert response.status_code == 200, response.text
-    instance_id = response.json()["instance_id"]
+    instance_id = str(response.json()["instance_id"])
     locked = client.post(f"/api/v1/{instance_id}/workflows/lock", json={})
     assert locked.status_code == 200, locked.text
     return instance_id
@@ -135,6 +135,20 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["procedure"]["status"] == "live"
 
+    reading = app_client.post(
+        f"/api/v1/{instance_id}/procedures/{procedure_id}/readings",
+        json={
+            "subject_grain": "procedure_unit",
+            "grade": "attestation",
+            "verdict": "satisfied",
+            "observed_at": "2026-07-22T12:00:00Z",
+            "actor_context": actor("http-reader").model_dump(mode="json"),
+        },
+    )
+    assert reading.status_code == 200, reading.text
+    assert reading.json()["procedure_id"] == procedure_id
+    assert reading.json()["grade"] == "attestation"
+
     executed = app_client.post(
         f"/api/v1/{instance_id}/procedures/{procedure_id}/run",
         json={
@@ -157,7 +171,20 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
         "in_flight": 0,
         "last_succeeded_at": executed.json()["run"]["finalized_at"],
         "top_refusal_reason": None,
-        "linked_outcomes": None,
+        "linked_outcomes": {
+            "contract_grade": {
+                "readings": 0,
+                "satisfied": 0,
+                "contradicted": 0,
+                "indeterminate": 0,
+            },
+            "attestation_grade": {
+                "readings": 1,
+                "satisfied": 1,
+                "contradicted": 0,
+                "indeterminate": 0,
+            },
+        },
     }
     assert tracked_list.json()["items"][0]["track_record"] == expected_track_record
     assert tracked_show.json()["procedure"]["track_record"] == expected_track_record

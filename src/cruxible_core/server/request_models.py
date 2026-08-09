@@ -268,6 +268,27 @@ class RunProcedureRequest(BaseModel):
     dry_run: bool = False
 
 
+class RecordProcedureReadingRequest(BaseModel):
+    subject_grain: Literal["procedure_unit", "node", "arm"]
+    grade: Literal["contract", "attestation"]
+    verdict: Literal["satisfied", "contradicted", "indeterminate"]
+    observed_at: datetime
+    node_id: str | None = None
+    from_node_id: str | None = None
+    arm_label: Literal["on_true", "on_false"] | None = None
+    measurement_name: str | None = None
+    contract_id: str | None = None
+    resolution_id: str | None = None
+    value: Any | None = None
+    run_id: str | None = None
+    episode_ref: str | None = None
+    situation_shape: dict[str, Any] | None = None
+    evidence_refs: list[contracts.EvidenceRef] = Field(default_factory=list)
+    note: str | None = None
+    idempotency_key: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
+
+
 class AttestRequest(BaseModel):
     relationship_type: str
     from_type: str

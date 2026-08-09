@@ -155,13 +155,22 @@ def test_a_false_arm_that_aborts_fails_the_run_with_the_guard_message(
         returns="result",
     )
     procedure_id = _accept(procedure_instance, definition)
-    with pytest.raises(QueryExecutionError, match="refused: value below threshold"):
+    with pytest.raises(QueryExecutionError, match="refused: value below threshold") as exc_info:
         service_run_procedure(
             procedure_instance,
             procedure_id,
             input_payload={"value": 1},
             actor_context=None,
         )
+
+    fired_store = procedure_instance.get_procedure_reading_store()
+    try:
+        fired = fired_store.list_run_fired_nodes(getattr(exc_info.value, "procedure_run_id"))
+    finally:
+        fired_store.close()
+    assert [node.node_id for node in fired] == ["read", "gate"]
+    assert fired[1].from_node_id == "read"
+    assert fired[1].arm_label == "next"
 
 
 def test_short_circuit_free_connectives_record_every_comparison(

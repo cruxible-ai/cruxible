@@ -125,6 +125,36 @@ class ConfigError(SchemaError):
         return f"{self.summary}: {detail}" + self._receipt_suffix()
 
 
+class ReservedSubjectError(ConfigError):
+    """The public contract opener named a live core-owned subject kind."""
+
+    error_code = "reserved_subject"
+
+
+class RetiredReservedKindError(ConfigError):
+    """A contract opener named a retired core-owned subject kind."""
+
+    error_code = "retired_reserved_kind"
+
+
+class UnknownReservedSubjectError(ConfigError):
+    """A contract opener named an unregistered reserved subject kind."""
+
+    error_code = "unknown_reserved_subject"
+
+
+class MalformedReservedSubjectError(ConfigError):
+    """A contract opener used malformed reserved-subject syntax."""
+
+    error_code = "malformed_reserved_subject"
+
+
+class ContractGradeRefusedError(ConfigError):
+    """A procedure reading did not prove its declared contract-grade coordinates."""
+
+    error_code = "contract_grade_refused"
+
+
 class EntityTypeNotFoundError(SchemaError):
     """Entity type not defined in config schema."""
 

@@ -9,7 +9,7 @@ remains a separate reviewer act through existing verbs.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, NoReturn, cast
 
 from pydantic import BaseModel
@@ -20,21 +20,37 @@ from cruxible_core.config.schema import (
     NamedQuerySchema,
     ResolutionContractGuardCondition,
 )
-from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.errors import (
+    ConfigError,
+    MalformedReservedSubjectError,
+    QueryExecutionError,
+    ReservedSubjectError,
+    RetiredReservedKindError,
+    UnknownReservedSubjectError,
+)
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.instance_protocol import (
     InstanceProtocol,
+    ProcedureStoreProtocol,
     ResolutionContractStoreProtocol,
 )
+from cruxible_core.procedure.types import (
+    ProcedureMeasurementDeclaration,
+    ProcedureRecord,
+)
 from cruxible_core.query.engine import effective_query_receipt_options
-from cruxible_core.query.entity_state import entity_matches_query_state
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.resolution_contracts.subjects import (
+    classify_reserved_subject_for_open,
+    resolve_contract_subject,
+)
 from cruxible_core.resolution_contracts.types import (
     AttestationMeasurement,
+    ContractActivation,
     ContractDeclaration,
     ContractDispositionResult,
     ContractListItem,
@@ -102,6 +118,15 @@ def service_open_resolution_contract(
         assert ctx.builder is not None
         assert ctx.uow is not None
         actor = _require_actor(actor_context, role="opening", builder=ctx.builder)
+        try:
+            classify_reserved_subject_for_open(entity_type, internal_authority=False)
+        except (
+            ReservedSubjectError,
+            RetiredReservedKindError,
+            UnknownReservedSubjectError,
+            MalformedReservedSubjectError,
+        ) as exc:
+            _record_reserved_subject_refusal(ctx.builder, exc)
         config = instance.load_config()
         graph = ctx.uow.graph.load_graph()
 
@@ -245,6 +270,72 @@ def _build_declaration(
             }
         )
     return declaration
+
+
+def _open_procedure_measurement_contract(
+    uow: Any,
+    *,
+    config: CoreConfig,
+    procedure: ProcedureRecord,
+    measurement: ProcedureMeasurementDeclaration,
+    accepted_at: datetime,
+    actor_context: GovernedActorContext,
+    builder: ReceiptBuilder,
+) -> ResolutionContract:
+    """Open and activate one procedure measurement in the accept transaction."""
+    entity_type = "cruxible.Procedure"
+    try:
+        classify_reserved_subject_for_open(entity_type, internal_authority=True)
+    except (
+        ReservedSubjectError,
+        RetiredReservedKindError,
+        UnknownReservedSubjectError,
+        MalformedReservedSubjectError,
+    ) as exc:
+        _record_reserved_subject_refusal(builder, exc)
+
+    declaration = _build_declaration(
+        config,
+        description=(
+            f"Procedure measurement '{measurement.name}' for '{procedure.definition.name}'"
+        ),
+        check_at=accepted_at + timedelta(days=measurement.check_after_days),
+        expires_at=accepted_at + timedelta(days=measurement.expires_after_days),
+        measurement=measurement.measurement.model_dump(
+            mode="json", by_alias=True, exclude_none=True
+        ),
+        builder=builder,
+    )
+    contract = ResolutionContract(
+        entity_type=entity_type,
+        entity_id=procedure.procedure_id,
+        subject_content_digest=procedure.definition_digest,
+        declaration=declaration,
+        actor_context=actor_context,
+        idempotency_key=(f"procedure-measurement:{procedure.procedure_id}:{measurement.name}"),
+        receipt_id=builder.receipt_id,
+    )
+    uow.resolution_contracts.save_contract(contract)
+    uow.resolution_contracts.save_activation(
+        ContractActivation(
+            contract_id=contract.contract_id,
+            acceptance_receipt_id=builder.receipt_id,
+            subject_content_digest=procedure.definition_digest,
+            activated_at=accepted_at,
+        )
+    )
+    builder.record_validation(
+        passed=True,
+        detail={
+            "action": "open_procedure_measurement_contract",
+            "contract_id": contract.contract_id,
+            "measurement_name": measurement.name,
+            "subject_content_digest": procedure.definition_digest,
+        },
+        entity_type=entity_type,
+        entity_id=procedure.procedure_id,
+    )
+    return contract
 
 
 def _pinned_execution_options(
@@ -1026,6 +1117,7 @@ def service_list_resolution_contracts(
     _validate_page(limit=limit, offset=offset)
     graph = instance.load_graph()
     store = instance.get_resolution_contract_store()
+    procedure_store = instance.get_procedure_store()
     try:
         contracts = store.list_contracts(
             entity_type=entity_type,
@@ -1034,9 +1126,10 @@ def service_list_resolution_contracts(
             offset=offset,
         )
         total = store.count_contracts(entity_type=entity_type, entity_id=entity_id)
-        items = _build_list_items(store, graph, contracts)
+        items = _build_list_items(store, graph, procedure_store, contracts)
     finally:
         store.close()
+        procedure_store.close()
     if status is not None:
         items = [item for item in items if item.status == status]
     return ListResult(
@@ -1073,13 +1166,21 @@ def service_outcome_queue(
     graph = instance.load_graph()
     now = format_datetime(utc_now()) or ""
     store = instance.get_resolution_contract_store()
+    procedure_store = instance.get_procedure_store()
     try:
         if queue == "contradicted":
-            entries = _contradicted_entries(store, graph)
+            entries = _contradicted_entries(store, graph, procedure_store)
         else:
-            entries = _clock_entries(store, graph, now=now, queue=queue)
+            entries = _clock_entries(
+                store,
+                graph,
+                procedure_store,
+                now=now,
+                queue=queue,
+            )
     finally:
         store.close()
+        procedure_store.close()
     total = len(entries)
     page = entries[offset : offset + limit]
     return ListResult(
@@ -1095,6 +1196,7 @@ def service_outcome_queue(
 def _clock_entries(
     store: ResolutionContractStoreProtocol,
     graph: EntityGraph,
+    procedure_store: ProcedureStoreProtocol,
     *,
     now: str,
     queue: ContractQueue,
@@ -1102,7 +1204,7 @@ def _clock_entries(
     contracts = store.list_activated_unresolved(before=now, use_expiry=queue == "overdue")
     entries: list[ContractQueueEntry] = []
     for contract in contracts:
-        if not _subject_is_live(graph, contract):
+        if not _subject_is_live(graph, procedure_store, contract):
             continue
         entries.append(
             ContractQueueEntry(
@@ -1123,10 +1225,11 @@ def _clock_entries(
 def _contradicted_entries(
     store: ResolutionContractStoreProtocol,
     graph: EntityGraph,
+    procedure_store: ProcedureStoreProtocol,
 ) -> list[ContractQueueEntry]:
     entries: list[ContractQueueEntry] = []
     for contract, resolution in store.list_undisposed_contradictions():
-        if not _subject_is_live(graph, contract):
+        if not _subject_is_live(graph, procedure_store, contract):
             continue
         entries.append(
             ContractQueueEntry(
@@ -1152,6 +1255,7 @@ def _contradicted_entries(
 def _build_list_items(
     store: ResolutionContractStoreProtocol,
     graph: EntityGraph,
+    procedure_store: ProcedureStoreProtocol,
     contracts: Sequence[ResolutionContract],
 ) -> list[ContractListItem]:
     contract_ids = [contract.contract_id for contract in contracts]
@@ -1176,7 +1280,12 @@ def _build_list_items(
             status = "resolved"
         else:
             status = "open"
-        subject = graph.get_entity(contract.entity_type, contract.entity_id)
+        subject = resolve_contract_subject(
+            graph,
+            procedure_store,
+            entity_type=contract.entity_type,
+            entity_id=contract.entity_id,
+        )
         items.append(
             ContractListItem(
                 contract=contract,
@@ -1185,21 +1294,26 @@ def _build_list_items(
                 latest_resolution=resolution,
                 latest_disposition=disposition,
                 expired=contract.declaration.expires_at <= now,
-                subject_present=subject is not None,
+                subject_present=subject.present,
                 subject_content_drifted=(
-                    subject is not None
-                    and _entity_digest(subject) != contract.subject_content_digest
+                    subject.present and subject.content_digest != contract.subject_content_digest
                 ),
             )
         )
     return items
 
 
-def _subject_is_live(graph: EntityGraph, contract: ResolutionContract) -> bool:
-    subject = graph.get_entity(contract.entity_type, contract.entity_id)
-    if subject is None:
-        return False
-    return bool(entity_matches_query_state(subject.metadata, "live"))
+def _subject_is_live(
+    graph: EntityGraph,
+    procedure_store: ProcedureStoreProtocol,
+    contract: ResolutionContract,
+) -> bool:
+    return resolve_contract_subject(
+        graph,
+        procedure_store,
+        entity_type=contract.entity_type,
+        entity_id=contract.entity_id,
+    ).live
 
 
 def _entity_digest(entity: EntityInstance) -> str:
@@ -1233,12 +1347,30 @@ def _refuse(builder: ReceiptBuilder, reason: str) -> NoReturn:
     raise ConfigError(reason)
 
 
+def _record_reserved_subject_refusal(
+    builder: ReceiptBuilder,
+    error: (
+        ReservedSubjectError
+        | RetiredReservedKindError
+        | UnknownReservedSubjectError
+        | MalformedReservedSubjectError
+    ),
+) -> NoReturn:
+    """Mirror the typed error code into the mutation-refusal receipt."""
+    builder.record_validation(
+        passed=False,
+        detail={"reason": str(error), "reason_code": error.error_code},
+    )
+    raise error
+
+
 def parse_measurement(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Normalize a caller-supplied measurement payload for the service."""
     return cast(dict[str, Any], dict(payload))
 
 
 __all__ = [
+    "_open_procedure_measurement_contract",
     "parse_measurement",
     "service_dispose_resolution",
     "service_list_resolution_contracts",

@@ -7,11 +7,13 @@ import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any, Literal, NoReturn
 
 from cruxible_core.config.schema import ContractSchema, CoreConfig, WorkflowStepSchema
 from cruxible_core.errors import (
     ConfigError,
+    ContractGradeRefusedError,
     CoreError,
     PermissionDeniedError,
     ProcedureBudgetExceededError,
@@ -47,6 +49,7 @@ from cruxible_core.procedure.types import (
     MAX_PROCEDURE_ENUMERATED_PATHS,
     MAX_PROCEDURE_EVIDENCE_BYTES,
     PROCEDURE_EVIDENCE_HEAD_BYTES,
+    LinkedOutcomeSummary,
     ProcedureAuthoringWarning,
     ProcedureBudgetSpent,
     ProcedureContractFieldSchema,
@@ -58,17 +61,23 @@ from cruxible_core.procedure.types import (
     ProcedureGuardStepSchema,
     ProcedurePathEnumeration,
     ProcedurePrecondition,
+    ProcedureReading,
+    ProcedureReadingGrade,
+    ProcedureReadingVerdict,
     ProcedureReadRecord,
     ProcedureRecord,
     ProcedureRefusalReason,
     ProcedureRepeatStepSchema,
     ProcedureRun,
+    ProcedureRunFiredNode,
     ProcedureRunStatus,
     ProcedureRunVerdict,
     ProcedureStatus,
+    ProcedureSubjectGrain,
     ProcedureTier,
     ProcedureTrackRecord,
     ProcedureTransitionResult,
+    SituationShape,
     compute_procedure_definition_digest,
     unwrap_procedure_step,
 )
@@ -79,8 +88,11 @@ from cruxible_core.runtime.permissions import PermissionMode, get_current_mode
 from cruxible_core.service.gates import entity_matches_property_equality_condition
 from cruxible_core.service.groups import service_propose_group
 from cruxible_core.service.mutation_receipts import mutation_receipt
+from cruxible_core.service.resolution_contracts import (
+    _open_procedure_measurement_contract,
+)
 from cruxible_core.service.types import ListResult, list_truncated
-from cruxible_core.temporal import format_datetime, utc_now
+from cruxible_core.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_core.workflow.compiler import (
     compile_plan_definition,
     compute_lock_config_digest,
@@ -97,6 +109,7 @@ from cruxible_core.workflow.contracts import (
 )
 from cruxible_core.workflow.execution_context import ProcedureExecutionBudget
 from cruxible_core.workflow.executor import (
+    FAILED_PROCEDURE_FIRED_NODES_ATTR,
     FAILED_WORKFLOW_RECEIPT_ATTR,
     _validate_procedure_output_contract,
     execute_procedure_plan,
@@ -203,6 +216,16 @@ def validate_procedure_definition_against_config(
             f"Procedure '{definition.name}' precondition references unknown entity type "
             f"'{precondition_entity_type}'"
         )
+    for measurement in definition.measurements or ():
+        shape = measurement.situation_shape
+        if shape is None or shape.entity_types is None:
+            continue
+        unknown = sorted(set(shape.entity_types) - set(config.entity_types))
+        if unknown:
+            raise ConfigError(
+                f"Procedure '{definition.name}' measurement '{measurement.name}' "
+                f"situation_shape references unknown entity types: {unknown}"
+            )
 
     effective_tier: ProcedureTier = "governed_write"
     # Which provider forced the floor. Without it the tier refusal names a tier
@@ -946,9 +969,20 @@ def service_get_procedure(
         needs_backfill = procedure.status == "live" and not store.list_node_digests(procedure_id)
     finally:
         store.close()
+    reading_store = instance.get_procedure_reading_store()
+    try:
+        linked_outcomes = reading_store.get_linked_outcome_summaries([procedure_id]).get(
+            procedure_id
+        )
+    finally:
+        reading_store.close()
     if needs_backfill:
         _backfill_node_digests(instance, procedure)
-    return _procedure_read_record(procedure, track_records.get(procedure_id))
+    return _procedure_read_record(
+        procedure,
+        track_records.get(procedure_id),
+        linked_outcomes=linked_outcomes,
+    )
 
 
 def _backfill_node_digests(instance: InstanceProtocol, procedure: ProcedureRecord) -> None:
@@ -1064,10 +1098,18 @@ def service_list_procedures(
             offset=offset,
         )
         track_records = store.get_run_track_records([procedure.procedure_id for procedure in items])
+        reading_store = instance.get_procedure_reading_store()
+        try:
+            linked_outcomes = reading_store.get_linked_outcome_summaries(
+                [procedure.procedure_id for procedure in items]
+            )
+        finally:
+            reading_store.close()
         read_items = [
             _procedure_read_record(
                 procedure,
                 track_records.get(procedure.procedure_id),
+                linked_outcomes=linked_outcomes.get(procedure.procedure_id),
             )
             for procedure in items
         ]
@@ -1087,6 +1129,8 @@ def service_list_procedures(
 def _procedure_read_record(
     procedure: ProcedureRecord,
     track_record: ProcedureTrackRecord | None,
+    *,
+    linked_outcomes: LinkedOutcomeSummary | None = None,
 ) -> ProcedureReadRecord:
     """Widen a stored record to its read shape, revalidating the whole thing.
 
@@ -1095,10 +1139,311 @@ def _procedure_read_record(
     field added to one and not the other must fail here rather than silently
     produce a half-populated read payload.
     """
+    summary = track_record or ProcedureTrackRecord()
+    if linked_outcomes is not None:
+        summary = summary.model_copy(update={"linked_outcomes": linked_outcomes})
     return ProcedureReadRecord(
         **dict(procedure),
-        track_record=track_record or ProcedureTrackRecord(),
+        track_record=summary,
     )
+
+
+def service_record_reading(
+    instance: InstanceProtocol,
+    procedure_id: str,
+    *,
+    subject_grain: ProcedureSubjectGrain,
+    grade: ProcedureReadingGrade,
+    verdict: ProcedureReadingVerdict,
+    observed_at: datetime,
+    actor_context: GovernedActorContext | None,
+    node_id: str | None = None,
+    from_node_id: str | None = None,
+    arm_label: Literal["on_true", "on_false"] | None = None,
+    measurement_name: str | None = None,
+    contract_id: str | None = None,
+    resolution_id: str | None = None,
+    value: Any | None = None,
+    run_id: str | None = None,
+    episode_ref: str | None = None,
+    situation_shape: Mapping[str, Any] | None = None,
+    evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = (),
+    note: str | None = None,
+    idempotency_key: str | None = None,
+) -> ProcedureReading:
+    """Record one explicit-grade outcome against accepted procedure coordinates."""
+    observed = ensure_utc(observed_at)
+    normalized_evidence = [normalize_evidence_ref(ref) for ref in evidence_refs]
+    shape = (
+        None if situation_shape is None else SituationShape.model_validate(dict(situation_shape))
+    )
+    try:
+        canonical_json(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"procedure reading value must be canonical JSON: {exc}") from exc
+
+    with mutation_receipt(
+        instance,
+        "procedure_reading",
+        {
+            "procedure_id": procedure_id,
+            "subject_grain": subject_grain,
+            "grade": grade,
+            "measurement_name": measurement_name,
+            "contract_id": contract_id,
+            "resolution_id": resolution_id,
+            "verdict": verdict,
+            "observed_at": format_datetime(observed),
+            "node_id": node_id,
+            "from_node_id": from_node_id,
+            "arm_label": arm_label,
+            "run_id": run_id,
+            "episode_ref": episode_ref,
+            "idempotency_key": idempotency_key,
+        },
+        actor_context=actor_context,
+    ) as ctx:
+        assert ctx.builder is not None
+        assert ctx.uow is not None
+        actor = _require_actor(
+            actor_context,
+            role="reading recorder",
+            builder=ctx.builder,
+            rationale="cannot attribute the outcome observation",
+        )
+        procedure = _get_procedure(ctx.uow.procedures, procedure_id, builder=ctx.builder)
+        if procedure.status not in {"live", "retired"}:
+            _refuse(
+                ctx.builder,
+                f"procedure reading requires an accepted definition; procedure "
+                f"'{procedure_id}' is '{procedure.status}'",
+            )
+
+        config = instance.load_config()
+        if shape is not None and shape.entity_types is not None:
+            unknown_types = sorted(set(shape.entity_types) - set(config.entity_types))
+            if unknown_types:
+                _refuse(
+                    ctx.builder,
+                    f"procedure reading situation_shape names unknown entity types: "
+                    f"{', '.join(unknown_types)}",
+                )
+
+        digests = compute_node_digests(procedure.definition)
+        definition_digest: str | None = None
+        node_local_digest: str | None = None
+        from_node_local_digest: str | None = None
+        arm_subtree_digest: str | None = None
+        if subject_grain == "procedure_unit":
+            if node_id is not None or from_node_id is not None or arm_label is not None:
+                _refuse(ctx.builder, "procedure_unit reading coordinates must omit node and arm")
+            definition_digest = procedure.definition_digest
+        elif subject_grain == "node":
+            if node_id is None or node_id not in digests:
+                _refuse(
+                    ctx.builder,
+                    f"node reading requires a node_id in procedure '{procedure_id}'",
+                )
+            if from_node_id is not None or arm_label is not None:
+                _refuse(
+                    ctx.builder,
+                    "node reading coordinates must omit from_node_id and arm_label",
+                )
+            node_local_digest = digests[node_id].local_digest
+        else:
+            if node_id is None or node_id not in digests:
+                _refuse(
+                    ctx.builder,
+                    f"arm reading requires a node_id in procedure '{procedure_id}'",
+                )
+            if from_node_id is None or from_node_id not in digests or arm_label is None:
+                _refuse(
+                    ctx.builder,
+                    "arm reading requires from_node_id and arm_label with authored nodes",
+                )
+            graph = build_procedure_graph(procedure.definition)
+            target = graph.edges.get(from_node_id, {}).get(arm_label)
+            if target != node_id:
+                _refuse(
+                    ctx.builder,
+                    f"arm reading {from_node_id}.{arm_label} targets '{target}', not '{node_id}'",
+                )
+            node_local_digest = digests[node_id].local_digest
+            from_node_local_digest = digests[from_node_id].local_digest
+            arm_subtree_digest = digests[node_id].subtree_digest
+
+        if run_id is not None:
+            run = ctx.uow.procedures.get_run(run_id)
+            if run is None or run.procedure_id != procedure_id:
+                _refuse(
+                    ctx.builder,
+                    f"procedure reading run_id '{run_id}' does not belong to '{procedure_id}'",
+                )
+
+        if grade == "contract":
+            _validate_contract_grade_reading(
+                ctx.uow,
+                procedure=procedure,
+                subject_grain=subject_grain,
+                node_id=node_id,
+                from_node_id=from_node_id,
+                arm_label=arm_label,
+                measurement_name=measurement_name,
+                contract_id=contract_id,
+                resolution_id=resolution_id,
+                verdict=verdict,
+                builder=ctx.builder,
+            )
+
+        reading = ProcedureReading(
+            subject_grain=subject_grain,
+            procedure_id=procedure_id,
+            definition_digest=definition_digest,
+            node_id=node_id,
+            node_local_digest=node_local_digest,
+            from_node_id=from_node_id,
+            from_node_local_digest=from_node_local_digest,
+            arm_label=arm_label,
+            arm_subtree_digest=arm_subtree_digest,
+            grade=grade,
+            measurement_name=measurement_name,
+            contract_id=contract_id,
+            resolution_id=resolution_id,
+            verdict=verdict,
+            value=value,
+            run_id=run_id,
+            episode_ref=episode_ref,
+            situation_shape=(
+                None if shape is None else shape.model_dump(mode="json", exclude_none=True)
+            ),
+            evidence_refs=normalized_evidence,
+            observed_at=observed,
+            actor_context=actor,
+            note=note,
+            idempotency_key=idempotency_key,
+            receipt_id=ctx.builder.receipt_id,
+        )
+        if idempotency_key is not None:
+            original: ProcedureReading | None = ctx.uow.procedure_readings.find_idempotent_reading(
+                idempotency_key=idempotency_key,
+                procedure_id=procedure_id,
+                actor_org_id=actor.org_id,
+                actor_id=actor.actor_id,
+            )
+            if original is not None:
+                excluded = {"reading_id", "recorded_at", "receipt_id"}
+                if original.model_dump(exclude=excluded) != reading.model_dump(exclude=excluded):
+                    _refuse(
+                        ctx.builder,
+                        "procedure reading idempotency replay diverges from the original request",
+                    )
+                return original
+
+        ctx.uow.procedure_readings.save_reading(reading)
+        ctx.builder.record_validation(
+            passed=True,
+            detail={
+                "reading_id": reading.reading_id,
+                "procedure_id": procedure_id,
+                "subject_grain": subject_grain,
+                "grade": grade,
+                "verdict": verdict,
+            },
+        )
+        ctx.set_result(reading)
+    return reading
+
+
+def _validate_contract_grade_reading(
+    uow: Any,
+    *,
+    procedure: ProcedureRecord,
+    subject_grain: ProcedureSubjectGrain,
+    node_id: str | None,
+    from_node_id: str | None,
+    arm_label: Literal["on_true", "on_false"] | None,
+    measurement_name: str | None,
+    contract_id: str | None,
+    resolution_id: str | None,
+    verdict: ProcedureReadingVerdict,
+    builder: ReceiptBuilder,
+) -> None:
+    """Enforce the declaration-and-activation Goodhart boundary."""
+    declarations = {
+        declaration.name: declaration for declaration in (procedure.definition.measurements or [])
+    }
+    declaration = declarations.get(measurement_name or "")
+    if declaration is None:
+        _refuse_contract_grade(
+            builder,
+            "contract-grade reading requires declared measurement "
+            f"'{measurement_name or '<missing>'}'",
+        )
+    assert declaration is not None
+    if declaration.granularity != subject_grain:
+        _refuse_contract_grade(
+            builder,
+            f"measurement '{declaration.name}' declares granularity "
+            f"'{declaration.granularity}', not '{subject_grain}'",
+        )
+    expected_coordinates = (declaration.node_id, declaration.from_node_id, declaration.arm_label)
+    actual_coordinates = (node_id, from_node_id, arm_label)
+    if expected_coordinates != actual_coordinates:
+        _refuse_contract_grade(
+            builder,
+            f"measurement '{declaration.name}' requires node/from/arm coordinates "
+            f"{expected_coordinates}, not {actual_coordinates}",
+        )
+    if contract_id is None:
+        _refuse_contract_grade(
+            builder,
+            f"measurement '{declaration.name}' requires its activated contract_id",
+        )
+    contract = uow.resolution_contracts.get_contract(contract_id)
+    expected_key = f"procedure-measurement:{procedure.procedure_id}:{declaration.name}"
+    if (
+        contract is None
+        or contract.entity_type != "cruxible.Procedure"
+        or contract.entity_id != procedure.procedure_id
+        or contract.subject_content_digest != procedure.definition_digest
+        or contract.idempotency_key != expected_key
+    ):
+        _refuse_contract_grade(
+            builder,
+            f"contract_id '{contract_id}' is not the contract opened for measurement "
+            f"'{declaration.name}' by this procedure's acceptance",
+        )
+    assert contract is not None
+    activation = uow.resolution_contracts.get_activations([contract_id]).get(contract_id)
+    if (
+        activation is None
+        or activation.subject_content_digest != procedure.definition_digest
+        or activation.acceptance_receipt_id != contract.receipt_id
+    ):
+        _refuse_contract_grade(
+            builder,
+            f"contract_id '{contract_id}' was not activated by this procedure's acceptance",
+        )
+    if resolution_id is not None:
+        resolution = uow.resolution_contracts.get_resolution(resolution_id)
+        if (
+            resolution is None
+            or resolution.contract_id != contract_id
+            or resolution.verdict != verdict
+        ):
+            _refuse_contract_grade(
+                builder,
+                f"resolution_id '{resolution_id}' does not carry verdict '{verdict}' "
+                f"for contract '{contract_id}'",
+            )
+
+
+def _refuse_contract_grade(builder: ReceiptBuilder, reason: str) -> NoReturn:
+    builder.record_validation(
+        passed=False,
+        detail={"reason": reason, "reason_code": ContractGradeRefusedError.error_code},
+    )
+    raise ContractGradeRefusedError(reason)
 
 
 def service_list_procedure_runs(
@@ -1283,6 +1628,7 @@ def service_run_procedure(
             executed_lock_digest=executed_lock_digest,
             error=refusal_error,
             refusal_reason=preflight_reason,
+            node_pins=stored_node_pins,
         )
         _tag_procedure_exception(refusal_error, finalized_run, receipt)
         if refusal_error is exc:
@@ -1392,6 +1738,7 @@ def service_run_procedure(
                 executed_lock_digest=plan.lock_digest,
                 error=refusal,
                 refusal_reason=refusal_reason,
+                node_pins=stored_node_pins,
             )
 
     if refusal is not None:
@@ -1419,6 +1766,7 @@ def service_run_procedure(
         original_exc = exc
         failure: BaseException
         failed_receipt = getattr(original_exc, FAILED_WORKFLOW_RECEIPT_ATTR, None)
+        failed_fired_nodes = getattr(original_exc, FAILED_PROCEDURE_FIRED_NODES_ATTR, [])
         if not isinstance(failed_receipt, Receipt):
             if isinstance(original_exc, CoreError):
                 execution_error = original_exc
@@ -1454,6 +1802,7 @@ def service_run_procedure(
             executed_lock_digest=plan.lock_digest,
             error=failure,
             node_pins=stored_node_pins,
+            fired_nodes=failed_fired_nodes,
         )
         _tag_procedure_exception(failure, finalized_run, receipt)
         if failure is original_exc:
@@ -1492,6 +1841,7 @@ def service_run_procedure(
                 executed_lock_digest=plan.lock_digest,
                 error=None,
                 node_pins=stored_node_pins,
+                fired_nodes=execution.fired_nodes,
             )
             # Evidence rows commit atomically with the run finalize: a crash here
             # rolls back both, leaving the run 'started' (crash-visible) instead of
@@ -1538,6 +1888,7 @@ def service_run_procedure(
             executed_lock_digest=plan.lock_digest,
             error=exc,
             node_pins=stored_node_pins,
+            fired_nodes=execution.fired_nodes,
         )
         _tag_procedure_exception(exc, finalized_run, receipt)
         raise
@@ -1850,6 +2201,7 @@ def _finalize_procedure_invocation(
     executed_lock_digest: str | None,
     error: BaseException | None,
     refusal_reason: ProcedureRefusalReason | None = None,
+    node_pins: Sequence[AcceptanceNodePin] = (),
 ) -> tuple[Receipt, ProcedureRun]:
     with instance.write_transaction() as uow:
         return _finalize_procedure_invocation_in_uow(
@@ -1866,6 +2218,7 @@ def _finalize_procedure_invocation(
             executed_lock_digest=executed_lock_digest,
             error=error,
             refusal_reason=refusal_reason,
+            node_pins=node_pins,
         )
 
 
@@ -1884,6 +2237,7 @@ def _finalize_procedure_invocation_in_uow(
     executed_lock_digest: str | None,
     error: BaseException | None,
     refusal_reason: ProcedureRefusalReason | None = None,
+    node_pins: Sequence[AcceptanceNodePin] = (),
 ) -> tuple[Receipt, ProcedureRun]:
     results = [{"output": None, "error": str(error)}] if error is not None else [{"output": None}]
     builder.record_results(results)
@@ -1902,6 +2256,7 @@ def _finalize_procedure_invocation_in_uow(
         executed_lock_digest=executed_lock_digest,
         error=error,
         refusal_reason=refusal_reason,
+        node_pins=node_pins,
     )
 
 
@@ -1921,6 +2276,7 @@ def _persist_built_procedure_receipt(
     error: BaseException | None,
     refusal_reason: ProcedureRefusalReason | None = None,
     node_pins: Sequence[AcceptanceNodePin] = (),
+    fired_nodes: Sequence[ProcedureRunFiredNode] = (),
 ) -> tuple[Receipt, ProcedureRun]:
     with instance.write_transaction() as uow:
         return _persist_built_procedure_receipt_in_uow(
@@ -1938,6 +2294,7 @@ def _persist_built_procedure_receipt(
             error=error,
             refusal_reason=refusal_reason,
             node_pins=node_pins,
+            fired_nodes=fired_nodes,
         )
 
 
@@ -1957,6 +2314,7 @@ def _persist_built_procedure_receipt_in_uow(
     error: BaseException | None,
     refusal_reason: ProcedureRefusalReason | None = None,
     node_pins: Sequence[AcceptanceNodePin] = (),
+    fired_nodes: Sequence[ProcedureRunFiredNode] = (),
 ) -> tuple[Receipt, ProcedureRun]:
     budget_spent = _procedure_budget_spent(budget)
     root_detail = receipt.nodes[0].detail
@@ -2006,6 +2364,7 @@ def _persist_built_procedure_receipt_in_uow(
         root_detail["refusal_reason"] = refusal_reason
     receipt.committed = True
     uow.receipts.save_receipt(receipt)
+    uow.procedure_readings.save_fired_nodes(fired_nodes)
     finalized_at = utc_now()
     updated = uow.procedures.finalize_run(
         started_run.run_id,
@@ -2165,6 +2524,17 @@ def _transition_pending_procedure(
                 procedure_id,
                 list(compute_node_digests(procedure.definition).values()),
             )
+            config = instance.load_config()
+            for measurement in procedure.definition.measurements or ():
+                _open_procedure_measurement_contract(
+                    ctx.uow,
+                    config=config,
+                    procedure=procedure,
+                    measurement=measurement,
+                    accepted_at=now,
+                    actor_context=resolving_actor,
+                    builder=ctx.builder,
+                )
 
         if action == "accept" and procedure.supersedes_procedure_id is not None:
             _retire_superseded_procedure(
@@ -2189,6 +2559,7 @@ def _transition_pending_procedure(
         }
         if action == "accept":
             detail["acceptance_node_pins"] = len(node_pins)
+            detail["measurement_contracts_opened"] = len(procedure.definition.measurements or ())
         if format_warnings:
             # Recorded, not returned: acceptance has no authoring channel, and a
             # warning the reviewer acted under belongs on the receipt.

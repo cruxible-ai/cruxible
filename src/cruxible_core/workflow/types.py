@@ -39,7 +39,7 @@ from cruxible_core.group.types import (
 )
 from cruxible_core.procedure.guards import GuardSpec
 from cruxible_core.procedure.proposal import ProcedureProposeGroupSpec
-from cruxible_core.procedure.types import ProjectSpec
+from cruxible_core.procedure.types import ProcedureRunFiredNode, ProjectSpec
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.temporal import utc_now
@@ -214,6 +214,7 @@ class WorkflowExecutionResult(BaseModel):
     alias_step_ids: dict[str, str] = Field(default_factory=dict)
     step_trace_ids: dict[str, list[str]] = Field(default_factory=dict)
     procedure_group_proposals: list[dict[str, Any]] = Field(default_factory=list)
+    fired_nodes: list[ProcedureRunFiredNode] = Field(default_factory=list)
 
     @property
     def canonical(self) -> bool:

@@ -38,8 +38,11 @@ from cruxible_core.kit_defaults import get_default_base_kit
 from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.procedure.types import (
     ProcedureDefinition,
+    ProcedureReadingGrade,
+    ProcedureReadingVerdict,
     ProcedureRecord,
     ProcedureStatus,
+    ProcedureSubjectGrain,
     ProcedureTransitionResult,
 )
 from cruxible_core.query.continuation import (
@@ -155,6 +158,7 @@ from cruxible_core.service import (
     service_pull_state_preview,
     service_query_inline_surface,
     service_query_surface,
+    service_record_reading,
     service_register_source_artifact,
     service_reject_procedure,
     service_reload_config,
@@ -4443,6 +4447,61 @@ def run_procedure(
         "evidence_refs": [ref.model_dump(mode="json") for ref in result.evidence_refs],
         "dry_run": result.dry_run,
     }
+
+
+def record_procedure_reading(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    subject_grain: ProcedureSubjectGrain,
+    grade: ProcedureReadingGrade,
+    verdict: ProcedureReadingVerdict,
+    observed_at: str | datetime,
+    node_id: str | None = None,
+    from_node_id: str | None = None,
+    arm_label: Literal["on_true", "on_false"] | None = None,
+    measurement_name: str | None = None,
+    contract_id: str | None = None,
+    resolution_id: str | None = None,
+    value: Any | None = None,
+    run_id: str | None = None,
+    episode_ref: str | None = None,
+    situation_shape: dict[str, Any] | None = None,
+    evidence_refs: Sequence[contracts.EvidenceRef | dict[str, Any]] = (),
+    note: str | None = None,
+    idempotency_key: str | None = None,
+    actor_context: Any | None = None,
+) -> dict[str, Any]:
+    """Record an explicit contract- or attestation-grade procedure outcome."""
+    check_permission("cruxible_record_procedure_reading", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
+    instance = get_manager().get(instance_id)
+    reading = service_record_reading(
+        instance,
+        procedure_id,
+        subject_grain=subject_grain,
+        grade=grade,
+        verdict=verdict,
+        observed_at=_require_datetime(observed_at, field="observed_at"),
+        actor_context=actor,
+        node_id=node_id,
+        from_node_id=from_node_id,
+        arm_label=arm_label,
+        measurement_name=measurement_name,
+        contract_id=contract_id,
+        resolution_id=resolution_id,
+        value=value,
+        run_id=run_id,
+        episode_ref=episode_ref,
+        situation_shape=situation_shape,
+        evidence_refs=[
+            ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
+            for ref in evidence_refs
+        ],
+        note=note,
+        idempotency_key=idempotency_key,
+    )
+    return reading.model_dump(mode="json")
 
 
 def list_procedure_runs(

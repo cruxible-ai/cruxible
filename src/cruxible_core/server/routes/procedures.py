@@ -11,6 +11,7 @@ from cruxible_core.procedure.types import ProcedureStatus
 from cruxible_core.runtime import api
 from cruxible_core.server.request_models import (
     ProposeProcedureRequest,
+    RecordProcedureReadingRequest,
     ResolveProcedureRequest,
     RetireProcedureRequest,
     RunProcedureRequest,
@@ -134,6 +135,23 @@ async def run_procedure(
         input_payload=req.input_payload,
         actor_context=req.actor_context,
         dry_run=req.dry_run,
+    )
+
+
+@router.post(
+    "/{instance_id}/procedures/{procedure_id}/readings",
+    response_model=dict[str, Any],
+    include_in_schema=False,
+)
+async def record_procedure_reading(
+    instance_id: str,
+    procedure_id: str,
+    req: RecordProcedureReadingRequest,
+) -> dict[str, Any]:
+    return api.record_procedure_reading(
+        resolve_server_instance_id(instance_id),
+        procedure_id,
+        **req.model_dump(mode="python"),
     )
 
 

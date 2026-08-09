@@ -3,6 +3,9 @@
 from cruxible_core.procedure.reading_store import ProcedureReadingStore
 from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.procedure.types import (
+    CalibrationTrigger,
+    LinkedOutcomeGradeSummary,
+    LinkedOutcomeSummary,
     ProcedureBudget,
     ProcedureContractFieldSchema,
     ProcedureContractSchema,
@@ -10,18 +13,24 @@ from cruxible_core.procedure.types import (
     ProcedureEvidenceArtifact,
     ProcedureExecutionResult,
     ProcedureGetResult,
+    ProcedureMeasurementDeclaration,
     ProcedurePrecondition,
     ProcedureReading,
     ProcedureRecord,
     ProcedureRepeatSpec,
     ProcedureRepeatStepSchema,
     ProcedureRun,
+    ProcedureRunFiredNode,
     ProcedureStaticExpansion,
     ProcedureTransitionResult,
+    SituationShape,
     compute_procedure_definition_digest,
 )
 
 __all__ = [
+    "CalibrationTrigger",
+    "LinkedOutcomeGradeSummary",
+    "LinkedOutcomeSummary",
     "ProcedureBudget",
     "ProcedureContractFieldSchema",
     "ProcedureContractSchema",
@@ -29,6 +38,7 @@ __all__ = [
     "ProcedureEvidenceArtifact",
     "ProcedureExecutionResult",
     "ProcedureGetResult",
+    "ProcedureMeasurementDeclaration",
     "ProcedurePrecondition",
     "ProcedureRecord",
     "ProcedureReading",
@@ -36,8 +46,10 @@ __all__ = [
     "ProcedureRepeatSpec",
     "ProcedureRepeatStepSchema",
     "ProcedureRun",
+    "ProcedureRunFiredNode",
     "ProcedureStaticExpansion",
     "ProcedureStore",
     "ProcedureTransitionResult",
+    "SituationShape",
     "compute_procedure_definition_digest",
 ]

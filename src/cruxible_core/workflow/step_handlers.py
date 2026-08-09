@@ -256,6 +256,19 @@ def execute_repeat_handler(
             ):
                 for nested_step in compiled_step.repeat_steps:
                     context.check_procedure_wall_clock()
+                    nested_node_id = f"{compiled_step.step_id}/{nested_step.step_id}"
+                    if nested_step is compiled_step.repeat_steps[0]:
+                        nested_from_node_id = compiled_step.step_id
+                    else:
+                        nested_index = compiled_step.repeat_steps.index(nested_step)
+                        previous = compiled_step.repeat_steps[nested_index - 1]
+                        nested_from_node_id = f"{compiled_step.step_id}/{previous.step_id}"
+                    context.record_fired_node(
+                        nested_node_id,
+                        from_node_id=nested_from_node_id,
+                        arm_label="next",
+                        attempt_count=attempt_count,
+                    )
                     PROCEDURE_STEP_HANDLER_REGISTRY.execute(context, nested_step)
         except Exception:
             context.receipt_builder.update_node_detail(
@@ -1240,12 +1253,23 @@ def execute_guard_handler(
     context.guard_outcomes[compiled_step.step_id] = arm
     target = compiled_step.on_true_step_id if passed else compiled_step.on_false_step_id
     detail: dict[str, Any] = {
+        "kind": "branch",
+        "node_id": compiled_step.step_id,
         "guard": "guard",
         "arm": arm,
+        "taken": arm,
         "target": target,
         "comparisons": operand_trace,
         "message": compiled_step.guard_message,
     }
+    if len(operand_trace) == 1:
+        detail.update(
+            {
+                "op": operand_trace[0]["op"],
+                "left": operand_trace[0]["left"],
+                "right": operand_trace[0]["right"],
+            }
+        )
     step_node = context.receipt_builder.record_plan_step(
         compiled_step.step_id,
         "guard",

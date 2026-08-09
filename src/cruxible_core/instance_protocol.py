@@ -40,12 +40,14 @@ if TYPE_CHECKING:
         OwnershipCollision,
     )
     from cruxible_core.procedure.types import (
+        LinkedOutcomeSummary,
         ProcedureBudgetSpent,
         ProcedureEvidenceArtifact,
         ProcedureReading,
         ProcedureRecord,
         ProcedureRefusalReason,
         ProcedureRun,
+        ProcedureRunFiredNode,
         ProcedureRunVerdict,
         ProcedureStatus,
         ProcedureTrackRecord,
@@ -541,6 +543,15 @@ class ProcedureReadingStoreProtocol(ABC):
         limit: int = 100,
         offset: int = 0,
     ) -> list[ProcedureReading]: ...
+    @abstractmethod
+    def save_fired_nodes(self, fired_nodes: Sequence[ProcedureRunFiredNode]) -> None: ...
+    @abstractmethod
+    def list_run_fired_nodes(self, run_id: str) -> list[ProcedureRunFiredNode]: ...
+    @abstractmethod
+    def get_linked_outcome_summaries(
+        self,
+        procedure_ids: Sequence[str],
+    ) -> dict[str, LinkedOutcomeSummary]: ...
     @abstractmethod
     def close(self) -> None: ...
 

@@ -23,6 +23,7 @@ from cruxible_core.procedure.types import (
     ProcedureDefinition,
     ProcedureExecutionResult,
     ProcedureGetResult,
+    ProcedureReading,
     ProcedureReadRecord,
     ProcedureRecord,
     ProcedureRun,
@@ -36,11 +37,13 @@ from cruxible_core.service import (
     service_list_procedure_runs,
     service_list_procedures,
     service_propose_procedure,
+    service_record_reading,
     service_reject_procedure,
     service_retire_procedure,
     service_run_procedure,
     service_withdraw_procedure,
 )
+from cruxible_core.temporal import parse_datetime
 
 
 @click.group("procedure")
@@ -92,6 +95,15 @@ def _parse_run_input(raw: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise click.BadParameter("--input must be a JSON object")
     return cast(dict[str, Any], payload)
+
+
+def _parse_json_value(raw: str | None, *, option: str) -> Any | None:
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter(f"{option} must be valid JSON") from exc
 
 
 def _procedure_from_result(result: Any) -> ProcedureRecord:
@@ -595,6 +607,121 @@ def procedure_run(
     _emit_json(payload.get("output"), sort_keys=True)
 
 
+@procedure_group.command("record-reading")
+@click.argument("procedure_id")
+@click.option(
+    "--subject-grain",
+    required=True,
+    type=click.Choice(["procedure_unit", "node", "arm"]),
+)
+@click.option("--grade", required=True, type=click.Choice(["contract", "attestation"]))
+@click.option(
+    "--verdict",
+    required=True,
+    type=click.Choice(["satisfied", "contradicted", "indeterminate"]),
+)
+@click.option("--observed-at", required=True, help="Observation time in ISO-8601 format.")
+@click.option("--node-id")
+@click.option("--from-node-id")
+@click.option("--arm-label", type=click.Choice(["on_true", "on_false"]))
+@click.option("--measurement-name")
+@click.option("--contract-id")
+@click.option("--resolution-id")
+@click.option("--value", "value_json", help="Observed value as JSON.")
+@click.option("--run-id")
+@click.option("--episode-ref")
+@click.option("--situation-shape", "situation_shape_json", help="Situation shape as JSON.")
+@click.option("--evidence-ref", multiple=True, help="EvidenceRef JSON; repeatable.")
+@click.option("--note")
+@click.option("--idempotency-key")
+@json_option
+@handle_errors
+def procedure_record_reading(
+    procedure_id: str,
+    subject_grain: str,
+    grade: str,
+    verdict: str,
+    observed_at: str,
+    node_id: str | None,
+    from_node_id: str | None,
+    arm_label: str | None,
+    measurement_name: str | None,
+    contract_id: str | None,
+    resolution_id: str | None,
+    value_json: str | None,
+    run_id: str | None,
+    episode_ref: str | None,
+    situation_shape_json: str | None,
+    evidence_ref: tuple[str, ...],
+    note: str | None,
+    idempotency_key: str | None,
+    output_json: bool,
+) -> None:
+    """Record one outcome reading without changing its requested evidence grade."""
+    parsed_observed_at = parse_datetime(observed_at)
+    if parsed_observed_at is None:
+        raise click.BadParameter("--observed-at is required")
+    situation_shape = _parse_json_value(situation_shape_json, option="--situation-shape")
+    if situation_shape is not None and not isinstance(situation_shape, dict):
+        raise click.BadParameter("--situation-shape must be a JSON object")
+    evidence_refs = _parse_evidence_refs(evidence_ref)
+    value = _parse_json_value(value_json, option="--value")
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.record_procedure_reading(
+            instance_id,
+            procedure_id,
+            subject_grain=subject_grain,
+            grade=grade,
+            verdict=verdict,
+            observed_at=observed_at,
+            node_id=node_id,
+            from_node_id=from_node_id,
+            arm_label=arm_label,
+            measurement_name=measurement_name,
+            contract_id=contract_id,
+            resolution_id=resolution_id,
+            value=value,
+            run_id=run_id,
+            episode_ref=episode_ref,
+            situation_shape=situation_shape,
+            evidence_refs=[ref.model_dump(mode="python") for ref in evidence_refs],
+            note=note,
+            idempotency_key=idempotency_key,
+        ),
+        lambda instance: service_record_reading(
+            instance,
+            procedure_id,
+            subject_grain=subject_grain,  # type: ignore[arg-type]
+            grade=grade,  # type: ignore[arg-type]
+            verdict=verdict,  # type: ignore[arg-type]
+            observed_at=parsed_observed_at,
+            actor_context=None,
+            node_id=node_id,
+            from_node_id=from_node_id,
+            arm_label=arm_label,  # type: ignore[arg-type]
+            measurement_name=measurement_name,
+            contract_id=contract_id,
+            resolution_id=resolution_id,
+            value=value,
+            run_id=run_id,
+            episode_ref=episode_ref,
+            situation_shape=situation_shape,
+            evidence_refs=[ref.model_dump(mode="python") for ref in evidence_refs],
+            note=note,
+            idempotency_key=idempotency_key,
+        ),
+        allow_local=False,
+        command_name="procedure record-reading",
+    )
+    payload = result.model_dump(mode="json") if isinstance(result, ProcedureReading) else result
+    if output_json:
+        _emit_json(payload)
+        return
+    click.echo(f"Procedure reading {payload['reading_id']} recorded as {payload['grade']} grade.")
+    if payload.get("receipt_id"):
+        click.echo(f"  Receipt: {payload['receipt_id']}")
+
+
 @procedure_group.command("runs")
 @click.argument("procedure_id")
 @click.option("--limit", default=100, type=click.IntRange(min=1), help="Max runs to show.")
@@ -650,6 +777,7 @@ __all__ = [
     "procedure_group",
     "procedure_list",
     "procedure_propose",
+    "procedure_record_reading",
     "procedure_resolve",
     "procedure_retire",
     "procedure_run",

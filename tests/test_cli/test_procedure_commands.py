@@ -351,3 +351,65 @@ def test_procedure_withdraw_forwards_version_and_optional_reason(
     assert f"Procedure {procedure_id} withdrawn." in result.output
     assert "Version: 2" in result.output
     assert "Receipt: RCP-withdraw" in result.output
+
+
+def test_procedure_record_reading_forwards_explicit_grade_and_arm(
+    runner: CliRunner,
+    procedure_cli_instance: tuple[CruxibleInstance, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, procedure_id = procedure_cli_instance
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def record_procedure_reading(
+            self,
+            instance_id: str,
+            target_id: str,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            captured.update({"instance_id": instance_id, "procedure_id": target_id, **kwargs})
+            return {
+                "reading_id": "PRD-cli-reading",
+                "grade": kwargs["grade"],
+                "receipt_id": "RCP-cli-reading",
+            }
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_procedure",
+            "procedure",
+            "record-reading",
+            procedure_id,
+            "--subject-grain",
+            "arm",
+            "--grade",
+            "contract",
+            "--verdict",
+            "satisfied",
+            "--observed-at",
+            "2026-07-22T12:00:00Z",
+            "--node-id",
+            "tail",
+            "--from-node-id",
+            "gate",
+            "--arm-label",
+            "on_true",
+            "--measurement-name",
+            "true_arm",
+            "--contract-id",
+            "RCT-arm",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["instance_id"] == "inst_procedure"
+    assert captured["procedure_id"] == procedure_id
+    assert captured["grade"] == "contract"
+    assert captured["arm_label"] == "on_true"
+    assert "Procedure reading PRD-cli-reading recorded as contract grade." in result.output

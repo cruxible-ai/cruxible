@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,12 @@ from cruxible_core.governance.actors import (
     load_actor_context,
 )
 from cruxible_core.instance_protocol import ProcedureReadingStoreProtocol
-from cruxible_core.procedure.types import ProcedureReading
+from cruxible_core.procedure.types import (
+    LinkedOutcomeGradeSummary,
+    LinkedOutcomeSummary,
+    ProcedureReading,
+    ProcedureRunFiredNode,
+)
 from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.temporal import format_datetime
 
@@ -83,6 +89,8 @@ CREATE INDEX IF NOT EXISTS idx_procedure_run_fired_nodes_local
 CREATE INDEX IF NOT EXISTS idx_procedure_run_fired_nodes_arm
     ON procedure_run_fired_nodes(from_node_local_digest, node_local_digest, run_id);
 """
+
+_MAX_READING_IDS_PER_STATEMENT = 500
 
 
 class ProcedureReadingStore(ProcedureReadingStoreProtocol):
@@ -189,6 +197,84 @@ class ProcedureReadingStore(ProcedureReadingStoreProtocol):
             (*params, limit, offset),
         ).fetchall()
         return [self._row_to_reading(row) for row in rows]
+
+    def save_fired_nodes(self, fired_nodes: Sequence[ProcedureRunFiredNode]) -> None:
+        """Insert an invocation's ordered fired-node facts without committing."""
+        self._conn.executemany(
+            "INSERT INTO procedure_run_fired_nodes "
+            "(run_id, sequence, node_id, node_local_digest, node_subtree_digest, "
+            "from_node_id, from_node_local_digest, arm_label, attempt_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    node.run_id,
+                    node.sequence,
+                    node.node_id,
+                    node.node_local_digest,
+                    node.node_subtree_digest,
+                    node.from_node_id,
+                    node.from_node_local_digest,
+                    node.arm_label,
+                    node.attempt_count,
+                )
+                for node in fired_nodes
+            ],
+        )
+
+    def list_run_fired_nodes(self, run_id: str) -> list[ProcedureRunFiredNode]:
+        """Load every fired node for a run in execution order."""
+        rows = self._conn.execute(
+            "SELECT * FROM procedure_run_fired_nodes WHERE run_id = ? ORDER BY sequence",
+            (run_id,),
+        ).fetchall()
+        return [
+            ProcedureRunFiredNode(
+                run_id=row["run_id"],
+                sequence=row["sequence"],
+                node_id=row["node_id"],
+                node_local_digest=row["node_local_digest"],
+                node_subtree_digest=row["node_subtree_digest"],
+                from_node_id=row["from_node_id"],
+                from_node_local_digest=row["from_node_local_digest"],
+                arm_label=row["arm_label"],
+                attempt_count=row["attempt_count"],
+            )
+            for row in rows
+        ]
+
+    def get_linked_outcome_summaries(
+        self,
+        procedure_ids: Sequence[str],
+    ) -> dict[str, LinkedOutcomeSummary]:
+        """Aggregate both grades with one grouped statement per id chunk."""
+        unique_ids = tuple(dict.fromkeys(procedure_ids))
+        summaries: dict[str, LinkedOutcomeSummary] = {}
+        for start in range(0, len(unique_ids), _MAX_READING_IDS_PER_STATEMENT):
+            chunk = unique_ids[start : start + _MAX_READING_IDS_PER_STATEMENT]
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT procedure_id, grade, COUNT(*) AS readings, "
+                "SUM(CASE WHEN verdict = 'satisfied' THEN 1 ELSE 0 END) AS satisfied, "
+                "SUM(CASE WHEN verdict = 'contradicted' THEN 1 ELSE 0 END) "
+                "AS contradicted, "
+                "SUM(CASE WHEN verdict = 'indeterminate' THEN 1 ELSE 0 END) "
+                "AS indeterminate "
+                f"FROM procedure_readings WHERE procedure_id IN ({placeholders}) "
+                "GROUP BY procedure_id, grade",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                procedure_id = str(row["procedure_id"])
+                grade_summary = LinkedOutcomeGradeSummary(
+                    readings=int(row["readings"]),
+                    satisfied=int(row["satisfied"]),
+                    contradicted=int(row["contradicted"]),
+                    indeterminate=int(row["indeterminate"]),
+                )
+                existing = summaries.get(procedure_id, LinkedOutcomeSummary())
+                field = "contract_grade" if row["grade"] == "contract" else "attestation_grade"
+                summaries[procedure_id] = existing.model_copy(update={field: grade_summary})
+        return summaries
 
     def close(self) -> None:
         if self._owns_connection:

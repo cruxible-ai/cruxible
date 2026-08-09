@@ -2040,6 +2040,77 @@ def handle_list_procedure_runs(
     )
 
 
+def handle_record_procedure_reading(
+    instance_id: str,
+    procedure_id: str,
+    *,
+    subject_grain: str,
+    grade: str,
+    verdict: str,
+    observed_at: str,
+    node_id: str | None = None,
+    from_node_id: str | None = None,
+    arm_label: str | None = None,
+    measurement_name: str | None = None,
+    contract_id: str | None = None,
+    resolution_id: str | None = None,
+    value: Any | None = None,
+    run_id: str | None = None,
+    episode_ref: str | None = None,
+    situation_shape: dict[str, Any] | None = None,
+    evidence_refs: list[contracts.EvidenceRef] | None = None,
+    note: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """Record one explicit-grade procedure outcome reading."""
+    return _dispatch_remote_or_local(
+        lambda client: client.record_procedure_reading(
+            instance_id,
+            procedure_id,
+            subject_grain=subject_grain,
+            grade=grade,
+            verdict=verdict,
+            observed_at=observed_at,
+            node_id=node_id,
+            from_node_id=from_node_id,
+            arm_label=arm_label,
+            measurement_name=measurement_name,
+            contract_id=contract_id,
+            resolution_id=resolution_id,
+            value=value,
+            run_id=run_id,
+            episode_ref=episode_ref,
+            situation_shape=situation_shape,
+            evidence_refs=evidence_refs or [],
+            note=note,
+            idempotency_key=idempotency_key,
+        ),
+        lambda: api.record_procedure_reading(
+            instance_id,
+            procedure_id,
+            subject_grain=subject_grain,  # type: ignore[arg-type]
+            grade=grade,  # type: ignore[arg-type]
+            verdict=verdict,  # type: ignore[arg-type]
+            observed_at=observed_at,
+            node_id=node_id,
+            from_node_id=from_node_id,
+            arm_label=arm_label,  # type: ignore[arg-type]
+            measurement_name=measurement_name,
+            contract_id=contract_id,
+            resolution_id=resolution_id,
+            value=value,
+            run_id=run_id,
+            episode_ref=episode_ref,
+            situation_shape=situation_shape,
+            evidence_refs=evidence_refs or [],
+            note=note,
+            idempotency_key=idempotency_key,
+        ),
+        allow_local=False,
+        operation_name="cruxible_record_procedure_reading",
+    )
+
+
 def handle_attest(
     instance_id: str,
     *,

@@ -1403,6 +1403,51 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_record_procedure_reading(
+        instance_id: str,
+        procedure_id: str,
+        subject_grain: Literal["procedure_unit", "node", "arm"],
+        grade: Literal["contract", "attestation"],
+        verdict: Literal["satisfied", "contradicted", "indeterminate"],
+        observed_at: str,
+        node_id: str | None = None,
+        from_node_id: str | None = None,
+        arm_label: Literal["on_true", "on_false"] | None = None,
+        measurement_name: str | None = None,
+        contract_id: str | None = None,
+        resolution_id: str | None = None,
+        value: Any | None = None,
+        run_id: str | None = None,
+        episode_ref: str | None = None,
+        situation_shape: dict[str, Any] | None = None,
+        evidence_refs: list[contracts.EvidenceRef] | None = None,
+        note: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Record an explicit contract- or attestation-grade procedure outcome."""
+        return handlers.handle_record_procedure_reading(
+            instance_id,
+            procedure_id,
+            subject_grain=subject_grain,
+            grade=grade,
+            verdict=verdict,
+            observed_at=observed_at,
+            node_id=node_id,
+            from_node_id=from_node_id,
+            arm_label=arm_label,
+            measurement_name=measurement_name,
+            contract_id=contract_id,
+            resolution_id=resolution_id,
+            value=value,
+            run_id=run_id,
+            episode_ref=episode_ref,
+            situation_shape=situation_shape,
+            evidence_refs=evidence_refs,
+            note=note,
+            idempotency_key=idempotency_key,
+        )
+
+    @_tool
     def cruxible_attest(
         instance_id: str,
         relationship_type: str,

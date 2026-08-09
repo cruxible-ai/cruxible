@@ -1792,7 +1792,9 @@ a `track_record` block summarizing its run ledger: `runs`, the exhaustive
 verdict buckets `succeeded`, `failed`, `refused`, `budget_exceeded`, and
 `in_flight` (started but not yet finalized, so `runs` always equals their sum),
 `last_succeeded_at`, the most frequent `top_refusal_reason`, and
-`linked_outcomes` (reserved, always null). `top_refusal_reason` is null when a
+`linked_outcomes`, which keeps `contract_grade` and `attestation_grade`
+verdict buckets separate and never reports a combined total. It is null until
+the procedure has a reading. `top_refusal_reason` is null when a
 procedure has never been refused and for refusals recorded before the reason
 was tracked. These buckets are read state, so running a procedure advances
 `read_revision` (once at start, once at finalization, refusals included) and a
@@ -1896,6 +1898,40 @@ withdrawing another actor's pending proposal is refused below `GRAPH_WRITE`.
 **Returns:** Procedure, run, output, receipt, and step-output fields.
 
 **Side Effects:** Writes a crash-safe run record, provider traces where applicable, and a receipt.
+
+## cruxible_record_procedure_reading
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Use when you need to record an explicit contract- or attestation-grade outcome reading for an accepted procedure. Contract grade is refused unless its measurement, grain, authored coordinates, and acceptance-opened contract all match; retry as attestation grade only when that is the intended evidentiary claim.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID. |
+| `procedure_id` | yes | string | Accepted procedure receiving the reading. |
+| `subject_grain` | yes | string | `procedure_unit`, `node`, or `arm`. |
+| `grade` | yes | string | Explicitly `contract` or `attestation`; never silently downgraded. |
+| `verdict` | yes | string | `satisfied`, `contradicted`, or `indeterminate`. |
+| `observed_at` | yes | string | ISO-8601 observation time. |
+| `node_id` | no | string or null | Required for node and arm grain. |
+| `from_node_id` | no | string or null | Required for arm grain. |
+| `arm_label` | no | string or null | `on_true` or `on_false`; required for arm grain. |
+| `measurement_name` | no | string or null | Required for contract grade and must name a declaration. |
+| `contract_id` | no | string or null | Required for contract grade and must be acceptance-opened. |
+| `resolution_id` | no | string or null | Optional matching resolution provenance. |
+| `value` | no | any JSON | Optional observed value. |
+| `run_id` | no | string or null | Optional invocation provenance. |
+| `episode_ref` | no | string or null | Optional opaque episode pointer. |
+| `situation_shape` | no | object or null | Optional task category, tags, and configured entity types. |
+| `evidence_refs` | no | array or null | Evidence references supporting the reading. |
+| `note` | no | string or null | Optional explanation. |
+| `idempotency_key` | no | string or null | Actor-scoped replay key. |
+
+**Returns:** The immutable reading, its derived subject digests, and receipt ID.
+
+**Side Effects:** Appends one reading and a receipt. Contract-grade mismatches raise a typed refusal and append no reading.
 
 ## cruxible_list_procedure_runs
 
