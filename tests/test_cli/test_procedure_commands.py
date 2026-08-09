@@ -10,8 +10,15 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
+from cruxible_client import contracts
+from cruxible_client.errors import ConfigError as ClientConfigError
 from cruxible_core.cli.main import cli
-from cruxible_core.procedure.types import ProcedureRun
+from cruxible_core.procedure.types import (
+    ProcedureDefinition,
+    ProcedureRecord,
+    ProcedureRun,
+    compute_procedure_definition_digest,
+)
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import service_lock, service_propose_procedure
 from tests.test_procedures.conftest import CONFIG_YAML, actor, provider_definition
@@ -54,6 +61,274 @@ def test_procedure_and_workflow_help_contain_contrast_sentence(runner: CliRunner
     sentence = "Workflows are designed; procedures are learned."
     assert sentence in procedure_help.output
     assert sentence in workflow_help.output
+
+
+def test_migrate_apply_refuses_distinct_tokens_for_the_same_actor_before_any_write(
+    runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposer_token = "crt_rcred_aaaaaaaaaaaaaaaa_proposer-secret"
+    reviewer_token = "crt_rcred_bbbbbbbbbbbbbbbb_reviewer-secret"
+    proposed = 0
+
+    class StubClient:
+        def __init__(self, token: str) -> None:
+            self.token = token
+
+        def list_runtime_credentials(
+            self, instance_id: str
+        ) -> contracts.RuntimeCredentialListResult:
+            assert self.token == proposer_token
+            return contracts.RuntimeCredentialListResult(
+                credentials=[
+                    contracts.RuntimeCredentialMetadata(
+                        credential_id="rcred_aaaaaaaaaaaaaaaa",
+                        instance_id=instance_id,
+                        label="same-migration-actor",
+                        permission_mode="admin",
+                        created_at="2026-08-09T12:00:00Z",
+                    ),
+                    contracts.RuntimeCredentialMetadata(
+                        credential_id="rcred_bbbbbbbbbbbbbbbb",
+                        instance_id=instance_id,
+                        label="same-migration-actor",
+                        permission_mode="graph_write",
+                        created_at="2026-08-09T12:00:00Z",
+                    ),
+                ]
+            )
+
+        def list_procedures(
+            self,
+            instance_id: str,
+            *,
+            status: str,
+            limit: int,
+            offset: int,
+        ) -> contracts.ListResult:
+            assert self.token == reviewer_token
+            return contracts.ListResult(
+                items=[],
+                total=0,
+                limit=limit,
+                offset=offset,
+                truncated=False,
+                read_revision=0,
+            )
+
+        def propose_procedure(self, *args: object, **kwargs: object) -> dict[str, object]:
+            nonlocal proposed
+            proposed += 1
+            raise AssertionError("same-actor preflight must run before proposal")
+
+        def close(self) -> None:
+            pass
+
+    clients = {
+        proposer_token: StubClient(proposer_token),
+        reviewer_token: StubClient(reviewer_token),
+    }
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.procedures._migration_client",
+        lambda token: clients[token],
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_migrate",
+            "migrate",
+            "--apply",
+            "--proposer-credential",
+            proposer_token,
+            "--reviewer-credential",
+            reviewer_token,
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "refused before any write" in result.output
+    assert "same-migration-actor" in result.output
+    assert proposed == 0
+
+
+def test_migrate_defaults_to_dry_run_and_reports_the_narrowed_reading_continuity(
+    runner: CliRunner,
+    procedure_cli_instance: tuple[CruxibleInstance, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, procedure_id = procedure_cli_instance
+    store = instance.get_procedure_store()
+    try:
+        stored = store.get_procedure(procedure_id)
+    finally:
+        store.close()
+    assert stored is not None
+    live = stored.model_copy(update={"status": "live"})
+    proposer_token = "crt_rcred_aaaaaaaaaaaaaaaa_dry-run-secret"
+    proposed = 0
+
+    class StubClient:
+        def list_procedures(
+            self,
+            instance_id: str,
+            *,
+            status: str,
+            limit: int,
+            offset: int,
+        ) -> contracts.ListResult:
+            items = (
+                [live.model_dump(mode="json", by_alias=True, exclude_none=True)]
+                if status == "live"
+                else []
+            )
+            return contracts.ListResult(
+                items=items,
+                total=len(items),
+                limit=limit,
+                offset=offset,
+                truncated=False,
+                read_revision=0,
+            )
+
+        def propose_procedure(self, *args: object, **kwargs: object) -> dict[str, object]:
+            nonlocal proposed
+            proposed += 1
+            raise AssertionError("dry-run must not propose")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.procedures._migration_client",
+        lambda token: StubClient(),
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_migrate",
+            "migrate",
+            "--proposer-credential",
+            proposer_token,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Procedure migration dry_run: 1 live v1 procedure(s)" in result.output
+    assert "Lift diff: graph_format 1 -> 2; changed_fields=graph_format" in result.output
+    assert "steps_changed=false; node_local_digests_unchanged=true" in result.output
+    assert "Dedupe disposition: none" in result.output
+    assert (
+        "node/arm readings retained on the retired predecessor and digest-matchable; "
+        "unit readings retained there only; not aggregated into the successor's "
+        "`linked_outcomes`"
+    ) in result.output
+    assert proposed == 0
+
+
+def test_migrate_reports_one_remote_refusal_and_continues_the_sweep(
+    runner: CliRunner,
+    procedure_cli_instance: tuple[CruxibleInstance, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, first_id = procedure_cli_instance
+    second = service_propose_procedure(
+        instance,
+        provider_definition("cli_continues_after_refusal"),
+        actor_context=actor("second-proposer"),
+    ).procedure
+    store = instance.get_procedure_store()
+    try:
+        first = store.get_procedure(first_id)
+    finally:
+        store.close()
+    assert first is not None
+    live_rows = [
+        first.model_copy(update={"status": "live"}),
+        second.model_copy(update={"status": "live"}),
+    ]
+    by_id = {row.procedure_id: row for row in live_rows}
+
+    class StubClient:
+        def list_procedures(
+            self,
+            instance_id: str,
+            *,
+            status: str,
+            limit: int,
+            offset: int,
+        ) -> contracts.ListResult:
+            items = (
+                [row.model_dump(mode="json", by_alias=True, exclude_none=True) for row in live_rows]
+                if status == "live"
+                else []
+            )
+            return contracts.ListResult(
+                items=items,
+                total=len(items),
+                limit=limit,
+                offset=offset,
+                truncated=False,
+                read_revision=0,
+            )
+
+        def propose_procedure(
+            self,
+            instance_id: str,
+            *,
+            definition: dict[str, object],
+            supersedes_procedure_id: str,
+        ) -> ProcedureRecord:
+            lifted = ProcedureDefinition.model_validate(definition)
+            if lifted.name == "cli_action":
+                raise ClientConfigError("remote policy refused the first lift")
+            predecessor = by_id[supersedes_procedure_id]
+            return predecessor.model_copy(
+                update={
+                    "procedure_id": "PRC_remote_continuation",
+                    "definition": lifted,
+                    "definition_digest": compute_procedure_definition_digest(lifted),
+                    "status": "pending",
+                    "version": 1,
+                    "supersedes_procedure_id": supersedes_procedure_id,
+                    "proposed_actor_context": actor("migration-proposer"),
+                    "definition_format_version": 2,
+                }
+            )
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.procedures._migration_client",
+        lambda token: StubClient(),
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_migrate",
+            "migrate",
+            "--apply",
+            "--proposer-credential",
+            "crt_rcred_aaaaaaaaaaaaaaaa_migration-secret",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "cli_action: refused (none)" in result.output
+    assert "remote policy refused the first lift" in result.output
+    assert "cli_continues_after_refusal: proposed (none)" in result.output
 
 
 def test_procedure_read_commands_use_envelopes_and_surface_started_tombstone(

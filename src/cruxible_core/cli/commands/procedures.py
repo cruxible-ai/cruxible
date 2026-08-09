@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,14 +12,18 @@ import click
 import yaml
 from pydantic import ValidationError
 
-from cruxible_client import contracts
+from cruxible_client import CruxibleClient, contracts
+from cruxible_client.errors import CoreError as ClientCoreError
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _emit_json,
     _list_envelope,
+    _require_instance_id,
+    _root_ctx_obj,
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.errors import ConfigError
 from cruxible_core.procedure.types import (
     ProcedureDefinition,
     ProcedureExecutionResult,
@@ -43,7 +48,15 @@ from cruxible_core.service import (
     service_run_procedure,
     service_withdraw_procedure,
 )
+from cruxible_core.service.procedure_migrations import (
+    ProcedureMigrationActorIdentity,
+    ProcedureMigrationResult,
+    ProcedureMigrationSurface,
+    run_procedure_migration,
+)
 from cruxible_core.temporal import parse_datetime
+
+_RUNTIME_CREDENTIAL_TOKEN = re.compile(r"^crt_(rcred_[0-9a-f]{16})_")
 
 
 @click.group("procedure")
@@ -220,6 +233,153 @@ def _procedure_from_payload(payload: Any) -> ProcedureRecord:
         ) from exc
 
 
+class _RemoteProcedureMigrationSurface(ProcedureMigrationSurface):
+    """Ordinary procedure-client verbs under separately authenticated actors."""
+
+    def __init__(
+        self,
+        instance_id: str,
+        *,
+        proposer_client: CruxibleClient,
+        reviewer_client: CruxibleClient | None,
+    ) -> None:
+        self._instance_id = instance_id
+        self._proposer_client = proposer_client
+        self._reviewer_client = reviewer_client
+
+    def list_procedures(
+        self,
+        *,
+        status: str,
+        limit: int,
+        offset: int,
+    ) -> list[ProcedureRecord]:
+        result = self._proposer_client.list_procedures(
+            self._instance_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+        return [_procedure_from_payload(item) for item in result.items]
+
+    def propose_procedure(
+        self,
+        definition: ProcedureDefinition,
+        *,
+        supersedes_procedure_id: str,
+    ) -> ProcedureRecord:
+        try:
+            result = self._proposer_client.propose_procedure(
+                self._instance_id,
+                definition=definition.model_dump(mode="json", by_alias=True, exclude_none=True),
+                supersedes_procedure_id=supersedes_procedure_id,
+            )
+        except ClientCoreError as exc:
+            raise ConfigError(str(exc)) from exc
+        return _procedure_from_result(result)
+
+    def accept_procedure(self, procedure: ProcedureRecord) -> ProcedureRecord:
+        if self._reviewer_client is None:
+            raise AssertionError("propose-only migration cannot accept a procedure")
+        try:
+            result = self._reviewer_client.resolve_procedure(
+                self._instance_id,
+                procedure.procedure_id,
+                action="accept",
+                expected_version=procedure.version,
+            )
+        except ClientCoreError as exc:
+            raise ConfigError(str(exc)) from exc
+        return _procedure_from_result(result)
+
+
+def _migration_client(token: str) -> CruxibleClient:
+    obj = _root_ctx_obj()
+    server_url = obj.get("server_url")
+    server_socket = obj.get("server_socket")
+    if not server_url and not server_socket:
+        raise click.UsageError(
+            "cruxible migrate requires server mode so each write is authenticated "
+            "by its supplied runtime credential"
+        )
+    return CruxibleClient(
+        base_url=str(server_url) if server_url else None,
+        socket_path=str(server_socket) if server_socket else None,
+        token=token,
+    )
+
+
+def _credential_id_from_token(token: str, *, option: str) -> str:
+    match = _RUNTIME_CREDENTIAL_TOKEN.match(token)
+    if match is None:
+        raise click.BadParameter(
+            "expected a Cruxible runtime credential token",
+            param_hint=option,
+        )
+    return match.group(1)
+
+
+def _migration_actor_identities(
+    proposer_client: CruxibleClient,
+    reviewer_client: CruxibleClient,
+    *,
+    instance_id: str,
+    proposer_token: str,
+    reviewer_token: str,
+) -> tuple[ProcedureMigrationActorIdentity, ProcedureMigrationActorIdentity]:
+    """Resolve both authoritative actors, including reviewer auth, before writes."""
+    proposer_id = _credential_id_from_token(
+        proposer_token,
+        option="--proposer-credential",
+    )
+    reviewer_id = _credential_id_from_token(
+        reviewer_token,
+        option="--reviewer-credential",
+    )
+    credential_rows = proposer_client.list_runtime_credentials(instance_id).credentials
+    credentials = {row.credential_id: row for row in credential_rows}
+    missing = [
+        credential_id
+        for credential_id in (proposer_id, reviewer_id)
+        if credential_id not in credentials
+    ]
+    if missing:
+        raise click.ClickException(
+            "Migration credential preflight could not resolve active credential metadata for "
+            + ", ".join(missing)
+            + "; no writes were attempted"
+        )
+    proposer = credentials[proposer_id]
+    reviewer = credentials[reviewer_id]
+    inactive = [row.credential_id for row in (proposer, reviewer) if row.revoked_at is not None]
+    if inactive:
+        raise click.ClickException(
+            "Migration credential preflight found revoked credential(s) "
+            + ", ".join(inactive)
+            + "; no writes were attempted"
+        )
+    if proposer.instance_id != instance_id or reviewer.instance_id != instance_id:
+        raise click.ClickException(
+            "Migration credentials must both be scoped to the selected instance; "
+            "no writes were attempted"
+        )
+    permission_rank = {"read_only": 1, "governed_write": 2, "graph_write": 3, "admin": 4}
+    if permission_rank[reviewer.permission_mode] < permission_rank["graph_write"]:
+        raise click.ClickException(
+            f"Reviewer credential {reviewer.credential_id} requires graph_write permission; "
+            "no writes were attempted"
+        )
+
+    # Authenticate and scope-check the reviewer before proposing anything.  A
+    # forged token that merely embeds a real credential id cannot pass this
+    # existing read verb.
+    reviewer_client.list_procedures(instance_id, status="pending", limit=1, offset=0)
+    return (
+        ProcedureMigrationActorIdentity(org_id=proposer.instance_id, actor_id=proposer.label),
+        ProcedureMigrationActorIdentity(org_id=reviewer.instance_id, actor_id=reviewer.label),
+    )
+
+
 def _run_items(result: Any) -> list[ProcedureRun]:
     return [ProcedureRun.model_validate(item) for item in result.items]
 
@@ -258,6 +418,96 @@ def _echo_procedure(procedure: ProcedureRecord) -> None:
 
 def _procedure_payload(procedure: ProcedureRecord) -> dict[str, Any]:
     return procedure.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+def _echo_migration_result(result: ProcedureMigrationResult) -> None:
+    click.echo(
+        f"Procedure migration {result.mode}: {len(result.items)} live v1 procedure(s); "
+        f"propose_only={str(result.propose_only).lower()}"
+    )
+    for item in result.items:
+        successor = item.successor_procedure_id or "not-created"
+        click.echo(f"  {item.name}: {item.outcome} ({item.dedupe_disposition})")
+        click.echo(f"    Lineage: {item.predecessor_procedure_id} -> {successor}")
+        click.echo(
+            "    Lift diff: "
+            f"graph_format {item.graph_format_before} -> {item.graph_format_after}; "
+            f"changed_fields={','.join(item.changed_fields)}; "
+            f"steps_changed={str(item.steps_changed).lower()}; "
+            "node_local_digests_unchanged="
+            f"{str(item.node_local_digests_unchanged).lower()}"
+        )
+        click.echo(
+            "    Definition digest: "
+            f"{item.definition_digest_before} -> {item.definition_digest_after or 'not-computed'}"
+        )
+        click.echo(f"    Dedupe disposition: {item.dedupe_disposition}")
+        if item.refusal:
+            click.echo(f"    Refusal: {item.refusal}")
+    click.echo(f"Reading continuity: {result.reading_continuity}")
+
+
+@click.command("migrate")
+@click.option(
+    "--proposer-credential",
+    required=True,
+    help=(
+        "Runtime bearer credential used for ordinary lift proposals; supervised apply "
+        "requires admin permission for the identity preflight."
+    ),
+)
+@click.option(
+    "--reviewer-credential",
+    default=None,
+    help="Distinct runtime bearer credential used for ordinary acceptance.",
+)
+@click.option(
+    "--dry-run/--apply",
+    "dry_run",
+    default=True,
+    show_default=True,
+    help="Report the convergence plan or execute it through governed lifecycle verbs.",
+)
+@handle_errors
+def migrate_cmd(
+    proposer_credential: str,
+    reviewer_credential: str | None,
+    dry_run: bool,
+) -> None:
+    """Converge live v1 procedures through supervised v2 re-acceptance."""
+    instance_id = _require_instance_id()
+    proposer_client = _migration_client(proposer_credential)
+    reviewer_client: CruxibleClient | None = None
+    try:
+        proposer_identity: ProcedureMigrationActorIdentity | None = None
+        reviewer_identity: ProcedureMigrationActorIdentity | None = None
+        if reviewer_credential is not None:
+            reviewer_client = _migration_client(reviewer_credential)
+        if not dry_run and reviewer_client is not None:
+            assert reviewer_credential is not None
+            proposer_identity, reviewer_identity = _migration_actor_identities(
+                proposer_client,
+                reviewer_client,
+                instance_id=instance_id,
+                proposer_token=proposer_credential,
+                reviewer_token=reviewer_credential,
+            )
+        surface = _RemoteProcedureMigrationSurface(
+            instance_id,
+            proposer_client=proposer_client,
+            reviewer_client=reviewer_client,
+        )
+        result = run_procedure_migration(
+            surface,
+            apply=not dry_run,
+            proposer_identity=proposer_identity,
+            reviewer_identity=reviewer_identity,
+        )
+    finally:
+        proposer_client.close()
+        if reviewer_client is not None:
+            reviewer_client.close()
+    _echo_migration_result(result)
 
 
 @procedure_group.command("propose")

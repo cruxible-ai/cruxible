@@ -109,6 +109,16 @@ from cruxible_core.service.mutations import (
     service_add_relationships,
     service_batch_direct_write,
 )
+from cruxible_core.service.procedure_migrations import (
+    READING_CONTINUITY_REPORT,
+    ProcedureMigrationActorIdentity,
+    ProcedureMigrationItem,
+    ProcedureMigrationResult,
+    ProcedureMigrationSurface,
+    run_procedure_migration,
+    service_migrate_procedures,
+    service_scan_pending_procedure_lift,
+)
 from cruxible_core.service.procedures import (
     compile_procedure_definition,
     service_accept_procedure,
@@ -459,6 +469,11 @@ __all__ = [
     "service_record_owned_object",
     "service_uninstall_preconditions",
     # Procedures
+    "ProcedureMigrationActorIdentity",
+    "ProcedureMigrationItem",
+    "ProcedureMigrationResult",
+    "ProcedureMigrationSurface",
+    "READING_CONTINUITY_REPORT",
     "compile_procedure_definition",
     "service_get_procedure",
     "service_get_procedure_details",
@@ -471,6 +486,9 @@ __all__ = [
     "service_retire_procedure",
     "service_run_procedure",
     "service_withdraw_procedure",
+    "run_procedure_migration",
+    "service_migrate_procedures",
+    "service_scan_pending_procedure_lift",
     "validate_procedure_definition_against_config",
     # Compute-slot bindings
     "build_near_match_report",
