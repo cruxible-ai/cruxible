@@ -106,6 +106,31 @@ class _ProposalMetadata:
     proposed_actor_context: GovernedActorContext | None
 
 
+@dataclass(frozen=True)
+class GroupProposalPlan:
+    """Read-only proposal decision consumed by previews and persistence."""
+
+    graph: EntityGraph
+    relationship_type: str
+    pending_refresh_mode: Literal["replace", "retain_missing"]
+    proposal_policy: ProposalPolicySchema | None
+    metadata: _ProposalMetadata
+    signature: str
+    pending_group: CandidateGroup | None
+    old_members: list[CandidateMember]
+    delta_members: list[CandidateMember]
+    pending_members: list[CandidateMember]
+    effective_members: list[CandidateMember]
+    prior_resolution: GroupResolution | None
+    suppressed_members: list[SuppressedProposalMember]
+    policy_summary: dict[str, int]
+    force_review: bool
+    has_override: bool
+    review_priority: ReviewPriority
+    auto_resolve: bool
+    disposition: Literal["suppress", "retain", "withdraw", "rewrite", "create"]
+
+
 def _proposal_result(
     *,
     group_id: str | None,
@@ -613,7 +638,7 @@ def service_propose_group_inputs(
     )
 
 
-def service_propose_group(
+def plan_group_proposal(
     instance: InstanceProtocol,
     relationship_type: str,
     members: list[CandidateMember],
@@ -630,11 +655,9 @@ def service_propose_group(
     source_step_ids: list[str] | None = None,
     expected_pending_version: int | None = None,
     actor_context: GovernedActorContext | None = None,
-    proposed_by: str | None = None,
-) -> ProposeGroupResult:
-    """Propose a group of candidate edges for batch review/approval."""
-    if proposed_by is not None:
-        emit_python_deprecation(GROUP_PROPOSED_BY_INPUT)
+    force_review: bool = False,
+) -> GroupProposalPlan:
+    """Plan a group proposal without persisting any state."""
     config = instance.load_config()
     caller_thesis_facts = thesis_facts or {}
     analysis_state = analysis_state or {}
@@ -697,7 +720,7 @@ def service_propose_group(
     graph = instance.load_graph()
     # Workflow policy accounting intentionally reflects the original proposal set.
     # Tuple-identity filtering below may remove members before the review group is stored.
-    members, force_review = apply_workflow_policies(
+    members, policy_force_review = apply_workflow_policies(
         config=config,
         graph=graph,
         relationship_type=relationship_type,
@@ -706,6 +729,7 @@ def service_propose_group(
         thesis_facts=thesis_facts,
         policy_summary=policy_summary,
     )
+    force_review = force_review or policy_force_review
 
     proposal_policy = rel_schema.proposal_policy
 
@@ -768,132 +792,222 @@ def service_propose_group(
             pending_members = merge_pending_members(old_members, delta_members)
 
         if not delta_members:
-            if suppressed_members:
-                return _proposal_result(
-                    group_id=None,
-                    signature=signature,
-                    status="suppressed",
-                    review_priority="review",
-                    member_count=0,
-                    prior_resolution=prior,
-                    suppressed=True,
-                    suppressed_members=suppressed_members,
-                    policy_summary=policy_summary,
+            has_override = False
+            auto_resolve = False
+            review_priority = (
+                pending_group.review_priority if pending_group is not None else "review"
+            )
+            if suppressed_members or pending_group is None:
+                disposition: Literal["suppress", "retain", "withdraw", "rewrite", "create"] = (
+                    "suppress"
                 )
-            if pending_group is None:
-                return _proposal_result(
-                    group_id=None,
-                    signature=signature,
-                    status="suppressed",
-                    review_priority="review",
-                    member_count=0,
-                    prior_resolution=prior,
-                    suppressed=True,
-                    suppressed_members=suppressed_members,
-                    policy_summary=policy_summary,
-                )
+                # A suppressed incoming proposal does not disturb an existing bucket.
+                effective_members = old_members
+            elif pending_refresh_mode == "retain_missing":
+                disposition = "retain"
+                effective_members = pending_members
+            else:
+                disposition = "withdraw"
+                effective_members = []
+        else:
+            review_priority = review_priority_for_members(
+                graph=graph,
+                members=pending_members,
+                proposal_policy=proposal_policy,
+                prior_resolution=prior,
+                force_review=force_review,
+            )
+            has_override = members_have_active_override(graph, delta_members)
+            auto_resolve = pending_group is None and should_auto_resolve(
+                members=delta_members,
+                proposal_policy=proposal_policy,
+                prior_resolution=prior,
+                force_review=force_review,
+                has_override=has_override,
+            )
+            disposition = "rewrite" if pending_group is not None else "create"
+            effective_members = pending_members
+    finally:
+        group_store.close()
 
-            if pending_refresh_mode == "retain_missing":
-                return _proposal_result(
-                    group_id=pending_group.group_id,
-                    signature=signature,
-                    status="pending_review",
-                    review_priority=pending_group.review_priority,
-                    member_count=pending_group.member_count,
-                    prior_resolution=prior,
-                    suppressed_members=suppressed_members,
-                    policy_summary=policy_summary,
-                )
+    return GroupProposalPlan(
+        graph=graph,
+        relationship_type=relationship_type,
+        pending_refresh_mode=pending_refresh_mode,
+        proposal_policy=proposal_policy,
+        metadata=metadata,
+        signature=signature,
+        pending_group=pending_group,
+        old_members=old_members,
+        delta_members=delta_members,
+        pending_members=pending_members,
+        effective_members=effective_members,
+        prior_resolution=prior,
+        suppressed_members=suppressed_members,
+        policy_summary=policy_summary,
+        force_review=force_review,
+        has_override=has_override,
+        review_priority=review_priority,
+        auto_resolve=auto_resolve,
+        disposition=disposition,
+    )
 
+
+def service_propose_group(
+    instance: InstanceProtocol,
+    relationship_type: str,
+    members: list[CandidateMember],
+    thesis_text: str = "",
+    thesis_facts: dict[str, Any] | None = None,
+    pending_refresh_mode: Literal["replace", "retain_missing"] = "replace",
+    analysis_state: dict[str, Any] | None = None,
+    signal_sources_used: list[str] | None = None,
+    suggested_priority: str | None = None,
+    source_workflow_name: str | None = None,
+    source_workflow_receipt_id: str | None = None,
+    source_query_receipt_ids: list[str] | None = None,
+    source_trace_ids: list[str] | None = None,
+    source_step_ids: list[str] | None = None,
+    expected_pending_version: int | None = None,
+    actor_context: GovernedActorContext | None = None,
+    proposed_by: str | None = None,
+    force_review: bool = False,
+) -> ProposeGroupResult:
+    """Plan and persist a group of candidate edges for review."""
+    if proposed_by is not None:
+        emit_python_deprecation(GROUP_PROPOSED_BY_INPUT)
+    plan = plan_group_proposal(
+        instance,
+        relationship_type,
+        members,
+        thesis_text=thesis_text,
+        thesis_facts=thesis_facts,
+        pending_refresh_mode=pending_refresh_mode,
+        analysis_state=analysis_state,
+        signal_sources_used=signal_sources_used,
+        suggested_priority=suggested_priority,
+        source_workflow_name=source_workflow_name,
+        source_workflow_receipt_id=source_workflow_receipt_id,
+        source_query_receipt_ids=source_query_receipt_ids,
+        source_trace_ids=source_trace_ids,
+        source_step_ids=source_step_ids,
+        expected_pending_version=expected_pending_version,
+        actor_context=actor_context,
+        force_review=force_review,
+    )
+    return _persist_group_proposal_plan(instance, plan)
+
+
+def _persist_group_proposal_plan(
+    instance: InstanceProtocol,
+    plan: GroupProposalPlan,
+) -> ProposeGroupResult:
+    if plan.disposition == "suppress":
+        return _proposal_result(
+            group_id=None,
+            signature=plan.signature,
+            status="suppressed",
+            review_priority="review",
+            member_count=0,
+            prior_resolution=plan.prior_resolution,
+            suppressed=True,
+            suppressed_members=plan.suppressed_members,
+            policy_summary=plan.policy_summary,
+        )
+
+    assert plan.pending_group is not None or plan.disposition == "create"
+    if plan.disposition == "retain":
+        assert plan.pending_group is not None
+        return _proposal_result(
+            group_id=plan.pending_group.group_id,
+            signature=plan.signature,
+            status="pending_review",
+            review_priority=plan.pending_group.review_priority,
+            member_count=plan.pending_group.member_count,
+            prior_resolution=plan.prior_resolution,
+            suppressed_members=plan.suppressed_members,
+            policy_summary=plan.policy_summary,
+        )
+
+    group_store = instance.get_group_store()
+    group_id: str | None = None
+    try:
+        if plan.disposition == "withdraw":
+            assert plan.pending_group is not None
             return _withdraw_pending_group(
                 instance=instance,
                 group_store=group_store,
-                pending_group=pending_group,
-                old_members=old_members,
-                signature=signature,
-                prior_resolution=prior,
-                suppressed_members=suppressed_members,
-                policy_summary=policy_summary,
-                actor_context=metadata.proposed_actor_context,
+                pending_group=plan.pending_group,
+                old_members=plan.old_members,
+                signature=plan.signature,
+                prior_resolution=plan.prior_resolution,
+                suppressed_members=plan.suppressed_members,
+                policy_summary=plan.policy_summary,
+                actor_context=plan.metadata.proposed_actor_context,
             )
 
-        review_priority = review_priority_for_members(
-            graph=graph,
-            members=pending_members,
-            proposal_policy=proposal_policy,
-            prior_resolution=prior,
-            force_review=force_review,
-        )
-        has_override = members_have_active_override(graph, delta_members)
-        auto_resolve = pending_group is None and should_auto_resolve(
-            members=delta_members,
-            proposal_policy=proposal_policy,
-            prior_resolution=prior,
-            force_review=force_review,
-            has_override=has_override,
-        )
-
-        if pending_group is not None:
+        if plan.disposition == "rewrite":
+            assert plan.pending_group is not None
             return _rewrite_pending_group(
                 instance=instance,
                 group_store=group_store,
-                pending_group=pending_group,
-                old_members=old_members,
-                pending_members=pending_members,
-                metadata=metadata,
-                signature=signature,
-                review_priority=review_priority,
-                prior_resolution=prior,
-                suppressed_members=suppressed_members,
-                policy_summary=policy_summary,
+                pending_group=plan.pending_group,
+                old_members=plan.old_members,
+                pending_members=plan.pending_members,
+                metadata=plan.metadata,
+                signature=plan.signature,
+                review_priority=plan.review_priority,
+                prior_resolution=plan.prior_resolution,
+                suppressed_members=plan.suppressed_members,
+                policy_summary=plan.policy_summary,
             )
 
         group_id = new_id("GRP")
         metadata = _metadata_with_source_query_receipts(
-            metadata,
-            _source_query_receipt_ids_from_members(pending_members),
+            plan.metadata,
+            _source_query_receipt_ids_from_members(plan.pending_members),
         )
         group = _new_candidate_group(
             group_id=group_id,
-            relationship_type=relationship_type,
-            signature=signature,
+            relationship_type=plan.relationship_type,
+            signature=plan.signature,
             status="pending_review",
             metadata=metadata,
-            member_count=len(pending_members),
-            review_priority=review_priority,
+            member_count=len(plan.pending_members),
+            review_priority=plan.review_priority,
         )
         created = _create_group_or_rewrite_concurrent(
             instance=instance,
-            graph=graph,
+            graph=plan.graph,
             group_store=group_store,
             group=group,
-            pending_members=pending_members,
-            delta_members=delta_members,
+            pending_members=plan.pending_members,
+            delta_members=plan.delta_members,
             metadata=metadata,
-            relationship_type=relationship_type,
-            signature=signature,
-            pending_refresh_mode=pending_refresh_mode,
-            proposal_policy=proposal_policy,
-            prior_resolution=prior,
-            force_review=force_review,
-            has_override=has_override,
-            review_priority=review_priority,
-            suppressed_members=suppressed_members,
-            policy_summary=policy_summary,
+            relationship_type=plan.relationship_type,
+            signature=plan.signature,
+            pending_refresh_mode=plan.pending_refresh_mode,
+            proposal_policy=plan.proposal_policy,
+            prior_resolution=plan.prior_resolution,
+            force_review=plan.force_review,
+            has_override=plan.has_override,
+            review_priority=plan.review_priority,
+            suppressed_members=plan.suppressed_members,
+            policy_summary=plan.policy_summary,
         )
     finally:
         group_store.close()
 
-    if not auto_resolve or created.group_id != group_id:
+    if not plan.auto_resolve or created.group_id != group_id:
         # A concurrent proposer won the insert race and this call became a
-        # rewrite of THEIR pending group. Auto-resolution was decided against a
-        # world with no pending bucket, so it no longer applies.
+        # rewrite of their pending group. The no-pending auto-resolution decision
+        # no longer applies.
         return created
     return _auto_resolve_created_group(
         instance,
         created,
         rationale=_AUTO_RESOLVE_RATIONALE,
-        actor_context=actor_context,
+        actor_context=plan.metadata.proposed_actor_context,
     )
 
 

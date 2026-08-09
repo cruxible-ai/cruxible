@@ -13,6 +13,13 @@ from cruxible_core.errors import (
 )
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.primitives import canonical_json
+from cruxible_core.procedure.proposal import (
+    PROPOSE_GROUP_FROM_KIND,
+    build_procedure_proposal_facts,
+    parse_candidate_edge_rows,
+    procedure_candidate_members,
+)
 from cruxible_core.workflow.apply import (
     apply_entity_set,
     apply_relationship_set,
@@ -48,7 +55,12 @@ from cruxible_core.workflow.transforms import (
 from cruxible_core.workflow.types import CompiledPlanStep, EntitySet, RelationshipSet
 
 VALID_STEP_KINDS: frozenset[str] = frozenset(str(kind) for kind in get_args(StepKind))
-PROCEDURE_STEP_KINDS: frozenset[str] = VALID_STEP_KINDS | {"repeat", "guard", "project"}
+PROCEDURE_STEP_KINDS: frozenset[str] = VALID_STEP_KINDS | {
+    "repeat",
+    "guard",
+    "project",
+    PROPOSE_GROUP_FROM_KIND,
+}
 """Kind admission is per-commit and enforced AT IMPORT.
 
 ``required_kinds == allowed_kinds`` below, and ``validate_complete()`` runs
@@ -1085,6 +1097,128 @@ def execute_project_handler(
     )
 
 
+def execute_propose_group_from_handler(
+    context: WorkflowExecutionContext,
+    compiled_step: CompiledPlanStep,
+) -> None:
+    """Validate and stage the procedure's single governed-output proposal."""
+    assert compiled_step.propose_group_from_spec is not None
+    spec = compiled_step.propose_group_from_spec
+    if (
+        context.procedure_id is None
+        or context.procedure_definition_digest is None
+        or context.procedure_run_id is None
+    ):
+        raise ConfigError(
+            f"Step '{compiled_step.step_id}' uses '{PROPOSE_GROUP_FROM_KIND}' outside a "
+            "governed procedure invocation"
+        )
+    rows = resolve_step_items(spec.edges_from, context.plan.input_payload, context.step_outputs)
+    try:
+        parsed = parse_candidate_edge_rows(rows)
+    except ValueError as exc:
+        raise QueryExecutionError(
+            f"Procedure step '{compiled_step.step_id}' cannot read '{spec.edges_from}' as "
+            f"candidate edges: {exc}"
+        ) from exc
+    proposal_scope = resolve_value(
+        spec.proposal_scope, context.plan.input_payload, context.step_outputs
+    )
+    try:
+        canonical_json(proposal_scope)
+    except (TypeError, ValueError) as exc:
+        raise QueryExecutionError(
+            f"Procedure step '{compiled_step.step_id}' proposal_scope is not JSON-serializable"
+        ) from exc
+    members, signal_sources = procedure_candidate_members(spec.relationship_type, parsed)
+    thesis_facts = build_procedure_proposal_facts(
+        procedure_id=context.procedure_id,
+        procedure_name=context.workflow_name,
+        definition_digest=context.procedure_definition_digest,
+        step_id=compiled_step.step_id,
+        proposal_scope=proposal_scope,
+        relationship_type=spec.relationship_type,
+        edges_from=context.output_key(compiled_step),
+    )
+    effective_members = members
+    if members:
+        from cruxible_core.service.groups import plan_group_proposal
+
+        proposal_plan = plan_group_proposal(
+            context.instance,
+            spec.relationship_type,
+            members,
+            thesis_text=spec.thesis_text or "",
+            thesis_facts=thesis_facts,
+            pending_refresh_mode=spec.pending_refresh_mode or "replace",
+            analysis_state=spec.analysis_state or {},
+            signal_sources_used=signal_sources,
+            suggested_priority=spec.suggested_priority,
+            source_workflow_name=f"procedure:{context.workflow_name}",
+            source_step_ids=[compiled_step.step_id],
+            actor_context=context.actor_context,
+            force_review=True,
+        )
+        effective_members = proposal_plan.effective_members
+    from cruxible_core.service.state_diff import compare_pending_relationships
+
+    would_change = compare_pending_relationships(
+        context.graph,
+        spec.relationship_type,
+        effective_members,
+    )
+    output: dict[str, Any] = {
+        "kind": "procedure_group_proposal",
+        "relationship_type": spec.relationship_type,
+        "edges_from": spec.edges_from,
+        "procedure_run_id": context.procedure_run_id,
+        "candidate_count": len(members),
+        "group_id": None,
+        "group_receipt_id": None,
+        "group_status": (
+            "no_candidates"
+            if not members
+            else ("would_propose" if context.procedure_dry_run else "staged")
+        ),
+        "review_priority": "normal",
+        "member_count": 0,
+        "suppressed": False,
+        "would_change": would_change,
+    }
+    if members:
+        context.procedure_group_proposals.append(
+            {
+                "step_id": compiled_step.step_id,
+                "output_key": context.output_key(compiled_step),
+                "relationship_type": spec.relationship_type,
+                "members": members,
+                "proposal_scope": proposal_scope,
+                "thesis_facts": thesis_facts,
+                "thesis_text": spec.thesis_text or "",
+                "pending_refresh_mode": spec.pending_refresh_mode or "replace",
+                "analysis_state": spec.analysis_state or {},
+                "suggested_priority": spec.suggested_priority,
+                "signal_sources_used": signal_sources,
+            }
+        )
+    context.set_step_output(compiled_step, output)
+    context.receipt_builder.record_plan_step(
+        compiled_step.step_id,
+        PROPOSE_GROUP_FROM_KIND,
+        detail={
+            "relationship_type": spec.relationship_type,
+            "edges_from": spec.edges_from,
+            "pending_refresh_mode": spec.pending_refresh_mode or "replace",
+            "candidate_count": len(members),
+            "group_id": None,
+            "group_receipt_id": None,
+            "group_status": output["group_status"],
+            "procedure_run_id": context.procedure_run_id,
+            "would_change": would_change,
+        },
+    )
+
+
 def execute_guard_handler(
     context: WorkflowExecutionContext,
     compiled_step: CompiledPlanStep,
@@ -1156,6 +1290,7 @@ PROCEDURE_STEP_HANDLER_REGISTRY = WorkflowStepRegistry(
         ("repeat", execute_repeat_handler),
         ("guard", execute_guard_handler),
         ("project", execute_project_handler),
+        (PROPOSE_GROUP_FROM_KIND, execute_propose_group_from_handler),
     ],
     allowed_kinds=PROCEDURE_STEP_KINDS,
     required_kinds=PROCEDURE_STEP_KINDS,

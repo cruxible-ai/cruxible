@@ -17,6 +17,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from cruxible_core.config.schema import WorkflowStepSchema
 from cruxible_core.procedure.types import (
+    ProcedureBridgeStepSchema,
     ProcedureFlowStepSchema,
     ProcedureGuardStepSchema,
     ProcedureProjectStepSchema,
@@ -58,6 +59,15 @@ REPRESENTATIVES: dict[type[BaseModel], dict[str, Any]] = {
         "id": "shape",
         "as": "result",
         "project": {"fields": {"value": "$steps.rows.value"}},
+    },
+    ProcedureBridgeStepSchema: {
+        "id": "land",
+        "as": "proposal",
+        "propose_group_from": {
+            "relationship_type": "affects",
+            "edges_from": "$steps.rows",
+            "proposal_scope": "$input.case_id",
+        },
     },
 }
 

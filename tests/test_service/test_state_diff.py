@@ -20,6 +20,7 @@ import pytest
 
 from cruxible_core.errors import ConcurrentStateDriftError, ConfigError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.group.types import CandidateMember
 from cruxible_core.primitives import canonical_json
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import (
@@ -36,6 +37,7 @@ from cruxible_core.service import (
 )
 from cruxible_core.service.snapshots import service_create_snapshot
 from cruxible_core.service.state_diff import (
+    compare_pending_relationships,
     parse_state_coordinate,
     resolve_state_coordinate,
 )
@@ -84,6 +86,32 @@ def _case(case_id: str, title: str) -> EntityInstance:
         entity_id=case_id,
         properties={"case_id": case_id, "title": title},
     )
+
+
+def test_pending_relationship_preview_uses_shared_edge_comparator(
+    instance: CruxibleInstance,
+) -> None:
+    before = instance.load_graph().to_dict()
+    preview = compare_pending_relationships(
+        instance.load_graph(),
+        "cites",
+        [
+            CandidateMember(
+                relationship_type="cites",
+                from_type="Case",
+                from_id="CASE-A",
+                to_type="Case",
+                to_id="CASE-B",
+            )
+        ],
+    )
+
+    edges = preview["sections"]["edges"]
+    assert edges["counts"]["added"] == 1
+    assert edges["counts"]["removed"] == 0
+    assert edges["counts"]["changed"] == 0
+    assert edges["added"][0]["claim_id"].startswith("preview-")
+    assert instance.load_graph().to_dict() == before
 
 
 @pytest.fixture

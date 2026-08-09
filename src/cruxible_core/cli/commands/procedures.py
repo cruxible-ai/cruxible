@@ -552,9 +552,15 @@ def procedure_retire(
 @procedure_group.command("run")
 @click.argument("procedure_id")
 @click.option("--input", "input_json", required=True, help="Procedure input as a JSON object.")
+@click.option("--dry-run", is_flag=True, help="Preview the run without landing group proposals.")
 @json_option
 @handle_errors
-def procedure_run(procedure_id: str, input_json: str, output_json: bool) -> None:
+def procedure_run(
+    procedure_id: str,
+    input_json: str,
+    dry_run: bool,
+    output_json: bool,
+) -> None:
     """Run one live procedure through the generic procedure executor."""
     input_payload = _parse_run_input(input_json)
     result = _dispatch_cli_instance(
@@ -562,12 +568,14 @@ def procedure_run(procedure_id: str, input_json: str, output_json: bool) -> None
             instance_id,
             procedure_id,
             input_payload=input_payload,
+            dry_run=dry_run,
         ),
         lambda instance: service_run_procedure(
             instance,
             procedure_id,
             input_payload,
             None,
+            dry_run=dry_run,
         ),
         allow_local=False,
         command_name="procedure run",

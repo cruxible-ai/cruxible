@@ -36,10 +36,12 @@ from cruxible_core.predicate import (
     evaluate_typed_comparison,
     normalize_comparison_op,
 )
+from cruxible_core.procedure.branch_targets import BRANCH_TARGETABLE_KINDS
 from cruxible_core.procedure.guards import GuardSpec, PredicateOperand, parse_predicate_operand
 from cruxible_core.procedure.types import (
     ABORT_TARGET,
     MAX_PROCEDURE_ENUMERATED_PATHS,
+    ProcedureBridgeStepSchema,
     ProcedureFlowStepSchema,
     ProcedureGuardStepSchema,
     ProcedureProjectStepSchema,
@@ -65,6 +67,8 @@ def procedure_node_kind(node: Any) -> str:
         return "guard"
     if isinstance(node, ProcedureProjectStepSchema):
         return "project"
+    if isinstance(node, ProcedureBridgeStepSchema):
+        return "propose_group_from"
     inner = unwrap_procedure_step(node)
     if isinstance(inner, ProcedureRepeatStepSchema):
         return "repeat"
@@ -202,7 +206,7 @@ def build_procedure_graph(
     *,
     initial_aliases: frozenset[str] = frozenset(),
 ) -> ProcedureGraph:
-    """Resolve, verify and return the control graph. Refuses R1, R2, R3, R15."""
+    """Resolve and verify the graph. Refuses R1–R3, R5, R6, and R15."""
     steps = list(definition.steps)
     node_ids = tuple(str(step.id) for step in steps)
     index_of = {node_id: index for index, node_id in enumerate(node_ids)}
@@ -216,7 +220,25 @@ def build_procedure_graph(
             position=position,
         )
 
+    for step in steps:
+        source_id = str(step.id)
+        for label, target in declared_control_targets(step).items():
+            if target == ABORT_TARGET:
+                continue
+            target_kind = kinds[target]
+            if target_kind not in BRANCH_TARGETABLE_KINDS:  # R6
+                raise ConfigError(
+                    f"R6: procedure step '{source_id}' control edge '{label}' targets "
+                    f"step '{target}' of non-targetable kind '{target_kind}'"
+                )
+
     edges = resolve_control_edges(steps)
+    for node_id, kind in kinds.items():
+        if kind == "propose_group_from" and edges[node_id]:  # R5
+            raise ConfigError(
+                f"R5: procedure bridge step '{node_id}' must be terminal on its path "
+                f"and declare no successor; resolved edges are {edges[node_id]}"
+            )
     successors = control_successors(edges)
     predecessors: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
     for node_id, targets in successors.items():

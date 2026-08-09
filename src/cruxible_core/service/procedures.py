@@ -77,6 +77,7 @@ from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.runtime.permissions import PermissionMode, get_current_mode
 from cruxible_core.service.gates import entity_matches_property_equality_condition
+from cruxible_core.service.groups import service_propose_group
 from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.service.types import ListResult, list_truncated
 from cruxible_core.temporal import format_datetime, utc_now
@@ -97,6 +98,7 @@ from cruxible_core.workflow.contracts import (
 from cruxible_core.workflow.execution_context import ProcedureExecutionBudget
 from cruxible_core.workflow.executor import (
     FAILED_WORKFLOW_RECEIPT_ATTR,
+    _validate_procedure_output_contract,
     execute_procedure_plan,
 )
 from cruxible_core.workflow.refs import iter_step_reference_templates
@@ -1136,8 +1138,10 @@ def service_run_procedure(
     procedure_id: str,
     input_payload: dict[str, Any],
     actor_context: GovernedActorContext | None,
+    *,
+    dry_run: bool = False,
 ) -> ProcedureExecutionResult:
-    """Run one live procedure with short authorization and crash-safe audit state."""
+    """Run live, or dry-run a pending/live procedure without landing writes."""
     invocation_started = time.monotonic()
     with instance.write_transaction() as uow:
         procedure = _get_procedure(uow.procedures, procedure_id)
@@ -1158,6 +1162,7 @@ def service_run_procedure(
             "procedure_id": procedure.procedure_id,
             "definition_digest": procedure.definition_digest,
             "input": input_payload,
+            "dry_run": dry_run,
         },
         operation_type="procedure",
         head_snapshot_id=instance.get_head_snapshot_id(),
@@ -1177,12 +1182,15 @@ def service_run_procedure(
     # surface could never count it. Checks that live inside the preflight
     # helpers below share the generic bucket; the receipt keeps their detail.
     preflight_reason: ProcedureRefusalReason = "preflight_refused"
+    stored_node_pins: list[AcceptanceNodePin] = []
 
     try:
-        if procedure.status != "live":
+        allowed_status = procedure.status == "live" or (dry_run and procedure.status == "pending")
+        if not allowed_status:
             preflight_reason = "procedure_not_live"
             raise ConfigError(
-                f"Procedure '{procedure.procedure_id}' must be live to run; "
+                f"Procedure '{procedure.procedure_id}' must be live to run"
+                f"{' or pending to dry-run' if dry_run else ''}; "
                 f"found '{procedure.status}'"
             )
         current_definition_digest = compute_procedure_definition_digest(procedure.definition)
@@ -1202,19 +1210,31 @@ def service_run_procedure(
             config,
         )
         _require_procedure_execution_tier(effective_tier)
+        if dry_run:
+            unsafe_providers = sorted(
+                name
+                for name in procedure.definition.referenced_providers()
+                if not config.providers[name].deterministic or config.providers[name].side_effects
+            )
+            if unsafe_providers:
+                raise ConfigError(
+                    "Procedure dry-run requires deterministic, side-effect-free providers; "
+                    f"refused {unsafe_providers}"
+                )
         # Ordered after the definition-vs-config checks on purpose: when the
         # config drift is one those checks already name precisely (a provider
         # de-exported, removed, or tier-raised), the operator is better served by
         # that specific refusal than by the generic pin mismatch.
-        stored_node_pins = _load_acceptance_node_pins(instance, procedure)
-        _verify_acceptance_pins(
-            procedure,
-            executed_config_digest=executed_config_digest,
-            executed_lock_digest=executed_lock_digest,
-            node_pins=stored_node_pins,
-            config=config,
-            lock=lock,
-        )
+        if procedure.status == "live":
+            stored_node_pins = _load_acceptance_node_pins(instance, procedure)
+            _verify_acceptance_pins(
+                procedure,
+                executed_config_digest=executed_config_digest,
+                executed_lock_digest=executed_lock_digest,
+                node_pins=stored_node_pins,
+                config=config,
+                lock=lock,
+            )
         plan = compile_plan_definition(
             config,
             lock,
@@ -1280,10 +1300,14 @@ def service_run_procedure(
         authorization_definition_digest = compute_procedure_definition_digest(
             authorization_procedure.definition
         )
-        if authorization_procedure.status != "live":
+        authorization_status_allowed = authorization_procedure.status == "live" or (
+            dry_run and authorization_procedure.status == "pending"
+        )
+        if not authorization_status_allowed:
             refusal_reason = "procedure_not_live"
             refusal = ConfigError(
-                f"Procedure '{authorization_procedure.procedure_id}' must be live to run; "
+                f"Procedure '{authorization_procedure.procedure_id}' must be live to run"
+                f"{' or pending to dry-run' if dry_run else ''}; "
                 f"found '{authorization_procedure.status}'"
             )
         elif authorization_procedure.definition_digest != procedure.definition_digest:
@@ -1386,6 +1410,10 @@ def service_run_procedure(
             builder,
             budget,
             actor_context=actor_context,
+            procedure_id=procedure.procedure_id,
+            procedure_definition_digest=procedure.definition_digest,
+            procedure_run_id=started_run.run_id,
+            procedure_dry_run=dry_run,
         )
     except Exception as exc:
         original_exc = exc
@@ -1432,44 +1460,87 @@ def service_run_procedure(
             raise
         raise failure from original_exc
 
-    with instance.write_transaction() as uow:
-        receipt, finalized_run = _persist_built_procedure_receipt_in_uow(
-            uow,
+    try:
+        with instance.write_transaction() as uow:
+            if not dry_run:
+                _land_procedure_group_proposals(
+                    instance,
+                    procedure=procedure,
+                    execution=execution,
+                    actor_context=actor_context,
+                )
+            else:
+                execution.receipt.nodes[0].detail["dry_run"] = True
+            execution.output = _validate_procedure_output_contract(
+                config,
+                procedure.definition.name,
+                procedure.definition,
+                execution.output,
+            )
+            execution.receipt.results = [{"output": execution.output}]
+            receipt, finalized_run = _persist_built_procedure_receipt_in_uow(
+                uow,
+                procedure=procedure,
+                started_run=started_run,
+                receipt=execution.receipt,
+                verdict="succeeded",
+                budget=budget,
+                precondition_detail=precondition_detail,
+                acceptance_config_digest=procedure.acceptance_config_digest,
+                acceptance_lock_digest=procedure.acceptance_lock_digest,
+                executed_config_digest=plan.config_digest,
+                executed_lock_digest=plan.lock_digest,
+                error=None,
+                node_pins=stored_node_pins,
+            )
+            # Evidence rows commit atomically with the run finalize: a crash here
+            # rolls back both, leaving the run 'started' (crash-visible) instead of
+            # a succeeded run with silently absent declared evidence. A
+            # deterministic persistence failure must not fail a run that already
+            # succeeded, so it degrades to no auto-refs with a logged warning.
+            if dry_run:
+                evidence_refs = []
+            else:
+                try:
+                    evidence_refs = _persist_procedure_evidence_outputs_in_uow(
+                        uow,
+                        procedure=procedure,
+                        run=finalized_run,
+                        receipt=receipt,
+                        output=execution.output,
+                        step_outputs=execution.step_outputs,
+                    )
+                except Exception:
+                    _logger.warning(
+                        "procedure evidence persistence failed for run %s; "
+                        "the run succeeded but returns no auto evidence refs",
+                        finalized_run.run_id,
+                        exc_info=True,
+                    )
+                    evidence_refs = []
+    except Exception as exc:
+        failed_receipt = execution.receipt.model_copy(deep=True)
+        failed_receipt.committed = False
+        failed_receipt.results = [{"output": None, "error": str(exc)}]
+        failed_receipt.nodes[0].detail["error"] = str(exc)
+        failed_receipt.nodes[0].detail["procedure_group_proposal_landed"] = False
+        receipt, finalized_run = _persist_built_procedure_receipt(
+            instance,
             procedure=procedure,
             started_run=started_run,
-            receipt=execution.receipt,
-            verdict="succeeded",
+            receipt=failed_receipt,
+            verdict="failed",
             budget=budget,
             precondition_detail=precondition_detail,
             acceptance_config_digest=procedure.acceptance_config_digest,
             acceptance_lock_digest=procedure.acceptance_lock_digest,
             executed_config_digest=plan.config_digest,
             executed_lock_digest=plan.lock_digest,
-            error=None,
+            error=exc,
             node_pins=stored_node_pins,
         )
-        # Evidence rows commit atomically with the run finalize: a crash here
-        # rolls back both, leaving the run 'started' (crash-visible) instead of
-        # a succeeded run with silently absent declared evidence. A
-        # deterministic persistence failure must not fail a run that already
-        # succeeded, so it degrades to no auto-refs with a logged warning.
-        try:
-            evidence_refs = _persist_procedure_evidence_outputs_in_uow(
-                uow,
-                procedure=procedure,
-                run=finalized_run,
-                receipt=receipt,
-                output=execution.output,
-                step_outputs=execution.step_outputs,
-            )
-        except Exception:
-            _logger.warning(
-                "procedure evidence persistence failed for run %s; "
-                "the run succeeded but returns no auto evidence refs",
-                finalized_run.run_id,
-                exc_info=True,
-            )
-            evidence_refs = []
+        _tag_procedure_exception(exc, finalized_run, receipt)
+        raise
     return ProcedureExecutionResult(
         procedure=procedure,
         run=finalized_run,
@@ -1477,7 +1548,69 @@ def service_run_procedure(
         receipt=receipt,
         step_outputs=execution.step_outputs,
         evidence_refs=evidence_refs,
+        dry_run=dry_run,
     )
+
+
+def _land_procedure_group_proposals(
+    instance: InstanceProtocol,
+    *,
+    procedure: ProcedureRecord,
+    execution: Any,
+    actor_context: GovernedActorContext | None,
+) -> None:
+    """Land staged bridge intents inside the procedure success transaction."""
+    for intent in execution.procedure_group_proposals:
+        result = service_propose_group(
+            instance,
+            intent["relationship_type"],
+            intent["members"],
+            thesis_text=intent["thesis_text"],
+            thesis_facts=intent["thesis_facts"],
+            pending_refresh_mode=intent["pending_refresh_mode"],
+            analysis_state=intent["analysis_state"],
+            signal_sources_used=intent["signal_sources_used"],
+            suggested_priority=intent["suggested_priority"],
+            source_workflow_name=f"procedure:{procedure.definition.name}",
+            source_workflow_receipt_id=execution.receipt.receipt_id,
+            source_query_receipt_ids=list(execution.query_receipt_ids),
+            source_trace_ids=[trace.trace_id for trace in execution.traces],
+            source_step_ids=[intent["step_id"]],
+            actor_context=actor_context,
+            force_review=True,
+        )
+        if result.status not in {"pending_review", "suppressed"}:
+            raise ConfigError(
+                "Procedure group bridge may only produce pending or suppressed groups; "
+                f"found '{result.status}'"
+            )
+        output = execution.step_outputs[intent["output_key"]]
+        output.update(
+            {
+                "group_id": result.group_id,
+                "group_receipt_id": result.receipt_id,
+                "group_status": result.status,
+                "review_priority": result.review_priority,
+                "member_count": result.member_count,
+                "suppressed": result.suppressed,
+            }
+        )
+        for node in execution.receipt.nodes:
+            if node.node_type != "plan_step" or node.detail.get("step_id") != intent["step_id"]:
+                continue
+            node.detail.update(
+                {
+                    "group_id": result.group_id,
+                    "group_receipt_id": result.receipt_id,
+                    "group_status": result.status,
+                    "review_priority": result.review_priority,
+                    "member_count": result.member_count,
+                    "suppressed": result.suppressed,
+                }
+            )
+        execution.receipt.results = [{"output": execution.output}]
+        execution.receipt.nodes[0].detail["procedure_group_id"] = result.group_id
+        execution.receipt.nodes[0].detail["procedure_group_proposal_landed"] = True
 
 
 def _load_acceptance_node_pins(

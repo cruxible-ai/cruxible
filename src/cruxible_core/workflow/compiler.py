@@ -24,6 +24,7 @@ from cruxible_core.procedure.analysis import (
 )
 from cruxible_core.procedure.types import (
     ABORT_TARGET,
+    ProcedureBridgeStepSchema,
     ProcedureDefinition,
     ProcedureGuardStepSchema,
     ProcedureProjectStepSchema,
@@ -56,6 +57,7 @@ _PROCEDURE_OUTPUT_STEP_KINDS = frozenset(
         "query",
         "provider",
         "project",
+        "propose_group_from",
         "repeat",
         "shape_items",
         "join_items",
@@ -470,6 +472,30 @@ def compile_plan_definition(
         # Read control targets BEFORE unwrapping: the wrapper owns `next`, a
         # guard owns `on_true`/`on_false`.
         control = control_edges.get(str(step.id), {})
+        if isinstance(step, ProcedureBridgeStepSchema):
+            spec = step.propose_group_from
+            if config.get_relationship(spec.relationship_type) is None:
+                raise ConfigError(
+                    f"{definition_label} '{workflow_name}' bridge step '{step.id}' "
+                    f"references unknown relationship type '{spec.relationship_type}'"
+                )
+            bridge_aliases = (
+                procedure_graph.available_aliases[str(step.id)]
+                if procedure_graph is not None
+                else prior_step_aliases
+            )
+            preview(spec.edges_from, step_aliases=bridge_aliases)
+            preview(spec.proposal_scope, step_aliases=bridge_aliases)
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="propose_group_from",
+                    workflow_type="utility",
+                    as_name=step.as_,
+                    propose_group_from_spec=spec,
+                )
+            )
+            continue
         if isinstance(step, ProcedureProjectStepSchema):
             compiled_steps.append(
                 CompiledPlanStep(

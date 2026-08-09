@@ -1990,6 +1990,7 @@ def handle_run_procedure(
     procedure_id: str,
     *,
     input_payload: dict[str, Any],
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run one live procedure through the generic execution surface."""
     return _dispatch_remote_or_local(
@@ -1997,11 +1998,13 @@ def handle_run_procedure(
             instance_id,
             procedure_id,
             input_payload=input_payload,
+            dry_run=dry_run,
         ),
         lambda: api.run_procedure(
             instance_id,
             procedure_id,
             input_payload=input_payload,
+            dry_run=dry_run,
         ),
         allow_local=False,
         operation_name="cruxible_run_procedure",

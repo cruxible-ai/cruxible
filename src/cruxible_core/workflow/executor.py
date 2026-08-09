@@ -254,6 +254,10 @@ def execute_procedure_plan(
     persist_query_receipts: bool = True,
     persist_traces: bool = True,
     actor_context: GovernedActorContext | None = None,
+    procedure_id: str | None = None,
+    procedure_definition_digest: str | None = None,
+    procedure_run_id: str | None = None,
+    procedure_dry_run: bool = False,
 ) -> WorkflowExecutionResult:
     """Execute a compiled procedure through the shared workflow step machinery.
 
@@ -280,6 +284,10 @@ def execute_procedure_plan(
         head_snapshot_id=head_snapshot_id,
         actor_context=actor_context,
         procedure_budget=budget,
+        procedure_id=procedure_id,
+        procedure_definition_digest=procedure_definition_digest,
+        procedure_run_id=procedure_run_id,
+        procedure_dry_run=procedure_dry_run,
     )
     results_recorded = False
 
@@ -336,6 +344,7 @@ def execute_procedure_plan(
         step_outputs=context.step_outputs,
         alias_step_ids=context.alias_step_ids,
         step_trace_ids=context.step_trace_ids,
+        procedure_group_proposals=context.procedure_group_proposals,
     )
 
 
