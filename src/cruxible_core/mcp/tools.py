@@ -1377,12 +1377,14 @@ def register_tools(
         instance_id: str,
         procedure_id: str,
         input_payload: dict[str, Any],
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         """Run one live procedure through the generic procedure executor."""
         return handlers.handle_run_procedure(
             instance_id,
             procedure_id,
             input_payload=input_payload,
+            dry_run=dry_run,
         )
 
     @_tool

@@ -16,6 +16,7 @@ from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.proposal import (
     PROPOSE_GROUP_FROM_KIND,
+    build_procedure_proposal_facts,
     parse_candidate_edge_rows,
     procedure_candidate_members,
 )
@@ -1103,7 +1104,11 @@ def execute_propose_group_from_handler(
     """Validate and stage the procedure's single governed-output proposal."""
     assert compiled_step.propose_group_from_spec is not None
     spec = compiled_step.propose_group_from_spec
-    if context.procedure_id is None or context.procedure_run_id is None:
+    if (
+        context.procedure_id is None
+        or context.procedure_definition_digest is None
+        or context.procedure_run_id is None
+    ):
         raise ConfigError(
             f"Step '{compiled_step.step_id}' uses '{PROPOSE_GROUP_FROM_KIND}' outside a "
             "governed procedure invocation"
@@ -1126,9 +1131,42 @@ def execute_propose_group_from_handler(
             f"Procedure step '{compiled_step.step_id}' proposal_scope is not JSON-serializable"
         ) from exc
     members, signal_sources = procedure_candidate_members(spec.relationship_type, parsed)
+    thesis_facts = build_procedure_proposal_facts(
+        procedure_id=context.procedure_id,
+        procedure_name=context.workflow_name,
+        definition_digest=context.procedure_definition_digest,
+        step_id=compiled_step.step_id,
+        proposal_scope=proposal_scope,
+        relationship_type=spec.relationship_type,
+        edges_from=context.output_key(compiled_step),
+    )
+    effective_members = members
+    if members:
+        from cruxible_core.service.groups import plan_group_proposal
+
+        proposal_plan = plan_group_proposal(
+            context.instance,
+            spec.relationship_type,
+            members,
+            thesis_text=spec.thesis_text or "",
+            thesis_facts=thesis_facts,
+            pending_refresh_mode=spec.pending_refresh_mode or "replace",
+            analysis_state=spec.analysis_state or {},
+            signal_sources_used=signal_sources,
+            suggested_priority=spec.suggested_priority,
+            source_workflow_name=f"procedure:{context.workflow_name}",
+            source_step_ids=[compiled_step.step_id],
+            actor_context=context.actor_context,
+            force_review=True,
+        )
+        effective_members = proposal_plan.effective_members
     from cruxible_core.service.state_diff import compare_pending_relationships
 
-    would_change = compare_pending_relationships(context.graph, spec.relationship_type, members)
+    would_change = compare_pending_relationships(
+        context.graph,
+        spec.relationship_type,
+        effective_members,
+    )
     output: dict[str, Any] = {
         "kind": "procedure_group_proposal",
         "relationship_type": spec.relationship_type,
@@ -1155,6 +1193,7 @@ def execute_propose_group_from_handler(
                 "relationship_type": spec.relationship_type,
                 "members": members,
                 "proposal_scope": proposal_scope,
+                "thesis_facts": thesis_facts,
                 "thesis_text": spec.thesis_text or "",
                 "pending_refresh_mode": spec.pending_refresh_mode or "replace",
                 "analysis_state": spec.analysis_state or {},

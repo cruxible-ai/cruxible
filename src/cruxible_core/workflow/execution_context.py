@@ -95,6 +95,7 @@ class WorkflowExecutionContext:
     evaluating twice could disagree, and the receipt already recorded the first
     answer as the reason the run went where it went."""
     procedure_id: str | None = None
+    procedure_definition_digest: str | None = None
     procedure_run_id: str | None = None
     procedure_dry_run: bool = False
     procedure_group_proposals: list[dict[str, Any]] = field(default_factory=list)

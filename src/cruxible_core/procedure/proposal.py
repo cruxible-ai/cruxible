@@ -97,11 +97,37 @@ def procedure_candidate_members(
     return members, list(ordered_unique(sources))
 
 
+def build_procedure_proposal_facts(
+    *,
+    procedure_id: str,
+    procedure_name: str,
+    definition_digest: str,
+    step_id: str,
+    proposal_scope: Any,
+    relationship_type: str,
+    edges_from: str,
+) -> dict[str, Any]:
+    """Build the signature facts shared by bridge planning and persistence."""
+    return {
+        "origin": {
+            "kind": "procedure",
+            "procedure_id": procedure_id,
+            "procedure_name": procedure_name,
+            "definition_digest": definition_digest,
+            "step_id": step_id,
+        },
+        "proposal_scope": proposal_scope,
+        "relationship_type": relationship_type,
+        "edges_from": edges_from,
+    }
+
+
 __all__ = [
     "PROPOSE_GROUP_FROM_KIND",
     "ProcedureCandidateEdgeRow",
     "ProcedureCandidateSignalRow",
     "ProcedureProposeGroupSpec",
+    "build_procedure_proposal_facts",
     "parse_candidate_edge_rows",
     "procedure_candidate_members",
 ]

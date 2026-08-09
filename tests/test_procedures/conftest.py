@@ -136,6 +136,7 @@ def bridge_definition(
     relationship_type: str = "blocks",
     edges_from: str = "$steps.rows.items",
     proposal_scope: object = "blocker-triage",
+    pending_refresh_mode: str | None = None,
 ) -> ProcedureDefinition:
     """Return a provider-free definition that lands shaped candidate rows."""
     return ProcedureDefinition.model_validate(
@@ -169,6 +170,7 @@ def bridge_definition(
                         "edges_from": edges_from,
                         "proposal_scope": proposal_scope,
                         "thesis_text": "tasks blocking open incidents",
+                        "pending_refresh_mode": pending_refresh_mode,
                     },
                     "as": "proposal",
                 },

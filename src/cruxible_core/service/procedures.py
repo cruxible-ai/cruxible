@@ -1411,6 +1411,7 @@ def service_run_procedure(
             budget,
             actor_context=actor_context,
             procedure_id=procedure.procedure_id,
+            procedure_definition_digest=procedure.definition_digest,
             procedure_run_id=started_run.run_id,
             procedure_dry_run=dry_run,
         )
@@ -1560,24 +1561,12 @@ def _land_procedure_group_proposals(
 ) -> None:
     """Land staged bridge intents inside the procedure success transaction."""
     for intent in execution.procedure_group_proposals:
-        facts = {
-            "origin": {
-                "kind": "procedure",
-                "procedure_id": procedure.procedure_id,
-                "procedure_name": procedure.definition.name,
-                "definition_digest": procedure.definition_digest,
-                "step_id": intent["step_id"],
-            },
-            "proposal_scope": intent["proposal_scope"],
-            "relationship_type": intent["relationship_type"],
-            "edges_from": intent["output_key"],
-        }
         result = service_propose_group(
             instance,
             intent["relationship_type"],
             intent["members"],
             thesis_text=intent["thesis_text"],
-            thesis_facts=facts,
+            thesis_facts=intent["thesis_facts"],
             pending_refresh_mode=intent["pending_refresh_mode"],
             analysis_state=intent["analysis_state"],
             signal_sources_used=intent["signal_sources_used"],

@@ -1891,6 +1891,7 @@ withdrawing another actor's pending proposal is refused below `GRAPH_WRITE`.
 | `instance_id` | yes | string | Governed instance ID. |
 | `procedure_id` | yes | string | Procedure ID. |
 | `input_payload` | yes | object | Input validated against the procedure contract. |
+| `dry_run` | no | boolean | Preview the run without landing group proposals. |
 
 **Returns:** Procedure, run, output, receipt, and step-output fields.
 

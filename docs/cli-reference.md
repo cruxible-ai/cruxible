@@ -1864,6 +1864,7 @@ This command requires daemon transport and `graph_write`.
 | --- | --- | --- | --- | --- |
 | `PROCEDURE_ID` | yes |  | argument | Procedure ID. |
 | `--input` | yes |  | text | JSON object validated against `contract_in`. |
+| `--dry-run` | no | `False` | boolean | Preview the run without landing group proposals. |
 | `--json` | no | `False` | boolean | Emit the execution result as JSON. |
 
 This command requires daemon transport. Its permission floor is

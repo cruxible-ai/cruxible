@@ -255,6 +255,7 @@ def execute_procedure_plan(
     persist_traces: bool = True,
     actor_context: GovernedActorContext | None = None,
     procedure_id: str | None = None,
+    procedure_definition_digest: str | None = None,
     procedure_run_id: str | None = None,
     procedure_dry_run: bool = False,
 ) -> WorkflowExecutionResult:
@@ -284,6 +285,7 @@ def execute_procedure_plan(
         actor_context=actor_context,
         procedure_budget=budget,
         procedure_id=procedure_id,
+        procedure_definition_digest=procedure_definition_digest,
         procedure_run_id=procedure_run_id,
         procedure_dry_run=procedure_dry_run,
     )

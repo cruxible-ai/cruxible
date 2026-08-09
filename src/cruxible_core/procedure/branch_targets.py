@@ -12,7 +12,25 @@ PROCEDURE_ONLY_NODE_KINDS: frozenset[str] = frozenset(
     {"repeat", "guard", "project", "propose_group_from"}
 )
 
-BRANCH_TARGETABLE_KINDS: frozenset[str] = _TOP_LEVEL_STEP_KINDS | PROCEDURE_ONLY_NODE_KINDS
+BRANCH_TARGETABLE_KINDS: frozenset[str] = frozenset(
+    {
+        "query",
+        "provider",
+        "assert",
+        "assert_not_truncated",
+        "assert_count",
+        "assert_exists",
+        "shape_items",
+        "join_items",
+        "filter_items",
+        "aggregate_items",
+        "dedupe_items",
+        "repeat",
+        "guard",
+        "project",
+        "propose_group_from",
+    }
+)
 """Kinds whose entry may safely be selected by a procedure control edge."""
 
 NEVER_BRANCH_TARGETABLE: dict[str, str] = {
@@ -35,8 +53,8 @@ def assert_branch_target_classification(
     top_level_step_kinds: Collection[str] | None = None,
 ) -> None:
     """Fail when either kind universe gains an unclassified member."""
-    shared = set(step_kinds or (str(kind) for kind in get_args(StepKind)))
-    top_level = set(top_level_step_kinds or _TOP_LEVEL_STEP_KINDS)
+    shared = set((str(kind) for kind in get_args(StepKind)) if step_kinds is None else step_kinds)
+    top_level = set(_TOP_LEVEL_STEP_KINDS if top_level_step_kinds is None else top_level_step_kinds)
     universe = shared | set(PROCEDURE_ONLY_NODE_KINDS)
     targetable = set(BRANCH_TARGETABLE_KINDS)
     never = set(NEVER_BRANCH_TARGETABLE)

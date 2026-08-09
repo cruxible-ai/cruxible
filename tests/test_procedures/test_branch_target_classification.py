@@ -27,6 +27,9 @@ def test_adding_step_kind_fires_the_completeness_failure() -> None:
 
 
 def test_adding_top_level_kind_fires_the_completeness_failure() -> None:
+    # This reproduces the real whitelist edit: BRANCH_TARGETABLE_KINDS is an
+    # independently reviewed closed set, so expanding the whitelist does not
+    # silently expand the classification under test.
     expanded_top_level = set(_TOP_LEVEL_STEP_KINDS) | {"synthetic_top_level_kind"}
 
     with pytest.raises(AssertionError, match="synthetic_top_level_kind"):

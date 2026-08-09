@@ -479,8 +479,13 @@ def compile_plan_definition(
                     f"{definition_label} '{workflow_name}' bridge step '{step.id}' "
                     f"references unknown relationship type '{spec.relationship_type}'"
                 )
-            preview(spec.edges_from, step_aliases=prior_step_aliases)
-            preview(spec.proposal_scope, step_aliases=prior_step_aliases)
+            bridge_aliases = (
+                procedure_graph.available_aliases[str(step.id)]
+                if procedure_graph is not None
+                else prior_step_aliases
+            )
+            preview(spec.edges_from, step_aliases=bridge_aliases)
+            preview(spec.proposal_scope, step_aliases=bridge_aliases)
             compiled_steps.append(
                 CompiledPlanStep(
                     step_id=step.id,
