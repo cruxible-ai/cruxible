@@ -102,6 +102,28 @@ def contract_input_example(
     }
 
 
+def declared_input_field_enums(
+    config: CoreConfig,
+    contract: ContractSchema,
+) -> dict[str, frozenset[Any]]:
+    """Return each contract field's declared vocabulary, keyed by ``$input`` path.
+
+    The "declared enum sets" R9 intersects against (§3.5). A guard demanding a
+    value the contract's own enumeration cannot carry can never hold, whatever
+    the caller sends -- and that is knowable at authoring time rather than on
+    the first run that takes the arm.
+
+    Keyed the way a guard operand names the field, so the analysis needs no
+    knowledge of contracts and this module needs none of predicates.
+    """
+    declared: dict[str, frozenset[Any]] = {}
+    for field_name, field_schema in contract.fields.items():
+        values = _declared_enum_values(config.enums, field_schema.enum, field_schema.enum_ref)
+        if values:
+            declared[f"$input.{field_name}"] = frozenset(values)
+    return declared
+
+
 def _declared_enum_values(
     enums: Mapping[str, Any],
     inline_enum: Any,

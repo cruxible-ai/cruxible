@@ -3855,7 +3855,11 @@ def _procedure_transition_payload(result: ProcedureTransitionResult) -> dict[str
         "action": result.action,
         "procedure": _procedure_record_payload(result.procedure),
         "receipt_id": result.receipt_id,
+        # Both channels, dual-emitted through 0.4: `warnings` is the deprecated
+        # string list (removed in 0.5.0), `typed_warnings` the same findings
+        # carrying a code and the nodes they name.
         "warnings": result.warnings,
+        "typed_warnings": [warning.model_dump(mode="json") for warning in result.typed_warnings],
     }
 
 
@@ -4312,6 +4316,12 @@ def get_procedure(instance_id: str, procedure_id: str) -> dict[str, Any]:
             None
             if result.contract_in_schema is None
             else result.contract_in_schema.model_dump(mode="json", exclude_none=True)
+        ),
+        # Display only (§3.1 analysis 7). `null` means the stored definition's
+        # control graph does not resolve, which is itself the thing a reviewer
+        # needs to see rather than a reason to fail the read.
+        "control_paths": (
+            None if result.control_paths is None else result.control_paths.model_dump(mode="json")
         ),
     }
 

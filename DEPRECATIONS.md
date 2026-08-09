@@ -22,3 +22,4 @@ together.
 | `GroupStatus 'auto_resolved' read-only member` | `resolved with resolution_source='auto_resolved'` | 0.3.0 | 0.4.0 |
 | `OperationType 'group_clear' read-only member` | `group_withdraw` | 0.3.0 | 0.4.0 |
 | `StateHealthGroupsSection.auto_resolved_count` | `withdrawn_count` | 0.3.0 | 0.4.0 |
+| `ProcedureTransitionResult.warnings string list` | `ProcedureTransitionResult.typed_warnings` | 0.4.0 | 0.5.0 |

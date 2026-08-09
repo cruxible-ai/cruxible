@@ -78,6 +78,24 @@ MAX_PROCEDURE_EXPANDED_PROVIDER_CALLS = 250
 MAX_PROCEDURE_REPEAT_ATTEMPTS = 25
 """Maximum attempts accepted by one bounded repeat step."""
 
+MAX_PROCEDURE_BRANCH_NODES = 12
+"""Maximum guard nodes in one definition (R11).
+
+Paths are exponential in branch count, and two things consume paths: the
+reviewer's enumeration (§3.1 analysis 7) and the reviewer's head. Every
+CORRECTNESS analysis here is ``O(V+E)`` and needs no such ceiling -- this one
+bounds what the display and the human have to absorb, and it is why a
+definition can never present a reviewer with a set of behaviours nobody can
+read.
+"""
+
+MAX_PROCEDURE_ENUMERATED_PATHS = 64
+"""Display cap on enumerated control paths (§3.3).
+
+Never consulted by a correctness check. A truncated enumeration says so; no
+refusal, no analysis and no ceiling is derived from it.
+"""
+
 _TOP_LEVEL_STEP_KINDS = frozenset(
     {
         "query",
@@ -334,11 +352,44 @@ def unwrap_procedure_step(step: Any) -> Any:
 
 
 class ProcedureStaticExpansion(BaseModel):
-    """Review-visible static upper bounds computed from a procedure body."""
+    """Review-visible static upper bounds computed from a procedure body.
+
+    The two expanded counts are longest-PATH maxima (§3.3), and each carries
+    the path that realises it. Without the witness a reviewer meeting
+    ``expanded_provider_calls=9`` on a branching definition has no way to find
+    which arm spends it, and the number reads as a property of the body rather
+    than of one execution.
+
+    ``total_steps`` has no witness because it is not a path property: it counts
+    STORED step definitions, which is what the 100-step ceiling is about.
+    """
 
     total_steps: int
     expanded_steps: int
     expanded_provider_calls: int
+    expanded_steps_path: tuple[str, ...] = ()
+    expanded_provider_calls_path: tuple[str, ...] = ()
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ProcedureAuthoringWarning(BaseModel):
+    """One non-blocking authoring diagnostic, typed (§3.6).
+
+    ``code`` is what a surface can group, filter and act on; the string list it
+    ships alongside can only be printed. ``node_ids`` names where the finding
+    lives, which a message can only spell out in prose that no caller can
+    parse.
+
+    Deliberately NOT scored and deliberately not aggregated. Per
+    ``dd-specificity-doctrine`` the warning family is a design razor, never a
+    metric: extension cardinality is uncomputable in an open world, and any
+    aggregate over these would Goodhart into vacuity.
+    """
+
+    code: str
+    message: str
+    node_ids: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -472,6 +523,17 @@ class ProcedureDefinition(BaseModel):
             if unknown:
                 raise ValueError(f"evidence_outputs references unknown step aliases: {unknown}")
 
+        branch_nodes = [
+            str(step.id) for step in self.steps if isinstance(step, ProcedureGuardStepSchema)
+        ]
+        if len(branch_nodes) > MAX_PROCEDURE_BRANCH_NODES:  # R11
+            raise ValueError(
+                f"procedure declares {len(branch_nodes)} guard nodes; the branch-node "
+                f"ceiling is {MAX_PROCEDURE_BRANCH_NODES}. Paths grow exponentially in "
+                "branch count, and a definition whose behaviours a reviewer cannot "
+                "enumerate cannot be reviewed. Split it into procedures that compose."
+            )
+
         expansion = self.static_expansion()
         refusals: list[str] = []
         if expansion.total_steps > MAX_PROCEDURE_STEPS:
@@ -490,43 +552,50 @@ class ProcedureDefinition(BaseModel):
                 "budget.max_provider_calls must be at least the expanded provider-call count"
             )
         if refusals:
+            # Each expanded count names the path that realises it. On a
+            # branching definition the bare number leaves an author to guess
+            # which arm blew the ceiling, and the guess is wrong as often as
+            # not -- the heaviest path is rarely the longest one.
+            from cruxible_core.procedure.analysis import format_witness_path
+
             counts = (
                 f"computed total_steps={expansion.total_steps}, "
-                f"expanded_steps={expansion.expanded_steps}, "
-                f"expanded_provider_calls={expansion.expanded_provider_calls}, "
+                f"expanded_steps={expansion.expanded_steps} on path "
+                f"{format_witness_path(expansion.expanded_steps_path)}, "
+                f"expanded_provider_calls={expansion.expanded_provider_calls} on path "
+                f"{format_witness_path(expansion.expanded_provider_calls_path)}, "
                 f"declared max_provider_calls={self.budget.max_provider_calls}"
             )
             raise ValueError(f"procedure static expansion refused: {counts}; {'; '.join(refusals)}")
         return self
 
     def static_expansion(self) -> ProcedureStaticExpansion:
-        """Return the maximum statically expanded step/provider counts."""
+        """Return the maximum statically expanded step/provider counts.
+
+        ``total_steps`` is a SUM over the stored body; the two expanded counts
+        are longest-path MAXIMA (§3.3). Summing them under branching would
+        charge one execution for work no execution does -- three mutually
+        exclusive arms would each pay for the other two, and the budget
+        ceiling would refuse a definition whose worst path is well inside it.
+
+        The import is deferred because the analysis layer sits ON TOP of this
+        module: it reads the step types and the control edges declared here.
+        """
+        from cruxible_core.procedure.analysis import worst_case_expansion
+
         total_steps = 0
-        expanded_steps = 0
-        expanded_provider_calls = 0
         for wrapper in self.steps:
             step = unwrap_procedure_step(wrapper)
-            if isinstance(step, ProcedureRepeatStepSchema):
-                nested_count = len(step.repeat.steps)
-                nested_provider_count = sum(
-                    workflow_step_kind(nested) == "provider" for nested in step.repeat.steps
-                )
-                total_steps += 1 + nested_count
-                expanded_steps += 1 + step.repeat.max_attempts * nested_count
-                expanded_provider_calls += step.repeat.max_attempts * nested_provider_count
-                continue
-            total_steps += 1
-            expanded_steps += 1
-            # A guard is one step and zero provider calls: it decides where
-            # control goes, it does not call out. Batch C turns the provider
-            # sum into a longest-path max; until then a branch-free definition
-            # counts exactly as it did.
-            if isinstance(step, WorkflowStepSchema) and workflow_step_kind(step) == "provider":
-                expanded_provider_calls += 1
+            total_steps += (
+                1 + len(step.repeat.steps) if isinstance(step, ProcedureRepeatStepSchema) else 1
+            )
+        expansion = worst_case_expansion(self.steps)
         return ProcedureStaticExpansion(
             total_steps=total_steps,
-            expanded_steps=expanded_steps,
-            expanded_provider_calls=expanded_provider_calls,
+            expanded_steps=expansion.expanded_steps.count,
+            expanded_provider_calls=expansion.expanded_provider_calls.count,
+            expanded_steps_path=expansion.expanded_steps.path,
+            expanded_provider_calls_path=expansion.expanded_provider_calls.path,
         )
 
     def referenced_providers(self) -> set[str]:
@@ -708,6 +777,26 @@ class ProcedureContractSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ProcedurePathEnumeration(BaseModel):
+    """Every control path through one definition, capped for display (§3.1).
+
+    Display only, and never consulted by a correctness check -- every refusal
+    in the analysis suite is ``O(V+E)`` over the graph and none of them looks
+    at this. It exists because authorising a branching definition is
+    authorising its BEHAVIOURS, and a topology is not a list of behaviours.
+
+    ``truncated`` is reported rather than absorbed. A surface that quietly
+    showed the first 64 of 300 paths would be worse than one that showed none:
+    the reviewer would believe they had seen the definition.
+    """
+
+    paths: list[list[str]]
+    truncated: bool
+    cap: int
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 class ProcedureGetResult(BaseModel):
     """One procedure record plus its currently resolved input field schema.
 
@@ -718,6 +807,13 @@ class ProcedureGetResult(BaseModel):
 
     procedure: ProcedureReadRecord
     contract_in_schema: ProcedureContractSchema | None
+    control_paths: ProcedurePathEnumeration | None = None
+    """``None`` when the stored definition's control graph does not resolve.
+
+    A read verb does not raise over derived data: a definition accepted under
+    an older core, or one whose graph a later refusal would reject, still has
+    to be READABLE -- that is how a reviewer finds out what is wrong with it.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -767,6 +863,19 @@ class ProcedureTransitionResult(BaseModel):
     procedure: ProcedureRecord
     receipt_id: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    """DEPRECATED, removed in 0.5.0. Use ``typed_warnings``.
+
+    Dual-emitted per ``dd-deprecation-policy`` class (3): the two lists carry
+    the same findings in the same order, and the strings are DERIVED from the
+    typed warnings rather than built beside them, so they cannot drift.
+
+    No per-call deprecation notice is emitted. This is an output field, always
+    populated, and nothing can observe whether a caller read it -- a notice on
+    every propose would be noise on a surface the caller never asked for. The
+    registry entry and the DEPRECATIONS.md row carry the schedule.
+    """
+    typed_warnings: list[ProcedureAuthoringWarning] = Field(default_factory=list)
+    """The same findings as ``warnings``, with a code and the nodes involved."""
 
 
 class ProcedureExecutionResult(BaseModel):
@@ -857,12 +966,15 @@ def _workflow_references(value: Any) -> list[str]:
 
 
 __all__ = [
+    "MAX_PROCEDURE_BRANCH_NODES",
+    "MAX_PROCEDURE_ENUMERATED_PATHS",
     "MAX_PROCEDURE_EXPANDED_PROVIDER_CALLS",
     "MAX_PROCEDURE_EXPANDED_STEPS",
     "MAX_PROCEDURE_EVIDENCE_BYTES",
     "MAX_PROCEDURE_REPEAT_ATTEMPTS",
     "MAX_PROCEDURE_STEPS",
     "PROCEDURE_EVIDENCE_HEAD_BYTES",
+    "ProcedureAuthoringWarning",
     "ProcedureBudget",
     "ProcedureBudgetSpent",
     "ProcedureDefinition",
@@ -875,6 +987,7 @@ __all__ = [
     "ProcedureGuardStepSchema",
     "ProcedureInnerStep",
     "ProcedureProjectStepSchema",
+    "ProcedurePathEnumeration",
     "ProcedurePrecondition",
     "ProcedureReadRecord",
     "ProcedureRecord",

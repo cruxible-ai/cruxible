@@ -39,6 +39,14 @@ DEFINITION_FORMAT_V1 = 1
 DEFINITION_FORMAT_V2 = 2
 """Graph-format definitions. ``graph_format: 2`` is declared on the wire."""
 
+GRAPH_FORMAT_DECLARED_WITHOUT_CONSTRUCT = "graph_format_declared_without_construct"
+"""Warning code for R14, kept beside the warning it names.
+
+A plain string, so the one-way dependency holds: this module still imports
+nothing from ``procedure.types``, and the typed-warning layer above maps the
+code without either module learning about the other.
+"""
+
 SUPPORTED_DECLARED_FORMATS: frozenset[int | None] = frozenset({None, DEFINITION_FORMAT_V2})
 """The ONLY legal wire spellings of ``graph_format``.
 
@@ -230,6 +238,7 @@ def definition_format_version(definition: ProcedureDefinition) -> tuple[int, lis
 
 __all__ = [
     "DEFINITION_FORMAT_V1",
+    "GRAPH_FORMAT_DECLARED_WITHOUT_CONSTRUCT",
     "coerce_present_declared_format",
     "DEFINITION_FORMAT_V2",
     "SUPPORTED_DECLARED_FORMATS",

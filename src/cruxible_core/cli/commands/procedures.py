@@ -122,13 +122,29 @@ def _transition_receipt_id(result: Any) -> str | None:
     return None
 
 
-def _transition_warnings(result: Any) -> list[str]:
+def _transition_warnings(result: Any) -> list[tuple[str, str]]:
+    """Return ``(code, message)`` per authoring warning.
+
+    The typed channel is preferred and the string list is the fallback, so a
+    daemon that predates `typed_warnings` still prints its warnings -- with the
+    code rendered as `?`, which is visibly a missing code rather than a
+    silently absent one.
+    """
     if isinstance(result, ProcedureTransitionResult):
-        return result.warnings
+        if result.typed_warnings:
+            return [(warning.code, warning.message) for warning in result.typed_warnings]
+        return [("?", message) for message in result.warnings]
     if isinstance(result, dict):
+        typed = result.get("typed_warnings")
+        if isinstance(typed, list) and typed:
+            return [
+                (str(item.get("code", "?")), str(item.get("message", "")))
+                for item in typed
+                if isinstance(item, dict)
+            ]
         warnings = result.get("warnings")
         if isinstance(warnings, list) and all(isinstance(item, str) for item in warnings):
-            return warnings
+            return [("?", message) for message in warnings]
     return []
 
 
@@ -142,6 +158,41 @@ def _contract_in_schema(result: Any) -> dict[str, Any] | None:
         if isinstance(value, dict):
             return value
     return None
+
+
+def _control_paths(result: Any) -> dict[str, Any] | None:
+    if isinstance(result, ProcedureGetResult):
+        if result.control_paths is None:
+            return None
+        return result.control_paths.model_dump(mode="json")
+    if isinstance(result, dict):
+        value = result.get("control_paths")
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _echo_control_paths(enumeration: dict[str, Any] | None) -> None:
+    """Print the behaviours a reviewer is being asked to authorise.
+
+    A linear definition has exactly one path and printing it says nothing the
+    step list did not, so it is skipped; the moment there is a second path the
+    reviewer needs the list, because that is the point at which the step list
+    stops describing what runs.
+    """
+    if enumeration is None:
+        click.echo("  Control paths: unresolved (the definition's control graph does not resolve)")
+        return
+    paths = enumeration.get("paths") or []
+    if len(paths) < 2 and not enumeration.get("truncated"):
+        return
+    click.echo(f"  Control paths ({len(paths)}):")
+    for path in paths:
+        click.echo(f"    {' -> '.join(str(node_id) for node_id in path)}")
+    if enumeration.get("truncated"):
+        click.echo(
+            f"    ... truncated at the {enumeration.get('cap')}-path display cap; more paths exist"
+        )
 
 
 def _procedure_items(result: Any) -> list[ProcedureRecord]:
@@ -242,8 +293,8 @@ def procedure_propose(
     receipt_id = _transition_receipt_id(result)
     if receipt_id:
         click.echo(f"  Receipt: {receipt_id}")
-    for warning in _transition_warnings(result):
-        click.echo(f"  Warning: {warning}")
+    for code, message in _transition_warnings(result):
+        click.echo(f"  Warning [{code}]: {message}")
 
 
 @procedure_group.command("list")
@@ -314,11 +365,13 @@ def procedure_show(procedure_id: str, output_json: bool) -> None:
             {
                 "procedure": _procedure_payload(procedure),
                 "contract_in_schema": _contract_in_schema(result),
+                "control_paths": _control_paths(result),
             }
         )
         return
     _echo_procedure(procedure)
     _echo_contract_in_schema(_contract_in_schema(result))
+    _echo_control_paths(_control_paths(result))
     click.echo("  Definition:")
     click.echo(
         yaml.safe_dump(

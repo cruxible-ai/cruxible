@@ -211,7 +211,78 @@ def test_procedure_propose_loads_yaml_and_forwards_governance_fields(
     evidence_refs = cast(list[object], captured["evidence_refs"])
     assert len(evidence_refs) == 1
     assert "Receipt: RCP-procedure" in result.output
-    assert "Warning: budget does not match provider-call count" in result.output
+    # The stub answers with the deprecated string list only, as a daemon that
+    # predates typed warnings does. The warning still prints, and the absent
+    # code is visibly absent rather than silently dropped.
+    assert "Warning [?]: budget does not match provider-call count" in result.output
+
+
+def test_procedure_propose_prints_the_typed_warning_code_when_the_daemon_sends_one(
+    runner: CliRunner,
+    procedure_cli_instance: tuple[CruxibleInstance, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The typed channel wins over the string list when both are present."""
+    instance, supersedes_id = procedure_cli_instance
+    definition_path = tmp_path / "procedure.yaml"
+    definition_path.write_text(
+        yaml.safe_dump(
+            provider_definition("cli_action").model_dump(
+                mode="json", by_alias=True, exclude_none=True
+            ),
+            sort_keys=False,
+        )
+    )
+
+    class StubClient:
+        def propose_procedure(
+            self,
+            instance_id: str,
+            *,
+            definition: dict[str, object],
+            supersedes_procedure_id: str | None,
+            evidence_refs: list[object],
+        ) -> dict[str, object]:
+            store = instance.get_procedure_store()
+            try:
+                procedure = store.get_procedure(supersedes_id)
+            finally:
+                store.close()
+            assert procedure is not None
+            return {
+                "action": "propose",
+                "procedure": procedure.model_dump(mode="json", by_alias=True, exclude_none=True),
+                "receipt_id": "RCP-procedure",
+                "warnings": ["only on some paths"],
+                "typed_warnings": [
+                    {
+                        "code": "contract_field_path_conditional",
+                        "message": "only on some paths",
+                        "node_ids": ["escalate"],
+                    }
+                ],
+            }
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_procedure",
+            "procedure",
+            "propose",
+            str(definition_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Warning [contract_field_path_conditional]: only on some paths" in result.output
+    # Not twice: the two channels carry the same findings, so printing both
+    # would double every warning during the dual-emit window.
+    assert result.output.count("only on some paths") == 1
 
 
 def test_procedure_withdraw_forwards_version_and_optional_reason(
