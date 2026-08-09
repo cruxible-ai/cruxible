@@ -103,6 +103,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("procedure", "resolve"): "active",
     ("procedure", "retire"): "active",
     ("procedure", "run"): "active",
+    ("migrate",): "active",
 }
 
 
@@ -414,6 +415,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "workflows",
         "validate",
         "Validate a config YAML file without creating an instance.",
+    ),
+    "migrate": _command(
+        "procedures",
+        "migrate_cmd",
+        "Converge live v1 procedures through supervised v2 re-acceptance.",
     ),
     "context": _group(
         "Manage remembered governed server and instance context.",
