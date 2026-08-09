@@ -1894,6 +1894,33 @@ A run with `verdict: refused` also carries `refusal_reason`, the classification
 counted by the procedure's `top_refusal_reason`. It is null on every other
 verdict, and null on refusals recorded before the reason was tracked.
 
+## cruxible migrate
+
+**Usage:** `cruxible migrate [OPTIONS]`
+
+**Purpose:** Converge live graph-format v1 procedures onto format 2 through
+supervised re-acceptance. Each lift is a newly validated v2 definition whose
+content differs from its predecessor only by the `graph_format` discriminator;
+anything else refuses.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--proposer-credential` | yes |  | text | Runtime bearer credential that authors the lift proposals. Supervised `--apply` requires this credential to hold `admin` permission: the up-front identity preflight resolves credential labels, revocation state, and instance scope through an admin-gated read before any write is attempted. |
+| `--reviewer-credential` | no |  | text | Distinct runtime bearer credential that accepts each lift through the ordinary review verbs. Omit to run propose-only. |
+| `--dry-run` / `--apply` | no | `--dry-run` | boolean | Report the convergence plan without writing, or execute it through the governed lifecycle verbs. |
+
+This command requires daemon transport and works through the ordinary
+propose, accept, and retire verbs only — it has no privileged write path.
+Same-actor `--apply` is refused up front, before any write. A rerun after a
+propose-only pass creates no second pending lift; a pending proposal for the
+same name that is not the expected lift refuses the sweep and is named in the
+report. Retired predecessors keep their receipts, runs, and readings —
+node/arm readings remain digest-matchable on the retired predecessor; unit
+readings are retained there only and are not aggregated into the successor's
+`linked_outcomes`.
+
 ## cruxible group
 
 **Usage:** `cruxible group [OPTIONS]`
