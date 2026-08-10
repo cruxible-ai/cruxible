@@ -68,7 +68,7 @@ tier meaning "may propose but may not direct-add."
   See [Direct-Write Governance](config-reference.md#direct-write-governance-refuse_direct_writes)
   for the precedence table and the three knobs.
 
-- **Adjudication tier** — `feedback approve` / `reject` / `correct` decide a
+- **Adjudication tier** — `feedback accept` / `reject` / `correct` decide a
   claim's fate, so they require `graph_write` regardless of the feedback tool's
   own `governed_write` tier. A `governed_write` agent may stage evidence
   (`attest`, `--pending`, `group propose`) — including `attest --stance

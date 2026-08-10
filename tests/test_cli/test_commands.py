@@ -3392,14 +3392,6 @@ class TestGroupHelpCLI:
         assert "resolutions" in result.output
 
 
-class TestFeedbackGroupOverrideCLI:
-    def test_feedback_group_override_flag(self, runner: CliRunner) -> None:
-        """--group-override flag appears in help."""
-        result = runner.invoke(cli, ["feedback", "record", "--help"])
-        assert result.exit_code == 0
-        assert "--group-override" in result.output
-
-
 def _extract_group_id(output: str) -> str:
     """Extract GRP-xxx from CLI output."""
     for line in output.splitlines():

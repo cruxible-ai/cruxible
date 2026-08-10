@@ -13,6 +13,11 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.retired_inputs import refuse_retired_inputs
+
+RETIRED_FEEDBACK_INPUTS = ("source", "group_override")
+"""Feedback input keys retired in 0.4.0: refused by name, never ignored."""
+
 QueryVisibilityState = Literal["live", "accepted", "all", "not-live", "pending", "reviewable"]
 LifecycleStatus = Literal["active", "inactive", "superseded", "retracted", "live", "retired"]
 # Output profile for entity-shaped read payloads: `standard` is the unchanged
@@ -45,13 +50,6 @@ GateEvaluationVerdict = Literal["satisfied", "unsatisfied", "error"]
 
 ConstraintSeverity = Literal["warning", "error"]
 FeedbackAction = Literal["accept", "reject", "correct"]
-FeedbackInputAction = Literal["accept", "reject", "correct", "approve", "flag"]
-"""Compatibility input vocabulary.
-
-``approve`` delegates to ``accept`` with a structured deprecation warning.
-``flag`` is accepted only so the server can return its structured deprecation
-refusal; it is not a live feedback action and is never persisted.
-"""
 OutcomeValue = Literal["correct", "incorrect", "partial", "unknown"]
 OutcomeAnchorType = Literal["resolution", "receipt"]
 ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
@@ -685,11 +683,9 @@ class PropertyPairInput(BaseModel):
 
 class FeedbackBatchItemInput(BaseModel):
     receipt_id: str = Field(description="Receipt id the feedback is anchored to.")
-    action: FeedbackInputAction = Field(
+    action: FeedbackAction = Field(
         description=(
-            "Adjudication: accept, reject, or correct the edge. Deprecated `approve` "
-            "delegates to `accept`; deprecated `flag` is accepted only to return its "
-            "removal warning. To record a "
+            "Adjudication: accept, reject, or correct the edge. To record a "
             "doubt WITHOUT adjudicating, use `cruxible attest record --stance "
             "contradict` -- it stores the observation, its evidence, and its "
             "actor instead of silently un-approving the edge."
@@ -708,29 +704,20 @@ class FeedbackBatchItemInput(BaseModel):
         default=None,
         description="Corrected property values, used with action='correct'.",
     )
-    group_override: bool = Field(
-        default=False,
-        description=(
-            "Deprecated compatibility write; use force_review. If true, mark "
-            "the edge assertion as a group-resolve override."
-        ),
-    )
-    source: str | None = Field(
-        default=None,
-        description=(
-            "Deprecated and ignored compatibility input; actor kind is derived from actor_context."
-        ),
-    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, RETIRED_FEEDBACK_INPUTS)
+        return data
 
 
 class FeedbackFromQueryInput(BaseModel):
     receipt_id: str = Field(description="Query receipt id whose row is being adjudicated.")
     result_index: int = Field(description="Zero-based index of the result row in the receipt.")
-    action: FeedbackInputAction = Field(
+    action: FeedbackAction = Field(
         description=(
-            "Adjudication: accept, reject, or correct the edge. Deprecated `approve` "
-            "delegates to `accept`; deprecated `flag` is accepted only to return its "
-            "removal warning. To record a "
+            "Adjudication: accept, reject, or correct the edge. To record a "
             "doubt WITHOUT adjudicating, use `cruxible attest record --stance "
             "contradict` -- it stores the observation, its evidence, and its "
             "actor instead of silently un-approving the edge."
@@ -748,19 +735,6 @@ class FeedbackFromQueryInput(BaseModel):
         default=None,
         description="Corrected property values, used with action='correct'.",
     )
-    group_override: bool = Field(
-        default=False,
-        description=(
-            "Deprecated compatibility write; use force_review. If true, mark "
-            "the edge assertion as a group-resolve override."
-        ),
-    )
-    source: str | None = Field(
-        default=None,
-        description=(
-            "Deprecated and ignored compatibility input; actor kind is derived from actor_context."
-        ),
-    )
     path_index: int | None = Field(
         default=None,
         description="For path rows, which path to select within the result.",
@@ -769,6 +743,12 @@ class FeedbackFromQueryInput(BaseModel):
         default=None,
         description="For path rows, the segment alias identifying the edge to adjudicate.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, RETIRED_FEEDBACK_INPUTS)
+        return data
 
 
 class DecisionPolicyMatchInput(BaseModel):

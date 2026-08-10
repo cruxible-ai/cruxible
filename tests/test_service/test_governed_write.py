@@ -31,7 +31,7 @@ def test_service_feedback_batch_applies_atomically(populated_instance):
         [
             FeedbackBatchItem(
                 receipt_id=receipt_id,
-                action="approve",
+                action="accept",
                 target=RelationshipInstance(
                     from_type="Part",
                     from_id="BP-1001",
@@ -93,7 +93,7 @@ def test_service_feedback_batch_input_wrapper(populated_instance):
         [
             FeedbackItemInput(
                 receipt_id=receipt_id,
-                action="approve",
+                action="accept",
                 target=RelationshipTargetInput(
                     from_type="Part",
                     from_id="BP-1001",
@@ -116,7 +116,7 @@ def test_service_feedback_batch_invalid_receipt_rolls_back(populated_instance):
             [
                 FeedbackBatchItem(
                     receipt_id="RCP-missing",
-                    action="approve",
+                    action="accept",
                     target=RelationshipInstance(
                         from_type="Part",
                         from_id="BP-1001",
@@ -162,7 +162,7 @@ def test_service_feedback_ambiguous_edge_rolls_back_feedback_record(populated_in
         service_feedback(
             populated_instance,
             receipt_id=receipt_id,
-            action="approve",
+            action="accept",
             target=RelationshipInstance(
                 from_type="Part",
                 from_id="BP-1001",

@@ -7,6 +7,70 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **The 0.4.0 deprecation removals landed (BREAKING).** Every surface the
+  registry stamped `removal_version: 0.4.0` and that a caller could stop sending
+  is gone, along with its acceptance path, its registry entry, and the
+  transport emitters that carried its warning. Removed: the `approve` feedback
+  action (use `accept`), the `flag` feedback action (use
+  `cruxible attest record --stance contradict`), the `group_override` feedback
+  write path (retired outright — see below), and the retired declared-actor inputs
+  `source`, `proposed_by`, `resolved_by`, and `opened_by` (the kind is derived
+  from `actor_context`). These were accepted-and-ignored compatibility inputs
+  through 0.3; sending one now FAILS, at every public boundary, by name — `422`
+  on HTTP, a typed tool error on MCP (the tool does not run), a `ValidationError`
+  on the client input contracts and the Python request models, and a
+  `BadParameter` naming the offending item on `feedback batch`. Each refusal
+  names the retired key and what to send instead. The refusal is scoped to the
+  retired names: an unrelated unknown field is still tolerated, because
+  forbidding extras wholesale is a wider contract change than this schedule
+  promised. Retired ACTIONS refuse the same way, as an unknown enum member on
+  HTTP/MCP and an unknown `--action` choice on the CLI. `FeedbackInputAction`
+  is removed from the client contracts: the input vocabulary and the write
+  vocabulary are the same thing again, so `FeedbackAction` is both.
+  **Migration:** drop the arguments and pass `actor_context`; replace `approve`
+  with `accept`. **Unaffected:** stored history still reads `approve` and `flag`
+  rows, the derived `source` / `proposed_by` / `resolved_by` / `opened_by` READ
+  projections still compute from the actor context, and edges already carrying
+  `assertion.group_override` still read and still suppress a re-proposal — the
+  flag is now write-once history that nothing can set again.
+  The `DEPRECATIONS.md` and 0.3.0 changelog rows stay as the historical record.
+- **`group_override` is retired outright, with no public replacement.** An
+  earlier draft of the entry above named `force_review` as the migration; that
+  was wrong, and the correction is recorded here rather than quietly dropped.
+  **What is gone:** every way for a caller to SET `assertion.group_override` —
+  the `--group-override` CLI flags, the HTTP and MCP inputs, the client kwargs,
+  and the service write path behind them. There is no replacement input, on any
+  transport. **What still works:** edges that 0.2.x/0.3 instances already
+  stamped. `group/governance.py` still reads the stored flag, so such an edge
+  still lifts a proposal's review priority and still blocks auto-resolution, and
+  reads still report it. The flag became write-once history, not dead weight.
+  **What `force_review` actually is:** a per-call boolean argument to
+  `service_propose_group` (also raised by a workflow's `require_review` policy)
+  that forces ONE proposal to be reviewed. It is Python-level and lives inside
+  the service layer — it is on no HTTP route, no MCP tool, no CLI command, and
+  no client method. It sets nothing on an edge and persists nothing, so it is
+  not an equivalent of a durable edge-level override and cannot migrate one.
+  **Future work:** exposing a per-proposal review forcer on the public
+  transports is a separate, demand-gated work item, not part of this release.
+- **The legacy outcome deprecations were rescheduled to 0.5.0.** The legacy
+  outcome record and outcome profile functions (`outcome record`,
+  `outcome profile`, `service_outcome`, `service_get_outcome_profile`, and their
+  MCP/HTTP/client equivalents) were stamped `removal_version: 0.4.0` and were
+  NOT removed; the maintainer has ruled the window moves to **0.5.0**, and their
+  warnings now say so on every transport. The rationale is that the stated
+  replacement does not exist yet: resolution contracts carry no equivalent of an
+  outcome profile's coded vocabulary, its `required_scope_keys`, or the
+  profile-drift analysis that `analyze outcomes` reports; four shipped kits
+  configure `outcome_profiles`, and the blueprint `outcome_metric` hook names an
+  outcome profile as its available target. Removing the only writer first would
+  leave that config, the `outcomes` table, `list outcomes`, and
+  `analyze outcomes` alive with nothing able to feed them, and porting the
+  missing machinery onto the resolution-contract rail is post-Playbill-branch
+  work. Both entries now state `removal_version="0.5.0"` explicitly instead of
+  inheriting the registry default, so the new commitment does not move when the
+  default does. `DEFAULT_REMOVAL_VERSION` itself moves to `0.5.0` for the same
+  reason a schedule exists: 0.4 is the release under development, so a notice
+  registered today and left on the old default would have been born past due.
 - **Procedure definitions can be graphs.** A definition is a typed DAG rather
   than a flat list: guard nodes carry a closed predicate grammar and two
   labelled successors, flow wrappers declare an unconditional successor, and a

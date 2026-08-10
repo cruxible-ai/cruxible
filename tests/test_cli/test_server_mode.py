@@ -2700,7 +2700,7 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
         """[
   {
     "receipt_id": "RCP-1",
-    "action": "approve",
+    "action": "accept",
     "target": {
       "from_type": "Part",
       "from_id": "BP-1",
@@ -2735,7 +2735,6 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
             reason_code,
             scope_hints,
             corrections,
-            group_override,
             path_index,
             path_alias,
         ):
@@ -2747,7 +2746,6 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
             assert reason_code == "vendor_mismatch"
             assert scope_hints == {"vendor": "acme"}
             assert corrections is None
-            assert group_override is False
             assert path_index == 1
             assert path_alias is None
             return contracts.FeedbackResult(
@@ -2773,7 +2771,6 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
     )
     assert feedback.exit_code == 0
     assert "Batch feedback recorded for 1/1 item(s)." in feedback.output
-    assert "feedback action 'approve'" in feedback.output
 
     feedback_from_query = runner.invoke(
         cli,
@@ -2791,7 +2788,7 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
             "--path-index",
             "1",
             "--action",
-            "approve",
+            "accept",
             "--reason",
             "looks valid",
             "--reason-code",
@@ -2802,7 +2799,6 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
     )
     assert feedback_from_query.exit_code == 0
     assert "Feedback FB-QUERY-1 applied to graph." in feedback_from_query.output
-    assert "feedback action 'approve'" in feedback_from_query.output
 
 
 def test_feedback_explicit_coordinates_without_receipt_forwards_none(
@@ -2832,7 +2828,7 @@ def test_feedback_explicit_coordinates_without_receipt_forwards_none(
             "feedback",
             "record",
             "--action",
-            "approve",
+            "accept",
             "--from-type",
             "Part",
             "--from-id",
@@ -2850,7 +2846,6 @@ def test_feedback_explicit_coordinates_without_receipt_forwards_none(
     assert captured["instance_id"] == "inst_123"
     assert captured["receipt_id"] is None
     assert captured["action"] == "accept"
-    assert "feedback action 'approve'" in result.output
     assert "Feedback FB-no-receipt applied to graph." in result.output
 
 

@@ -750,7 +750,7 @@ def _approve_fit_edge(
     return client.post(
         f"/api/v1/{instance_id}/feedback",
         json={
-            "action": "approve",
+            "action": "accept",
             "from_type": "Part",
             "from_id": "BP-PEND",
             "relationship_type": "fits",
@@ -992,7 +992,7 @@ def test_auth_off_approve_promotes_without_actor_context(
     approve = app_client.post(
         f"/api/v1/{instance_id}/feedback",
         json={
-            "action": "approve",
+            "action": "accept",
             "from_type": "Part",
             "from_id": "BP-PEND",
             "relationship_type": "fits",

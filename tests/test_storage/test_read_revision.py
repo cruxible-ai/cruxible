@@ -174,7 +174,7 @@ class TestRevisionIncrementsOncePerMutationCommit:
         before = instance.get_read_revision()
         service_feedback_input(
             instance,
-            FeedbackItemInput(action="approve", target=_fits_target()),
+            FeedbackItemInput(action="accept", target=_fits_target()),
         )
         assert instance.get_read_revision() == before + 1
 

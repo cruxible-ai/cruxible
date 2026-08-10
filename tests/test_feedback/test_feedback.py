@@ -4,6 +4,7 @@ import json
 from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_core.config.schema import (
     CoreConfig,
@@ -1133,15 +1134,15 @@ class TestHistoricalFlagRowsStayReadable:
         assert payload["action"] == "flag"
         assert FeedbackRecord.model_validate(payload).action == "flag"
 
-    def test_the_retired_action_is_still_refused_on_every_write_path(
+    def test_the_retired_actions_are_refused_by_the_input_schema(
         self, target: RelationshipInstance
     ):
-        """Readable is not writable: compatibility input reaches one refusal.
+        """Readable is not writable: the input models no longer admit them.
 
-        During the deprecation window the input model accepts ``flag`` so the
-        service can return the structured replacement warning. The canonical
-        action type and write vocabulary stay narrow, and nothing can add a
-        ``flag`` row.
+        ``flag`` and ``approve`` were removed from every input vocabulary in
+        0.4.0, so a caller that still sends one gets an ordinary unknown-value
+        validation error instead of a compatibility warning or refusal. The
+        stored vocabulary still admits both so history stays readable.
         """
         from cruxible_core.feedback.types import (
             RETIRED_FEEDBACK_ACTIONS,
@@ -1157,14 +1158,14 @@ class TestHistoricalFlagRowsStayReadable:
             RETIRED_FEEDBACK_ACTIONS | {"approve"}
         )
         assert "flag" not in _VALID_ACTIONS
+        assert "approve" not in _VALID_ACTIONS
 
-        item = FeedbackBatchItem(
-            receipt_id="RCP-1",
-            action="flag",
-            target=target,
-        )
-        with pytest.raises(ConfigError, match="attest --stance contradict"):
-            _validate_feedback_request_values(
-                action=item.action,
-                corrections=item.corrections,
-            )
+        for retired in ("flag", "approve"):
+            with pytest.raises(ValidationError):
+                FeedbackBatchItem(
+                    receipt_id="RCP-1",
+                    action=retired,
+                    target=target,
+                )
+            with pytest.raises(ConfigError, match="Invalid action"):
+                _validate_feedback_request_values(action=retired, corrections=None)

@@ -10,7 +10,7 @@ import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypedDict, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 import yaml
 
@@ -36,22 +36,6 @@ _client_cache_key: tuple[str | None, str | None, str | None] | None = None
 # and teardown must be serialized; RLock because _get_client resets inline.
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
-
-
-class _SourceAliasKwargs(TypedDict, total=False):
-    source: str
-
-
-class _OpenedByAliasKwargs(TypedDict, total=False):
-    opened_by: str
-
-
-class _ProposedByAliasKwargs(TypedDict, total=False):
-    proposed_by: str
-
-
-class _ResolvedByAliasKwargs(TypedDict, total=False):
-    resolved_by: str
 
 
 def get_manager() -> InstanceManager:
@@ -659,25 +643,19 @@ def handle_create_decision_record(
     question: str,
     subject_type: str | None = None,
     subject_id: str | None = None,
-    opened_by: str | None = None,
 ) -> contracts.DecisionRecordResult:
-    deprecated_kwargs: _OpenedByAliasKwargs = {}
-    if opened_by is not None:
-        deprecated_kwargs["opened_by"] = opened_by
     return _dispatch_remote_or_local(
         lambda client: client.create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            **deprecated_kwargs,
         ),
         lambda: api.create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_create_decision_record",
@@ -869,7 +847,7 @@ def handle_list_traces(
 def handle_feedback(
     instance_id: str,
     receipt_id: str | None,
-    action: contracts.FeedbackInputAction,
+    action: contracts.FeedbackAction,
     from_type: str,
     from_id: str,
     relationship_type: str,
@@ -880,14 +858,9 @@ def handle_feedback(
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
     claim_id: str | None = None,
-    source: str | None = None,
 ) -> contracts.FeedbackResult:
     """Record feedback on an edge."""
-    deprecated_kwargs: _SourceAliasKwargs = {}
-    if source is not None:
-        deprecated_kwargs["source"] = source
     return _dispatch_remote_or_local(
         lambda client: client.feedback(
             instance_id,
@@ -904,8 +877,6 @@ def handle_feedback(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
-            **deprecated_kwargs,
         ),
         lambda: api.feedback(
             instance_id=instance_id,
@@ -922,8 +893,6 @@ def handle_feedback(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_feedback",
@@ -1060,20 +1029,15 @@ def handle_feedback_from_query(
     *,
     receipt_id: str,
     result_index: int,
-    action: contracts.FeedbackInputAction,
+    action: contracts.FeedbackAction,
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
     path_index: int | None = None,
     path_alias: str | None = None,
-    source: str | None = None,
 ) -> contracts.FeedbackResult:
     """Record edge feedback by selecting relationship evidence from a query receipt."""
-    deprecated_kwargs: _SourceAliasKwargs = {}
-    if source is not None:
-        deprecated_kwargs["source"] = source
     return _dispatch_remote_or_local(
         lambda client: client.feedback_from_query(
             instance_id,
@@ -1084,10 +1048,8 @@ def handle_feedback_from_query(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
-            **deprecated_kwargs,
         ),
         lambda: api.feedback_from_query(
             instance_id,
@@ -1098,10 +1060,8 @@ def handle_feedback_from_query(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_feedback_from_query",
@@ -1118,12 +1078,8 @@ def handle_outcome(
     scope_hints: dict[str, Any] | None = None,
     outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
-    source: str | None = None,
 ) -> contracts.OutcomeResult:
     """Record a structured outcome for a prior receipt or proposal resolution."""
-    deprecated_kwargs: _SourceAliasKwargs = {}
-    if source is not None:
-        deprecated_kwargs["source"] = source
     return _dispatch_remote_or_local(
         lambda client: client.outcome(
             instance_id,
@@ -1135,7 +1091,6 @@ def handle_outcome(
             scope_hints=scope_hints,
             outcome_profile_key=outcome_profile_key,
             detail=detail,
-            **deprecated_kwargs,
         ),
         lambda: api.outcome(
             instance_id,
@@ -1147,7 +1102,6 @@ def handle_outcome(
             scope_hints=scope_hints,
             outcome_profile_key=outcome_profile_key,
             detail=detail,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_outcome",
@@ -2417,12 +2371,8 @@ def handle_propose_group(
     signal_sources_used: list[str] | None = None,
     suggested_priority: str | None = None,
     expected_pending_version: int | None = None,
-    proposed_by: str | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""
-    deprecated_kwargs: _ProposedByAliasKwargs = {}
-    if proposed_by is not None:
-        deprecated_kwargs["proposed_by"] = proposed_by
     return _dispatch_remote_or_local(
         lambda client: client.propose_group(
             instance_id,
@@ -2434,7 +2384,6 @@ def handle_propose_group(
             signal_sources_used=signal_sources_used,
             suggested_priority=suggested_priority,
             expected_pending_version=expected_pending_version,
-            **deprecated_kwargs,
         ),
         lambda: api.propose_group(
             instance_id,
@@ -2446,7 +2395,6 @@ def handle_propose_group(
             signal_sources_used=signal_sources_used,
             suggested_priority=suggested_priority,
             expected_pending_version=expected_pending_version,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_propose_group",
@@ -2460,12 +2408,8 @@ def handle_resolve_group(
     rationale: str = "",
     expected_pending_version: int | None = None,
     stamp_existing: bool = False,
-    resolved_by: str | None = None,
 ) -> contracts.ResolveGroupToolResult:
     """Resolve a candidate group (approve or reject)."""
-    deprecated_kwargs: _ResolvedByAliasKwargs = {}
-    if resolved_by is not None:
-        deprecated_kwargs["resolved_by"] = resolved_by
     return _dispatch_remote_or_local(
         lambda client: client.resolve_group(
             instance_id,
@@ -2474,7 +2418,6 @@ def handle_resolve_group(
             rationale=rationale,
             expected_pending_version=_required_pending_version(expected_pending_version),
             stamp_existing=stamp_existing,
-            **deprecated_kwargs,
         ),
         lambda: api.resolve_group(
             instance_id,
@@ -2483,7 +2426,6 @@ def handle_resolve_group(
             rationale=rationale,
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_resolve_group",

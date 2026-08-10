@@ -10,11 +10,16 @@ from __future__ import annotations
 import json
 import sys
 import warnings
-from collections.abc import Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, TextIO
 
-DEFAULT_REMOVAL_VERSION = "0.4.0"
+DEFAULT_REMOVAL_VERSION = "0.5.0"
+"""Earliest release a NEWLY registered deprecation may honestly name.
+
+0.4 is the release under development, so a notice that took the old default
+promised removal in the very release it was born into -- past due on day one.
+The default now names the release after that; anything else states its own.
+"""
 
 
 @dataclass(frozen=True)
@@ -30,46 +35,25 @@ class DeprecationNotice:
         return asdict(self)
 
 
-FLAG_FEEDBACK_ACTION = DeprecationNotice(
-    surface="feedback action 'flag'",
-    replacement="attest --stance contradict",
-)
-APPROVE_FEEDBACK_ACTION = DeprecationNotice(
-    surface="feedback action 'approve'",
-    replacement="feedback action 'accept'",
-)
 LEGACY_OUTCOME_RECORD = DeprecationNotice(
     surface="legacy outcome record functions",
     replacement="resolution contracts and attestations",
+    removal_version="0.5.0",
 )
 LEGACY_OUTCOME_PROFILE = DeprecationNotice(
     surface="legacy outcome profile functions",
     replacement="resolution contract declarations",
+    removal_version="0.5.0",
 )
-GROUP_OVERRIDE = DeprecationNotice(
-    surface="feedback group_override write path",
-    replacement="force_review",
-)
-FEEDBACK_SOURCE_INPUT = DeprecationNotice(
-    surface="FeedbackRecord.source input",
-    replacement="actor_context",
-)
-OUTCOME_SOURCE_INPUT = DeprecationNotice(
-    surface="OutcomeRecord.source input",
-    replacement="actor_context",
-)
-GROUP_RESOLVED_BY_INPUT = DeprecationNotice(
-    surface="GroupResolution.resolved_by input",
-    replacement="resolved_actor_context",
-)
-GROUP_PROPOSED_BY_INPUT = DeprecationNotice(
-    surface="CandidateGroup.proposed_by input",
-    replacement="proposed_actor_context",
-)
-DECISION_OPENED_BY_INPUT = DeprecationNotice(
-    surface="DecisionRecord.opened_by input",
-    replacement="opened_actor_context",
-)
+"""Rescheduled from 0.4.0 to 0.5.0 by maintainer ruling, stated EXPLICITLY.
+
+Both were stamped 0.4.0 and both survived the 0.4.0 sweep, because the named
+replacement does not exist yet: resolution contracts carry no equivalent of an
+outcome profile's coded vocabulary, its ``required_scope_keys``, or the
+profile-drift analysis ``analyze outcomes`` reports. Porting that machinery is
+post-Playbill work, so the window moves rather than the surface. Written out
+instead of left on the default so the commitment survives a default change.
+"""
 PROCEDURE_STRING_WARNINGS = DeprecationNotice(
     surface="ProcedureTransitionResult.warnings string list",
     replacement="ProcedureTransitionResult.typed_warnings",
@@ -84,16 +68,8 @@ emitters exist for INPUT deprecations, where a caller's use is visible.
 """
 
 DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
-    FLAG_FEEDBACK_ACTION,
-    APPROVE_FEEDBACK_ACTION,
     LEGACY_OUTCOME_RECORD,
     LEGACY_OUTCOME_PROFILE,
-    GROUP_OVERRIDE,
-    FEEDBACK_SOURCE_INPUT,
-    OUTCOME_SOURCE_INPUT,
-    GROUP_RESOLVED_BY_INPUT,
-    GROUP_PROPOSED_BY_INPUT,
-    DECISION_OPENED_BY_INPUT,
     PROCEDURE_STRING_WARNINGS,
 )
 """Every warning-emitting deprecation registered by cruxible-core."""
@@ -102,11 +78,6 @@ DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
 def serialize_deprecation(notice: DeprecationNotice) -> str:
     """Serialize one notice deterministically for line- and header-based idioms."""
     return json.dumps(notice.as_dict(), separators=(",", ":"), sort_keys=True)
-
-
-def deprecation_refusal_message(notice: DeprecationNotice, detail: str) -> str:
-    """Build a refusal that still carries the standard structured warning."""
-    return f"Deprecated surface refused: {serialize_deprecation(notice)}. {detail}"
 
 
 def emit_cli_deprecation(
@@ -128,21 +99,6 @@ def emit_python_deprecation(notice: DeprecationNotice, *, stacklevel: int = 2) -
         DeprecationWarning,
         stacklevel=stacklevel,
     )
-
-
-def accept_deprecated_model_input(
-    value: Any,
-    *,
-    field: str,
-    notice: DeprecationNotice,
-) -> Any:
-    """Strip one ignored legacy model field after emitting its notice."""
-    if not isinstance(value, Mapping) or field not in value:
-        return value
-    emit_python_deprecation(notice, stacklevel=3)
-    payload = dict(value)
-    payload.pop(field)
-    return payload
 
 
 def _payload_dict(result: Any) -> dict[str, Any]:

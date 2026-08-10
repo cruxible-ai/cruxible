@@ -8,14 +8,14 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | --- | --- | --- |
 | READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, snapshots listing. |
 | GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow and procedure runs, procedure/group proposals, claim attestations, outcomes, decision records, snapshot creation, and source artifact registration. Reaching the feedback tools is permitted at this tier, but every feedback ACTION now requires GRAPH_WRITE — see below. |
-| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, group resolution/trust updates, procedure resolution/retirement, attestation dispositions, and feedback **adjudication** (`approve` / `reject` / `correct`). |
+| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, group resolution/trust updates, procedure resolution/retirement, attestation dispositions, and feedback **adjudication** (`accept` / `reject` / `correct`). |
 | ADMIN | `admin` | Full lifecycle, config reload, locks, snapshots, clone, state publication/pull, ingest, constraints, and policies. |
 
 `tools/list` advertises only tools allowed by the active `CRUXIBLE_MODE`; call-time permission checks still enforce the same tiers as a backstop.
 
 The **Permission** line on each tool below is the tier needed to *call* it, which
 is not always enough to succeed. Two surfaces additionally gate on the payload:
-the feedback tools require `GRAPH_WRITE` for the adjudication actions `approve` /
+the feedback tools require `GRAPH_WRITE` for the adjudication actions `accept` /
 `reject` / `correct` — which is all of them, so their `GOVERNED_WRITE` call floor
 admits no completable action — and the direct-write tools honor a type's
 config-declared `write_tier`.
@@ -536,7 +536,7 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when a person or reviewer agent adjudicated one explicit relationship and you need to record support, rejection, or a correction. To record a DOUBT without adjudicating, use cruxible_attest with stance 'contradict' instead. Use edge_key only to disambiguate multiple stored edges with the same relationship tuple; receipt_id is optional for explicit-coordinate feedback.
 
-**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `approve` delegates to `accept` with a structured warning; deprecated `flag` is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
+**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
 
 **Arguments:**
 
@@ -544,7 +544,7 @@ happened; they never prove its inputs are still current.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `receipt_id` | no | string |  |
-| `action` | yes | enum: accept, reject, correct, approve, flag | Deprecated `approve` delegates to `accept`; deprecated `flag` is a refused compatibility alias. |
+| `action` | yes | enum: accept, reject, correct | Adjudicates the claim. |
 | `from_type` | yes | string |  |
 | `from_id` | yes | string |  |
 | `relationship_type` | yes | string |  |
@@ -555,11 +555,9 @@ happened; they never prove its inputs are still current.
 | `reason_code` | no | string | null |  |
 | `scope_hints` | no | object | null |  |
 | `corrections` | no | object | null |  |
-| `group_override` | no | boolean | Deprecated compatibility write; use `force_review`. |
 | `claim_id` | no | string | null | Stable claim identity; preferred disambiguator, takes precedence over `edge_key`, disagreement refused. |
-| `source` | no | string | null | Deprecated and ignored; actor kind is derived from `actor_context`. |
 
-**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`, `deprecation_warnings`
+**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -574,7 +572,7 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when a query receipt and result index identify the relationship that needs feedback. This path requires receipt_id because the receipt/result selection is the target selector.
 
-**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `approve` delegates to `accept` with a structured warning; deprecated `flag` is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
+**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
 
 **Arguments:**
 
@@ -583,17 +581,15 @@ happened; they never prove its inputs are still current.
 | `instance_id` | yes | string | Governed instance ID or local instance root. |
 | `receipt_id` | yes | string | Query receipt ID. |
 | `result_index` | yes | integer | Zero-based query result row index. |
-| `action` | yes | enum: accept, reject, correct, approve, flag | Deprecated `approve` delegates to `accept`; deprecated `flag` is a refused compatibility alias. |
+| `action` | yes | enum: accept, reject, correct | Adjudicates the claim. |
 | `reason` | no | string | Reason for feedback. |
 | `reason_code` | no | string | Structured feedback reason code. |
 | `scope_hints` | no | object | Structured feedback scope hints. |
 | `corrections` | no | object | Edge property corrections for `action="correct"`. |
-| `group_override` | no | boolean | Deprecated compatibility write; use `force_review`. |
 | `path_index` | no | integer | Zero-based path segment index for path rows. |
 | `path_alias` | no | string | Traversal alias for the selected path segment. |
-| `source` | no | string | Deprecated and ignored; actor kind is derived from `actor_context`. |
 
-**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`, `deprecation_warnings`
+**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`
 
 **Side Effects:** Creates normal feedback records and feedback receipts through the existing edge-feedback path.
 
@@ -609,7 +605,7 @@ happened; they never prove its inputs are still current.
 
 **Purpose:** Use when you need to record several relationship feedback decisions from the same review session.
 
-**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `approve` in any item delegates to `accept` with a structured warning; deprecated `flag` is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
+**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
 
 **Arguments:**
 
@@ -618,7 +614,7 @@ happened; they never prove its inputs are still current.
 | `instance_id` | yes | string |  |
 | `items` | yes | array |  |
 
-**Returns:** Top-level fields: `feedback_ids`, `applied_count`, `total`, `receipt_id`, `deprecation_warnings`
+**Returns:** Top-level fields: `feedback_ids`, `applied_count`, `total`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -646,7 +642,6 @@ happened; they never prove its inputs are still current.
 | `scope_hints` | no | object | null |  |
 | `outcome_profile_key` | no | string | null |  |
 | `detail` | no | object | null |  |
-| `source` | no | string | null | Deprecated and ignored; actor kind is derived from `actor_context`. |
 
 **Returns:** Top-level fields: `outcome_id`, `deprecation_warnings`
 
@@ -1412,9 +1407,8 @@ without it, only the active materialized digest is checked.
 | `question` | yes | string |  |
 | `subject_type` | no | string | null |  |
 | `subject_id` | no | string | null |  |
-| `opened_by` | no | string | null | Deprecated and ignored; actor kind is derived from the runtime actor context. |
 
-**Returns:** Top-level fields: `record`, `events`, `receipt_id`, `deprecation_warnings`
+**Returns:** Top-level fields: `record`, `events`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1976,12 +1970,11 @@ reason was tracked.
 | `signal_sources_used` | no | array | null |  |
 | `suggested_priority` | no | string | null |  |
 | `expected_pending_version` | no | integer | null | Optimistic guard. A re-propose REWRITES the live pending group; pass the version you computed your delta against to have a bucket that moved underneath you refused instead of overwritten. Omit for an unconditional refresh. |
-| `proposed_by` | no | string | null | Deprecated and ignored; actor kind is derived from the runtime actor context. |
 
 Each member and each nested signal may pass `citation_handles` beside the
 unchanged `source_evidence` locators.
 
-**Returns:** Top-level fields: `group_id`, `signature`, `status`, `review_priority`, `member_count`, `prior_resolution`, `suppressed`, `suppressed_members`, `policy_summary`, `receipt_id`, `deprecation_warnings`
+**Returns:** Top-level fields: `group_id`, `signature`, `status`, `review_priority`, `member_count`, `prior_resolution`, `suppressed`, `suppressed_members`, `policy_summary`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -2006,9 +1999,8 @@ unchanged `source_evidence` locators.
 | `expected_pending_version` | yes | integer |  |
 | `rationale` | no | string |  |
 | `stamp_existing` | no | boolean | On approve, bless each surviving pre-existing edge (member tuple already live) with this group's review status and provenance instead of skipping it. |
-| `resolved_by` | no | string | null | Deprecated and ignored; actor kind is derived from the runtime actor context. |
 
-**Returns:** Top-level fields: `group_id`, `action`, `edges_created`, `edges_skipped`, `resolution_id`, `receipt_id`, `skipped_members` (per-member skip explanations: identity plus `skip_kind`, `reason`, `stamped`), `edges_stamped`, `deprecation_warnings`
+**Returns:** Top-level fields: `group_id`, `action`, `edges_created`, `edges_skipped`, `resolution_id`, `receipt_id`, `skipped_members` (per-member skip explanations: identity plus `skip_kind`, `reason`, `stamped`), `edges_stamped`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 

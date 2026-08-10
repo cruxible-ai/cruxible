@@ -82,15 +82,6 @@
         "correct"
       ]
     },
-    "FeedbackInputAction": {
-      "values": [
-        "accept",
-        "reject",
-        "correct",
-        "approve",
-        "flag"
-      ]
-    },
     "FindingCategory": {
       "values": [
         "orphan_entity",
@@ -8465,13 +8456,11 @@
           "json_name": "action",
           "required": true,
           "schema": {
-            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
               "accept",
               "reject",
-              "correct",
-              "approve",
-              "flag"
+              "correct"
             ],
             "title": "Action",
             "type": "string"
@@ -8497,20 +8486,6 @@
             "default": null,
             "description": "Corrected property values, used with action='correct'.",
             "title": "Corrections"
-          }
-        },
-        "group_override": {
-          "default": false,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "group_override",
-          "required": false,
-          "schema": {
-            "default": false,
-            "description": "Deprecated compatibility write; use force_review. If true, mark the edge assertion as a group-resolve override.",
-            "title": "Group Override",
-            "type": "boolean"
           }
         },
         "reason": {
@@ -8569,27 +8544,6 @@
             "description": "Optional hints scoping how broadly the feedback should generalize.",
             "title": "Scope Hints",
             "type": "object"
-          }
-        },
-        "source": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "source",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Deprecated and ignored compatibility input; actor kind is derived from actor_context.",
-            "title": "Source"
           }
         },
         "target": {
@@ -8672,13 +8626,11 @@
         },
         "properties": {
           "action": {
-            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
               "accept",
               "reject",
-              "correct",
-              "approve",
-              "flag"
+              "correct"
             ],
             "title": "Action",
             "type": "string"
@@ -8696,12 +8648,6 @@
             "default": null,
             "description": "Corrected property values, used with action='correct'.",
             "title": "Corrections"
-          },
-          "group_override": {
-            "default": false,
-            "description": "Deprecated compatibility write; use force_review. If true, mark the edge assertion as a group-resolve override.",
-            "title": "Group Override",
-            "type": "boolean"
           },
           "reason": {
             "default": "",
@@ -8732,19 +8678,6 @@
             "description": "Optional hints scoping how broadly the feedback should generalize.",
             "title": "Scope Hints",
             "type": "object"
-          },
-          "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Deprecated and ignored compatibility input; actor kind is derived from actor_context.",
-            "title": "Source"
           },
           "target": {
             "$ref": "#/$defs/EdgeTargetInput",
@@ -8871,13 +8804,11 @@
           "json_name": "action",
           "required": true,
           "schema": {
-            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
               "accept",
               "reject",
-              "correct",
-              "approve",
-              "flag"
+              "correct"
             ],
             "title": "Action",
             "type": "string"
@@ -8903,20 +8834,6 @@
             "default": null,
             "description": "Corrected property values, used with action='correct'.",
             "title": "Corrections"
-          }
-        },
-        "group_override": {
-          "default": false,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "group_override",
-          "required": false,
-          "schema": {
-            "default": false,
-            "description": "Deprecated compatibility write; use force_review. If true, mark the edge assertion as a group-resolve override.",
-            "title": "Group Override",
-            "type": "boolean"
           }
         },
         "path_alias": {
@@ -9039,39 +8956,16 @@
             "description": "Optional hints scoping how broadly the feedback should generalize.",
             "title": "Scope Hints"
           }
-        },
-        "source": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "source",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Deprecated and ignored compatibility input; actor kind is derived from actor_context.",
-            "title": "Source"
-          }
         }
       },
       "json_schema": {
         "properties": {
           "action": {
-            "description": "Adjudication: accept, reject, or correct the edge. Deprecated `approve` delegates to `accept`; deprecated `flag` is accepted only to return its removal warning. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
+            "description": "Adjudication: accept, reject, or correct the edge. To record a doubt WITHOUT adjudicating, use `cruxible attest record --stance contradict` -- it stores the observation, its evidence, and its actor instead of silently un-approving the edge.",
             "enum": [
               "accept",
               "reject",
-              "correct",
-              "approve",
-              "flag"
+              "correct"
             ],
             "title": "Action",
             "type": "string"
@@ -9089,12 +8983,6 @@
             "default": null,
             "description": "Corrected property values, used with action='correct'.",
             "title": "Corrections"
-          },
-          "group_override": {
-            "default": false,
-            "description": "Deprecated compatibility write; use force_review. If true, mark the edge assertion as a group-resolve override.",
-            "title": "Group Override",
-            "type": "boolean"
           },
           "path_alias": {
             "anyOf": [
@@ -9164,19 +9052,6 @@
             "default": null,
             "description": "Optional hints scoping how broadly the feedback should generalize.",
             "title": "Scope Hints"
-          },
-          "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Deprecated and ignored compatibility input; actor kind is derived from actor_context.",
-            "title": "Source"
           }
         },
         "required": [

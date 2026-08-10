@@ -16,15 +16,8 @@ from pydantic import Field, TypeAdapter
 from cruxible_client import contracts
 from cruxible_core import __version__
 from cruxible_core.deprecation import (
-    APPROVE_FEEDBACK_ACTION,
-    DECISION_OPENED_BY_INPUT,
-    FEEDBACK_SOURCE_INPUT,
-    GROUP_OVERRIDE,
-    GROUP_PROPOSED_BY_INPUT,
-    GROUP_RESOLVED_BY_INPUT,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
-    OUTCOME_SOURCE_INPUT,
     DeprecationNotice,
     attach_mcp_deprecations,
 )
@@ -32,13 +25,27 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.kit_surface import KitSurface
 from cruxible_core.mcp.tool_prompts import tool_description
 
+RETIRED_TOOL_INPUTS: dict[str, tuple[str, ...]] = {
+    "cruxible_feedback": contracts.RETIRED_FEEDBACK_INPUTS,
+    "cruxible_feedback_from_query": contracts.RETIRED_FEEDBACK_INPUTS,
+    "cruxible_outcome": ("source",),
+    "cruxible_propose_group": ("proposed_by",),
+    "cruxible_resolve_group": ("resolved_by",),
+    "cruxible_create_decision_record": ("opened_by",),
+}
+"""Retired arguments per tool, refused at the tools/call seam.
 
-class _MCPFeedbackResult(contracts.FeedbackResult):
-    deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
+The tool signatures no longer declare these parameters, so FastMCP drops them
+during argument validation and the handler never sees them. That is exactly the
+silent-discard the removals must not leave behind, so the refusal lives at the
+one seam that still sees the caller's raw arguments. Keeping them OUT of the
+signatures also keeps them out of the advertised input schema, which is what
+the tool-schema tests pin.
 
-
-class _MCPFeedbackBatchResult(contracts.FeedbackBatchResult):
-    deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
+``cruxible_feedback_batch`` is absent on purpose: its retired keys ride on
+``items``, and ``contracts.FeedbackBatchItemInput`` refuses them during
+ordinary argument validation.
+"""
 
 
 class _MCPOutcomeResult(contracts.OutcomeResult):
@@ -46,18 +53,6 @@ class _MCPOutcomeResult(contracts.OutcomeResult):
 
 
 class _MCPOutcomeProfileResult(contracts.OutcomeProfileResult):
-    deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
-
-
-class _MCPProposeGroupResult(contracts.ProposeGroupToolResult):
-    deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
-
-
-class _MCPResolveGroupResult(contracts.ResolveGroupToolResult):
-    deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
-
-
-class _MCPDecisionRecordResult(contracts.DecisionRecordResult):
     deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -418,7 +413,7 @@ def register_tools(
     @_tool
     def cruxible_feedback(
         instance_id: str,
-        action: contracts.FeedbackInputAction,
+        action: contracts.FeedbackAction,
         from_type: str,
         from_id: str,
         relationship_type: str,
@@ -429,15 +424,10 @@ def register_tools(
         reason_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
         corrections: dict[str, Any] | None = None,
-        group_override: bool = False,
         receipt_id: str | None = None,
         claim_id: str | None = None,
-        source: str | None = None,
-    ) -> _MCPFeedbackResult:
+    ) -> contracts.FeedbackResult:
         """Record edge-level feedback by explicit relationship coordinates.
-
-        ``source`` is a deprecated, ignored compatibility input. Actor kind is
-        derived from the authenticated ``actor_context``.
 
         Rejected edges are excluded from future query results.
         Approved edges are trusted in traversals.
@@ -448,18 +438,11 @@ def register_tools(
         supplying both with disagreeing values is refused rather than silently
         resolved. `applied=False` means the record was saved but the graph edge
         was not updated.
-
-        Deprecated `group_override=True` marks the edge assertion metadata as a
-        group override for group resolve; use `force_review`. The edge must
-        already exist in the graph.
         """
-        normalized_action: contracts.FeedbackInputAction = (
-            "accept" if action == "approve" else action
-        )
         result = handlers.handle_feedback(
             instance_id=instance_id,
             receipt_id=receipt_id,
-            action=normalized_action,
+            action=action,
             from_type=from_type,
             from_id=from_id,
             relationship_type=relationship_type,
@@ -471,84 +454,49 @@ def register_tools(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
-            source=source,
         )
-        notices: list[DeprecationNotice] = []
-        if action == "approve":
-            notices.append(APPROVE_FEEDBACK_ACTION)
-        if group_override:
-            notices.append(GROUP_OVERRIDE)
-        if source is not None:
-            notices.append(FEEDBACK_SOURCE_INPUT)
-        return _MCPFeedbackResult.model_validate(_mcp_deprecation_payload(result, notices))
+        return result
 
     @_tool
     def cruxible_feedback_batch(
         instance_id: str,
         items: list[contracts.FeedbackBatchItemInput],
-    ) -> _MCPFeedbackBatchResult:
+    ) -> contracts.FeedbackBatchResult:
         """Record batch edge feedback under one top-level mutation receipt."""
-        normalized_items = [
-            item.model_copy(update={"action": "accept"}) if item.action == "approve" else item
-            for item in items
-        ]
-        result = handlers.handle_feedback_batch(instance_id, normalized_items)
-        notices: list[DeprecationNotice] = []
-        if any(item.action == "approve" for item in items):
-            notices.append(APPROVE_FEEDBACK_ACTION)
-        if any(item.group_override for item in items):
-            notices.append(GROUP_OVERRIDE)
-        if any(item.source is not None for item in items):
-            notices.append(FEEDBACK_SOURCE_INPUT)
-        return _MCPFeedbackBatchResult.model_validate(_mcp_deprecation_payload(result, notices))
+        return handlers.handle_feedback_batch(instance_id, items)
 
     @_tool
     def cruxible_feedback_from_query(
         instance_id: str,
         receipt_id: str,
         result_index: int,
-        action: contracts.FeedbackInputAction,
+        action: contracts.FeedbackAction,
         reason: str = "",
         reason_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
         corrections: dict[str, Any] | None = None,
-        group_override: bool = False,
         path_index: int | None = None,
         path_alias: str | None = None,
-        source: str | None = None,
-    ) -> _MCPFeedbackResult:
+    ) -> contracts.FeedbackResult:
         """Record edge feedback from one relationship/path row in a query receipt.
 
         This adjudicates one existing relationship assertion. It does not
         resolve candidate groups; use group resolution for group theses and
         member-set decisions.
         """
-        normalized_action: contracts.FeedbackInputAction = (
-            "accept" if action == "approve" else action
-        )
         result = handlers.handle_feedback_from_query(
             instance_id,
             receipt_id=receipt_id,
             result_index=result_index,
-            action=normalized_action,
+            action=action,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
-            source=source,
         )
-        notices: list[DeprecationNotice] = []
-        if action == "approve":
-            notices.append(APPROVE_FEEDBACK_ACTION)
-        if group_override:
-            notices.append(GROUP_OVERRIDE)
-        if source is not None:
-            notices.append(FEEDBACK_SOURCE_INPUT)
-        return _MCPFeedbackResult.model_validate(_mcp_deprecation_payload(result, notices))
+        return result
 
     @_tool
     def cruxible_outcome(
@@ -561,7 +509,6 @@ def register_tools(
         scope_hints: dict[str, Any] | None = None,
         outcome_profile_key: str | None = None,
         detail: dict[str, Any] | None = None,
-        source: str | None = None,
     ) -> _MCPOutcomeResult:
         """Deprecated outcome recorder; use resolution contracts and attestations."""
         result = handlers.handle_outcome(
@@ -574,11 +521,8 @@ def register_tools(
             scope_hints=scope_hints,
             outcome_profile_key=outcome_profile_key,
             detail=detail,
-            source=source,
         )
         notices = [LEGACY_OUTCOME_RECORD]
-        if source is not None:
-            notices.append(OUTCOME_SOURCE_INPUT)
         return _MCPOutcomeResult.model_validate(_mcp_deprecation_payload(result, notices))
 
     @_tool
@@ -1185,22 +1129,17 @@ def register_tools(
         question: str,
         subject_type: str | None = None,
         subject_id: str | None = None,
-        opened_by: str | None = None,
-    ) -> _MCPDecisionRecordResult:
+    ) -> contracts.DecisionRecordResult:
         """Open a decision record that can collect query and workflow receipts.
 
-        ``opened_by`` is a deprecated, ignored compatibility input. The opener
-        is derived from the authenticated actor context.
+        The opener is derived from the authenticated actor context.
         """
-        result = handlers.handle_create_decision_record(
+        return handlers.handle_create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         )
-        notices = [DECISION_OPENED_BY_INPUT] if opened_by is not None else []
-        return _MCPDecisionRecordResult.model_validate(_mcp_deprecation_payload(result, notices))
 
     @_tool
     def cruxible_get_decision_record(
@@ -1654,8 +1593,7 @@ def register_tools(
         signal_sources_used: list[str] | None = None,
         suggested_priority: str | None = None,
         expected_pending_version: int | None = None,
-        proposed_by: str | None = None,
-    ) -> _MCPProposeGroupResult:
+    ) -> contracts.ProposeGroupToolResult:
         """Propose a candidate group of edges for batch review.
 
         Each member carries tri-state signals (support/contradict/unsure) from
@@ -1678,7 +1616,6 @@ def register_tools(
         group. Pass ``expected_pending_version`` (read from the group you
         computed the delta against) to have a bucket that moved underneath you
         refused instead of overwritten; omit it for an unconditional refresh.
-        ``proposed_by`` is a deprecated, ignored compatibility input.
         """
         result = handlers.handle_propose_group(
             instance_id,
@@ -1690,10 +1627,8 @@ def register_tools(
             signal_sources_used=signal_sources_used,
             suggested_priority=suggested_priority,
             expected_pending_version=expected_pending_version,
-            proposed_by=proposed_by,
         )
-        notices = [GROUP_PROPOSED_BY_INPUT] if proposed_by is not None else []
-        return _MCPProposeGroupResult.model_validate(_mcp_deprecation_payload(result, notices))
+        return result
 
     @_tool
     def cruxible_resolve_group(
@@ -1703,8 +1638,7 @@ def register_tools(
         expected_pending_version: int,
         rationale: str = "",
         stamp_existing: bool = False,
-        resolved_by: str | None = None,
-    ) -> _MCPResolveGroupResult:
+    ) -> contracts.ResolveGroupToolResult:
         """Resolve a candidate group by approving or rejecting it.
 
         Approve creates edges in the graph for valid members. Members whose
@@ -1713,7 +1647,6 @@ def register_tools(
         surviving pre-existing edge with this group's review status and
         provenance. Reject records the resolution without graph mutation. Both
         persist the resolution for audit and future auto-resolve precedent.
-        ``resolved_by`` is a deprecated, ignored compatibility input.
         """
         result = handlers.handle_resolve_group(
             instance_id,
@@ -1722,10 +1655,8 @@ def register_tools(
             rationale=rationale,
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
-            resolved_by=resolved_by,
         )
-        notices = [GROUP_RESOLVED_BY_INPUT] if resolved_by is not None else []
-        return _MCPResolveGroupResult.model_validate(_mcp_deprecation_payload(result, notices))
+        return result
 
     @_tool
     def cruxible_update_trust_status(

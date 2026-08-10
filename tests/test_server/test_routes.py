@@ -2780,7 +2780,7 @@ def test_feedback_batch_route(
         json={
             "receipt_id": receipt_id,
             "result_index": 0,
-            "action": "approve",
+            "action": "accept",
             "reason_code": "route_review",
             "scope_hints": {"route": "feedback-from-query"},
         },
@@ -2794,7 +2794,7 @@ def test_feedback_batch_route(
             "items": [
                 {
                     "receipt_id": receipt_id,
-                    "action": "approve",
+                    "action": "accept",
                     "target": {
                         "from_type": "Part",
                         "from_id": "BP-1",
@@ -2875,7 +2875,7 @@ def test_feedback_route_approves_pending_relationship_without_source_receipt(
     feedback = app_client.post(
         f"/api/v1/{instance_id}/feedback",
         json={
-            "action": "approve",
+            "action": "accept",
             "from_type": "Part",
             "from_id": "BP-1",
             "relationship_type": "fits",
@@ -2930,7 +2930,7 @@ def test_feedback_route_threads_claim_id_through_to_resolution(
     claim_id = lookup.json()["claim_id"]
     assert claim_id
 
-    target = {"action": "approve", "source": "human", **coordinates}
+    target = {"action": "accept", **coordinates}
 
     # Disagreeing disambiguators are refused over HTTP, which is only possible
     # if claim_id actually reached resolution.
@@ -2986,11 +2986,10 @@ def test_feedback_batch_route_threads_claim_id_through_to_resolution(
     disagree = app_client.post(
         f"/api/v1/{instance_id}/feedback/batch",
         json={
-            "source": "human",
             "items": [
                 {
                     "receipt_id": receipt_id,
-                    "action": "approve",
+                    "action": "accept",
                     "target": {**batch_target, "claim_id": claim_id, "edge_key": 9999},
                 }
             ],
@@ -3002,11 +3001,10 @@ def test_feedback_batch_route_threads_claim_id_through_to_resolution(
     agreed = app_client.post(
         f"/api/v1/{instance_id}/feedback/batch",
         json={
-            "source": "human",
             "items": [
                 {
                     "receipt_id": receipt_id,
-                    "action": "approve",
+                    "action": "accept",
                     "target": {**batch_target, "claim_id": claim_id},
                 }
             ],

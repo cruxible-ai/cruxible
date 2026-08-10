@@ -8,6 +8,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from cruxible_client import contracts
+from cruxible_client.retired_inputs import refuse_retired_inputs
+
+# Each request model below refuses its OWN retired keys by name. Scoped that way
+# on purpose: ``extra="forbid"`` would also reject every unrelated unknown key,
+# a wider contract change than the 0.4.0 removals made.
 
 
 class InitRequest(BaseModel):
@@ -152,7 +157,7 @@ class EntitySupersedeRequest(BaseModel):
 
 class FeedbackRequest(BaseModel):
     receipt_id: str | None = None
-    action: contracts.FeedbackInputAction
+    action: contracts.FeedbackAction
     from_type: str
     from_id: str
     relationship_type: str
@@ -165,10 +170,13 @@ class FeedbackRequest(BaseModel):
     reason_code: str | None = None
     scope_hints: dict[str, Any] | None = None
     corrections: dict[str, Any] | None = None
-    group_override: bool = False
     actor_context: contracts.GovernedActorContext | None = None
-    source: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, contracts.RETIRED_FEEDBACK_INPUTS)
+        return data
 
 
 class FeedbackBatchRequest(BaseModel):
@@ -190,8 +198,12 @@ class OutcomeRequest(BaseModel):
     outcome_profile_key: str | None = None
     detail: dict[str, Any] | None = None
     actor_context: contracts.GovernedActorContext | None = None
-    source: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, ("source",))
+        return data
 
 
 class ProposeGroupRequest(BaseModel):
@@ -211,8 +223,12 @@ class ProposeGroupRequest(BaseModel):
     # advertised in the CHANGELOG, and then silently dropped at the HTTP seam.
     expected_pending_version: int | None = None
     actor_context: contracts.GovernedActorContext | None = None
-    proposed_by: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, ("proposed_by",))
+        return data
 
 
 class ResolveGroupRequest(BaseModel):
@@ -224,8 +240,12 @@ class ResolveGroupRequest(BaseModel):
     # already live) with the group's review status + provenance instead of
     # skipping it silently. Default keeps today's skip-but-now-explained behavior.
     stamp_existing: bool = False
-    resolved_by: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, ("resolved_by",))
+        return data
 
 
 class UpdateTrustStatusRequest(BaseModel):
@@ -452,8 +472,12 @@ class DecisionRecordCreateRequest(BaseModel):
     subject_type: str | None = None
     subject_id: str | None = None
     actor_context: contracts.GovernedActorContext | None = None
-    opened_by: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, ("opened_by",))
+        return data
 
 
 class DecisionRecordFinalizeRequest(BaseModel):

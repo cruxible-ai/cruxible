@@ -355,7 +355,7 @@ def workflow_instance_id(canonical_workflow_project: Path) -> str:
             "cruxible_feedback",
             {
                 "instance_id": "inst_123",
-                "action": "approve",
+                "action": "accept",
                 "from_type": "Part",
                 "from_id": "BP-1",
                 "relationship_type": "fits",
@@ -369,7 +369,7 @@ def workflow_instance_id(canonical_workflow_project: Path) -> str:
                 "instance_id": "inst_123",
                 "receipt_id": "RCP-1",
                 "result_index": 0,
-                "action": "approve",
+                "action": "accept",
             },
         ),
         (

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Literal, cast, get_args
+from typing import Any, Literal, get_args
 
 from pydantic import ValidationError
 
@@ -20,14 +20,8 @@ from cruxible_core.config.schema import (
     OutcomeRemediationHint,
 )
 from cruxible_core.deprecation import (
-    APPROVE_FEEDBACK_ACTION,
-    FEEDBACK_SOURCE_INPUT,
-    FLAG_FEEDBACK_ACTION,
-    GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
-    OUTCOME_SOURCE_INPUT,
-    deprecation_refusal_message,
     emit_python_deprecation,
 )
 from cruxible_core.errors import (
@@ -35,13 +29,11 @@ from cruxible_core.errors import (
     DataValidationError,
     DirectWriteRefusedError,
     ReceiptNotFoundError,
-    RelationshipAmbiguityError,
 )
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.types import (
     FeedbackAction,
     FeedbackBatchItem,
-    FeedbackInputAction,
     FeedbackRecord,
     OutcomeRecord,
 )
@@ -82,18 +74,6 @@ that read fine but can never be written again.
 _VALID_OUTCOMES = ("correct", "incorrect", "partial", "unknown")
 
 
-_DEPRECATED_FLAG_ACTION_MESSAGE = deprecation_refusal_message(
-    FLAG_FEEDBACK_ACTION,
-    "The 'flag' feedback action was removed from the live write vocabulary and "
-    "survives only as a deprecated refused alias because it un-approved an edge "
-    "to 'pending' while storing no annotation, destroying the reviewer's actual "
-    "signal. Use 'cruxible attest record --stance contradict' (MCP: "
-    "cruxible_attest) to "
-    "store the observation, evidence refs, and actor without changing review "
-    "status. To adjudicate, use accept, reject, or correct.",
-)
-
-
 def _validate_feedback_request_values(
     *,
     action: str,
@@ -107,11 +87,7 @@ def _validate_feedback_request_values(
     routes through here, so the CLI, MCP, and HTTP surfaces all inherit these
     refusals without each restating them.
     """
-    if action == "flag":
-        raise ConfigError(_DEPRECATED_FLAG_ACTION_MESSAGE)
-
-    normalized_action = "accept" if action == "approve" else action
-    if normalized_action not in _VALID_ACTIONS:
+    if action not in _VALID_ACTIONS:
         raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_ACTIONS)}")
 
     if corrections is not None and not isinstance(corrections, dict):
@@ -132,19 +108,6 @@ def _validate_feedback_request_values(
         )
 
 
-def _normalize_feedback_action(
-    action: FeedbackInputAction,
-    *,
-    warn: bool,
-) -> FeedbackAction:
-    """Map the deprecated public alias to the canonical claim verdict."""
-    if action == "approve":
-        if warn:
-            emit_python_deprecation(APPROVE_FEEDBACK_ACTION)
-        return "accept"
-    return cast(FeedbackAction, action)
-
-
 def _normalize_feedback_record(
     *,
     config: CoreConfig,
@@ -157,7 +120,6 @@ def _normalize_feedback_record(
     reason_code: str | None,
     scope_hints: dict[str, Any] | None,
     corrections: dict[str, Any] | None,
-    group_override: bool,
     actor_context: GovernedActorContext | None = None,
 ) -> FeedbackRecord:
     """Validate and normalize one feedback request into a record.
@@ -212,26 +174,6 @@ def _normalize_feedback_record(
     else:
         normalized_corrections = dict(normalized_corrections)
     normalized_scope_hints = dict(scope_hints or {})
-
-    if group_override:
-        if resolved_target is None:
-            raise ConfigError("group_override requires the edge to exist in the graph")
-        if target.edge_key is None and target.claim_id is None:
-            count = graph.relationship_count_between(
-                target.from_type,
-                target.from_id,
-                target.to_type,
-                target.to_id,
-                target.relationship_type,
-            )
-            if count > 1:
-                raise RelationshipAmbiguityError(
-                    from_type=target.from_type,
-                    from_id=target.from_id,
-                    to_type=target.to_type,
-                    to_id=target.to_id,
-                    relationship_type=target.relationship_type,
-                )
 
     profile = config.get_feedback_profile(target.relationship_type)
     reason_remediation_hint: FeedbackRemediationHint | None = None
@@ -857,8 +799,6 @@ def _feedback_batch_item_from_input(item: FeedbackItemInput) -> FeedbackBatchIte
         reason_code=item.reason_code,
         scope_hints=item.scope_hints or {},
         corrections=item.corrections or {},
-        group_override=item.group_override,
-        source=item.source,
     )
 
 
@@ -1047,39 +987,6 @@ def _enforce_feedback_governance(records: Iterable[FeedbackRecord]) -> None:
             )
 
 
-def _apply_feedback_record(
-    graph: EntityGraph,
-    record: FeedbackRecord,
-    *,
-    group_override: bool,
-) -> bool:
-    """Apply one normalized feedback record and any requested group override."""
-    applied = apply_feedback(graph, record)
-    if group_override:
-        target = record.target
-        relationship = graph.get_relationship(
-            target.from_type,
-            target.from_id,
-            target.to_type,
-            target.to_id,
-            target.relationship_type,
-            edge_key=target.edge_key,
-        )
-        if relationship is not None:
-            assertion = relationship.metadata.assertion.model_copy(update={"group_override": True})
-            metadata = relationship.metadata.model_copy(update={"assertion": assertion})
-            graph.update_relationship_state(
-                target.from_type,
-                target.from_id,
-                target.to_type,
-                target.to_id,
-                target.relationship_type,
-                metadata=metadata,
-                edge_key=target.edge_key,
-            )
-    return applied
-
-
 def _feedback_relationship_after_apply(
     graph: EntityGraph,
     target: RelationshipInstance,
@@ -1111,8 +1018,6 @@ def service_feedback_input(
         reason_code=item.reason_code,
         scope_hints=item.scope_hints,
         corrections=item.corrections,
-        group_override=item.group_override,
-        source=item.source,
         actor_context=actor_context,
     )
 
@@ -1122,13 +1027,11 @@ def service_feedback_from_query_result(
     *,
     receipt_id: str,
     result_index: int,
-    action: FeedbackInputAction,
+    action: FeedbackAction,
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
-    source: str | None = None,
     path_index: int | None = None,
     path_alias: str | None = None,
     actor_context: GovernedActorContext | None = None,
@@ -1171,8 +1074,6 @@ def service_feedback_from_query_result(
         reason_code=reason_code,
         scope_hints=scope_hints,
         corrections=corrections,
-        group_override=group_override,
-        source=source,
         _feedback_from_query={
             **query_selection,
             "action": action,
@@ -1188,32 +1089,24 @@ def service_feedback_from_query_result(
 def service_feedback(
     instance: InstanceProtocol,
     receipt_id: str | None,
-    action: FeedbackInputAction,
+    action: FeedbackAction,
     target: RelationshipInstance,
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
     _feedback_from_query: dict[str, Any] | None = None,
     actor_context: GovernedActorContext | None = None,
-    source: str | None = None,
 ) -> FeedbackServiceResult:
     """Record feedback on an edge.
 
     Validates corrections, checks receipt existence, persists feedback,
-    and applies to the graph. If group_override=True, marks the edge assertion
-    metadata as a group override after applying feedback.
+    and applies it to the graph.
     """
-    if group_override:
-        emit_python_deprecation(GROUP_OVERRIDE)
-    if source is not None:
-        emit_python_deprecation(FEEDBACK_SOURCE_INPUT)
     _validate_feedback_request_values(
         action=action,
         corrections=corrections,
     )
-    normalized_action = _normalize_feedback_action(action, warn=True)
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
         relationship_types=[target.relationship_type],
@@ -1226,26 +1119,25 @@ def service_feedback(
         graph=graph,
         receipt=receipt,
         receipt_id=receipt_id,
-        action=normalized_action,
+        action=action,
         target=target,
         reason=reason,
         reason_code=reason_code,
         scope_hints=scope_hints,
         corrections=corrections,
-        group_override=group_override,
         actor_context=actor_context,
     )
 
     receipt_parameters: dict[str, Any] = {
         "source_receipt_id": receipt_id,
-        "action": normalized_action,
+        "action": action,
         "actor_kind": derived_actor_kind(actor_context),
         "target": _feedback_target_label(target),
     }
     if _feedback_from_query is not None:
         receipt_parameters["feedback_from_query"] = {
             **_feedback_from_query,
-            "action": normalized_action,
+            "action": action,
         }
 
     with mutation_receipt(
@@ -1259,14 +1151,10 @@ def service_feedback(
         _enforce_feedback_governance([record])
         ctx.uow.feedback.save_feedback_batch([record])
 
-        applied = _apply_feedback_record(
-            graph,
-            record,
-            group_override=group_override,
-        )
+        applied = apply_feedback(graph, record)
         ctx.builder.record_feedback_applied(
             _feedback_target_label(record.target),
-            normalized_action,
+            action,
             applied,
         )
 
@@ -1309,10 +1197,6 @@ def service_feedback_batch(
     """Record a batch of edge feedback with one top-level receipt."""
     if not items:
         raise ConfigError("Batch feedback items must not be empty")
-    if any(item.group_override for item in items):
-        emit_python_deprecation(GROUP_OVERRIDE)
-    if any(item.source is not None for item in items):
-        emit_python_deprecation(FEEDBACK_SOURCE_INPUT)
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
         relationship_types=[item.target.relationship_type for item in items],
@@ -1323,8 +1207,6 @@ def service_feedback_batch(
             action=item.action,
             corrections=item.corrections,
         )
-    if any(item.action == "approve" for item in items):
-        emit_python_deprecation(APPROVE_FEEDBACK_ACTION)
 
     graph = instance.load_graph()
     config = instance.load_config()
@@ -1336,13 +1218,12 @@ def service_feedback_batch(
             graph=graph,
             receipt=receipts[item.receipt_id],
             receipt_id=item.receipt_id,
-            action=_normalize_feedback_action(item.action, warn=False),
+            action=item.action,
             target=item.target,
             reason=item.reason,
             reason_code=item.reason_code,
             scope_hints=item.scope_hints,
             corrections=item.corrections,
-            group_override=item.group_override,
             actor_context=actor_context,
         )
         for item in items
@@ -1371,12 +1252,8 @@ def service_feedback_batch(
 
         applied_count = 0
         touched_relationships: list[RelationshipInstance] = []
-        for record, item in zip(records, items, strict=True):
-            applied = _apply_feedback_record(
-                graph,
-                record,
-                group_override=item.group_override,
-            )
+        for record in records:
+            applied = apply_feedback(graph, record)
             if applied:
                 applied_count += 1
             ctx.builder.record_feedback_applied(
@@ -1421,7 +1298,6 @@ def service_outcome(
     outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
     actor_context: GovernedActorContext | None = None,
-    source: str | None = None,
 ) -> OutcomeServiceResult:
     """Record an anchored outcome for a prior receipt or proposal resolution.
 
@@ -1429,8 +1305,6 @@ def service_outcome(
     and persists a bounded lineage snapshot for later analysis.
     """
     emit_python_deprecation(LEGACY_OUTCOME_RECORD)
-    if source is not None:
-        emit_python_deprecation(OUTCOME_SOURCE_INPUT)
     _validate_outcome_request_values(
         outcome=outcome,
         detail=detail,

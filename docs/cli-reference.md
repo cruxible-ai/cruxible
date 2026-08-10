@@ -1402,7 +1402,7 @@ findings.
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--receipt` | yes | `Sentinel.UNSET` | text | Receipt ID. |
-| `--action` | yes | `Sentinel.UNSET` | choice | Feedback action: `accept`, `reject`, or `correct`. Deprecated `approve` delegates to `accept`; deprecated `flag` returns its removal refusal. |
+| `--action` | yes | `Sentinel.UNSET` | choice | Feedback action: `accept`, `reject`, or `correct`. |
 | `--from-type` | yes | `Sentinel.UNSET` | text | Source entity type. |
 | `--from-id` | yes | `Sentinel.UNSET` | text | Source entity ID. |
 | `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
@@ -1413,7 +1413,6 @@ findings.
 | `--reason-code` | no | `` | text | Structured feedback reason code. |
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
 | `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
-| `--group-override` | no | `False` | boolean | Mark relationship assertion metadata as a group override (edge must exist). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1436,12 +1435,11 @@ findings.
 | --- | --- | --- | --- | --- |
 | `--receipt` | yes | `Sentinel.UNSET` | text | Query receipt ID. |
 | `--result-index` | yes | `Sentinel.UNSET` | integer | Zero-based index of the query result row to adjudicate. |
-| `--action` | yes | `Sentinel.UNSET` | choice | Feedback action: `accept`, `reject`, or `correct`. Deprecated `approve` delegates to `accept`; deprecated `flag` returns its removal refusal. |
+| `--action` | yes | `Sentinel.UNSET` | choice | Feedback action: `accept`, `reject`, or `correct`. |
 | `--reason` | no | `` | text | Reason for feedback. |
 | `--reason-code` | no | `` | text | Structured feedback reason code. |
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
 | `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
-| `--group-override` | no | `False` | boolean | Mark selected edge assertion metadata as a group override (edge must exist). |
 | `--path-index` | no | `` | integer | Zero-based path segment index for path query rows. |
 | `--path-alias` | no | `` | text | Traversal alias for the selected path segment. |
 | `--json` | no | `False` | boolean | Output as JSON. |
@@ -1473,7 +1471,7 @@ findings.
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
-- Batch item actions use `accept`, `reject`, or `correct`; deprecated `approve` delegates to `accept` with a warning.
+- Batch item actions use `accept`, `reject`, or `correct`.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

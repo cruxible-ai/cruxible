@@ -1471,7 +1471,6 @@ def create_decision_record(
     subject_type: str | None = None,
     subject_id: str | None = None,
     actor_context: Any | None = None,
-    opened_by: str | None = None,
 ) -> contracts.DecisionRecordResult:
     check_permission("cruxible_create_decision_record", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
@@ -1482,7 +1481,6 @@ def create_decision_record(
         subject_type=subject_type,
         subject_id=subject_id,
         actor_context=actor,
-        opened_by=opened_by,
     )
     return contracts.DecisionRecordResult(
         record=result.record.model_dump(mode="json"),
@@ -1950,7 +1948,7 @@ def list_traces(
 
 def feedback(
     instance_id: str,
-    action: contracts.FeedbackInputAction,
+    action: contracts.FeedbackAction,
     from_type: str,
     from_id: str,
     relationship_type: str,
@@ -1961,11 +1959,9 @@ def feedback(
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
     receipt_id: str | None = None,
     actor_context: Any | None = None,
     claim_id: str | None = None,
-    source: str | None = None,
 ) -> contracts.FeedbackResult:
     """Record feedback on an edge.
 
@@ -1999,8 +1995,6 @@ def feedback(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
-            source=source,
         ),
         actor_context=actor,
     )
@@ -2047,8 +2041,6 @@ def feedback_batch(
                 reason_code=item.reason_code,
                 scope_hints=item.scope_hints,
                 corrections=item.corrections or {},
-                group_override=item.group_override,
-                source=item.source,
             )
             for item in items
         ],
@@ -2067,16 +2059,14 @@ def feedback_from_query(
     *,
     receipt_id: str,
     result_index: int,
-    action: contracts.FeedbackInputAction,
+    action: contracts.FeedbackAction,
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
     path_index: int | None = None,
     path_alias: str | None = None,
     actor_context: Any | None = None,
-    source: str | None = None,
 ) -> contracts.FeedbackResult:
     """Record edge feedback by selecting relationship evidence from a query receipt."""
     check_permission("cruxible_feedback_from_query", instance_id=instance_id)
@@ -2094,11 +2084,9 @@ def feedback_from_query(
         reason_code=reason_code,
         scope_hints=scope_hints,
         corrections=corrections,
-        group_override=group_override,
         path_index=path_index,
         path_alias=path_alias,
         actor_context=actor,
-        source=source,
     )
     return contracts.FeedbackResult(
         feedback_id=result.feedback_id,
@@ -2118,7 +2106,6 @@ def outcome(
     outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
     actor_context: Any | None = None,
-    source: str | None = None,
 ) -> contracts.OutcomeResult:
     """Record a structured outcome for a prior receipt or proposal resolution."""
     check_permission("cruxible_outcome", instance_id=instance_id)
@@ -2135,7 +2122,6 @@ def outcome(
         outcome_profile_key=outcome_profile_key,
         detail=detail,
         actor_context=actor,
-        source=source,
     )
     return contracts.OutcomeResult(outcome_id=result.outcome_id)
 
@@ -4541,7 +4527,6 @@ def propose_group(
     suggested_priority: str | None = None,
     expected_pending_version: int | None = None,
     actor_context: Any | None = None,
-    proposed_by: str | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""
     check_permission("cruxible_propose_group", instance_id=instance_id)
@@ -4595,7 +4580,6 @@ def propose_group(
         suggested_priority=suggested_priority,
         expected_pending_version=expected_pending_version,
         actor_context=actor,
-        proposed_by=proposed_by,
     )
     return contracts.ProposeGroupToolResult(
         group_id=result.group_id,
@@ -4781,7 +4765,6 @@ def resolve_group(
     expected_pending_version: int | None = None,
     actor_context: Any | None = None,
     stamp_existing: bool = False,
-    resolved_by: str | None = None,
 ) -> contracts.ResolveGroupToolResult:
     """Resolve a candidate group (approve or reject)."""
     check_permission("cruxible_resolve_group", instance_id=instance_id)
@@ -4796,7 +4779,6 @@ def resolve_group(
         expected_pending_version=expected_pending_version,
         actor_context=actor,
         stamp_existing=stamp_existing,
-        resolved_by=resolved_by,
     )
     return contracts.ResolveGroupToolResult(
         group_id=result.group_id,

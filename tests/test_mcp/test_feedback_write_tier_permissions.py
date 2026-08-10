@@ -4,12 +4,12 @@ Companion to ``test_write_tier_permissions.py`` (direct-write channels).
 Covered channels:
 
 * direct relationship writes (baseline, unchanged),
-* ``feedback`` correct / approve / reject,
+* ``feedback`` correct / accept / reject,
 * ``feedback_batch`` (all-or-nothing, gated at its strictest action),
 * ``feedback_from_query`` (target selected from a query receipt).
 
 The rail these exercise is wi-feedback-approval-rail: the adjudication actions
-(``approve`` / ``reject`` / ``correct``) sit at a GRAPH_WRITE floor, because
+(``accept`` / ``reject`` / ``correct``) sit at a GRAPH_WRITE floor, because
 attributing WHO promoted an edge never established that they were entitled to.
 That floor is a property of the ACTION, so it wins over the per-type
 ``write_tier`` opt-out this fixture declares: a type owner may lower who can
@@ -318,28 +318,26 @@ class TestFeedbackCorrectTierGate:
                 _feedback(feedback_tier_instance_id, "correct")
         assert _blocks_edge_severity(feedback_tier_instance_id) == "high"
 
-    @pytest.mark.parametrize("action", ["approve", "reject"])
+    @pytest.mark.parametrize("action", ["accept", "reject"])
     def test_governed_adjudication_transitions_refused(self, feedback_tier_instance_id, action):
-        """approve/reject adjudicate: they make an edge live or retract it, so
+        """accept/reject adjudicate: they make an edge live or retract it, so
         they require the same tier as a direct write or a group resolution."""
         with request_permission_scope(PermissionMode.GOVERNED_WRITE):
             with pytest.raises(PermissionDeniedError, match="GRAPH_WRITE"):
                 _feedback(feedback_tier_instance_id, action)
 
-    @pytest.mark.parametrize("action", ["approve", "reject"])
+    @pytest.mark.parametrize("action", ["accept", "reject"])
     def test_graph_write_adjudication_transitions_allowed(self, feedback_tier_instance_id, action):
         with request_permission_scope(PermissionMode.GRAPH_WRITE):
             result = _feedback(feedback_tier_instance_id, action)
         assert result.applied is True
 
-    def test_removed_flag_action_refuses_and_names_the_replacement(self, feedback_tier_instance_id):
-        """``flag`` is gone; the refusal has to route the caller somewhere real."""
-        with request_permission_scope(PermissionMode.GRAPH_WRITE):
-            with pytest.raises(ConfigError, match="'flag' feedback action was removed"):
-                _feedback(feedback_tier_instance_id, "flag")
-        with request_permission_scope(PermissionMode.GRAPH_WRITE):
-            with pytest.raises(ConfigError, match="attest record --stance contradict"):
-                _feedback(feedback_tier_instance_id, "flag")
+    def test_removed_actions_refuse_as_unknown_values(self, feedback_tier_instance_id):
+        """``flag`` and ``approve`` are no longer in the input vocabulary."""
+        for retired in ("flag", "approve"):
+            with request_permission_scope(PermissionMode.GRAPH_WRITE):
+                with pytest.raises(ConfigError, match=f"Invalid action '{retired}'"):
+                    _feedback(feedback_tier_instance_id, retired)
 
     def test_graph_write_correct_unaffected(self, feedback_tier_instance_id):
         with request_permission_scope(PermissionMode.GRAPH_WRITE):
@@ -492,7 +490,7 @@ class TestAnonymousReviewTransitionRefused:
     """Under server auth every feedback action needs a resolved actor identity
     — anonymous retraction (reject) ends with this work item."""
 
-    @pytest.mark.parametrize("action", ["approve", "correct", "reject"])
+    @pytest.mark.parametrize("action", ["accept", "correct", "reject"])
     def test_auth_on_anonymous_action_refused(
         self,
         feedback_tier_instance_id,
@@ -515,9 +513,9 @@ class TestAnonymousReviewTransitionRefused:
         adjudication at the right TIER goes through without a request-supplied
         actor. (This used to be pinned on ``flag``, the one action a governed
         operator kept at every auth setting; ``flag`` was removed, so the pin
-        moves to ``approve`` at its own GRAPH_WRITE floor.)
+        moves to ``accept`` at its own GRAPH_WRITE floor.)
         """
         monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
         with request_permission_scope(PermissionMode.GRAPH_WRITE):
-            result = _feedback(feedback_tier_instance_id, "approve")
+            result = _feedback(feedback_tier_instance_id, "accept")
         assert result.applied is True
