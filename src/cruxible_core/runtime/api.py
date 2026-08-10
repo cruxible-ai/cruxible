@@ -1471,7 +1471,6 @@ def create_decision_record(
     subject_type: str | None = None,
     subject_id: str | None = None,
     actor_context: Any | None = None,
-    opened_by: str | None = None,
 ) -> contracts.DecisionRecordResult:
     check_permission("cruxible_create_decision_record", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
@@ -1482,7 +1481,6 @@ def create_decision_record(
         subject_type=subject_type,
         subject_id=subject_id,
         actor_context=actor,
-        opened_by=opened_by,
     )
     return contracts.DecisionRecordResult(
         record=result.record.model_dump(mode="json"),

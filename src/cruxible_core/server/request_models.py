@@ -448,8 +448,6 @@ class DecisionRecordCreateRequest(BaseModel):
     subject_type: str | None = None
     subject_id: str | None = None
     actor_context: contracts.GovernedActorContext | None = None
-    opened_by: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
 
 
 class DecisionRecordFinalizeRequest(BaseModel):

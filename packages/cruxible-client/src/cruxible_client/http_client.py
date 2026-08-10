@@ -469,7 +469,6 @@ class CruxibleClient:
         subject_type: str | None = None,
         subject_id: str | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
-        opened_by: str | None = None,
     ) -> contracts.DecisionRecordResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/decision-records",
@@ -478,7 +477,6 @@ class CruxibleClient:
                     "question": question,
                     "subject_type": subject_type,
                     "subject_id": subject_id,
-                    **({"opened_by": opened_by} if opened_by is not None else {}),
                 },
                 actor_context,
             ),

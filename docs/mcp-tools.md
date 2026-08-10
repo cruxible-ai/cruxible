@@ -1412,7 +1412,6 @@ without it, only the active materialized digest is checked.
 | `question` | yes | string |  |
 | `subject_type` | no | string | null |  |
 | `subject_id` | no | string | null |  |
-| `opened_by` | no | string | null | Deprecated and ignored; actor kind is derived from the runtime actor context. |
 
 **Returns:** Top-level fields: `record`, `events`, `receipt_id`, `deprecation_warnings`
 

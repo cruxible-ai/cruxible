@@ -42,10 +42,6 @@ class _SourceAliasKwargs(TypedDict, total=False):
     source: str
 
 
-class _OpenedByAliasKwargs(TypedDict, total=False):
-    opened_by: str
-
-
 def get_manager() -> InstanceManager:
     """Return the process-global instance manager."""
     return runtime_get_manager()
@@ -651,25 +647,19 @@ def handle_create_decision_record(
     question: str,
     subject_type: str | None = None,
     subject_id: str | None = None,
-    opened_by: str | None = None,
 ) -> contracts.DecisionRecordResult:
-    deprecated_kwargs: _OpenedByAliasKwargs = {}
-    if opened_by is not None:
-        deprecated_kwargs["opened_by"] = opened_by
     return _dispatch_remote_or_local(
         lambda client: client.create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            **deprecated_kwargs,
         ),
         lambda: api.create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_create_decision_record",

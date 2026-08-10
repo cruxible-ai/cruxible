@@ -9,7 +9,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
-from cruxible_core.deprecation import DECISION_OPENED_BY_INPUT, accept_deprecated_model_input
 from cruxible_core.governance.actors import (
     DerivedActorKind,
     GovernedActorContext,
@@ -53,16 +52,6 @@ class DecisionRecord(BaseModel):
     decision_class: DecisionClass | None = None
     rationale: str = ""
     abandoned_reason: str = ""
-
-    @model_validator(mode="before")
-    @classmethod
-    def accept_deprecated_opened_by(cls, value: Any) -> Any:
-        """Accept and ignore the caller-declared opener compatibility input."""
-        return accept_deprecated_model_input(
-            value,
-            field="opened_by",
-            notice=DECISION_OPENED_BY_INPUT,
-        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

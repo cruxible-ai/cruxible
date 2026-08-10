@@ -58,10 +58,6 @@ OUTCOME_SOURCE_INPUT = DeprecationNotice(
     surface="OutcomeRecord.source input",
     replacement="actor_context",
 )
-DECISION_OPENED_BY_INPUT = DeprecationNotice(
-    surface="DecisionRecord.opened_by input",
-    replacement="opened_actor_context",
-)
 PROCEDURE_STRING_WARNINGS = DeprecationNotice(
     surface="ProcedureTransitionResult.warnings string list",
     replacement="ProcedureTransitionResult.typed_warnings",
@@ -83,7 +79,6 @@ DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
     GROUP_OVERRIDE,
     FEEDBACK_SOURCE_INPUT,
     OUTCOME_SOURCE_INPUT,
-    DECISION_OPENED_BY_INPUT,
     PROCEDURE_STRING_WARNINGS,
 )
 """Every warning-emitting deprecation registered by cruxible-core."""

@@ -17,7 +17,6 @@ from cruxible_client import contracts
 from cruxible_core import __version__
 from cruxible_core.deprecation import (
     APPROVE_FEEDBACK_ACTION,
-    DECISION_OPENED_BY_INPUT,
     FEEDBACK_SOURCE_INPUT,
     GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
@@ -44,10 +43,6 @@ class _MCPOutcomeResult(contracts.OutcomeResult):
 
 
 class _MCPOutcomeProfileResult(contracts.OutcomeProfileResult):
-    deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
-
-
-class _MCPDecisionRecordResult(contracts.DecisionRecordResult):
     deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -1175,22 +1170,17 @@ def register_tools(
         question: str,
         subject_type: str | None = None,
         subject_id: str | None = None,
-        opened_by: str | None = None,
-    ) -> _MCPDecisionRecordResult:
+    ) -> contracts.DecisionRecordResult:
         """Open a decision record that can collect query and workflow receipts.
 
-        ``opened_by`` is a deprecated, ignored compatibility input. The opener
-        is derived from the authenticated actor context.
+        The opener is derived from the authenticated actor context.
         """
-        result = handlers.handle_create_decision_record(
+        return handlers.handle_create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            opened_by=opened_by,
         )
-        notices = [DECISION_OPENED_BY_INPUT] if opened_by is not None else []
-        return _MCPDecisionRecordResult.model_validate(_mcp_deprecation_payload(result, notices))
 
     @_tool
     def cruxible_get_decision_record(

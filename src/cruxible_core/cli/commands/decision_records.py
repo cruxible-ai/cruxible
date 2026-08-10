@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 
 import click
 
@@ -15,7 +15,6 @@ from cruxible_core.cli.commands._common import (
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.decision.types import DecisionEvent, DecisionRecord
-from cruxible_core.deprecation import DECISION_OPENED_BY_INPUT, emit_cli_deprecation
 from cruxible_core.service import (
     service_abandon_decision_record,
     service_create_decision_record,
@@ -24,10 +23,6 @@ from cruxible_core.service import (
     service_list_decision_events,
     service_list_decision_records,
 )
-
-
-class _OpenedByAliasKwargs(TypedDict, total=False):
-    opened_by: str
 
 
 def _record_payload(record: DecisionRecord | dict[str, Any]) -> dict[str, Any]:
@@ -73,36 +68,27 @@ def decision_records_cmd() -> None:
 @click.option("--question", required=True, help="Question or decision being evaluated.")
 @click.option("--subject-type", default=None, help="Optional subject type.")
 @click.option("--subject-id", default=None, help="Optional subject identifier.")
-@click.option("--opened-by", default=None, hidden=True)
 @json_option
 @handle_errors
 def create_cmd(
     question: str,
     subject_type: str | None,
     subject_id: str | None,
-    opened_by: str | None,
     output_json: bool,
 ) -> None:
     """Create an open decision record."""
-    if opened_by is not None:
-        emit_cli_deprecation(DECISION_OPENED_BY_INPUT)
-    deprecated_kwargs: _OpenedByAliasKwargs = {}
-    if opened_by is not None:
-        deprecated_kwargs["opened_by"] = opened_by
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            **deprecated_kwargs,
         ),
         lambda instance: service_create_decision_record(
             instance,
             question=question,
             subject_type=subject_type,
             subject_id=subject_id,
-            **deprecated_kwargs,
         ),
     )
     payload = _result_record_payload(result)
