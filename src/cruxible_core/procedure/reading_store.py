@@ -16,6 +16,7 @@ from cruxible_core.governance.actors import (
 from cruxible_core.instance_protocol import ProcedureReadingStoreProtocol
 from cruxible_core.procedure.types import (
     LinkedOutcomeGradeSummary,
+    LinkedOutcomeGrainSummary,
     LinkedOutcomeSummary,
     ProcedureReading,
     ProcedureRunFiredNode,
@@ -246,21 +247,21 @@ class ProcedureReadingStore(ProcedureReadingStoreProtocol):
         self,
         procedure_ids: Sequence[str],
     ) -> dict[str, LinkedOutcomeSummary]:
-        """Aggregate both grades with one grouped statement per id chunk."""
+        """Aggregate every grain and grade with one grouped statement per id chunk."""
         unique_ids = tuple(dict.fromkeys(procedure_ids))
         summaries: dict[str, LinkedOutcomeSummary] = {}
         for start in range(0, len(unique_ids), _MAX_READING_IDS_PER_STATEMENT):
             chunk = unique_ids[start : start + _MAX_READING_IDS_PER_STATEMENT]
             placeholders = ", ".join("?" for _ in chunk)
             rows = self._conn.execute(
-                "SELECT procedure_id, grade, COUNT(*) AS readings, "
+                "SELECT procedure_id, subject_grain, grade, COUNT(*) AS readings, "
                 "SUM(CASE WHEN verdict = 'satisfied' THEN 1 ELSE 0 END) AS satisfied, "
                 "SUM(CASE WHEN verdict = 'contradicted' THEN 1 ELSE 0 END) "
                 "AS contradicted, "
                 "SUM(CASE WHEN verdict = 'indeterminate' THEN 1 ELSE 0 END) "
                 "AS indeterminate "
                 f"FROM procedure_readings WHERE procedure_id IN ({placeholders}) "
-                "GROUP BY procedure_id, grade",
+                "GROUP BY procedure_id, subject_grain, grade",
                 chunk,
             ).fetchall()
             for row in rows:
@@ -272,8 +273,14 @@ class ProcedureReadingStore(ProcedureReadingStoreProtocol):
                     indeterminate=int(row["indeterminate"]),
                 )
                 existing = summaries.get(procedure_id, LinkedOutcomeSummary())
-                field = "contract_grade" if row["grade"] == "contract" else "attestation_grade"
-                summaries[procedure_id] = existing.model_copy(update={field: grade_summary})
+                grain_field = str(row["subject_grain"])
+                grade_field = (
+                    "contract_grade" if row["grade"] == "contract" else "attestation_grade"
+                )
+                grain: LinkedOutcomeGrainSummary = getattr(existing, grain_field)
+                summaries[procedure_id] = existing.model_copy(
+                    update={grain_field: grain.model_copy(update={grade_field: grade_summary})}
+                )
         return summaries
 
     def close(self) -> None:

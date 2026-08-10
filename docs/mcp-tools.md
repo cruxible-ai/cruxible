@@ -1792,8 +1792,9 @@ a `track_record` block summarizing its run ledger: `runs`, the exhaustive
 verdict buckets `succeeded`, `failed`, `refused`, `budget_exceeded`, and
 `in_flight` (started but not yet finalized, so `runs` always equals their sum),
 `last_succeeded_at`, the most frequent `top_refusal_reason`, and
-`linked_outcomes`, which keeps `contract_grade` and `attestation_grade`
-verdict buckets separate and never reports a combined total. It is null until
+`linked_outcomes`, which carries a `procedure_unit`, `node`, and `arm` block,
+each keeping `contract_grade` and `attestation_grade` verdict buckets separate,
+and never reports a total across grains or grades. It is null until
 the procedure has a reading. `top_refusal_reason` is null when a
 procedure has never been refused and for refusals recorded before the reason
 was tracked. These buckets are read state, so running a procedure advances
@@ -1903,7 +1904,7 @@ withdrawing another actor's pending proposal is refused below `GRAPH_WRITE`.
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Use when you need to record an explicit contract- or attestation-grade outcome reading for an accepted procedure. Contract grade is refused unless its measurement, grain, authored coordinates, and acceptance-opened contract all match; retry as attestation grade only when that is the intended evidentiary claim.
+**Purpose:** Use when you need to record an explicit contract- or attestation-grade outcome reading for an accepted procedure. Contract grade is refused unless its measurement, grain, authored coordinates, acceptance-opened contract, and that contract's standing non-overturned resolution all match; retry as attestation grade only when that is the intended evidentiary claim.
 
 **Arguments:**
 
@@ -1920,7 +1921,7 @@ withdrawing another actor's pending proposal is refused below `GRAPH_WRITE`.
 | `arm_label` | no | string or null | `on_true` or `on_false`; required for arm grain. |
 | `measurement_name` | no | string or null | Required for contract grade and must name a declaration. |
 | `contract_id` | no | string or null | Required for contract grade and must be acceptance-opened. |
-| `resolution_id` | no | string or null | Optional matching resolution provenance. |
+| `resolution_id` | no | string or null | Required for contract grade and must be that contract's standing, non-overturned resolution carrying the reading's verdict. |
 | `value` | no | any JSON | Optional observed value. |
 | `run_id` | no | string or null | Optional invocation provenance. |
 | `episode_ref` | no | string or null | Optional opaque episode pointer. |

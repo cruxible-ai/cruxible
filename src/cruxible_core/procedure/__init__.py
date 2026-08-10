@@ -5,6 +5,7 @@ from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.procedure.types import (
     CalibrationTrigger,
     LinkedOutcomeGradeSummary,
+    LinkedOutcomeGrainSummary,
     LinkedOutcomeSummary,
     ProcedureBudget,
     ProcedureContractFieldSchema,
@@ -30,6 +31,7 @@ from cruxible_core.procedure.types import (
 __all__ = [
     "CalibrationTrigger",
     "LinkedOutcomeGradeSummary",
+    "LinkedOutcomeGrainSummary",
     "LinkedOutcomeSummary",
     "ProcedureBudget",
     "ProcedureContractFieldSchema",

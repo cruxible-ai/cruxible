@@ -162,6 +162,13 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
 
     tracked_list = app_client.get(f"/api/v1/{instance_id}/procedures")
     tracked_show = app_client.get(f"/api/v1/{instance_id}/procedures/{procedure_id}")
+    empty_grade = {
+        "readings": 0,
+        "satisfied": 0,
+        "contradicted": 0,
+        "indeterminate": 0,
+    }
+    empty_grain = {"contract_grade": empty_grade, "attestation_grade": empty_grade}
     expected_track_record = {
         "runs": 1,
         "succeeded": 1,
@@ -172,18 +179,17 @@ def test_procedure_routes_cover_lifecycle_run_and_read_envelopes(
         "last_succeeded_at": executed.json()["run"]["finalized_at"],
         "top_refusal_reason": None,
         "linked_outcomes": {
-            "contract_grade": {
-                "readings": 0,
-                "satisfied": 0,
-                "contradicted": 0,
-                "indeterminate": 0,
+            "procedure_unit": {
+                "contract_grade": empty_grade,
+                "attestation_grade": {
+                    "readings": 1,
+                    "satisfied": 1,
+                    "contradicted": 0,
+                    "indeterminate": 0,
+                },
             },
-            "attestation_grade": {
-                "readings": 1,
-                "satisfied": 1,
-                "contradicted": 0,
-                "indeterminate": 0,
-            },
+            "node": empty_grain,
+            "arm": empty_grain,
         },
     }
     assert tracked_list.json()["items"][0]["track_record"] == expected_track_record

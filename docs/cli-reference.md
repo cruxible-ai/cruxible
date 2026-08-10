@@ -1768,8 +1768,12 @@ Each item carries a `track_record` block summarizing that procedure's run
 ledger, so a dead procedure is distinguishable from a healthy one without a
 second call: `runs`, the exhaustive verdict buckets `succeeded`, `failed`,
 `refused`, `budget_exceeded`, and `in_flight` (started but not yet finalized),
-`last_succeeded_at`, `top_refusal_reason`, and `linked_outcomes` (reserved,
-always null). `runs` always equals the sum of the five buckets, so a procedure
+`last_succeeded_at`, `top_refusal_reason`, and `linked_outcomes`. The last is
+null until the procedure has a reading and otherwise carries a
+`procedure_unit`, `node`, and `arm` block, each keeping `contract_grade` and
+`attestation_grade` verdict buckets separate; no total is reported across
+grains or grades, and text mode prints the per-grain, per-grade reading counts.
+`runs` always equals the sum of the five buckets, so a procedure
 that exhausts its budget on every invocation reads differently from one whose
 invocations are still running. `top_refusal_reason` is the most frequently
 recorded refusal classification and is null when a procedure has never been
@@ -1893,6 +1897,43 @@ Text output labels an interrupted record as
 A run with `verdict: refused` also carries `refusal_reason`, the classification
 counted by the procedure's `top_refusal_reason`. It is null on every other
 verdict, and null on refusals recorded before the reason was tracked.
+
+## cruxible procedure record-reading
+
+**Usage:** `cruxible procedure record-reading [OPTIONS] PROCEDURE_ID`
+
+**Purpose:** Record one outcome reading without changing its requested evidence grade.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROCEDURE_ID` | yes |  | argument | Procedure ID. |
+| `--subject-grain` | yes |  | choice | One of `procedure_unit`, `node`, `arm`. |
+| `--grade` | yes |  | choice | `contract` or `attestation`. |
+| `--verdict` | yes |  | choice | `satisfied`, `contradicted`, or `indeterminate`. |
+| `--observed-at` | yes |  | text | Observation time in ISO-8601 format. |
+| `--node-id` | no |  | text | Node coordinate for node-grain readings. |
+| `--from-node-id` | no |  | text | Source-node coordinate for arm-grain readings. |
+| `--arm-label` | no |  | choice | `on_true` or `on_false` for arm-grain readings. |
+| `--measurement-name` | no |  | text | Declared measurement name; required for contract grade. |
+| `--contract-id` | no |  | text | Acceptance-opened measurement contract; required for contract grade. |
+| `--resolution-id` | no |  | text | The contract's standing resolution; required for contract grade. |
+| `--value` | no |  | text | Observed value as JSON. |
+| `--run-id` | no |  | text | Run the reading is attributed to. |
+| `--episode-ref` | no |  | text | External episode reference. |
+| `--situation-shape` | no |  | text | Situation shape as JSON. |
+| `--evidence-ref` | no |  | text | EvidenceRef JSON; repeatable. |
+| `--note` | no |  | text | Free-text annotation. |
+| `--idempotency-key` | no |  | text | Dedupe key for retried submissions. |
+| `--json` | no | `False` | boolean | Emit the recorded reading as JSON. |
+
+Contract-grade readings are validated against the measurement's declaration,
+its acceptance-opened contract and activation, and the contract's standing
+(highest-sequence, non-overturned) resolution; failures refuse with
+`contract_grade_refused` and write nothing. Attestation-grade readings record
+unvalidated observations. This command requires daemon transport; its
+permission floor is `governed_write`.
 
 ## cruxible migrate
 

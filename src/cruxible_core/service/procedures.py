@@ -1368,7 +1368,7 @@ def _validate_contract_grade_reading(
     verdict: ProcedureReadingVerdict,
     builder: ReceiptBuilder,
 ) -> None:
-    """Enforce the declaration-and-activation Goodhart boundary."""
+    """Enforce the declaration, activation, and settlement Goodhart boundary."""
     declarations = {
         declaration.name: declaration for declaration in (procedure.definition.measurements or [])
     }
@@ -1424,18 +1424,38 @@ def _validate_contract_grade_reading(
             builder,
             f"contract_id '{contract_id}' was not activated by this procedure's acceptance",
         )
-    if resolution_id is not None:
-        resolution = uow.resolution_contracts.get_resolution(resolution_id)
-        if (
-            resolution is None
-            or resolution.contract_id != contract_id
-            or resolution.verdict != verdict
-        ):
-            _refuse_contract_grade(
-                builder,
-                f"resolution_id '{resolution_id}' does not carry verdict '{verdict}' "
-                f"for contract '{contract_id}'",
-            )
+    if resolution_id is None:
+        _refuse_contract_grade(
+            builder,
+            f"measurement '{declaration.name}' requires the resolution_id that settled "
+            f"contract '{contract_id}'; contract grade is the settlement's grade, not a "
+            "claim about it",
+        )
+    resolution = uow.resolution_contracts.get_resolution(resolution_id)
+    if resolution is None or resolution.contract_id != contract_id or resolution.verdict != verdict:
+        _refuse_contract_grade(
+            builder,
+            f"resolution_id '{resolution_id}' does not carry verdict '{verdict}' "
+            f"for contract '{contract_id}'",
+        )
+    standing = uow.resolution_contracts.get_latest_resolutions([contract_id]).get(contract_id)
+    if standing is None or standing.resolution_id != resolution_id:
+        # An older resolution stopped being the contract's answer the moment a
+        # later one was recorded; citing it would grade a reading on a
+        # settlement the contract has since replaced.
+        _refuse_contract_grade(
+            builder,
+            f"resolution_id '{resolution_id}' is not the standing resolution for "
+            f"contract '{contract_id}'",
+        )
+    disposition = uow.resolution_contracts.get_dispositions([resolution_id]).get(resolution_id)
+    if disposition is not None and disposition.verdict == "overturned":
+        _refuse_contract_grade(
+            builder,
+            f"resolution '{resolution_id}' was overturned by reviewer disposition "
+            f"'{disposition.disposition_id}'; an overturned settlement cannot back "
+            "contract-grade evidence",
+        )
 
 
 def _refuse_contract_grade(builder: ReceiptBuilder, reason: str) -> NoReturn:
