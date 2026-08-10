@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import sys
 import warnings
-from collections.abc import Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, TextIO
 
@@ -64,11 +63,6 @@ def serialize_deprecation(notice: DeprecationNotice) -> str:
     return json.dumps(notice.as_dict(), separators=(",", ":"), sort_keys=True)
 
 
-def deprecation_refusal_message(notice: DeprecationNotice, detail: str) -> str:
-    """Build a refusal that still carries the standard structured warning."""
-    return f"Deprecated surface refused: {serialize_deprecation(notice)}. {detail}"
-
-
 def emit_cli_deprecation(
     notice: DeprecationNotice,
     *,
@@ -88,21 +82,6 @@ def emit_python_deprecation(notice: DeprecationNotice, *, stacklevel: int = 2) -
         DeprecationWarning,
         stacklevel=stacklevel,
     )
-
-
-def accept_deprecated_model_input(
-    value: Any,
-    *,
-    field: str,
-    notice: DeprecationNotice,
-) -> Any:
-    """Strip one ignored legacy model field after emitting its notice."""
-    if not isinstance(value, Mapping) or field not in value:
-        return value
-    emit_python_deprecation(notice, stacklevel=3)
-    payload = dict(value)
-    payload.pop(field)
-    return payload
 
 
 def _payload_dict(result: Any) -> dict[str, Any]:
