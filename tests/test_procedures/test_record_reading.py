@@ -258,18 +258,29 @@ def test_two_converging_arms_are_distinct_contract_grade_subjects(
     assert readings[0].arm_label != readings[1].arm_label
     linked = service_get_procedure(procedure_instance, procedure.procedure_id).track_record
     assert linked.linked_outcomes is not None
+    empty_grade = {
+        "readings": 0,
+        "satisfied": 0,
+        "contradicted": 0,
+        "indeterminate": 0,
+    }
     assert linked.linked_outcomes.model_dump(mode="json") == {
-        "contract_grade": {
-            "readings": 2,
-            "satisfied": 0,
-            "contradicted": 0,
-            "indeterminate": 2,
+        "procedure_unit": {
+            "contract_grade": empty_grade,
+            "attestation_grade": empty_grade,
         },
-        "attestation_grade": {
-            "readings": 0,
-            "satisfied": 0,
-            "contradicted": 0,
-            "indeterminate": 0,
+        "node": {
+            "contract_grade": empty_grade,
+            "attestation_grade": empty_grade,
+        },
+        "arm": {
+            "contract_grade": {
+                "readings": 2,
+                "satisfied": 0,
+                "contradicted": 0,
+                "indeterminate": 2,
+            },
+            "attestation_grade": empty_grade,
         },
     }
 

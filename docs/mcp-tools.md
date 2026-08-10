@@ -1792,8 +1792,9 @@ a `track_record` block summarizing its run ledger: `runs`, the exhaustive
 verdict buckets `succeeded`, `failed`, `refused`, `budget_exceeded`, and
 `in_flight` (started but not yet finalized, so `runs` always equals their sum),
 `last_succeeded_at`, the most frequent `top_refusal_reason`, and
-`linked_outcomes`, which keeps `contract_grade` and `attestation_grade`
-verdict buckets separate and never reports a combined total. It is null until
+`linked_outcomes`, which carries a `procedure_unit`, `node`, and `arm` block,
+each keeping `contract_grade` and `attestation_grade` verdict buckets separate,
+and never reports a total across grains or grades. It is null until
 the procedure has a reading. `top_refusal_reason` is null when a
 procedure has never been refused and for refusals recorded before the reason
 was tracked. These buckets are read state, so running a procedure advances

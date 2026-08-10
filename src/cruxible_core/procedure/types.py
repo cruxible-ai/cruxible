@@ -860,11 +860,26 @@ class LinkedOutcomeGradeSummary(BaseModel):
         return self
 
 
-class LinkedOutcomeSummary(BaseModel):
-    """Own-procedure outcomes, with contract and attestation grades kept apart."""
+class LinkedOutcomeGrainSummary(BaseModel):
+    """One subject grain's outcomes, with the two grades kept apart."""
 
     contract_grade: LinkedOutcomeGradeSummary = Field(default_factory=LinkedOutcomeGradeSummary)
     attestation_grade: LinkedOutcomeGradeSummary = Field(default_factory=LinkedOutcomeGradeSummary)
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class LinkedOutcomeSummary(BaseModel):
+    """Own-procedure outcomes, kept apart by subject grain and by grade.
+
+    No total across grains is exposed anywhere in the model. A unit reading, a
+    node reading, and an arm reading observe different subjects, so a combined
+    count would advertise a sample size that no subject actually has.
+    """
+
+    procedure_unit: LinkedOutcomeGrainSummary = Field(default_factory=LinkedOutcomeGrainSummary)
+    node: LinkedOutcomeGrainSummary = Field(default_factory=LinkedOutcomeGrainSummary)
+    arm: LinkedOutcomeGrainSummary = Field(default_factory=LinkedOutcomeGrainSummary)
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1336,6 +1351,7 @@ __all__ = [
     "ProcedureInnerStep",
     "ProcedureMeasurementDeclaration",
     "LinkedOutcomeGradeSummary",
+    "LinkedOutcomeGrainSummary",
     "LinkedOutcomeSummary",
     "ProcedureProjectStepSchema",
     "ProcedureReading",

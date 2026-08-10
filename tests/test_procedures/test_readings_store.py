@@ -12,7 +12,11 @@ from cruxible_core.procedure.reading_store import (
     _MAX_READING_IDS_PER_STATEMENT,
     ProcedureReadingStore,
 )
-from cruxible_core.procedure.types import LinkedOutcomeGradeSummary, ProcedureReading
+from cruxible_core.procedure.types import (
+    LinkedOutcomeGradeSummary,
+    LinkedOutcomeGrainSummary,
+    ProcedureReading,
+)
 from tests.test_procedures.conftest import actor
 
 _OBSERVED_AT = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
@@ -160,17 +164,72 @@ def test_linked_outcomes_use_one_grouped_statement_per_id_chunk() -> None:
     grouped = [
         statement
         for statement in statements
-        if "FROM procedure_readings" in statement and "GROUP BY procedure_id, grade" in statement
+        if "FROM procedure_readings" in statement
+        and "GROUP BY procedure_id, subject_grain, grade" in statement
     ]
     assert len(grouped) == 2
     summary = summaries[procedure_id]
-    assert summary.contract_grade == LinkedOutcomeGradeSummary(
+    assert summary.procedure_unit.contract_grade == LinkedOutcomeGradeSummary(
         readings=2,
         satisfied=1,
         contradicted=1,
     )
-    assert summary.attestation_grade == LinkedOutcomeGradeSummary(
+    assert summary.procedure_unit.attestation_grade == LinkedOutcomeGradeSummary(
         readings=2,
         satisfied=1,
         indeterminate=1,
     )
+    assert summary.node == LinkedOutcomeGrainSummary()
+    assert summary.arm == LinkedOutcomeGrainSummary()
+
+
+def test_linked_outcomes_keep_every_grain_in_its_own_bucket() -> None:
+    """Four readings over three grains stay four distinguishable observations."""
+    store = ProcedureReadingStore()
+    procedure_id = "PRC-mixed-grain"
+    node_coordinates: dict[str, object] = {
+        "subject_grain": "node",
+        "definition_digest": None,
+        "node_id": "decide",
+        "node_local_digest": "sha256:node",
+    }
+    rows = [
+        _unit_reading(reading_id="PRD-grain-unit", procedure_id=procedure_id),
+        _unit_reading(reading_id="PRD-grain-node-1", procedure_id=procedure_id, **node_coordinates),
+        _unit_reading(
+            reading_id="PRD-grain-node-2",
+            procedure_id=procedure_id,
+            verdict="contradicted",
+            **node_coordinates,
+        ),
+        _unit_reading(
+            reading_id="PRD-grain-arm",
+            procedure_id=procedure_id,
+            subject_grain="arm",
+            definition_digest=None,
+            node_id="converged",
+            node_local_digest="sha256:node",
+            from_node_id="decide",
+            from_node_local_digest="sha256:guard",
+            arm_label="on_true",
+            arm_subtree_digest="sha256:arm",
+        ),
+    ]
+    try:
+        for row in rows:
+            store.save_reading(row)
+        summary = store.get_linked_outcome_summaries([procedure_id])[procedure_id]
+    finally:
+        store.close()
+
+    assert summary.procedure_unit.attestation_grade == LinkedOutcomeGradeSummary(
+        readings=1,
+        satisfied=1,
+    )
+    assert summary.node.attestation_grade == LinkedOutcomeGradeSummary(
+        readings=2,
+        satisfied=1,
+        contradicted=1,
+    )
+    assert summary.arm.attestation_grade == LinkedOutcomeGradeSummary(readings=1, satisfied=1)
+    assert set(summary.model_dump()) == {"procedure_unit", "node", "arm"}
