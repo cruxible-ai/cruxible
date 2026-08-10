@@ -2930,7 +2930,7 @@ def test_feedback_route_threads_claim_id_through_to_resolution(
     claim_id = lookup.json()["claim_id"]
     assert claim_id
 
-    target = {"action": "accept", "source": "human", **coordinates}
+    target = {"action": "accept", **coordinates}
 
     # Disagreeing disambiguators are refused over HTTP, which is only possible
     # if claim_id actually reached resolution.
@@ -2986,7 +2986,6 @@ def test_feedback_batch_route_threads_claim_id_through_to_resolution(
     disagree = app_client.post(
         f"/api/v1/{instance_id}/feedback/batch",
         json={
-            "source": "human",
             "items": [
                 {
                     "receipt_id": receipt_id,
@@ -3002,7 +3001,6 @@ def test_feedback_batch_route_threads_claim_id_through_to_resolution(
     agreed = app_client.post(
         f"/api/v1/{instance_id}/feedback/batch",
         json={
-            "source": "human",
             "items": [
                 {
                     "receipt_id": receipt_id,

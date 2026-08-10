@@ -13,6 +13,11 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.retired_inputs import refuse_retired_inputs
+
+RETIRED_FEEDBACK_INPUTS = ("source", "group_override")
+"""Feedback input keys retired in 0.4.0: refused by name, never ignored."""
+
 QueryVisibilityState = Literal["live", "accepted", "all", "not-live", "pending", "reviewable"]
 LifecycleStatus = Literal["active", "inactive", "superseded", "retracted", "live", "retired"]
 # Output profile for entity-shaped read payloads: `standard` is the unchanged
@@ -700,6 +705,12 @@ class FeedbackBatchItemInput(BaseModel):
         description="Corrected property values, used with action='correct'.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, RETIRED_FEEDBACK_INPUTS)
+        return data
+
 
 class FeedbackFromQueryInput(BaseModel):
     receipt_id: str = Field(description="Query receipt id whose row is being adjudicated.")
@@ -732,6 +743,12 @@ class FeedbackFromQueryInput(BaseModel):
         default=None,
         description="For path rows, the segment alias identifying the edge to adjudicate.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, RETIRED_FEEDBACK_INPUTS)
+        return data
 
 
 class DecisionPolicyMatchInput(BaseModel):

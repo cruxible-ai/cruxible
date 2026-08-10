@@ -31,4 +31,12 @@ and CHANGELOG rows are the record): `feedback action 'flag'`, `feedback action
 'approve'`, `feedback group_override write path`, `FeedbackRecord.source input`,
 `OutcomeRecord.source input`, `GroupResolution.resolved_by input`,
 `CandidateGroup.proposed_by input`, and `DecisionRecord.opened_by input`.
-Sending any of them now fails ordinary schema validation rather than warning.
+
+Sending any of them now FAILS rather than warning, and fails by NAME at every
+public boundary rather than being dropped as an unknown key: `422` on HTTP, a
+typed tool error on MCP (the tool does not run), a `ValidationError` on the
+client input contracts, and a `BadParameter` naming the offending item on
+`cruxible feedback batch`. Each refusal names the retired key and what to send
+instead. Only the retired names are refused — an unrelated unknown field is
+still tolerated, because banning extras outright is a wider contract change
+than this schedule promised.

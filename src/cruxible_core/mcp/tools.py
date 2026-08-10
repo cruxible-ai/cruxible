@@ -25,6 +25,28 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.kit_surface import KitSurface
 from cruxible_core.mcp.tool_prompts import tool_description
 
+RETIRED_TOOL_INPUTS: dict[str, tuple[str, ...]] = {
+    "cruxible_feedback": contracts.RETIRED_FEEDBACK_INPUTS,
+    "cruxible_feedback_from_query": contracts.RETIRED_FEEDBACK_INPUTS,
+    "cruxible_outcome": ("source",),
+    "cruxible_propose_group": ("proposed_by",),
+    "cruxible_resolve_group": ("resolved_by",),
+    "cruxible_create_decision_record": ("opened_by",),
+}
+"""Retired arguments per tool, refused at the tools/call seam.
+
+The tool signatures no longer declare these parameters, so FastMCP drops them
+during argument validation and the handler never sees them. That is exactly the
+silent-discard the removals must not leave behind, so the refusal lives at the
+one seam that still sees the caller's raw arguments. Keeping them OUT of the
+signatures also keeps them out of the advertised input schema, which is what
+the tool-schema tests pin.
+
+``cruxible_feedback_batch`` is absent on purpose: its retired keys ride on
+``items``, and ``contracts.FeedbackBatchItemInput`` refuses them during
+ordinary argument validation.
+"""
+
 
 class _MCPOutcomeResult(contracts.OutcomeResult):
     deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)

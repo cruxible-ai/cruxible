@@ -11,6 +11,7 @@ import click
 import yaml
 
 from cruxible_client import contracts
+from cruxible_client.retired_inputs import find_retired_inputs, retired_input_message
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _emit_json,
@@ -304,6 +305,12 @@ def feedback_batch_cmd(
 
     if not isinstance(raw_items, list):
         raise click.BadParameter("Items must be a top-level array.")
+
+    # The item builder below reads named keys, so a retired key in the file
+    # would otherwise be dropped without a word. Refused here, naming the item.
+    for index, item in enumerate(raw_items):
+        for retired in find_retired_inputs(item, contracts.RETIRED_FEEDBACK_INPUTS):
+            raise click.BadParameter(f"items[{index}]: {retired_input_message(retired)}")
 
     batch_items = [
         contracts.FeedbackBatchItemInput(

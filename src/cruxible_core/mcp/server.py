@@ -16,6 +16,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.tools.tool_manager import ToolManager
 from mcp.types import Tool as MCPTool
 
+from cruxible_client.retired_inputs import find_retired_inputs, retired_input_message
 from cruxible_core import __version__
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp import handlers
@@ -31,7 +32,7 @@ from cruxible_core.mcp.permissions import (
     init_permissions,
     validate_tool_permissions,
 )
-from cruxible_core.mcp.tools import register_tools
+from cruxible_core.mcp.tools import RETIRED_TOOL_INPUTS, register_tools
 from cruxible_core.server.config import ServerSettings, resolve_server_settings
 from cruxible_core.telemetry.instrumentation import record_boundary
 
@@ -288,6 +289,42 @@ def _record_mcp_boundary(
         return
 
 
+def _install_retired_input_gate(server: FastMCP) -> None:
+    """Refuse retired tool arguments before the tool runs.
+
+    FastMCP validates ``arguments`` against the tool signature and DISCARDS
+    whatever the signature does not declare, so a stale caller still sending
+    ``group_override=True`` or ``source=...`` got a successful call with its
+    input silently dropped. This wraps the same tool-manager chokepoint the
+    curation gate uses -- the one place that still sees the caller's raw
+    arguments -- so the protocol path and the in-process path share one refusal.
+
+    Installed BENEATH the curation gate: an uncurated or permission-denied tool
+    is refused for that reason first, and the retired-argument refusal only
+    speaks for calls that would otherwise have executed.
+    """
+    manager = getattr(server, "_tool_manager")
+    inner_call_tool = manager.call_tool
+
+    async def refuse_retired_then_call(
+        name: str,
+        arguments: dict[str, Any],
+        context: Any | None = None,
+        convert_result: bool = False,
+    ) -> Any:
+        retired = find_retired_inputs(arguments, RETIRED_TOOL_INPUTS.get(name, ()))
+        if retired:
+            raise ToolError(retired_input_message(retired[0]))
+        return await inner_call_tool(
+            name,
+            arguments,
+            context=context,
+            convert_result=convert_result,
+        )
+
+    manager.call_tool = refuse_retired_then_call
+
+
 def _install_tool_curation(
     server: FastMCP,
     advertised: set[str],
@@ -453,6 +490,9 @@ def create_server() -> FastMCP:
         advertised=advertised,
         transport_error=transport_error,
     )
+    # Beneath the curation gate: curation wraps this, so an uncurated call is
+    # refused for that reason before a retired argument is ever inspected.
+    _install_retired_input_gate(server)
     _install_tool_curation(
         server,
         advertised,

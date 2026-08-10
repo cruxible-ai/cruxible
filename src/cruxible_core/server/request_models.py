@@ -8,6 +8,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from cruxible_client import contracts
+from cruxible_client.retired_inputs import refuse_retired_inputs
+
+# Each request model below refuses its OWN retired keys by name. Scoped that way
+# on purpose: ``extra="forbid"`` would also reject every unrelated unknown key,
+# a wider contract change than the 0.4.0 removals made.
 
 
 class InitRequest(BaseModel):
@@ -167,6 +172,12 @@ class FeedbackRequest(BaseModel):
     corrections: dict[str, Any] | None = None
     actor_context: contracts.GovernedActorContext | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, contracts.RETIRED_FEEDBACK_INPUTS)
+        return data
+
 
 class FeedbackBatchRequest(BaseModel):
     items: list[contracts.FeedbackBatchItemInput]
@@ -188,6 +199,12 @@ class OutcomeRequest(BaseModel):
     detail: dict[str, Any] | None = None
     actor_context: contracts.GovernedActorContext | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, ("source",))
+        return data
+
 
 class ProposeGroupRequest(BaseModel):
     relationship_type: str
@@ -207,6 +224,12 @@ class ProposeGroupRequest(BaseModel):
     expected_pending_version: int | None = None
     actor_context: contracts.GovernedActorContext | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, ("proposed_by",))
+        return data
+
 
 class ResolveGroupRequest(BaseModel):
     action: contracts.GroupAction
@@ -217,6 +240,12 @@ class ResolveGroupRequest(BaseModel):
     # already live) with the group's review status + provenance instead of
     # skipping it silently. Default keeps today's skip-but-now-explained behavior.
     stamp_existing: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, ("resolved_by",))
+        return data
 
 
 class UpdateTrustStatusRequest(BaseModel):
@@ -443,6 +472,12 @@ class DecisionRecordCreateRequest(BaseModel):
     subject_type: str | None = None
     subject_id: str | None = None
     actor_context: contracts.GovernedActorContext | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_inputs(cls, data: Any) -> Any:
+        refuse_retired_inputs(data, ("opened_by",))
+        return data
 
 
 class DecisionRecordFinalizeRequest(BaseModel):

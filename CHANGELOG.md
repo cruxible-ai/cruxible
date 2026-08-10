@@ -16,9 +16,15 @@ the project's own state instance.
   write path (use `force_review`), and the retired declared-actor inputs
   `source`, `proposed_by`, `resolved_by`, and `opened_by` (the kind is derived
   from `actor_context`). These were accepted-and-ignored compatibility inputs
-  through 0.3; sending one now fails ordinary schema validation — an unknown
-  field on HTTP/MCP, an unknown `--action` choice on the CLI, a `ValidationError`
-  on the Python models — with no special tombstone handling. `FeedbackInputAction`
+  through 0.3; sending one now FAILS, at every public boundary, by name — `422`
+  on HTTP, a typed tool error on MCP (the tool does not run), a `ValidationError`
+  on the client input contracts and the Python request models, and a
+  `BadParameter` naming the offending item on `feedback batch`. Each refusal
+  names the retired key and what to send instead. The refusal is scoped to the
+  retired names: an unrelated unknown field is still tolerated, because
+  forbidding extras wholesale is a wider contract change than this schedule
+  promised. Retired ACTIONS refuse the same way, as an unknown enum member on
+  HTTP/MCP and an unknown `--action` choice on the CLI. `FeedbackInputAction`
   is removed from the client contracts: the input vocabulary and the write
   vocabulary are the same thing again, so `FeedbackAction` is both.
   **Migration:** drop the arguments and pass `actor_context`; replace `approve`
