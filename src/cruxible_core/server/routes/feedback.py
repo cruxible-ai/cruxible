@@ -8,10 +8,8 @@ from fastapi import APIRouter, Response
 
 from cruxible_client import contracts
 from cruxible_core.deprecation import (
-    GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
-    DeprecationNotice,
     emit_http_deprecations,
 )
 from cruxible_core.runtime import api
@@ -32,12 +30,8 @@ router = APIRouter(prefix="/api/v1", tags=["feedback"])
 async def feedback(
     instance_id: str,
     req: FeedbackRequest,
-    response: Response,
 ) -> contracts.FeedbackResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    notices: list[DeprecationNotice] = []
-    if req.group_override:
-        notices.append(GROUP_OVERRIDE)
     result = api.feedback(
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
@@ -53,30 +47,21 @@ async def feedback(
         reason_code=req.reason_code,
         scope_hints=req.scope_hints,
         corrections=req.corrections,
-        group_override=req.group_override,
         actor_context=req.actor_context,
     )
-    return cast(contracts.FeedbackResult, emit_http_deprecations(response, result, notices))
+    return result
 
 
 @router.post("/{instance_id}/feedback/batch", response_model=contracts.FeedbackBatchResult)
 async def feedback_batch(
     instance_id: str,
     req: FeedbackBatchRequest,
-    response: Response,
 ) -> contracts.FeedbackBatchResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    notices: list[DeprecationNotice] = []
-    if any(item.group_override for item in req.items):
-        notices.append(GROUP_OVERRIDE)
-    result = api.feedback_batch(
+    return api.feedback_batch(
         instance_id=resolved_instance_id,
         items=req.items,
         actor_context=req.actor_context,
-    )
-    return cast(
-        contracts.FeedbackBatchResult,
-        emit_http_deprecations(response, result, notices),
     )
 
 
@@ -84,12 +69,8 @@ async def feedback_batch(
 async def feedback_from_query(
     instance_id: str,
     req: FeedbackFromQueryRequest,
-    response: Response,
 ) -> contracts.FeedbackResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    notices: list[DeprecationNotice] = []
-    if req.group_override:
-        notices.append(GROUP_OVERRIDE)
     result = api.feedback_from_query(
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
@@ -99,12 +80,11 @@ async def feedback_from_query(
         reason_code=req.reason_code,
         scope_hints=req.scope_hints,
         corrections=req.corrections,
-        group_override=req.group_override,
         path_index=req.path_index,
         path_alias=req.path_alias,
         actor_context=req.actor_context,
     )
-    return cast(contracts.FeedbackResult, emit_http_deprecations(response, result, notices))
+    return result
 
 
 @router.post(

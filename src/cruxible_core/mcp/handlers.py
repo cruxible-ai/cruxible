@@ -858,7 +858,6 @@ def handle_feedback(
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
     claim_id: str | None = None,
 ) -> contracts.FeedbackResult:
     """Record feedback on an edge."""
@@ -878,7 +877,6 @@ def handle_feedback(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
         ),
         lambda: api.feedback(
             instance_id=instance_id,
@@ -895,7 +893,6 @@ def handle_feedback(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
         ),
         allow_local=False,
         operation_name="cruxible_feedback",
@@ -1037,7 +1034,6 @@ def handle_feedback_from_query(
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
     path_index: int | None = None,
     path_alias: str | None = None,
 ) -> contracts.FeedbackResult:
@@ -1052,7 +1048,6 @@ def handle_feedback_from_query(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
         ),
@@ -1065,7 +1060,6 @@ def handle_feedback_from_query(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
         ),

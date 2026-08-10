@@ -38,10 +38,6 @@ LEGACY_OUTCOME_PROFILE = DeprecationNotice(
     surface="legacy outcome profile functions",
     replacement="resolution contract declarations",
 )
-GROUP_OVERRIDE = DeprecationNotice(
-    surface="feedback group_override write path",
-    replacement="force_review",
-)
 PROCEDURE_STRING_WARNINGS = DeprecationNotice(
     surface="ProcedureTransitionResult.warnings string list",
     replacement="ProcedureTransitionResult.typed_warnings",
@@ -58,7 +54,6 @@ emitters exist for INPUT deprecations, where a caller's use is visible.
 DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
     LEGACY_OUTCOME_RECORD,
     LEGACY_OUTCOME_PROFILE,
-    GROUP_OVERRIDE,
     PROCEDURE_STRING_WARNINGS,
 )
 """Every warning-emitting deprecation registered by cruxible-core."""

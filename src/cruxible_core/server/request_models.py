@@ -165,7 +165,6 @@ class FeedbackRequest(BaseModel):
     reason_code: str | None = None
     scope_hints: dict[str, Any] | None = None
     corrections: dict[str, Any] | None = None
-    group_override: bool = False
     actor_context: contracts.GovernedActorContext | None = None
 
 

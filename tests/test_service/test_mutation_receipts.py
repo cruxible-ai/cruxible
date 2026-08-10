@@ -279,7 +279,7 @@ class TestFeedbackReceipts:
         result = service_feedback(
             populated_instance,
             receipt_id=receipt_id,
-            action="approve",
+            action="accept",
             target=_edge_target(),
             reason="Confirmed fitment",
         )
@@ -302,7 +302,7 @@ class TestFeedbackReceipts:
         result = service_feedback(
             populated_instance,
             receipt_id=receipt_id,
-            action="approve",
+            action="accept",
             target=_edge_target(),
         )
         store = populated_instance.get_receipt_store()
@@ -333,7 +333,7 @@ class TestFeedbackReceipts:
 
         with (
             patch(
-                "cruxible_core.service.feedback._apply_feedback_record",
+                "cruxible_core.service.feedback.apply_feedback",
                 side_effect=RuntimeError("feedback graph update failed"),
             ),
             pytest.raises(

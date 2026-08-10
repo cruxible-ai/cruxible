@@ -203,14 +203,13 @@ class RelationshipTargetInput:
 
 @dataclass
 class FeedbackItemInput:
-    action: Literal["accept", "reject", "correct", "approve", "flag"]
+    action: Literal["accept", "reject", "correct"]
     target: RelationshipTargetInput
     receipt_id: str | None = None
     reason: str = ""
     reason_code: str | None = None
     scope_hints: dict[str, Any] | None = None
     corrections: dict[str, Any] | None = None
-    group_override: bool = False
 
 
 @dataclass

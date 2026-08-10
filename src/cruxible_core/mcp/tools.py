@@ -16,7 +16,6 @@ from pydantic import Field, TypeAdapter
 from cruxible_client import contracts
 from cruxible_core import __version__
 from cruxible_core.deprecation import (
-    GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
     DeprecationNotice,
@@ -25,14 +24,6 @@ from cruxible_core.deprecation import (
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.kit_surface import KitSurface
 from cruxible_core.mcp.tool_prompts import tool_description
-
-
-class _MCPFeedbackResult(contracts.FeedbackResult):
-    deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
-
-
-class _MCPFeedbackBatchResult(contracts.FeedbackBatchResult):
-    deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
 
 
 class _MCPOutcomeResult(contracts.OutcomeResult):
@@ -411,10 +402,9 @@ def register_tools(
         reason_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
         corrections: dict[str, Any] | None = None,
-        group_override: bool = False,
         receipt_id: str | None = None,
         claim_id: str | None = None,
-    ) -> _MCPFeedbackResult:
+    ) -> contracts.FeedbackResult:
         """Record edge-level feedback by explicit relationship coordinates.
 
         Rejected edges are excluded from future query results.
@@ -426,10 +416,6 @@ def register_tools(
         supplying both with disagreeing values is refused rather than silently
         resolved. `applied=False` means the record was saved but the graph edge
         was not updated.
-
-        Deprecated `group_override=True` marks the edge assertion metadata as a
-        group override for group resolve; use `force_review`. The edge must
-        already exist in the graph.
         """
         result = handlers.handle_feedback(
             instance_id=instance_id,
@@ -446,24 +432,16 @@ def register_tools(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
         )
-        notices: list[DeprecationNotice] = []
-        if group_override:
-            notices.append(GROUP_OVERRIDE)
-        return _MCPFeedbackResult.model_validate(_mcp_deprecation_payload(result, notices))
+        return result
 
     @_tool
     def cruxible_feedback_batch(
         instance_id: str,
         items: list[contracts.FeedbackBatchItemInput],
-    ) -> _MCPFeedbackBatchResult:
+    ) -> contracts.FeedbackBatchResult:
         """Record batch edge feedback under one top-level mutation receipt."""
-        result = handlers.handle_feedback_batch(instance_id, items)
-        notices: list[DeprecationNotice] = []
-        if any(item.group_override for item in items):
-            notices.append(GROUP_OVERRIDE)
-        return _MCPFeedbackBatchResult.model_validate(_mcp_deprecation_payload(result, notices))
+        return handlers.handle_feedback_batch(instance_id, items)
 
     @_tool
     def cruxible_feedback_from_query(
@@ -475,10 +453,9 @@ def register_tools(
         reason_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
         corrections: dict[str, Any] | None = None,
-        group_override: bool = False,
         path_index: int | None = None,
         path_alias: str | None = None,
-    ) -> _MCPFeedbackResult:
+    ) -> contracts.FeedbackResult:
         """Record edge feedback from one relationship/path row in a query receipt.
 
         This adjudicates one existing relationship assertion. It does not
@@ -494,14 +471,10 @@ def register_tools(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
         )
-        notices: list[DeprecationNotice] = []
-        if group_override:
-            notices.append(GROUP_OVERRIDE)
-        return _MCPFeedbackResult.model_validate(_mcp_deprecation_payload(result, notices))
+        return result
 
     @_tool
     def cruxible_outcome(

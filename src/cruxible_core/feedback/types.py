@@ -113,7 +113,6 @@ class FeedbackBatchItem(BaseModel):
     reason_code: str | None = None
     scope_hints: dict[str, Any] = Field(default_factory=dict)
     corrections: dict[str, Any] = Field(default_factory=dict)
-    group_override: bool = False
 
 
 class OutcomeRecord(BaseModel):

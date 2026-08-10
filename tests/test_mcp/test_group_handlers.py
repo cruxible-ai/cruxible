@@ -765,69 +765,19 @@ class TestReadPermissions:
         assert result["relationship"]["metadata"]["assertion"]["review"]["status"] == "approved"
 
 
-class TestFeedbackGroupOverride:
-    def test_feedback_with_group_override(self, server, instance_id):
-        """group_override=True via MCP marks relationship assertion metadata."""
-        # Add edge first
-        call_tool(
-            server,
-            "cruxible_add_relationship",
-            {
-                "instance_id": instance_id,
-                "relationships": [
-                    {
-                        "from_type": "Part",
-                        "from_id": "BP-1",
-                        "relationship_type": "fits",
-                        "to_type": "Vehicle",
-                        "to_id": "V-1",
-                        "properties": {"verified": True},
-                    }
-                ],
-            },
+class TestFeedbackDropsRemovedGroupOverrideInput:
+    def test_group_override_is_no_longer_a_tool_parameter(self, server) -> None:
+        """The removed write path is gone from the advertised tool schema."""
+        tools = asyncio.run(server.list_tools())
+        feedback_tools = {
+            tool.name: tool.inputSchema
+            for tool in tools
+            if tool.name in {"cruxible_feedback", "cruxible_feedback_from_query"}
+        }
+        assert feedback_tools
+        for schema in feedback_tools.values():
+            assert "group_override" not in schema["properties"]
+        batch_item = next(
+            tool.inputSchema for tool in tools if tool.name == "cruxible_feedback_batch"
         )
-        # Query to get receipt
-        query_result = call_union_tool(
-            server,
-            "cruxible_query",
-            {
-                "instance_id": instance_id,
-                "query_name": "parts_for_vehicle",
-                "params": {"vehicle_id": "V-1"},
-            },
-        )
-        # Feedback with group_override needs a named query that returns the edge
-        # Use a simple config — the query filters on verified=true so BP-1→V-1 should appear
-        receipt_id = query_result["receipt_id"]
-        result = call_tool(
-            server,
-            "cruxible_feedback",
-            {
-                "instance_id": instance_id,
-                "receipt_id": receipt_id,
-                "action": "approve",
-                "from_type": "Part",
-                "from_id": "BP-1",
-                "relationship_type": "fits",
-                "to_type": "Vehicle",
-                "to_id": "V-1",
-                "group_override": True,
-            },
-        )
-        assert result["applied"] is True
-
-        # Verify the edge has group_override assertion metadata
-        edge = call_tool(
-            server,
-            "cruxible_get_relationship",
-            {
-                "instance_id": instance_id,
-                "from_type": "Part",
-                "from_id": "BP-1",
-                "relationship_type": "fits",
-                "to_type": "Vehicle",
-                "to_id": "V-1",
-            },
-        )
-        assert edge["metadata"]["assertion"]["group_override"] is True
-        assert "group_override" not in edge["properties"]
+        assert "group_override" not in json.dumps(batch_item)

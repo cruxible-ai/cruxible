@@ -1413,7 +1413,6 @@ findings.
 | `--reason-code` | no | `` | text | Structured feedback reason code. |
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
 | `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
-| `--group-override` | no | `False` | boolean | Mark relationship assertion metadata as a group override (edge must exist). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1441,7 +1440,6 @@ findings.
 | `--reason-code` | no | `` | text | Structured feedback reason code. |
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
 | `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
-| `--group-override` | no | `False` | boolean | Mark selected edge assertion metadata as a group override (edge must exist). |
 | `--path-index` | no | `` | integer | Zero-based path segment index for path query rows. |
 | `--path-alias` | no | `` | text | Traversal alias for the selected path segment. |
 | `--json` | no | `False` | boolean | Output as JSON. |

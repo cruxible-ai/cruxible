@@ -1959,7 +1959,6 @@ def feedback(
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
     receipt_id: str | None = None,
     actor_context: Any | None = None,
     claim_id: str | None = None,
@@ -1996,7 +1995,6 @@ def feedback(
             reason_code=reason_code,
             scope_hints=scope_hints,
             corrections=corrections,
-            group_override=group_override,
         ),
         actor_context=actor,
     )
@@ -2043,8 +2041,6 @@ def feedback_batch(
                 reason_code=item.reason_code,
                 scope_hints=item.scope_hints,
                 corrections=item.corrections or {},
-                group_override=item.group_override,
-                source=item.source,
             )
             for item in items
         ],
@@ -2068,7 +2064,6 @@ def feedback_from_query(
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
     path_index: int | None = None,
     path_alias: str | None = None,
     actor_context: Any | None = None,
@@ -2089,7 +2084,6 @@ def feedback_from_query(
         reason_code=reason_code,
         scope_hints=scope_hints,
         corrections=corrections,
-        group_override=group_override,
         path_index=path_index,
         path_alias=path_alias,
         actor_context=actor,

@@ -21,7 +21,6 @@ from cruxible_core.cli.commands._common import (
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.deprecation import (
-    GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
     emit_cli_deprecation,
@@ -106,12 +105,6 @@ def outcome_group() -> None:
     default=None,
     help="JSON object of edge property corrections (for action=correct).",
 )
-@click.option(
-    "--group-override",
-    is_flag=True,
-    default=False,
-    help="Deprecated; use force_review. Marks group override metadata (edge must exist).",
-)
 @json_option
 @handle_errors
 def feedback_cmd(
@@ -127,12 +120,9 @@ def feedback_cmd(
     reason_code: str | None,
     scope_hints: str | None,
     corrections: str | None,
-    group_override: bool,
     output_json: bool,
 ) -> None:
     """Submit feedback on a specific edge by explicit relationship coordinates."""
-    if group_override:
-        emit_cli_deprecation(GROUP_OVERRIDE)
     corrections_dict = _parse_corrections(corrections)
     scope_hints_dict = _parse_json_object(scope_hints, option="--scope-hints")
 
@@ -160,7 +150,6 @@ def feedback_cmd(
             reason_code=reason_code,
             scope_hints=scope_hints_dict,
             corrections=corrections_dict,
-            group_override=group_override,
         ),
         lambda instance: _call_service(
             "service_feedback_input",
@@ -173,7 +162,6 @@ def feedback_cmd(
                 reason_code=reason_code,
                 scope_hints=scope_hints_dict,
                 corrections=corrections_dict,
-                group_override=group_override,
             ),
         ),
         allow_local=False,
@@ -215,12 +203,6 @@ def feedback_cmd(
     help="JSON object of edge property corrections (for action=correct).",
 )
 @click.option(
-    "--group-override",
-    is_flag=True,
-    default=False,
-    help="Deprecated; use force_review. Marks group override metadata (edge must exist).",
-)
-@click.option(
     "--path-index",
     default=None,
     type=int,
@@ -241,14 +223,11 @@ def feedback_from_query_cmd(
     reason_code: str | None,
     scope_hints: str | None,
     corrections: str | None,
-    group_override: bool,
     path_index: int | None,
     path_alias: str | None,
     output_json: bool,
 ) -> None:
     """Submit edge feedback by selecting relationship evidence from a query receipt."""
-    if group_override:
-        emit_cli_deprecation(GROUP_OVERRIDE)
     corrections_dict = _parse_corrections(corrections)
     scope_hints_dict = _parse_json_object(scope_hints, option="--scope-hints")
 
@@ -262,7 +241,6 @@ def feedback_from_query_cmd(
             reason_code=reason_code,
             scope_hints=scope_hints_dict,
             corrections=corrections_dict,
-            group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
         ),
@@ -276,7 +254,6 @@ def feedback_from_query_cmd(
             reason_code=reason_code,
             scope_hints=scope_hints_dict,
             corrections=corrections_dict,
-            group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
         ),
@@ -327,8 +304,6 @@ def feedback_batch_cmd(
 
     if not isinstance(raw_items, list):
         raise click.BadParameter("Items must be a top-level array.")
-    if any(bool(item.get("group_override")) for item in raw_items if isinstance(item, dict)):
-        emit_cli_deprecation(GROUP_OVERRIDE)
 
     batch_items = [
         contracts.FeedbackBatchItemInput(
@@ -339,7 +314,6 @@ def feedback_batch_cmd(
             reason_code=item.get("reason_code"),
             scope_hints=item.get("scope_hints", {}),
             corrections=item.get("corrections"),
-            group_override=item.get("group_override", False),
         )
         for item in raw_items
     ]
@@ -368,7 +342,6 @@ def feedback_batch_cmd(
                     reason_code=item.reason_code,
                     scope_hints=item.scope_hints,
                     corrections=item.corrections or {},
-                    group_override=item.group_override,
                 )
                 for item in batch_items
             ],

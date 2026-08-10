@@ -133,7 +133,7 @@ def test_feedback_stamps_the_resolved_claim_id(instance: CruxibleInstance) -> No
     result = service_feedback(
         instance,
         receipt_id=None,
-        action="approve",
+        action="accept",
         target=RelationshipInstance(
             from_type="Part",
             from_id="BP-1",
@@ -162,7 +162,7 @@ def test_feedback_refuses_disagreeing_target_disambiguators(instance: CruxibleIn
         service_feedback(
             instance,
             receipt_id=None,
-            action="approve",
+            action="accept",
             target=RelationshipInstance(
                 from_type="Part",
                 from_id="BP-1",

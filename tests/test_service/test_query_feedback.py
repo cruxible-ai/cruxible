@@ -523,7 +523,7 @@ class TestFeedback:
         result = service_feedback(
             populated_instance,
             receipt_id=receipt_id,
-            action="approve",
+            action="accept",
             target=_edge_target(),
         )
         assert result.feedback_id.startswith("FB-")
@@ -543,7 +543,7 @@ class TestFeedback:
             populated_instance,
             FeedbackItemInput(
                 receipt_id=receipt_id,
-                action="approve",
+                action="accept",
                 target=RelationshipTargetInput(
                     from_type="Part",
                     from_id="BP-1001",
@@ -588,7 +588,7 @@ class TestFeedback:
             service_feedback(
                 populated_instance,
                 receipt_id="nonexistent-receipt",
-                action="approve",
+                action="accept",
                 target=_edge_target(),
             )
 
@@ -598,7 +598,7 @@ class TestFeedback:
             service_feedback(
                 populated_instance,
                 receipt_id="bad-id",
-                action="approve",
+                action="accept",
                 target=_edge_target(),
             )
         # Should be able to open stores again without issues
@@ -756,24 +756,26 @@ class TestFeedback:
                 ],
             )
 
-    def test_removed_flag_action_refuses_and_names_the_attestation_replacement(
+    def test_removed_actions_refuse_as_unknown_values(
         self, populated_instance: CruxibleInstance
     ) -> None:
-        """``flag`` un-approved an edge while storing no annotation; it is gone.
+        """``flag`` and ``approve`` left the input vocabulary entirely in 0.4.0.
 
-        The refusal has to say where the signal goes now, otherwise removing the
-        action just loses the reviewer's intent at a different seam.
+        Their compatibility handling (a teaching refusal for ``flag``, an alias
+        delegation for ``approve``) is gone with them, so what a caller now gets
+        is the ordinary unknown-value refusal naming the live vocabulary.
         """
-        with pytest.raises(ConfigError) as exc_info:
-            service_feedback(
-                populated_instance,
-                receipt_id="any",
-                action="flag",  # type: ignore[arg-type]
-                target=_edge_target(),
-            )
-        message = str(exc_info.value)
-        assert "'flag' feedback action was removed" in message
-        assert "cruxible attest record --stance contradict" in message
+        for retired in ("flag", "approve"):
+            with pytest.raises(ConfigError) as exc_info:
+                service_feedback(
+                    populated_instance,
+                    receipt_id="any",
+                    action=retired,  # type: ignore[arg-type]
+                    target=_edge_target(),
+                )
+            message = str(exc_info.value)
+            assert f"Invalid action '{retired}'" in message
+            assert "accept, reject, correct" in message
 
     def test_profile_requires_reason_code_for_system(
         self, populated_instance: CruxibleInstance
@@ -960,7 +962,7 @@ class TestFeedbackFromQuery:
             populated_instance,
             receipt_id=query.receipt_id,
             result_index=0,
-            action="approve",
+            action="accept",
         )
 
         assert result.applied is True
@@ -1013,7 +1015,7 @@ class TestFeedbackFromQuery:
             populated_instance,
             receipt_id=query.receipt_id,
             result_index=0,
-            action="approve",
+            action="accept",
         )
 
         assert result.applied is True
@@ -1045,7 +1047,7 @@ class TestFeedbackFromQuery:
             populated_instance,
             receipt_id=query.receipt_id,
             result_index=0,
-            action="approve",
+            action="accept",
         )
 
         assert result.applied is True
@@ -1079,7 +1081,7 @@ class TestFeedbackFromQuery:
                 populated_instance,
                 receipt_id=query.receipt_id,
                 result_index=0,
-                action="approve",
+                action="accept",
             )
 
     def test_multi_hop_path_can_select_by_index(
@@ -1098,7 +1100,7 @@ class TestFeedbackFromQuery:
             populated_instance,
             receipt_id=query.receipt_id,
             result_index=0,
-            action="approve",
+            action="accept",
             path_index=1,
         )
 
@@ -1129,7 +1131,7 @@ class TestFeedbackFromQuery:
             populated_instance,
             receipt_id=query.receipt_id,
             result_index=0,
-            action="approve",
+            action="accept",
             path_alias="fit",
         )
 
@@ -1167,7 +1169,7 @@ class TestFeedbackFromQuery:
                 populated_instance,
                 receipt_id=query.receipt_id,
                 result_index=0,
-                action="approve",
+                action="accept",
             )
 
     def test_invalid_receipt_and_result_selection_errors(
@@ -1187,21 +1189,21 @@ class TestFeedbackFromQuery:
                 populated_instance,
                 receipt_id="missing",
                 result_index=0,
-                action="approve",
+                action="accept",
             )
         with pytest.raises(ConfigError, match="out of range"):
             service_feedback_from_query_result(
                 populated_instance,
                 receipt_id=query.receipt_id,
                 result_index=99,
-                action="approve",
+                action="accept",
             )
         with pytest.raises(ConfigError, match="do not accept path_index"):
             service_feedback_from_query_result(
                 populated_instance,
                 receipt_id=query.receipt_id,
                 result_index=0,
-                action="approve",
+                action="accept",
                 path_index=0,
             )
 
@@ -1214,7 +1216,7 @@ class TestFeedbackFromQuery:
                 populated_instance,
                 receipt_id=receipt_id,
                 result_index=0,
-                action="approve",
+                action="accept",
             )
 
     def test_invalid_path_alias_and_index_errors(
@@ -1234,7 +1236,7 @@ class TestFeedbackFromQuery:
                 populated_instance,
                 receipt_id=query.receipt_id,
                 result_index=0,
-                action="approve",
+                action="accept",
                 path_index=0,
                 path_alias="fit",
             )
@@ -1243,7 +1245,7 @@ class TestFeedbackFromQuery:
                 populated_instance,
                 receipt_id=query.receipt_id,
                 result_index=0,
-                action="approve",
+                action="accept",
                 path_index=9,
             )
         with pytest.raises(ConfigError, match="was not found"):
@@ -1251,7 +1253,7 @@ class TestFeedbackFromQuery:
                 populated_instance,
                 receipt_id=query.receipt_id,
                 result_index=0,
-                action="approve",
+                action="accept",
                 path_alias="missing",
             )
 
@@ -1282,7 +1284,7 @@ class TestFeedbackFromQuery:
                 populated_instance,
                 receipt_id=receipt_id,
                 result_index=0,
-                action="approve",
+                action="accept",
                 path_alias="duplicate",
             )
 
@@ -1315,7 +1317,7 @@ class TestFeedbackFromQuery:
                 populated_instance,
                 receipt_id=query.receipt_id,
                 result_index=0,
-                action="approve",
+                action="accept",
             )
 
     def test_pending_relationship_becomes_approved_from_query_feedback(
@@ -1346,7 +1348,7 @@ class TestFeedbackFromQuery:
             populated_instance,
             receipt_id=query.receipt_id,
             result_index=0,
-            action="approve",
+            action="accept",
         )
 
         assert result.applied is True

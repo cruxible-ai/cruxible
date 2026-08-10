@@ -555,10 +555,9 @@ happened; they never prove its inputs are still current.
 | `reason_code` | no | string | null |  |
 | `scope_hints` | no | object | null |  |
 | `corrections` | no | object | null |  |
-| `group_override` | no | boolean | Deprecated compatibility write; use `force_review`. |
 | `claim_id` | no | string | null | Stable claim identity; preferred disambiguator, takes precedence over `edge_key`, disagreement refused. |
 
-**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`, `deprecation_warnings`
+**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -587,11 +586,10 @@ happened; they never prove its inputs are still current.
 | `reason_code` | no | string | Structured feedback reason code. |
 | `scope_hints` | no | object | Structured feedback scope hints. |
 | `corrections` | no | object | Edge property corrections for `action="correct"`. |
-| `group_override` | no | boolean | Deprecated compatibility write; use `force_review`. |
 | `path_index` | no | integer | Zero-based path segment index for path rows. |
 | `path_alias` | no | string | Traversal alias for the selected path segment. |
 
-**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`, `deprecation_warnings`
+**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`
 
 **Side Effects:** Creates normal feedback records and feedback receipts through the existing edge-feedback path.
 
@@ -616,7 +614,7 @@ happened; they never prove its inputs are still current.
 | `instance_id` | yes | string |  |
 | `items` | yes | array |  |
 
-**Returns:** Top-level fields: `feedback_ids`, `applied_count`, `total`, `receipt_id`, `deprecation_warnings`
+**Returns:** Top-level fields: `feedback_ids`, `applied_count`, `total`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1410,7 +1408,7 @@ without it, only the active materialized digest is checked.
 | `subject_type` | no | string | null |  |
 | `subject_id` | no | string | null |  |
 
-**Returns:** Top-level fields: `record`, `events`, `receipt_id`, `deprecation_warnings`
+**Returns:** Top-level fields: `record`, `events`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1975,7 +1973,7 @@ reason was tracked.
 Each member and each nested signal may pass `citation_handles` beside the
 unchanged `source_evidence` locators.
 
-**Returns:** Top-level fields: `group_id`, `signature`, `status`, `review_priority`, `member_count`, `prior_resolution`, `suppressed`, `suppressed_members`, `policy_summary`, `receipt_id`, `deprecation_warnings`
+**Returns:** Top-level fields: `group_id`, `signature`, `status`, `review_priority`, `member_count`, `prior_resolution`, `suppressed`, `suppressed_members`, `policy_summary`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -2001,7 +1999,7 @@ unchanged `source_evidence` locators.
 | `rationale` | no | string |  |
 | `stamp_existing` | no | boolean | On approve, bless each surviving pre-existing edge (member tuple already live) with this group's review status and provenance instead of skipping it. |
 
-**Returns:** Top-level fields: `group_id`, `action`, `edges_created`, `edges_skipped`, `resolution_id`, `receipt_id`, `skipped_members` (per-member skip explanations: identity plus `skip_kind`, `reason`, `stamped`), `edges_stamped`, `deprecation_warnings`
+**Returns:** Top-level fields: `group_id`, `action`, `edges_created`, `edges_skipped`, `resolution_id`, `receipt_id`, `skipped_members` (per-member skip explanations: identity plus `skip_kind`, `reason`, `stamped`), `edges_stamped`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 

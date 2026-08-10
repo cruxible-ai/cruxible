@@ -2710,7 +2710,7 @@ class TestBatchDirectWrite:
         result = service_feedback_input(
             initialized_instance,
             FeedbackItemInput(
-                action="approve",
+                action="accept",
                 target=_batch_fit_target(),
             ),
         )

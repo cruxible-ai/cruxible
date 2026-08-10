@@ -20,7 +20,6 @@ from cruxible_core.config.schema import (
     OutcomeRemediationHint,
 )
 from cruxible_core.deprecation import (
-    GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
     emit_python_deprecation,
@@ -30,7 +29,6 @@ from cruxible_core.errors import (
     DataValidationError,
     DirectWriteRefusedError,
     ReceiptNotFoundError,
-    RelationshipAmbiguityError,
 )
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.types import (
@@ -122,7 +120,6 @@ def _normalize_feedback_record(
     reason_code: str | None,
     scope_hints: dict[str, Any] | None,
     corrections: dict[str, Any] | None,
-    group_override: bool,
     actor_context: GovernedActorContext | None = None,
 ) -> FeedbackRecord:
     """Validate and normalize one feedback request into a record.
@@ -177,26 +174,6 @@ def _normalize_feedback_record(
     else:
         normalized_corrections = dict(normalized_corrections)
     normalized_scope_hints = dict(scope_hints or {})
-
-    if group_override:
-        if resolved_target is None:
-            raise ConfigError("group_override requires the edge to exist in the graph")
-        if target.edge_key is None and target.claim_id is None:
-            count = graph.relationship_count_between(
-                target.from_type,
-                target.from_id,
-                target.to_type,
-                target.to_id,
-                target.relationship_type,
-            )
-            if count > 1:
-                raise RelationshipAmbiguityError(
-                    from_type=target.from_type,
-                    from_id=target.from_id,
-                    to_type=target.to_type,
-                    to_id=target.to_id,
-                    relationship_type=target.relationship_type,
-                )
 
     profile = config.get_feedback_profile(target.relationship_type)
     reason_remediation_hint: FeedbackRemediationHint | None = None
@@ -822,7 +799,6 @@ def _feedback_batch_item_from_input(item: FeedbackItemInput) -> FeedbackBatchIte
         reason_code=item.reason_code,
         scope_hints=item.scope_hints or {},
         corrections=item.corrections or {},
-        group_override=item.group_override,
     )
 
 
@@ -1011,39 +987,6 @@ def _enforce_feedback_governance(records: Iterable[FeedbackRecord]) -> None:
             )
 
 
-def _apply_feedback_record(
-    graph: EntityGraph,
-    record: FeedbackRecord,
-    *,
-    group_override: bool,
-) -> bool:
-    """Apply one normalized feedback record and any requested group override."""
-    applied = apply_feedback(graph, record)
-    if group_override:
-        target = record.target
-        relationship = graph.get_relationship(
-            target.from_type,
-            target.from_id,
-            target.to_type,
-            target.to_id,
-            target.relationship_type,
-            edge_key=target.edge_key,
-        )
-        if relationship is not None:
-            assertion = relationship.metadata.assertion.model_copy(update={"group_override": True})
-            metadata = relationship.metadata.model_copy(update={"assertion": assertion})
-            graph.update_relationship_state(
-                target.from_type,
-                target.from_id,
-                target.to_type,
-                target.to_id,
-                target.relationship_type,
-                metadata=metadata,
-                edge_key=target.edge_key,
-            )
-    return applied
-
-
 def _feedback_relationship_after_apply(
     graph: EntityGraph,
     target: RelationshipInstance,
@@ -1075,7 +1018,6 @@ def service_feedback_input(
         reason_code=item.reason_code,
         scope_hints=item.scope_hints,
         corrections=item.corrections,
-        group_override=item.group_override,
         actor_context=actor_context,
     )
 
@@ -1090,7 +1032,6 @@ def service_feedback_from_query_result(
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
     path_index: int | None = None,
     path_alias: str | None = None,
     actor_context: GovernedActorContext | None = None,
@@ -1133,7 +1074,6 @@ def service_feedback_from_query_result(
         reason_code=reason_code,
         scope_hints=scope_hints,
         corrections=corrections,
-        group_override=group_override,
         _feedback_from_query={
             **query_selection,
             "action": action,
@@ -1155,18 +1095,14 @@ def service_feedback(
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
     _feedback_from_query: dict[str, Any] | None = None,
     actor_context: GovernedActorContext | None = None,
 ) -> FeedbackServiceResult:
     """Record feedback on an edge.
 
     Validates corrections, checks receipt existence, persists feedback,
-    and applies to the graph. If group_override=True, marks the edge assertion
-    metadata as a group override after applying feedback.
+    and applies it to the graph.
     """
-    if group_override:
-        emit_python_deprecation(GROUP_OVERRIDE)
     _validate_feedback_request_values(
         action=action,
         corrections=corrections,
@@ -1189,7 +1125,6 @@ def service_feedback(
         reason_code=reason_code,
         scope_hints=scope_hints,
         corrections=corrections,
-        group_override=group_override,
         actor_context=actor_context,
     )
 
@@ -1216,11 +1151,7 @@ def service_feedback(
         _enforce_feedback_governance([record])
         ctx.uow.feedback.save_feedback_batch([record])
 
-        applied = _apply_feedback_record(
-            graph,
-            record,
-            group_override=group_override,
-        )
+        applied = apply_feedback(graph, record)
         ctx.builder.record_feedback_applied(
             _feedback_target_label(record.target),
             action,
@@ -1266,8 +1197,6 @@ def service_feedback_batch(
     """Record a batch of edge feedback with one top-level receipt."""
     if not items:
         raise ConfigError("Batch feedback items must not be empty")
-    if any(item.group_override for item in items):
-        emit_python_deprecation(GROUP_OVERRIDE)
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
         relationship_types=[item.target.relationship_type for item in items],
@@ -1295,7 +1224,6 @@ def service_feedback_batch(
             reason_code=item.reason_code,
             scope_hints=item.scope_hints,
             corrections=item.corrections,
-            group_override=item.group_override,
             actor_context=actor_context,
         )
         for item in items
@@ -1324,12 +1252,8 @@ def service_feedback_batch(
 
         applied_count = 0
         touched_relationships: list[RelationshipInstance] = []
-        for record, item in zip(records, items, strict=True):
-            applied = _apply_feedback_record(
-                graph,
-                record,
-                group_override=item.group_override,
-            )
+        for record in records:
+            applied = apply_feedback(graph, record)
             if applied:
                 applied_count += 1
             ctx.builder.record_feedback_applied(

@@ -353,7 +353,7 @@ class TestFeedbackActorContext:
         result = service_feedback(
             instance,
             None,
-            "approve",
+            "accept",
             RelationshipInstance(
                 relationship_type="fits",
                 from_type="Part",

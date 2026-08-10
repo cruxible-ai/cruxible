@@ -359,7 +359,7 @@ def test_write_after_acceptance_still_works(
     service_feedback(
         pending_edge_instance,
         receipt_id=None,
-        action="approve",
+        action="accept",
         target=RelationshipInstance(
             relationship_type="fits",
             from_type="Part",

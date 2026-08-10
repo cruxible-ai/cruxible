@@ -162,7 +162,7 @@ def test_feedback_batch_tool(server, instance_id):
             "items": [
                 {
                     "receipt_id": receipt_id,
-                    "action": "approve",
+                    "action": "accept",
                     "target": {
                         "from_type": "Part",
                         "from_id": "BP-1",

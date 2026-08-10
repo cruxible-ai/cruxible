@@ -699,13 +699,6 @@ class FeedbackBatchItemInput(BaseModel):
         default=None,
         description="Corrected property values, used with action='correct'.",
     )
-    group_override: bool = Field(
-        default=False,
-        description=(
-            "Deprecated compatibility write; use force_review. If true, mark "
-            "the edge assertion as a group-resolve override."
-        ),
-    )
 
 
 class FeedbackFromQueryInput(BaseModel):
@@ -730,13 +723,6 @@ class FeedbackFromQueryInput(BaseModel):
     corrections: dict[str, Any] | None = Field(
         default=None,
         description="Corrected property values, used with action='correct'.",
-    )
-    group_override: bool = Field(
-        default=False,
-        description=(
-            "Deprecated compatibility write; use force_review. If true, mark "
-            "the edge assertion as a group-resolve override."
-        ),
     )
     path_index: int | None = Field(
         default=None,

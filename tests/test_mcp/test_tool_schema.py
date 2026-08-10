@@ -49,16 +49,12 @@ class TestInputSchema:
     def test_feedback_action_enum(self, server):
         schemas = _get_tool_schemas(server)
         action = schemas["cruxible_feedback"].inputSchema["properties"]["action"]
-        assert action["enum"] == ["accept", "reject", "correct", "approve", "flag"]
+        assert action["enum"] == ["accept", "reject", "correct"]
 
-    def test_feedback_source_input_is_deprecated_compatibility_only(self, server):
-        """The retired declaration remains accepted during the removal window.
-
-        Its value is ignored; the reason-code rule still keys off the runtime
-        actor context.
-        """
+    def test_retired_declared_actor_input_is_gone_from_the_schema(self, server):
+        """``source`` was removed in 0.4.0; the kind derives from actor context."""
         schemas = _get_tool_schemas(server)
-        assert "source" in schemas["cruxible_feedback"].inputSchema["properties"]
+        assert "source" not in schemas["cruxible_feedback"].inputSchema["properties"]
 
     def test_feedback_receipt_is_optional_for_explicit_coordinates(self, server):
         schemas = _get_tool_schemas(server)
@@ -72,14 +68,8 @@ class TestInputSchema:
         props = schemas["cruxible_feedback_from_query"].inputSchema["properties"]
         required = set(schemas["cruxible_feedback_from_query"].inputSchema["required"])
         assert {"instance_id", "receipt_id", "result_index", "action"} <= required
-        assert props["action"]["enum"] == [
-            "accept",
-            "reject",
-            "correct",
-            "approve",
-            "flag",
-        ]
-        assert "source" in props
+        assert props["action"]["enum"] == ["accept", "reject", "correct"]
+        assert "source" not in props
         assert "reason_code" in props
         assert "scope_hints" in props
         assert "path_index" in props
@@ -290,14 +280,8 @@ class TestOutputSchema:
                     "warnings",
                 },
             ),
-            (
-                "cruxible_feedback",
-                {"feedback_id", "applied", "receipt_id", "deprecation_warnings"},
-            ),
-            (
-                "cruxible_feedback_from_query",
-                {"feedback_id", "applied", "receipt_id", "deprecation_warnings"},
-            ),
+            ("cruxible_feedback", {"feedback_id", "applied", "receipt_id"}),
+            ("cruxible_feedback_from_query", {"feedback_id", "applied", "receipt_id"}),
             ("cruxible_outcome", {"outcome_id", "deprecation_warnings"}),
             (
                 "cruxible_get_outcome_profile",
