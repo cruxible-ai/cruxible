@@ -59,6 +59,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("group", "resolve"): "active",
     ("group", "trust"): "active",
     ("procedure", "propose"): "active",
+    ("procedure", "record-reading"): "active",
     ("procedure", "resolve"): "active",
     ("procedure", "retire"): "active",
     ("procedure", "run"): "active",
