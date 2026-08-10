@@ -306,8 +306,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_record_procedure_reading": (
         "Use when you need to record an explicit contract- or attestation-grade outcome "
         "reading for an accepted procedure. Contract grade is refused unless its measurement, "
-        "grain, authored coordinates, and acceptance-opened contract all match; retry as "
-        "attestation grade only when that is the intended evidentiary claim."
+        "grain, authored coordinates, acceptance-opened contract, and that contract's standing "
+        "non-overturned resolution all match; retry as attestation grade only when that is the "
+        "intended evidentiary claim."
     ),
     "cruxible_attest": (
         "Use when you observed evidence supporting, contradicting, or leaving you "

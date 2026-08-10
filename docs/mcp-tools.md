@@ -1903,7 +1903,7 @@ withdrawing another actor's pending proposal is refused below `GRAPH_WRITE`.
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Use when you need to record an explicit contract- or attestation-grade outcome reading for an accepted procedure. Contract grade is refused unless its measurement, grain, authored coordinates, and acceptance-opened contract all match; retry as attestation grade only when that is the intended evidentiary claim.
+**Purpose:** Use when you need to record an explicit contract- or attestation-grade outcome reading for an accepted procedure. Contract grade is refused unless its measurement, grain, authored coordinates, acceptance-opened contract, and that contract's standing non-overturned resolution all match; retry as attestation grade only when that is the intended evidentiary claim.
 
 **Arguments:**
 
@@ -1920,7 +1920,7 @@ withdrawing another actor's pending proposal is refused below `GRAPH_WRITE`.
 | `arm_label` | no | string or null | `on_true` or `on_false`; required for arm grain. |
 | `measurement_name` | no | string or null | Required for contract grade and must name a declaration. |
 | `contract_id` | no | string or null | Required for contract grade and must be acceptance-opened. |
-| `resolution_id` | no | string or null | Optional matching resolution provenance. |
+| `resolution_id` | no | string or null | Required for contract grade and must be that contract's standing, non-overturned resolution carrying the reading's verdict. |
 | `value` | no | any JSON | Optional observed value. |
 | `run_id` | no | string or null | Optional invocation provenance. |
 | `episode_ref` | no | string or null | Optional opaque episode pointer. |
