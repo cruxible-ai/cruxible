@@ -46,6 +46,9 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("feedback", "from-query"): "active",
     ("feedback", "batch"): "active",
     ("outcome", "record"): "active",
+    ("outcome", "open"): "active",
+    ("outcome", "resolve"): "active",
+    ("outcome", "dispose"): "active",
     ("entity", "add"): "active",
     ("entity", "update"): "active",
     ("entity", "supersede"): "active",
@@ -63,6 +66,9 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("procedure", "resolve"): "active",
     ("procedure", "retire"): "active",
     ("procedure", "run"): "active",
+    ("procedure", "withdraw"): "active",
+    ("attest", "record"): "active",
+    ("attest", "resolve"): "active",
     ("migrate",): "active",
 }
 

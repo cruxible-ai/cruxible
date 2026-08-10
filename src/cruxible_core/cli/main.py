@@ -87,6 +87,9 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("feedback", "from-query"): "active",
     ("feedback", "batch"): "active",
     ("outcome", "record"): "active",
+    ("outcome", "open"): "active",
+    ("outcome", "resolve"): "active",
+    ("outcome", "dispose"): "active",
     ("entity", "add"): "active",
     ("entity", "update"): "active",
     ("entity", "supersede"): "active",
@@ -104,6 +107,9 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("procedure", "resolve"): "active",
     ("procedure", "retire"): "active",
     ("procedure", "run"): "active",
+    ("procedure", "withdraw"): "active",
+    ("attest", "record"): "active",
+    ("attest", "resolve"): "active",
     ("migrate",): "active",
 }
 
