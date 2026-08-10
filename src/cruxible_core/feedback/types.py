@@ -13,11 +13,6 @@ from cruxible_core.config.schema import (
     OutcomeLabel,
     OutcomeRemediationHint,
 )
-from cruxible_core.deprecation import (
-    FEEDBACK_SOURCE_INPUT,
-    OUTCOME_SOURCE_INPUT,
-    accept_deprecated_model_input,
-)
 from cruxible_core.governance.actors import (
     DerivedActorKind,
     GovernedActorContext,
@@ -98,16 +93,6 @@ class FeedbackRecord(BaseModel):
     actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
-    @model_validator(mode="before")
-    @classmethod
-    def accept_deprecated_source(cls, value: Any) -> Any:
-        """Accept and ignore the caller-declared source compatibility input."""
-        return accept_deprecated_model_input(
-            value,
-            field="source",
-            notice=FEEDBACK_SOURCE_INPUT,
-        )
-
     @computed_field  # type: ignore[prop-decorator]
     @property
     def source(self) -> DerivedActorKind:
@@ -136,8 +121,6 @@ class FeedbackBatchItem(BaseModel):
     scope_hints: dict[str, Any] = Field(default_factory=dict)
     corrections: dict[str, Any] = Field(default_factory=dict)
     group_override: bool = False
-    source: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
 
 
 class OutcomeRecord(BaseModel):
@@ -162,16 +145,6 @@ class OutcomeRecord(BaseModel):
     detail: dict[str, Any] = Field(default_factory=dict)
     actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)
-
-    @model_validator(mode="before")
-    @classmethod
-    def accept_deprecated_source(cls, value: Any) -> Any:
-        """Accept and ignore the caller-declared source compatibility input."""
-        return accept_deprecated_model_input(
-            value,
-            field="source",
-            notice=OUTCOME_SOURCE_INPUT,
-        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -647,7 +647,6 @@ class CruxibleClient:
         receipt_id: str | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
         claim_id: str | None = None,
-        source: str | None = None,
     ) -> contracts.FeedbackResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/feedback",
@@ -667,7 +666,6 @@ class CruxibleClient:
                     "scope_hints": scope_hints,
                     "corrections": corrections,
                     "group_override": group_override,
-                    **({"source": source} if source is not None else {}),
                 },
                 actor_context,
             ),
@@ -685,13 +683,7 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/feedback/batch",
             json=self._with_actor_context(
                 {
-                    "items": [
-                        item.model_dump(
-                            mode="json",
-                            exclude={"source"} if item.source is None else None,
-                        )
-                        for item in items
-                    ],
+                    "items": [item.model_dump(mode="json") for item in items],
                 },
                 actor_context,
             ),
@@ -713,7 +705,6 @@ class CruxibleClient:
         path_index: int | None = None,
         path_alias: str | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
-        source: str | None = None,
     ) -> contracts.FeedbackResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/feedback/from-query",
@@ -729,7 +720,6 @@ class CruxibleClient:
                     "group_override": group_override,
                     "path_index": path_index,
                     "path_alias": path_alias,
-                    **({"source": source} if source is not None else {}),
                 },
                 actor_context,
             ),
@@ -749,7 +739,6 @@ class CruxibleClient:
         outcome_profile_key: str | None = None,
         detail: dict[str, Any] | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
-        source: str | None = None,
     ) -> contracts.OutcomeResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/outcome",
@@ -763,7 +752,6 @@ class CruxibleClient:
                     "scope_hints": scope_hints,
                     "outcome_profile_key": outcome_profile_key,
                     "detail": detail,
-                    **({"source": source} if source is not None else {}),
                 },
                 actor_context,
             ),

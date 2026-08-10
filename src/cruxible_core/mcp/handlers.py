@@ -10,7 +10,7 @@ import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypedDict, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 import yaml
 
@@ -36,10 +36,6 @@ _client_cache_key: tuple[str | None, str | None, str | None] | None = None
 # and teardown must be serialized; RLock because _get_client resets inline.
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
-
-
-class _SourceAliasKwargs(TypedDict, total=False):
-    source: str
 
 
 def get_manager() -> InstanceManager:
@@ -864,12 +860,8 @@ def handle_feedback(
     corrections: dict[str, Any] | None = None,
     group_override: bool = False,
     claim_id: str | None = None,
-    source: str | None = None,
 ) -> contracts.FeedbackResult:
     """Record feedback on an edge."""
-    deprecated_kwargs: _SourceAliasKwargs = {}
-    if source is not None:
-        deprecated_kwargs["source"] = source
     return _dispatch_remote_or_local(
         lambda client: client.feedback(
             instance_id,
@@ -887,7 +879,6 @@ def handle_feedback(
             scope_hints=scope_hints,
             corrections=corrections,
             group_override=group_override,
-            **deprecated_kwargs,
         ),
         lambda: api.feedback(
             instance_id=instance_id,
@@ -905,7 +896,6 @@ def handle_feedback(
             scope_hints=scope_hints,
             corrections=corrections,
             group_override=group_override,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_feedback",
@@ -1050,12 +1040,8 @@ def handle_feedback_from_query(
     group_override: bool = False,
     path_index: int | None = None,
     path_alias: str | None = None,
-    source: str | None = None,
 ) -> contracts.FeedbackResult:
     """Record edge feedback by selecting relationship evidence from a query receipt."""
-    deprecated_kwargs: _SourceAliasKwargs = {}
-    if source is not None:
-        deprecated_kwargs["source"] = source
     return _dispatch_remote_or_local(
         lambda client: client.feedback_from_query(
             instance_id,
@@ -1069,7 +1055,6 @@ def handle_feedback_from_query(
             group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
-            **deprecated_kwargs,
         ),
         lambda: api.feedback_from_query(
             instance_id,
@@ -1083,7 +1068,6 @@ def handle_feedback_from_query(
             group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_feedback_from_query",
@@ -1100,12 +1084,8 @@ def handle_outcome(
     scope_hints: dict[str, Any] | None = None,
     outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
-    source: str | None = None,
 ) -> contracts.OutcomeResult:
     """Record a structured outcome for a prior receipt or proposal resolution."""
-    deprecated_kwargs: _SourceAliasKwargs = {}
-    if source is not None:
-        deprecated_kwargs["source"] = source
     return _dispatch_remote_or_local(
         lambda client: client.outcome(
             instance_id,
@@ -1117,7 +1097,6 @@ def handle_outcome(
             scope_hints=scope_hints,
             outcome_profile_key=outcome_profile_key,
             detail=detail,
-            **deprecated_kwargs,
         ),
         lambda: api.outcome(
             instance_id,
@@ -1129,7 +1108,6 @@ def handle_outcome(
             scope_hints=scope_hints,
             outcome_profile_key=outcome_profile_key,
             detail=detail,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_outcome",

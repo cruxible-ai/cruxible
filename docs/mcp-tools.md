@@ -557,7 +557,6 @@ happened; they never prove its inputs are still current.
 | `corrections` | no | object | null |  |
 | `group_override` | no | boolean | Deprecated compatibility write; use `force_review`. |
 | `claim_id` | no | string | null | Stable claim identity; preferred disambiguator, takes precedence over `edge_key`, disagreement refused. |
-| `source` | no | string | null | Deprecated and ignored; actor kind is derived from `actor_context`. |
 
 **Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`, `deprecation_warnings`
 
@@ -591,7 +590,6 @@ happened; they never prove its inputs are still current.
 | `group_override` | no | boolean | Deprecated compatibility write; use `force_review`. |
 | `path_index` | no | integer | Zero-based path segment index for path rows. |
 | `path_alias` | no | string | Traversal alias for the selected path segment. |
-| `source` | no | string | Deprecated and ignored; actor kind is derived from `actor_context`. |
 
 **Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`, `deprecation_warnings`
 
@@ -646,7 +644,6 @@ happened; they never prove its inputs are still current.
 | `scope_hints` | no | object | null |  |
 | `outcome_profile_key` | no | string | null |  |
 | `detail` | no | object | null |  |
-| `source` | no | string | null | Deprecated and ignored; actor kind is derived from `actor_context`. |
 
 **Returns:** Top-level fields: `outcome_id`, `deprecation_warnings`
 

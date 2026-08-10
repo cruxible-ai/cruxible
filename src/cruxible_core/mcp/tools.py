@@ -17,11 +17,9 @@ from cruxible_client import contracts
 from cruxible_core import __version__
 from cruxible_core.deprecation import (
     APPROVE_FEEDBACK_ACTION,
-    FEEDBACK_SOURCE_INPUT,
     GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
-    OUTCOME_SOURCE_INPUT,
     DeprecationNotice,
     attach_mcp_deprecations,
 )
@@ -417,12 +415,8 @@ def register_tools(
         group_override: bool = False,
         receipt_id: str | None = None,
         claim_id: str | None = None,
-        source: str | None = None,
     ) -> _MCPFeedbackResult:
         """Record edge-level feedback by explicit relationship coordinates.
-
-        ``source`` is a deprecated, ignored compatibility input. Actor kind is
-        derived from the authenticated ``actor_context``.
 
         Rejected edges are excluded from future query results.
         Approved edges are trusted in traversals.
@@ -457,15 +451,12 @@ def register_tools(
             scope_hints=scope_hints,
             corrections=corrections,
             group_override=group_override,
-            source=source,
         )
         notices: list[DeprecationNotice] = []
         if action == "approve":
             notices.append(APPROVE_FEEDBACK_ACTION)
         if group_override:
             notices.append(GROUP_OVERRIDE)
-        if source is not None:
-            notices.append(FEEDBACK_SOURCE_INPUT)
         return _MCPFeedbackResult.model_validate(_mcp_deprecation_payload(result, notices))
 
     @_tool
@@ -484,8 +475,6 @@ def register_tools(
             notices.append(APPROVE_FEEDBACK_ACTION)
         if any(item.group_override for item in items):
             notices.append(GROUP_OVERRIDE)
-        if any(item.source is not None for item in items):
-            notices.append(FEEDBACK_SOURCE_INPUT)
         return _MCPFeedbackBatchResult.model_validate(_mcp_deprecation_payload(result, notices))
 
     @_tool
@@ -501,7 +490,6 @@ def register_tools(
         group_override: bool = False,
         path_index: int | None = None,
         path_alias: str | None = None,
-        source: str | None = None,
     ) -> _MCPFeedbackResult:
         """Record edge feedback from one relationship/path row in a query receipt.
 
@@ -524,15 +512,12 @@ def register_tools(
             group_override=group_override,
             path_index=path_index,
             path_alias=path_alias,
-            source=source,
         )
         notices: list[DeprecationNotice] = []
         if action == "approve":
             notices.append(APPROVE_FEEDBACK_ACTION)
         if group_override:
             notices.append(GROUP_OVERRIDE)
-        if source is not None:
-            notices.append(FEEDBACK_SOURCE_INPUT)
         return _MCPFeedbackResult.model_validate(_mcp_deprecation_payload(result, notices))
 
     @_tool
@@ -546,7 +531,6 @@ def register_tools(
         scope_hints: dict[str, Any] | None = None,
         outcome_profile_key: str | None = None,
         detail: dict[str, Any] | None = None,
-        source: str | None = None,
     ) -> _MCPOutcomeResult:
         """Deprecated outcome recorder; use resolution contracts and attestations."""
         result = handlers.handle_outcome(
@@ -559,11 +543,8 @@ def register_tools(
             scope_hints=scope_hints,
             outcome_profile_key=outcome_profile_key,
             detail=detail,
-            source=source,
         )
         notices = [LEGACY_OUTCOME_RECORD]
-        if source is not None:
-            notices.append(OUTCOME_SOURCE_INPUT)
         return _MCPOutcomeResult.model_validate(_mcp_deprecation_payload(result, notices))
 
     @_tool

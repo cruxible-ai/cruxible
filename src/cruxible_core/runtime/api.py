@@ -1963,7 +1963,6 @@ def feedback(
     receipt_id: str | None = None,
     actor_context: Any | None = None,
     claim_id: str | None = None,
-    source: str | None = None,
 ) -> contracts.FeedbackResult:
     """Record feedback on an edge.
 
@@ -1998,7 +1997,6 @@ def feedback(
             scope_hints=scope_hints,
             corrections=corrections,
             group_override=group_override,
-            source=source,
         ),
         actor_context=actor,
     )
@@ -2074,7 +2072,6 @@ def feedback_from_query(
     path_index: int | None = None,
     path_alias: str | None = None,
     actor_context: Any | None = None,
-    source: str | None = None,
 ) -> contracts.FeedbackResult:
     """Record edge feedback by selecting relationship evidence from a query receipt."""
     check_permission("cruxible_feedback_from_query", instance_id=instance_id)
@@ -2096,7 +2093,6 @@ def feedback_from_query(
         path_index=path_index,
         path_alias=path_alias,
         actor_context=actor,
-        source=source,
     )
     return contracts.FeedbackResult(
         feedback_id=result.feedback_id,
@@ -2116,7 +2112,6 @@ def outcome(
     outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
     actor_context: Any | None = None,
-    source: str | None = None,
 ) -> contracts.OutcomeResult:
     """Record a structured outcome for a prior receipt or proposal resolution."""
     check_permission("cruxible_outcome", instance_id=instance_id)
@@ -2133,7 +2128,6 @@ def outcome(
         outcome_profile_key=outcome_profile_key,
         detail=detail,
         actor_context=actor,
-        source=source,
     )
     return contracts.OutcomeResult(outcome_id=result.outcome_id)
 

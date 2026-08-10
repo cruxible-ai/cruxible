@@ -9,11 +9,9 @@ from fastapi import APIRouter, Response
 from cruxible_client import contracts
 from cruxible_core.deprecation import (
     APPROVE_FEEDBACK_ACTION,
-    FEEDBACK_SOURCE_INPUT,
     GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
-    OUTCOME_SOURCE_INPUT,
     DeprecationNotice,
     emit_http_deprecations,
 )
@@ -46,8 +44,6 @@ async def feedback(
         notices.append(APPROVE_FEEDBACK_ACTION)
     if req.group_override:
         notices.append(GROUP_OVERRIDE)
-    if "source" in req.model_fields_set:
-        notices.append(FEEDBACK_SOURCE_INPUT)
     result = api.feedback(
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
@@ -65,7 +61,6 @@ async def feedback(
         corrections=req.corrections,
         group_override=req.group_override,
         actor_context=req.actor_context,
-        source=req.source,
     )
     return cast(contracts.FeedbackResult, emit_http_deprecations(response, result, notices))
 
@@ -86,8 +81,6 @@ async def feedback_batch(
         notices.append(APPROVE_FEEDBACK_ACTION)
     if any(item.group_override for item in req.items):
         notices.append(GROUP_OVERRIDE)
-    if any("source" in item.model_fields_set for item in req.items):
-        notices.append(FEEDBACK_SOURCE_INPUT)
     result = api.feedback_batch(
         instance_id=resolved_instance_id,
         items=normalized_items,
@@ -114,8 +107,6 @@ async def feedback_from_query(
         notices.append(APPROVE_FEEDBACK_ACTION)
     if req.group_override:
         notices.append(GROUP_OVERRIDE)
-    if "source" in req.model_fields_set:
-        notices.append(FEEDBACK_SOURCE_INPUT)
     result = api.feedback_from_query(
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
@@ -129,7 +120,6 @@ async def feedback_from_query(
         path_index=req.path_index,
         path_alias=req.path_alias,
         actor_context=req.actor_context,
-        source=req.source,
     )
     return cast(contracts.FeedbackResult, emit_http_deprecations(response, result, notices))
 
@@ -175,8 +165,6 @@ async def outcome(
 ) -> contracts.OutcomeResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     notices = [LEGACY_OUTCOME_RECORD]
-    if "source" in req.model_fields_set:
-        notices.append(OUTCOME_SOURCE_INPUT)
     result = api.outcome(
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
@@ -188,7 +176,6 @@ async def outcome(
         outcome_profile_key=req.outcome_profile_key,
         detail=req.detail,
         actor_context=req.actor_context,
-        source=req.source,
     )
     return cast(contracts.OutcomeResult, emit_http_deprecations(response, result, notices))
 

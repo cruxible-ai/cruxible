@@ -167,8 +167,6 @@ class FeedbackRequest(BaseModel):
     corrections: dict[str, Any] | None = None
     group_override: bool = False
     actor_context: contracts.GovernedActorContext | None = None
-    source: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
 
 
 class FeedbackBatchRequest(BaseModel):
@@ -190,8 +188,6 @@ class OutcomeRequest(BaseModel):
     outcome_profile_key: str | None = None
     detail: dict[str, Any] | None = None
     actor_context: contracts.GovernedActorContext | None = None
-    source: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
 
 
 class ProposeGroupRequest(BaseModel):

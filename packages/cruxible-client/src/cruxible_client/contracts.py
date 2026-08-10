@@ -715,12 +715,6 @@ class FeedbackBatchItemInput(BaseModel):
             "the edge assertion as a group-resolve override."
         ),
     )
-    source: str | None = Field(
-        default=None,
-        description=(
-            "Deprecated and ignored compatibility input; actor kind is derived from actor_context."
-        ),
-    )
 
 
 class FeedbackFromQueryInput(BaseModel):
@@ -753,12 +747,6 @@ class FeedbackFromQueryInput(BaseModel):
         description=(
             "Deprecated compatibility write; use force_review. If true, mark "
             "the edge assertion as a group-resolve override."
-        ),
-    )
-    source: str | None = Field(
-        default=None,
-        description=(
-            "Deprecated and ignored compatibility input; actor kind is derived from actor_context."
         ),
     )
     path_index: int | None = Field(

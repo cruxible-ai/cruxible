@@ -211,8 +211,6 @@ class FeedbackItemInput:
     scope_hints: dict[str, Any] | None = None
     corrections: dict[str, Any] | None = None
     group_override: bool = False
-    source: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
 
 
 @dataclass

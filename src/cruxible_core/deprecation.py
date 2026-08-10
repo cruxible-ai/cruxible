@@ -50,14 +50,6 @@ GROUP_OVERRIDE = DeprecationNotice(
     surface="feedback group_override write path",
     replacement="force_review",
 )
-FEEDBACK_SOURCE_INPUT = DeprecationNotice(
-    surface="FeedbackRecord.source input",
-    replacement="actor_context",
-)
-OUTCOME_SOURCE_INPUT = DeprecationNotice(
-    surface="OutcomeRecord.source input",
-    replacement="actor_context",
-)
 PROCEDURE_STRING_WARNINGS = DeprecationNotice(
     surface="ProcedureTransitionResult.warnings string list",
     replacement="ProcedureTransitionResult.typed_warnings",
@@ -77,8 +69,6 @@ DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
     LEGACY_OUTCOME_RECORD,
     LEGACY_OUTCOME_PROFILE,
     GROUP_OVERRIDE,
-    FEEDBACK_SOURCE_INPUT,
-    OUTCOME_SOURCE_INPUT,
     PROCEDURE_STRING_WARNINGS,
 )
 """Every warning-emitting deprecation registered by cruxible-core."""

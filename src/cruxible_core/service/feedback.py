@@ -21,12 +21,10 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.deprecation import (
     APPROVE_FEEDBACK_ACTION,
-    FEEDBACK_SOURCE_INPUT,
     FLAG_FEEDBACK_ACTION,
     GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
-    OUTCOME_SOURCE_INPUT,
     deprecation_refusal_message,
     emit_python_deprecation,
 )
@@ -858,7 +856,6 @@ def _feedback_batch_item_from_input(item: FeedbackItemInput) -> FeedbackBatchIte
         scope_hints=item.scope_hints or {},
         corrections=item.corrections or {},
         group_override=item.group_override,
-        source=item.source,
     )
 
 
@@ -1112,7 +1109,6 @@ def service_feedback_input(
         scope_hints=item.scope_hints,
         corrections=item.corrections,
         group_override=item.group_override,
-        source=item.source,
         actor_context=actor_context,
     )
 
@@ -1128,7 +1124,6 @@ def service_feedback_from_query_result(
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
     group_override: bool = False,
-    source: str | None = None,
     path_index: int | None = None,
     path_alias: str | None = None,
     actor_context: GovernedActorContext | None = None,
@@ -1172,7 +1167,6 @@ def service_feedback_from_query_result(
         scope_hints=scope_hints,
         corrections=corrections,
         group_override=group_override,
-        source=source,
         _feedback_from_query={
             **query_selection,
             "action": action,
@@ -1197,7 +1191,6 @@ def service_feedback(
     group_override: bool = False,
     _feedback_from_query: dict[str, Any] | None = None,
     actor_context: GovernedActorContext | None = None,
-    source: str | None = None,
 ) -> FeedbackServiceResult:
     """Record feedback on an edge.
 
@@ -1207,8 +1200,6 @@ def service_feedback(
     """
     if group_override:
         emit_python_deprecation(GROUP_OVERRIDE)
-    if source is not None:
-        emit_python_deprecation(FEEDBACK_SOURCE_INPUT)
     _validate_feedback_request_values(
         action=action,
         corrections=corrections,
@@ -1311,8 +1302,6 @@ def service_feedback_batch(
         raise ConfigError("Batch feedback items must not be empty")
     if any(item.group_override for item in items):
         emit_python_deprecation(GROUP_OVERRIDE)
-    if any(item.source is not None for item in items):
-        emit_python_deprecation(FEEDBACK_SOURCE_INPUT)
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
         relationship_types=[item.target.relationship_type for item in items],
@@ -1421,7 +1410,6 @@ def service_outcome(
     outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
     actor_context: GovernedActorContext | None = None,
-    source: str | None = None,
 ) -> OutcomeServiceResult:
     """Record an anchored outcome for a prior receipt or proposal resolution.
 
@@ -1429,8 +1417,6 @@ def service_outcome(
     and persists a bounded lineage snapshot for later analysis.
     """
     emit_python_deprecation(LEGACY_OUTCOME_RECORD)
-    if source is not None:
-        emit_python_deprecation(OUTCOME_SOURCE_INPUT)
     _validate_outcome_request_values(
         outcome=outcome,
         detail=detail,
