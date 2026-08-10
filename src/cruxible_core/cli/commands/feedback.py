@@ -21,7 +21,6 @@ from cruxible_core.cli.commands._common import (
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.deprecation import (
-    APPROVE_FEEDBACK_ACTION,
     GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
@@ -67,14 +66,6 @@ def _result_payload(result: Any) -> dict[str, Any]:
     return cast(dict[str, Any], dict(result))
 
 
-def _normalize_cli_feedback_action(action: str) -> str:
-    """Warn once and map the deprecated claim verdict to its replacement."""
-    if action == "approve":
-        emit_cli_deprecation(APPROVE_FEEDBACK_ACTION)
-        return "accept"
-    return action
-
-
 @click.group("feedback")
 def feedback_group() -> None:
     """Record, batch, analyze, and inspect edge feedback."""
@@ -90,7 +81,7 @@ def outcome_group() -> None:
 @click.option(
     "--action",
     required=True,
-    type=click.Choice(["accept", "reject", "correct", "approve", "flag"]),
+    type=click.Choice(["accept", "reject", "correct"]),
     help="Feedback action.",
 )
 @click.option("--from-type", required=True, help="Source entity type.")
@@ -140,7 +131,6 @@ def feedback_cmd(
     output_json: bool,
 ) -> None:
     """Submit feedback on a specific edge by explicit relationship coordinates."""
-    action = _normalize_cli_feedback_action(action)
     if group_override:
         emit_cli_deprecation(GROUP_OVERRIDE)
     corrections_dict = _parse_corrections(corrections)
@@ -159,7 +149,7 @@ def feedback_cmd(
         lambda client, instance_id: client.feedback(
             instance_id,
             receipt_id=receipt_id,
-            action=cast(contracts.FeedbackInputAction, action),
+            action=cast(contracts.FeedbackAction, action),
             from_type=from_type,
             from_id=from_id,
             relationship_type=relationship,
@@ -177,7 +167,7 @@ def feedback_cmd(
             instance,
             _service_attr("FeedbackItemInput")(
                 receipt_id=receipt_id,
-                action=cast(contracts.FeedbackInputAction, action),
+                action=cast(contracts.FeedbackAction, action),
                 target=target,
                 reason=reason,
                 reason_code=reason_code,
@@ -213,7 +203,7 @@ def feedback_cmd(
 @click.option(
     "--action",
     required=True,
-    type=click.Choice(["accept", "reject", "correct", "approve", "flag"]),
+    type=click.Choice(["accept", "reject", "correct"]),
     help="Feedback action.",
 )
 @click.option("--reason", default="", help="Reason for feedback.")
@@ -257,7 +247,6 @@ def feedback_from_query_cmd(
     output_json: bool,
 ) -> None:
     """Submit edge feedback by selecting relationship evidence from a query receipt."""
-    action = _normalize_cli_feedback_action(action)
     if group_override:
         emit_cli_deprecation(GROUP_OVERRIDE)
     corrections_dict = _parse_corrections(corrections)
@@ -268,7 +257,7 @@ def feedback_from_query_cmd(
             instance_id,
             receipt_id=receipt_id,
             result_index=result_index,
-            action=cast(contracts.FeedbackInputAction, action),
+            action=cast(contracts.FeedbackAction, action),
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints_dict,
@@ -282,7 +271,7 @@ def feedback_from_query_cmd(
             instance,
             receipt_id=receipt_id,
             result_index=result_index,
-            action=cast(contracts.FeedbackInputAction, action),
+            action=cast(contracts.FeedbackAction, action),
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints_dict,
@@ -338,12 +327,6 @@ def feedback_batch_cmd(
 
     if not isinstance(raw_items, list):
         raise click.BadParameter("Items must be a top-level array.")
-    if any(item.get("action") == "approve" for item in raw_items if isinstance(item, dict)):
-        emit_cli_deprecation(APPROVE_FEEDBACK_ACTION)
-        raw_items = [
-            {**item, "action": "accept"} if item.get("action") == "approve" else item
-            for item in raw_items
-        ]
     if any(bool(item.get("group_override")) for item in raw_items if isinstance(item, dict)):
         emit_cli_deprecation(GROUP_OVERRIDE)
 

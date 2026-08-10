@@ -25,12 +25,6 @@ from cruxible_core.temporal import utc_now
 # The WRITE vocabulary: what a caller may ask for today.
 FeedbackAction = Literal["accept", "reject", "correct"]
 
-# The compatibility INPUT vocabulary. ``approve`` delegates to ``accept`` with
-# a warning. ``flag`` reaches the service validation seam solely so its
-# structured deprecation refusal can teach the replacement; no write path
-# persists it.
-FeedbackInputAction = Literal["accept", "reject", "correct", "approve", "flag"]
-
 # The READ vocabulary: what a stored row may legally contain.
 #
 # These are deliberately DIFFERENT. ``flag`` was removed as a write in 2026-07
@@ -44,10 +38,10 @@ FeedbackInputAction = Literal["accept", "reject", "correct", "approve", "flag"]
 # ordinary list.
 #
 # So the record model tolerates both historical ``approve`` and ``flag`` rows
-# on read. Compatibility INPUT types admit ``approve`` as a warned alias that
-# new writes normalize to ``accept``; they admit ``flag`` only far enough to
-# reach the structured service refusal. The applier retains an ``approve`` read
-# branch for historical records but has no ``flag`` branch.
+# on read. Neither is writable: both were removed from every input vocabulary
+# in 0.4.0, so an unknown-value validation error is what a caller now gets. The
+# applier retains an ``approve`` read branch for historical records but has no
+# ``flag`` branch.
 StoredFeedbackAction = Literal["accept", "approve", "reject", "correct", "flag"]
 
 RETIRED_FEEDBACK_ACTIONS: frozenset[str] = frozenset({"flag"})
@@ -112,8 +106,7 @@ class FeedbackBatchItem(BaseModel):
     """Input payload for one batch feedback item."""
 
     receipt_id: str
-    action: FeedbackInputAction
-    """Compatibility input vocabulary; service validation still refuses ``flag``."""
+    action: FeedbackAction
 
     target: RelationshipInstance
     reason: str = ""

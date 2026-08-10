@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Literal, cast, get_args
+from typing import Any, Literal, get_args
 
 from pydantic import ValidationError
 
@@ -20,12 +20,9 @@ from cruxible_core.config.schema import (
     OutcomeRemediationHint,
 )
 from cruxible_core.deprecation import (
-    APPROVE_FEEDBACK_ACTION,
-    FLAG_FEEDBACK_ACTION,
     GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
-    deprecation_refusal_message,
     emit_python_deprecation,
 )
 from cruxible_core.errors import (
@@ -39,7 +36,6 @@ from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.types import (
     FeedbackAction,
     FeedbackBatchItem,
-    FeedbackInputAction,
     FeedbackRecord,
     OutcomeRecord,
 )
@@ -80,18 +76,6 @@ that read fine but can never be written again.
 _VALID_OUTCOMES = ("correct", "incorrect", "partial", "unknown")
 
 
-_DEPRECATED_FLAG_ACTION_MESSAGE = deprecation_refusal_message(
-    FLAG_FEEDBACK_ACTION,
-    "The 'flag' feedback action was removed from the live write vocabulary and "
-    "survives only as a deprecated refused alias because it un-approved an edge "
-    "to 'pending' while storing no annotation, destroying the reviewer's actual "
-    "signal. Use 'cruxible attest record --stance contradict' (MCP: "
-    "cruxible_attest) to "
-    "store the observation, evidence refs, and actor without changing review "
-    "status. To adjudicate, use accept, reject, or correct.",
-)
-
-
 def _validate_feedback_request_values(
     *,
     action: str,
@@ -105,11 +89,7 @@ def _validate_feedback_request_values(
     routes through here, so the CLI, MCP, and HTTP surfaces all inherit these
     refusals without each restating them.
     """
-    if action == "flag":
-        raise ConfigError(_DEPRECATED_FLAG_ACTION_MESSAGE)
-
-    normalized_action = "accept" if action == "approve" else action
-    if normalized_action not in _VALID_ACTIONS:
+    if action not in _VALID_ACTIONS:
         raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_ACTIONS)}")
 
     if corrections is not None and not isinstance(corrections, dict):
@@ -128,19 +108,6 @@ def _validate_feedback_request_values(
             "'cruxible attest record --stance contradict' "
             "to record a doubt without adjudicating."
         )
-
-
-def _normalize_feedback_action(
-    action: FeedbackInputAction,
-    *,
-    warn: bool,
-) -> FeedbackAction:
-    """Map the deprecated public alias to the canonical claim verdict."""
-    if action == "approve":
-        if warn:
-            emit_python_deprecation(APPROVE_FEEDBACK_ACTION)
-        return "accept"
-    return cast(FeedbackAction, action)
 
 
 def _normalize_feedback_record(
@@ -1118,7 +1085,7 @@ def service_feedback_from_query_result(
     *,
     receipt_id: str,
     result_index: int,
-    action: FeedbackInputAction,
+    action: FeedbackAction,
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,
@@ -1182,7 +1149,7 @@ def service_feedback_from_query_result(
 def service_feedback(
     instance: InstanceProtocol,
     receipt_id: str | None,
-    action: FeedbackInputAction,
+    action: FeedbackAction,
     target: RelationshipInstance,
     reason: str = "",
     reason_code: str | None = None,
@@ -1204,7 +1171,6 @@ def service_feedback(
         action=action,
         corrections=corrections,
     )
-    normalized_action = _normalize_feedback_action(action, warn=True)
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
         relationship_types=[target.relationship_type],
@@ -1217,7 +1183,7 @@ def service_feedback(
         graph=graph,
         receipt=receipt,
         receipt_id=receipt_id,
-        action=normalized_action,
+        action=action,
         target=target,
         reason=reason,
         reason_code=reason_code,
@@ -1229,14 +1195,14 @@ def service_feedback(
 
     receipt_parameters: dict[str, Any] = {
         "source_receipt_id": receipt_id,
-        "action": normalized_action,
+        "action": action,
         "actor_kind": derived_actor_kind(actor_context),
         "target": _feedback_target_label(target),
     }
     if _feedback_from_query is not None:
         receipt_parameters["feedback_from_query"] = {
             **_feedback_from_query,
-            "action": normalized_action,
+            "action": action,
         }
 
     with mutation_receipt(
@@ -1257,7 +1223,7 @@ def service_feedback(
         )
         ctx.builder.record_feedback_applied(
             _feedback_target_label(record.target),
-            normalized_action,
+            action,
             applied,
         )
 
@@ -1312,8 +1278,6 @@ def service_feedback_batch(
             action=item.action,
             corrections=item.corrections,
         )
-    if any(item.action == "approve" for item in items):
-        emit_python_deprecation(APPROVE_FEEDBACK_ACTION)
 
     graph = instance.load_graph()
     config = instance.load_config()
@@ -1325,7 +1289,7 @@ def service_feedback_batch(
             graph=graph,
             receipt=receipts[item.receipt_id],
             receipt_id=item.receipt_id,
-            action=_normalize_feedback_action(item.action, warn=False),
+            action=item.action,
             target=item.target,
             reason=item.reason,
             reason_code=item.reason_code,

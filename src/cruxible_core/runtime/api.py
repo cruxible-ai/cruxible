@@ -1948,7 +1948,7 @@ def list_traces(
 
 def feedback(
     instance_id: str,
-    action: contracts.FeedbackInputAction,
+    action: contracts.FeedbackAction,
     from_type: str,
     from_id: str,
     relationship_type: str,
@@ -2063,7 +2063,7 @@ def feedback_from_query(
     *,
     receipt_id: str,
     result_index: int,
-    action: contracts.FeedbackInputAction,
+    action: contracts.FeedbackAction,
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,

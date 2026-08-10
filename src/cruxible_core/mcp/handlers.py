@@ -847,7 +847,7 @@ def handle_list_traces(
 def handle_feedback(
     instance_id: str,
     receipt_id: str | None,
-    action: contracts.FeedbackInputAction,
+    action: contracts.FeedbackAction,
     from_type: str,
     from_id: str,
     relationship_type: str,
@@ -1032,7 +1032,7 @@ def handle_feedback_from_query(
     *,
     receipt_id: str,
     result_index: int,
-    action: contracts.FeedbackInputAction,
+    action: contracts.FeedbackAction,
     reason: str = "",
     reason_code: str | None = None,
     scope_hints: dict[str, Any] | None = None,

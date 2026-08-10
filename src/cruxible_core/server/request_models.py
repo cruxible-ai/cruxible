@@ -152,7 +152,7 @@ class EntitySupersedeRequest(BaseModel):
 
 class FeedbackRequest(BaseModel):
     receipt_id: str | None = None
-    action: contracts.FeedbackInputAction
+    action: contracts.FeedbackAction
     from_type: str
     from_id: str
     relationship_type: str

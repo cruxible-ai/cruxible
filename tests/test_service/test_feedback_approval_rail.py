@@ -5,9 +5,9 @@ that is only the floor for REACHING the tool. Two rails, both keyed on the
 payload's ``action`` and both enforced at the service chokepoint every surface
 funnels through:
 
-  1. **Tier.** ``approve`` / ``reject`` / ``correct`` require GRAPH_WRITE. Without
+  1. **Tier.** ``accept`` / ``reject`` / ``correct`` require GRAPH_WRITE. Without
      it one GOVERNED_WRITE actor could attest an edge into ``pending`` and then
-     approve their own proposal, arriving at a live approved claim on a
+     accept their own proposal, arriving at a live approved claim on a
      ``proposal_only`` type with no reviewer above them. Since ``flag`` was
      removed in 2026-07, those three are ALL the actions — so no feedback action
      is completable at GOVERNED_WRITE, and what that floor still buys is the
@@ -16,9 +16,9 @@ funnels through:
      (stance ``contradict``) instead.
   2. **Kill-switch.** ``CRUXIBLE_REFUSE_DIRECT_WRITES`` now also refuses the
      feedback actions that transition an edge INTO accepted state
-     (``approve``/``correct``). It previously disclaimed the feedback channel
+     (``accept``/``correct``). It previously disclaimed the feedback channel
      entirely, which made it a half-switch: an operator who froze live writes
-     could still have state promoted to live through feedback approve.
+     could still have state promoted to live through feedback accept.
      ``reject`` is deliberately NOT covered — it moves an edge OUT of live
      state, the direction the kill-switch wants.
 
@@ -28,7 +28,7 @@ a malformed payload reports its shape error regardless of the caller's tier.
 
 The tier rail's facade coverage (per-type ``write_tier`` interaction, batch,
 from_query) lives in ``tests/test_mcp/test_feedback_write_tier_permissions.py``;
-the end-to-end attest-then-approve loop lives in
+the end-to-end attest-then-accept loop lives in
 ``tests/test_server/test_hosted_runtime_routes.py``.
 """
 
@@ -77,7 +77,7 @@ relationships:
 constraints: []
 """
 
-ADJUDICATION_ACTIONS = ("approve", "reject", "correct")
+ADJUDICATION_ACTIONS = ("accept", "reject", "correct")
 
 
 def _target() -> RelationshipInstance:
@@ -195,13 +195,13 @@ def test_governed_write_adjudication_refused(rail: Rail, action: str) -> None:
 def test_governed_write_adjudication_refusal_is_receipted(rail: Rail) -> None:
     with request_permission_scope(PermissionMode.GOVERNED_WRITE):
         with pytest.raises(PermissionDeniedError) as exc:
-            _feedback(rail, "approve")
+            _feedback(rail, "accept")
     assert exc.value.mutation_receipt_id is not None
 
 
-def test_graph_write_approve_allowed(rail: Rail) -> None:
+def test_graph_write_accept_allowed(rail: Rail) -> None:
     with request_permission_scope(PermissionMode.GRAPH_WRITE):
-        result = _feedback(rail, "approve")
+        result = _feedback(rail, "accept")
     assert result.applied is True
     assert _review_status(rail) == "approved"
 
@@ -219,7 +219,7 @@ def test_no_feedback_action_sits_at_the_governed_floor_anymore() -> None:
 
 def test_batch_is_gated_at_its_strictest_action(rail: Rail) -> None:
     """Every action is an adjudication now, so the whole batch needs GRAPH_WRITE."""
-    items = [_batch_item(rail, "reject"), _batch_item(rail, "approve")]
+    items = [_batch_item(rail, "reject"), _batch_item(rail, "accept")]
     with request_permission_scope(PermissionMode.GOVERNED_WRITE):
         with pytest.raises(PermissionDeniedError, match="GRAPH_WRITE"):
             service_feedback_batch(rail.instance, items)
@@ -236,7 +236,7 @@ def test_batch_is_gated_at_its_strictest_action(rail: Rail) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("action", ["accept", "approve", "correct"])
+@pytest.mark.parametrize("action", ["accept", "correct"])
 def test_kill_switch_refuses_acceptance_actions(
     rail: Rail,
     monkeypatch: pytest.MonkeyPatch,
@@ -247,9 +247,7 @@ def test_kill_switch_refuses_acceptance_actions(
         _feedback(rail, action)
     assert exc.value.kind == "feedback"
     assert exc.value.type_name == "fits"
-    # The deprecated ``approve`` alias is normalized before the gate, so the
-    # refusal names the canonical action it refused.
-    assert exc.value.source == ("accept" if action == "approve" else action)
+    assert exc.value.source == action
     assert "CRUXIBLE_REFUSE_DIRECT_WRITES" in str(exc.value)
     assert exc.value.mutation_receipt_id is not None
     assert _review_status(rail) == "pending"
@@ -271,7 +269,7 @@ def test_kill_switch_refuses_a_batch_containing_acceptance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CRUXIBLE_REFUSE_DIRECT_WRITES", "true")
-    items = [_batch_item(rail, "reject"), _batch_item(rail, "approve")]
+    items = [_batch_item(rail, "reject"), _batch_item(rail, "accept")]
     with pytest.raises(DirectWriteRefusedError):
         service_feedback_batch(rail.instance, items)
     assert _review_status(rail) == "pending"
@@ -282,34 +280,34 @@ def test_kill_switch_unset_allows_acceptance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CRUXIBLE_REFUSE_DIRECT_WRITES", raising=False)
-    result = _feedback(rail, "approve")
+    result = _feedback(rail, "accept")
     assert result.applied is True
     assert _review_status(rail) == "approved"
 
 
 @pytest.mark.parametrize("value", ["1", "true", "yes", "on", "TRUE", " On "])
 def test_kill_switch_env_spellings_match_the_direct_write_switch(value: str) -> None:
-    assert env_refuses_feedback_acceptance("approve", {"CRUXIBLE_REFUSE_DIRECT_WRITES": value})
+    assert env_refuses_feedback_acceptance("accept", {"CRUXIBLE_REFUSE_DIRECT_WRITES": value})
 
 
 @pytest.mark.parametrize("value", ["0", "false", "no", "off", ""])
 def test_kill_switch_falsy_spellings(value: str) -> None:
-    assert not env_refuses_feedback_acceptance("approve", {"CRUXIBLE_REFUSE_DIRECT_WRITES": value})
+    assert not env_refuses_feedback_acceptance("accept", {"CRUXIBLE_REFUSE_DIRECT_WRITES": value})
 
 
 def test_kill_switch_scope_is_the_acceptance_actions_only() -> None:
     env = {"CRUXIBLE_REFUSE_DIRECT_WRITES": "1"}
-    assert env_refuses_feedback_acceptance("approve", env)
+    assert env_refuses_feedback_acceptance("accept", env)
     assert env_refuses_feedback_acceptance("correct", env)
     assert not env_refuses_feedback_acceptance("reject", env)
 
 
 def test_feedback_kill_switch_refusal_maps_to_403() -> None:
-    status, body = error_to_response(DirectWriteRefusedError("feedback", "fits", "approve"))
+    status, body = error_to_response(DirectWriteRefusedError("feedback", "fits", "accept"))
     assert status == 403
     assert body.error_code == "direct_write_refused"
     assert body.context == {
         "kind": "feedback",
         "type_name": "fits",
-        "source": "approve",
+        "source": "accept",
     }

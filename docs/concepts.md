@@ -359,7 +359,7 @@ Feedback is edge-level review tied to a receipt. Every action requires
 
 | Action | Effect |
 | --- | --- |
-| `accept` | Mark the edge trusted by the reviewer (`approve` is a deprecated input alias until 0.4.0; the stored review status remains `approved`) |
+| `accept` | Mark the edge trusted by the reviewer (the stored review status remains `approved`) |
 | `reject` | Exclude the edge from future query results |
 | `correct` | Apply declared property corrections and accept (requires a non-empty `corrections` object) |
 

@@ -16,7 +16,6 @@ from pydantic import Field, TypeAdapter
 from cruxible_client import contracts
 from cruxible_core import __version__
 from cruxible_core.deprecation import (
-    APPROVE_FEEDBACK_ACTION,
     GROUP_OVERRIDE,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
@@ -401,7 +400,7 @@ def register_tools(
     @_tool
     def cruxible_feedback(
         instance_id: str,
-        action: contracts.FeedbackInputAction,
+        action: contracts.FeedbackAction,
         from_type: str,
         from_id: str,
         relationship_type: str,
@@ -432,13 +431,10 @@ def register_tools(
         group override for group resolve; use `force_review`. The edge must
         already exist in the graph.
         """
-        normalized_action: contracts.FeedbackInputAction = (
-            "accept" if action == "approve" else action
-        )
         result = handlers.handle_feedback(
             instance_id=instance_id,
             receipt_id=receipt_id,
-            action=normalized_action,
+            action=action,
             from_type=from_type,
             from_id=from_id,
             relationship_type=relationship_type,
@@ -453,8 +449,6 @@ def register_tools(
             group_override=group_override,
         )
         notices: list[DeprecationNotice] = []
-        if action == "approve":
-            notices.append(APPROVE_FEEDBACK_ACTION)
         if group_override:
             notices.append(GROUP_OVERRIDE)
         return _MCPFeedbackResult.model_validate(_mcp_deprecation_payload(result, notices))
@@ -465,14 +459,8 @@ def register_tools(
         items: list[contracts.FeedbackBatchItemInput],
     ) -> _MCPFeedbackBatchResult:
         """Record batch edge feedback under one top-level mutation receipt."""
-        normalized_items = [
-            item.model_copy(update={"action": "accept"}) if item.action == "approve" else item
-            for item in items
-        ]
-        result = handlers.handle_feedback_batch(instance_id, normalized_items)
+        result = handlers.handle_feedback_batch(instance_id, items)
         notices: list[DeprecationNotice] = []
-        if any(item.action == "approve" for item in items):
-            notices.append(APPROVE_FEEDBACK_ACTION)
         if any(item.group_override for item in items):
             notices.append(GROUP_OVERRIDE)
         return _MCPFeedbackBatchResult.model_validate(_mcp_deprecation_payload(result, notices))
@@ -482,7 +470,7 @@ def register_tools(
         instance_id: str,
         receipt_id: str,
         result_index: int,
-        action: contracts.FeedbackInputAction,
+        action: contracts.FeedbackAction,
         reason: str = "",
         reason_code: str | None = None,
         scope_hints: dict[str, Any] | None = None,
@@ -497,14 +485,11 @@ def register_tools(
         resolve candidate groups; use group resolution for group theses and
         member-set decisions.
         """
-        normalized_action: contracts.FeedbackInputAction = (
-            "accept" if action == "approve" else action
-        )
         result = handlers.handle_feedback_from_query(
             instance_id,
             receipt_id=receipt_id,
             result_index=result_index,
-            action=normalized_action,
+            action=action,
             reason=reason,
             reason_code=reason_code,
             scope_hints=scope_hints,
@@ -514,8 +499,6 @@ def register_tools(
             path_alias=path_alias,
         )
         notices: list[DeprecationNotice] = []
-        if action == "approve":
-            notices.append(APPROVE_FEEDBACK_ACTION)
         if group_override:
             notices.append(GROUP_OVERRIDE)
         return _MCPFeedbackResult.model_validate(_mcp_deprecation_payload(result, notices))

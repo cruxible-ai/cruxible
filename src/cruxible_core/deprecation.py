@@ -30,14 +30,6 @@ class DeprecationNotice:
         return asdict(self)
 
 
-FLAG_FEEDBACK_ACTION = DeprecationNotice(
-    surface="feedback action 'flag'",
-    replacement="attest --stance contradict",
-)
-APPROVE_FEEDBACK_ACTION = DeprecationNotice(
-    surface="feedback action 'approve'",
-    replacement="feedback action 'accept'",
-)
 LEGACY_OUTCOME_RECORD = DeprecationNotice(
     surface="legacy outcome record functions",
     replacement="resolution contracts and attestations",
@@ -64,8 +56,6 @@ emitters exist for INPUT deprecations, where a caller's use is visible.
 """
 
 DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
-    FLAG_FEEDBACK_ACTION,
-    APPROVE_FEEDBACK_ACTION,
     LEGACY_OUTCOME_RECORD,
     LEGACY_OUTCOME_PROFILE,
     GROUP_OVERRIDE,
