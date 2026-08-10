@@ -20,7 +20,13 @@ from cruxible_core.procedure.types import (
     compute_procedure_definition_digest,
 )
 from cruxible_core.runtime.instance import CruxibleInstance
-from cruxible_core.service import service_lock, service_propose_procedure
+from cruxible_core.service import (
+    service_accept_procedure,
+    service_lock,
+    service_propose_procedure,
+    service_record_reading,
+)
+from cruxible_core.temporal import utc_now
 from tests.test_procedures.conftest import CONFIG_YAML, actor, provider_definition
 
 
@@ -386,6 +392,7 @@ def test_procedure_read_commands_use_envelopes_and_surface_started_tombstone(
     }
 
     assert shown_text.exit_code == 0, shown_text.output
+    assert shown_payload["procedure"]["track_record"]["linked_outcomes"] is None
     assert "top_refusal_reason=null, linked_outcomes=null" in shown_text.output
     assert "Input schema:" in shown_text.output
     assert "value (int, required)" in shown_text.output
@@ -407,6 +414,48 @@ def test_procedure_read_commands_use_envelopes_and_surface_started_tombstone(
 
     assert runs_text.exit_code == 0, runs_text.output
     assert "verdict=null (started/unfinalized tombstone)" in runs_text.output
+
+
+def test_procedure_show_renders_recorded_linked_outcomes_in_both_tracks(
+    runner: CliRunner,
+    procedure_cli_instance: tuple[CruxibleInstance, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, procedure_id = procedure_cli_instance
+    monkeypatch.chdir(instance.get_root_path())
+    service_accept_procedure(
+        instance,
+        procedure_id,
+        expected_version=1,
+        actor_context=actor("cli-reviewer"),
+    )
+    service_record_reading(
+        instance,
+        procedure_id,
+        subject_grain="procedure_unit",
+        grade="attestation",
+        verdict="satisfied",
+        observed_at=utc_now(),
+        actor_context=actor("cli-recorder"),
+    )
+
+    shown = runner.invoke(cli, ["procedure", "show", procedure_id, "--json"])
+    shown_text = runner.invoke(cli, ["procedure", "show", procedure_id])
+
+    assert shown.exit_code == 0, shown.output
+    linked_outcomes = json.loads(shown.output)["procedure"]["track_record"]["linked_outcomes"]
+    assert linked_outcomes["procedure_unit"]["attestation_grade"] == {
+        "readings": 1,
+        "satisfied": 1,
+        "contradicted": 0,
+        "indeterminate": 0,
+    }
+    assert shown_text.exit_code == 0, shown_text.output
+    assert (
+        "linked_outcomes=procedure_unit contract=0 attestation=1; "
+        "node contract=0 attestation=0; arm contract=0 attestation=0"
+    ) in shown_text.output
+    assert "linked_outcomes=null" not in shown_text.output
 
 
 def test_procedure_propose_loads_yaml_and_forwards_governance_fields(

@@ -25,6 +25,7 @@ from cruxible_core.cli.commands._common import (
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.errors import ConfigError
 from cruxible_core.procedure.types import (
+    LinkedOutcomeSummary,
     ProcedureDefinition,
     ProcedureExecutionResult,
     ProcedureGetResult,
@@ -384,6 +385,26 @@ def _run_items(result: Any) -> list[ProcedureRun]:
     return [ProcedureRun.model_validate(item) for item in result.items]
 
 
+def _format_linked_outcomes(summary: LinkedOutcomeSummary | None) -> str:
+    """Render one line of linked-outcome reading counts, grade by grade.
+
+    Grades stay apart and no grain is summed with another because the model
+    exposes no such total: each grain observes a different subject, so a
+    combined count would advertise a sample size no subject has.
+    """
+    if summary is None:
+        return "null"
+    return "; ".join(
+        f"{grain} contract={counts.contract_grade.readings} "
+        f"attestation={counts.attestation_grade.readings}"
+        for grain, counts in (
+            ("procedure_unit", summary.procedure_unit),
+            ("node", summary.node),
+            ("arm", summary.arm),
+        )
+    )
+
+
 def _echo_procedure(procedure: ProcedureRecord) -> None:
     click.echo(f"{procedure.procedure_id} [{procedure.status}] v{procedure.version}")
     click.echo(f"  Name: {procedure.definition.name}")
@@ -412,7 +433,8 @@ def _echo_procedure(procedure: ProcedureRecord) -> None:
         )
         click.echo(
             f"    last_succeeded_at={last_succeeded_at}, "
-            f"top_refusal_reason={top_refusal_reason}, linked_outcomes=null"
+            f"top_refusal_reason={top_refusal_reason}, "
+            f"linked_outcomes={_format_linked_outcomes(track_record.linked_outcomes)}"
         )
 
 

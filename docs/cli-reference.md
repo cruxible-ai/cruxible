@@ -1768,8 +1768,12 @@ Each item carries a `track_record` block summarizing that procedure's run
 ledger, so a dead procedure is distinguishable from a healthy one without a
 second call: `runs`, the exhaustive verdict buckets `succeeded`, `failed`,
 `refused`, `budget_exceeded`, and `in_flight` (started but not yet finalized),
-`last_succeeded_at`, `top_refusal_reason`, and `linked_outcomes` (reserved,
-always null). `runs` always equals the sum of the five buckets, so a procedure
+`last_succeeded_at`, `top_refusal_reason`, and `linked_outcomes`. The last is
+null until the procedure has a reading and otherwise carries a
+`procedure_unit`, `node`, and `arm` block, each keeping `contract_grade` and
+`attestation_grade` verdict buckets separate; no total is reported across
+grains or grades, and text mode prints the per-grain, per-grade reading counts.
+`runs` always equals the sum of the five buckets, so a procedure
 that exhausts its budget on every invocation reads differently from one whose
 invocations are still running. `top_refusal_reason` is the most frequently
 recorded refusal classification and is null when a procedure has never been
