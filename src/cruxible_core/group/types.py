@@ -16,11 +16,6 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_core.deprecation import (
-    GROUP_PROPOSED_BY_INPUT,
-    GROUP_RESOLVED_BY_INPUT,
-    accept_deprecated_model_input,
-)
 from cruxible_core.governance.actors import (
     DerivedActorKind,
     GovernedActorContext,
@@ -207,16 +202,6 @@ class GroupResolution(BaseModel):
         ),
     )
 
-    @model_validator(mode="before")
-    @classmethod
-    def accept_deprecated_resolved_by(cls, value: Any) -> Any:
-        """Accept and ignore the caller-declared resolver compatibility input."""
-        return accept_deprecated_model_input(
-            value,
-            field="resolved_by",
-            notice=GROUP_RESOLVED_BY_INPUT,
-        )
-
     @computed_field  # type: ignore[prop-decorator]
     @property
     def resolved_by(self) -> DerivedActorKind:
@@ -255,16 +240,6 @@ class CandidateGroup(BaseModel):
     resolution_id: str | None = None
     proposed_actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)
-
-    @model_validator(mode="before")
-    @classmethod
-    def accept_deprecated_proposed_by(cls, value: Any) -> Any:
-        """Accept and ignore the caller-declared proposer compatibility input."""
-        return accept_deprecated_model_input(
-            value,
-            field="proposed_by",
-            notice=GROUP_PROPOSED_BY_INPUT,
-        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -2240,7 +2240,6 @@ class CruxibleClient:
         suggested_priority: str | None = None,
         expected_pending_version: int | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
-        proposed_by: str | None = None,
     ) -> contracts.ProposeGroupToolResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/groups/propose",
@@ -2254,7 +2253,6 @@ class CruxibleClient:
                     "signal_sources_used": signal_sources_used,
                     "suggested_priority": suggested_priority,
                     "expected_pending_version": expected_pending_version,
-                    **({"proposed_by": proposed_by} if proposed_by is not None else {}),
                 },
                 actor_context,
             ),
@@ -2271,7 +2269,6 @@ class CruxibleClient:
         expected_pending_version: int,
         stamp_existing: bool = False,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
-        resolved_by: str | None = None,
     ) -> contracts.ResolveGroupToolResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/groups/{group_id}/resolve",
@@ -2281,7 +2278,6 @@ class CruxibleClient:
                     "rationale": rationale,
                     "expected_pending_version": expected_pending_version,
                     "stamp_existing": stamp_existing,
-                    **({"resolved_by": resolved_by} if resolved_by is not None else {}),
                 },
                 actor_context,
             ),

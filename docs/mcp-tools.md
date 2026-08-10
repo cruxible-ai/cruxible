@@ -1975,7 +1975,6 @@ reason was tracked.
 | `signal_sources_used` | no | array | null |  |
 | `suggested_priority` | no | string | null |  |
 | `expected_pending_version` | no | integer | null | Optimistic guard. A re-propose REWRITES the live pending group; pass the version you computed your delta against to have a bucket that moved underneath you refused instead of overwritten. Omit for an unconditional refresh. |
-| `proposed_by` | no | string | null | Deprecated and ignored; actor kind is derived from the runtime actor context. |
 
 Each member and each nested signal may pass `citation_handles` beside the
 unchanged `source_evidence` locators.
@@ -2005,7 +2004,6 @@ unchanged `source_evidence` locators.
 | `expected_pending_version` | yes | integer |  |
 | `rationale` | no | string |  |
 | `stamp_existing` | no | boolean | On approve, bless each surviving pre-existing edge (member tuple already live) with this group's review status and provenance instead of skipping it. |
-| `resolved_by` | no | string | null | Deprecated and ignored; actor kind is derived from the runtime actor context. |
 
 **Returns:** Top-level fields: `group_id`, `action`, `edges_created`, `edges_skipped`, `resolution_id`, `receipt_id`, `skipped_members` (per-member skip explanations: identity plus `skip_kind`, `reason`, `stamped`), `edges_stamped`, `deprecation_warnings`
 

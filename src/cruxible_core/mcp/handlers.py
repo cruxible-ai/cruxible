@@ -46,14 +46,6 @@ class _OpenedByAliasKwargs(TypedDict, total=False):
     opened_by: str
 
 
-class _ProposedByAliasKwargs(TypedDict, total=False):
-    proposed_by: str
-
-
-class _ResolvedByAliasKwargs(TypedDict, total=False):
-    resolved_by: str
-
-
 def get_manager() -> InstanceManager:
     """Return the process-global instance manager."""
     return runtime_get_manager()
@@ -2417,12 +2409,8 @@ def handle_propose_group(
     signal_sources_used: list[str] | None = None,
     suggested_priority: str | None = None,
     expected_pending_version: int | None = None,
-    proposed_by: str | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""
-    deprecated_kwargs: _ProposedByAliasKwargs = {}
-    if proposed_by is not None:
-        deprecated_kwargs["proposed_by"] = proposed_by
     return _dispatch_remote_or_local(
         lambda client: client.propose_group(
             instance_id,
@@ -2434,7 +2422,6 @@ def handle_propose_group(
             signal_sources_used=signal_sources_used,
             suggested_priority=suggested_priority,
             expected_pending_version=expected_pending_version,
-            **deprecated_kwargs,
         ),
         lambda: api.propose_group(
             instance_id,
@@ -2446,7 +2433,6 @@ def handle_propose_group(
             signal_sources_used=signal_sources_used,
             suggested_priority=suggested_priority,
             expected_pending_version=expected_pending_version,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_propose_group",
@@ -2460,12 +2446,8 @@ def handle_resolve_group(
     rationale: str = "",
     expected_pending_version: int | None = None,
     stamp_existing: bool = False,
-    resolved_by: str | None = None,
 ) -> contracts.ResolveGroupToolResult:
     """Resolve a candidate group (approve or reject)."""
-    deprecated_kwargs: _ResolvedByAliasKwargs = {}
-    if resolved_by is not None:
-        deprecated_kwargs["resolved_by"] = resolved_by
     return _dispatch_remote_or_local(
         lambda client: client.resolve_group(
             instance_id,
@@ -2474,7 +2456,6 @@ def handle_resolve_group(
             rationale=rationale,
             expected_pending_version=_required_pending_version(expected_pending_version),
             stamp_existing=stamp_existing,
-            **deprecated_kwargs,
         ),
         lambda: api.resolve_group(
             instance_id,
@@ -2483,7 +2464,6 @@ def handle_resolve_group(
             rationale=rationale,
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
-            **deprecated_kwargs,
         ),
         allow_local=False,
         operation_name="cruxible_resolve_group",

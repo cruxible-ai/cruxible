@@ -58,14 +58,6 @@ OUTCOME_SOURCE_INPUT = DeprecationNotice(
     surface="OutcomeRecord.source input",
     replacement="actor_context",
 )
-GROUP_RESOLVED_BY_INPUT = DeprecationNotice(
-    surface="GroupResolution.resolved_by input",
-    replacement="resolved_actor_context",
-)
-GROUP_PROPOSED_BY_INPUT = DeprecationNotice(
-    surface="CandidateGroup.proposed_by input",
-    replacement="proposed_actor_context",
-)
 DECISION_OPENED_BY_INPUT = DeprecationNotice(
     surface="DecisionRecord.opened_by input",
     replacement="opened_actor_context",
@@ -91,8 +83,6 @@ DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
     GROUP_OVERRIDE,
     FEEDBACK_SOURCE_INPUT,
     OUTCOME_SOURCE_INPUT,
-    GROUP_RESOLVED_BY_INPUT,
-    GROUP_PROPOSED_BY_INPUT,
     DECISION_OPENED_BY_INPUT,
     PROCEDURE_STRING_WARNINGS,
 )

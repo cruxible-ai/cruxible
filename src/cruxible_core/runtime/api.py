@@ -4541,7 +4541,6 @@ def propose_group(
     suggested_priority: str | None = None,
     expected_pending_version: int | None = None,
     actor_context: Any | None = None,
-    proposed_by: str | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""
     check_permission("cruxible_propose_group", instance_id=instance_id)
@@ -4595,7 +4594,6 @@ def propose_group(
         suggested_priority=suggested_priority,
         expected_pending_version=expected_pending_version,
         actor_context=actor,
-        proposed_by=proposed_by,
     )
     return contracts.ProposeGroupToolResult(
         group_id=result.group_id,
@@ -4781,7 +4779,6 @@ def resolve_group(
     expected_pending_version: int | None = None,
     actor_context: Any | None = None,
     stamp_existing: bool = False,
-    resolved_by: str | None = None,
 ) -> contracts.ResolveGroupToolResult:
     """Resolve a candidate group (approve or reject)."""
     check_permission("cruxible_resolve_group", instance_id=instance_id)
@@ -4796,7 +4793,6 @@ def resolve_group(
         expected_pending_version=expected_pending_version,
         actor_context=actor,
         stamp_existing=stamp_existing,
-        resolved_by=resolved_by,
     )
     return contracts.ResolveGroupToolResult(
         group_id=result.group_id,

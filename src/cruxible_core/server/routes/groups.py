@@ -2,16 +2,9 @@
 
 from __future__ import annotations
 
-from typing import cast
-
-from fastapi import APIRouter, Response
+from fastapi import APIRouter
 
 from cruxible_client import contracts
-from cruxible_core.deprecation import (
-    GROUP_PROPOSED_BY_INPUT,
-    GROUP_RESOLVED_BY_INPUT,
-    emit_http_deprecations,
-)
 from cruxible_core.runtime import api
 from cruxible_core.server.request_models import (
     ProposeGroupRequest,
@@ -27,7 +20,6 @@ router = APIRouter(prefix="/api/v1", tags=["groups"])
 async def propose_group(
     instance_id: str,
     req: ProposeGroupRequest,
-    response: Response,
 ) -> contracts.ProposeGroupToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     result = api.propose_group(
@@ -41,13 +33,8 @@ async def propose_group(
         suggested_priority=req.suggested_priority,
         expected_pending_version=req.expected_pending_version,
         actor_context=req.actor_context,
-        proposed_by=req.proposed_by,
     )
-    notices = [GROUP_PROPOSED_BY_INPUT] if "proposed_by" in req.model_fields_set else []
-    return cast(
-        contracts.ProposeGroupToolResult,
-        emit_http_deprecations(response, result, notices),
-    )
+    return result
 
 
 @router.post(
@@ -58,7 +45,6 @@ async def resolve_group(
     instance_id: str,
     group_id: str,
     req: ResolveGroupRequest,
-    response: Response,
 ) -> contracts.ResolveGroupToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     result = api.resolve_group(
@@ -69,13 +55,8 @@ async def resolve_group(
         expected_pending_version=req.expected_pending_version,
         actor_context=req.actor_context,
         stamp_existing=req.stamp_existing,
-        resolved_by=req.resolved_by,
     )
-    notices = [GROUP_RESOLVED_BY_INPUT] if "resolved_by" in req.model_fields_set else []
-    return cast(
-        contracts.ResolveGroupToolResult,
-        emit_http_deprecations(response, result, notices),
-    )
+    return result
 
 
 @router.patch(

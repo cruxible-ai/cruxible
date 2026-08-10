@@ -20,8 +20,6 @@ from cruxible_core.deprecation import (
     DECISION_OPENED_BY_INPUT,
     FEEDBACK_SOURCE_INPUT,
     GROUP_OVERRIDE,
-    GROUP_PROPOSED_BY_INPUT,
-    GROUP_RESOLVED_BY_INPUT,
     LEGACY_OUTCOME_PROFILE,
     LEGACY_OUTCOME_RECORD,
     OUTCOME_SOURCE_INPUT,
@@ -46,14 +44,6 @@ class _MCPOutcomeResult(contracts.OutcomeResult):
 
 
 class _MCPOutcomeProfileResult(contracts.OutcomeProfileResult):
-    deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
-
-
-class _MCPProposeGroupResult(contracts.ProposeGroupToolResult):
-    deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
-
-
-class _MCPResolveGroupResult(contracts.ResolveGroupToolResult):
     deprecation_warnings: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -1654,8 +1644,7 @@ def register_tools(
         signal_sources_used: list[str] | None = None,
         suggested_priority: str | None = None,
         expected_pending_version: int | None = None,
-        proposed_by: str | None = None,
-    ) -> _MCPProposeGroupResult:
+    ) -> contracts.ProposeGroupToolResult:
         """Propose a candidate group of edges for batch review.
 
         Each member carries tri-state signals (support/contradict/unsure) from
@@ -1678,7 +1667,6 @@ def register_tools(
         group. Pass ``expected_pending_version`` (read from the group you
         computed the delta against) to have a bucket that moved underneath you
         refused instead of overwritten; omit it for an unconditional refresh.
-        ``proposed_by`` is a deprecated, ignored compatibility input.
         """
         result = handlers.handle_propose_group(
             instance_id,
@@ -1690,10 +1678,8 @@ def register_tools(
             signal_sources_used=signal_sources_used,
             suggested_priority=suggested_priority,
             expected_pending_version=expected_pending_version,
-            proposed_by=proposed_by,
         )
-        notices = [GROUP_PROPOSED_BY_INPUT] if proposed_by is not None else []
-        return _MCPProposeGroupResult.model_validate(_mcp_deprecation_payload(result, notices))
+        return result
 
     @_tool
     def cruxible_resolve_group(
@@ -1703,8 +1689,7 @@ def register_tools(
         expected_pending_version: int,
         rationale: str = "",
         stamp_existing: bool = False,
-        resolved_by: str | None = None,
-    ) -> _MCPResolveGroupResult:
+    ) -> contracts.ResolveGroupToolResult:
         """Resolve a candidate group by approving or rejecting it.
 
         Approve creates edges in the graph for valid members. Members whose
@@ -1713,7 +1698,6 @@ def register_tools(
         surviving pre-existing edge with this group's review status and
         provenance. Reject records the resolution without graph mutation. Both
         persist the resolution for audit and future auto-resolve precedent.
-        ``resolved_by`` is a deprecated, ignored compatibility input.
         """
         result = handlers.handle_resolve_group(
             instance_id,
@@ -1722,10 +1706,8 @@ def register_tools(
             rationale=rationale,
             expected_pending_version=expected_pending_version,
             stamp_existing=stamp_existing,
-            resolved_by=resolved_by,
         )
-        notices = [GROUP_RESOLVED_BY_INPUT] if resolved_by is not None else []
-        return _MCPResolveGroupResult.model_validate(_mcp_deprecation_payload(result, notices))
+        return result
 
     @_tool
     def cruxible_update_trust_status(

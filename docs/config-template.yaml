@@ -550,7 +550,6 @@ workflows: {}
   #         analysis_state:
   #           summary: $steps.summary.items
   #         suggested_priority: review
-  #         proposed_by: agent
   #       as: proposal
   #   returns: proposal
   #

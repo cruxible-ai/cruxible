@@ -211,8 +211,6 @@ class ProposeGroupRequest(BaseModel):
     # advertised in the CHANGELOG, and then silently dropped at the HTTP seam.
     expected_pending_version: int | None = None
     actor_context: contracts.GovernedActorContext | None = None
-    proposed_by: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
 
 
 class ResolveGroupRequest(BaseModel):
@@ -224,8 +222,6 @@ class ResolveGroupRequest(BaseModel):
     # already live) with the group's review status + provenance instead of
     # skipping it silently. Default keeps today's skip-but-now-explained behavior.
     stamp_existing: bool = False
-    resolved_by: str | None = None
-    """Deprecated and ignored; actor kind is derived from ``actor_context``."""
 
 
 class UpdateTrustStatusRequest(BaseModel):
