@@ -7,6 +7,40 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **The 0.4.0 deprecation removals landed (BREAKING).** Every surface the
+  registry stamped `removal_version: 0.4.0` and that a caller could stop sending
+  is gone, along with its acceptance path, its registry entry, and the
+  transport emitters that carried its warning. Removed: the `approve` feedback
+  action (use `accept`), the `flag` feedback action (use
+  `cruxible attest record --stance contradict`), the `group_override` feedback
+  write path (use `force_review`), and the retired declared-actor inputs
+  `source`, `proposed_by`, `resolved_by`, and `opened_by` (the kind is derived
+  from `actor_context`). These were accepted-and-ignored compatibility inputs
+  through 0.3; sending one now fails ordinary schema validation — an unknown
+  field on HTTP/MCP, an unknown `--action` choice on the CLI, a `ValidationError`
+  on the Python models — with no special tombstone handling. `FeedbackInputAction`
+  is removed from the client contracts: the input vocabulary and the write
+  vocabulary are the same thing again, so `FeedbackAction` is both.
+  **Migration:** drop the arguments and pass `actor_context`; replace `approve`
+  with `accept`; replace `group_override=True` with `force_review=True` on the
+  proposal. **Unaffected:** stored history still reads `approve` and `flag` rows,
+  the derived `source` / `proposed_by` / `resolved_by` / `opened_by` READ
+  projections still compute from the actor context, and edges already carrying
+  `assertion.group_override` still read and still suppress a re-proposal — the
+  flag is now write-once history that nothing can set again.
+  The `DEPRECATIONS.md` and 0.3.0 changelog rows stay as the historical record.
+- **Two 0.4.0-stamped deprecations were deliberately NOT removed.** The legacy
+  outcome record and outcome profile functions (`outcome record`,
+  `outcome profile`, `service_outcome`, `service_get_outcome_profile`, and their
+  MCP/HTTP/client equivalents) still work and still warn. Their stated
+  replacement, resolution contracts, carries no equivalent of an outcome
+  profile's coded vocabulary, its `required_scope_keys`, or the profile-drift
+  analysis that `analyze outcomes` reports; four shipped kits configure
+  `outcome_profiles`, and the blueprint `outcome_metric` hook names an outcome
+  profile as its available target. Removing the only writer would leave that
+  config, the `outcomes` table, `list outcomes`, and `analyze outcomes` alive
+  with nothing able to feed them. Whether the schedule moves or the replacement
+  grows the missing machinery first is a maintainer call.
 - **Procedure definitions can be graphs.** A definition is a typed DAG rather
   than a flat list: guard nodes carry a closed predicate grammar and two
   labelled successors, flow wrappers declare an unconditional successor, and a

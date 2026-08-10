@@ -23,3 +23,12 @@ together.
 | `OperationType 'group_clear' read-only member` | `group_withdraw` | 0.3.0 | 0.4.0 |
 | `StateHealthGroupsSection.auto_resolved_count` | `withdrawn_count` | 0.3.0 | 0.4.0 |
 | `ProcedureTransitionResult.warnings string list` | `ProcedureTransitionResult.typed_warnings` | 0.4.0 | 0.5.0 |
+
+The rows stay after a surface is removed: this table is the historical schedule,
+not a list of what is still accepted. Removed in 0.4.0 (the registry entry, the
+acceptance path, and every surface that carried them are gone; the DEPRECATIONS
+and CHANGELOG rows are the record): `feedback action 'flag'`, `feedback action
+'approve'`, `feedback group_override write path`, `FeedbackRecord.source input`,
+`OutcomeRecord.source input`, `GroupResolution.resolved_by input`,
+`CandidateGroup.proposed_by input`, and `DecisionRecord.opened_by input`.
+Sending any of them now fails ordinary schema validation rather than warning.
