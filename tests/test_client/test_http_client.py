@@ -724,7 +724,7 @@ def test_feedback_from_query_uses_expected_route_and_payload():
 
 def test_client_forwards_structured_http_deprecation_header() -> None:
     notice = (
-        '{"removal_version":"0.4.0","replacement":"resolution contracts and attestations",'
+        '{"removal_version":"0.5.0","replacement":"resolution contracts and attestations",'
         '"surface":"legacy outcome record functions"}'
     )
 

@@ -35,18 +35,25 @@ the project's own state instance.
   `assertion.group_override` still read and still suppress a re-proposal — the
   flag is now write-once history that nothing can set again.
   The `DEPRECATIONS.md` and 0.3.0 changelog rows stay as the historical record.
-- **Two 0.4.0-stamped deprecations were deliberately NOT removed.** The legacy
+- **The legacy outcome deprecations were rescheduled to 0.5.0.** The legacy
   outcome record and outcome profile functions (`outcome record`,
   `outcome profile`, `service_outcome`, `service_get_outcome_profile`, and their
-  MCP/HTTP/client equivalents) still work and still warn. Their stated
-  replacement, resolution contracts, carries no equivalent of an outcome
-  profile's coded vocabulary, its `required_scope_keys`, or the profile-drift
-  analysis that `analyze outcomes` reports; four shipped kits configure
-  `outcome_profiles`, and the blueprint `outcome_metric` hook names an outcome
-  profile as its available target. Removing the only writer would leave that
-  config, the `outcomes` table, `list outcomes`, and `analyze outcomes` alive
-  with nothing able to feed them. Whether the schedule moves or the replacement
-  grows the missing machinery first is a maintainer call.
+  MCP/HTTP/client equivalents) were stamped `removal_version: 0.4.0` and were
+  NOT removed; the maintainer has ruled the window moves to **0.5.0**, and their
+  warnings now say so on every transport. The rationale is that the stated
+  replacement does not exist yet: resolution contracts carry no equivalent of an
+  outcome profile's coded vocabulary, its `required_scope_keys`, or the
+  profile-drift analysis that `analyze outcomes` reports; four shipped kits
+  configure `outcome_profiles`, and the blueprint `outcome_metric` hook names an
+  outcome profile as its available target. Removing the only writer first would
+  leave that config, the `outcomes` table, `list outcomes`, and
+  `analyze outcomes` alive with nothing able to feed them, and porting the
+  missing machinery onto the resolution-contract rail is post-Playbill-branch
+  work. Both entries now state `removal_version="0.5.0"` explicitly instead of
+  inheriting the registry default, so the new commitment does not move when the
+  default does. `DEFAULT_REMOVAL_VERSION` itself moves to `0.5.0` for the same
+  reason a schedule exists: 0.4 is the release under development, so a notice
+  registered today and left on the old default would have been born past due.
 - **Procedure definitions can be graphs.** A definition is a typed DAG rather
   than a flat list: guard nodes carry a closed predicate grammar and two
   labelled successors, flow wrappers declare an unconditional successor, and a

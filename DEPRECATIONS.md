@@ -11,8 +11,8 @@ together.
 | --- | --- | --- | --- |
 | `feedback action 'flag'` | `attest --stance contradict` | 0.3.0 | 0.4.0 |
 | `feedback action 'approve'` | `feedback action 'accept'` | 0.3.0 | 0.4.0 |
-| `legacy outcome record functions` | `resolution contracts and attestations` | 0.3.0 | 0.4.0 |
-| `legacy outcome profile functions` | `resolution contract declarations` | 0.3.0 | 0.4.0 |
+| `legacy outcome record functions` | `resolution contracts and attestations` | 0.3.0 | 0.5.0 |
+| `legacy outcome profile functions` | `resolution contract declarations` | 0.3.0 | 0.5.0 |
 | `feedback group_override write path` | `force_review` | 0.3.0 | 0.4.0 |
 | `FeedbackRecord.source input` | `actor_context` | 0.3.0 | 0.4.0 |
 | `OutcomeRecord.source input` | `actor_context` | 0.3.0 | 0.4.0 |
@@ -40,3 +40,15 @@ client input contracts, and a `BadParameter` naming the offending item on
 instead. Only the retired names are refused — an unrelated unknown field is
 still tolerated, because banning extras outright is a wider contract change
 than this schedule promised.
+
+**Rescheduled in 0.4.0.** `legacy outcome record functions` and `legacy outcome
+profile functions` were stamped 0.4.0 and were NOT removed; the maintainer moved
+both to 0.5.0. The stated replacement does not exist yet — resolution contracts
+carry no equivalent of an outcome profile's coded vocabulary, its
+`required_scope_keys`, or the profile-drift analysis `analyze outcomes` reports,
+and porting that machinery is post-Playbill-branch work. Removing the only
+writer first would leave the `outcome_profiles` config four shipped kits
+declare, the `outcomes` table, `list outcomes`, and `analyze outcomes` alive
+with nothing able to feed them. Both entries now carry `removal_version:
+"0.5.0"` explicitly in the registry rather than inheriting the default, so the
+new commitment survives a change to that default.

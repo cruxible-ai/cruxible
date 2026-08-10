@@ -83,7 +83,7 @@ def test_legacy_outcome_record_still_dispatches(monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     assert calls == ["outcome"]
     assert '"surface":"legacy outcome record functions"' in result.output
-    assert '"removal_version":"0.4.0"' in result.output
+    assert '"removal_version":"0.5.0"' in result.output
 
 
 def test_outcome_contract_commands_dispatch_and_emit_list_envelopes(monkeypatch) -> None:

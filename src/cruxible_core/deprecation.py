@@ -13,7 +13,13 @@ import warnings
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, TextIO
 
-DEFAULT_REMOVAL_VERSION = "0.4.0"
+DEFAULT_REMOVAL_VERSION = "0.5.0"
+"""Earliest release a NEWLY registered deprecation may honestly name.
+
+0.4 is the release under development, so a notice that took the old default
+promised removal in the very release it was born into -- past due on day one.
+The default now names the release after that; anything else states its own.
+"""
 
 
 @dataclass(frozen=True)
@@ -32,11 +38,22 @@ class DeprecationNotice:
 LEGACY_OUTCOME_RECORD = DeprecationNotice(
     surface="legacy outcome record functions",
     replacement="resolution contracts and attestations",
+    removal_version="0.5.0",
 )
 LEGACY_OUTCOME_PROFILE = DeprecationNotice(
     surface="legacy outcome profile functions",
     replacement="resolution contract declarations",
+    removal_version="0.5.0",
 )
+"""Rescheduled from 0.4.0 to 0.5.0 by maintainer ruling, stated EXPLICITLY.
+
+Both were stamped 0.4.0 and both survived the 0.4.0 sweep, because the named
+replacement does not exist yet: resolution contracts carry no equivalent of an
+outcome profile's coded vocabulary, its ``required_scope_keys``, or the
+profile-drift analysis ``analyze outcomes`` reports. Porting that machinery is
+post-Playbill work, so the window moves rather than the surface. Written out
+instead of left on the default so the commitment survives a default change.
+"""
 PROCEDURE_STRING_WARNINGS = DeprecationNotice(
     surface="ProcedureTransitionResult.warnings string list",
     replacement="ProcedureTransitionResult.typed_warnings",
