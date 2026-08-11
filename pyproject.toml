@@ -32,6 +32,7 @@ dependencies = [
     "pyyaml>=6.0",
     "structlog>=24.0",
     "click>=8.0",
+    "cryptography>=46.0",
     "rich>=13.0",
     "httpx>=0.24",
     "pypdf>=5.0",

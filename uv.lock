@@ -405,6 +405,7 @@ source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "cruxible-client" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "markdown-it-py" },
@@ -445,6 +446,7 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
     { name = "cruxible-client", editable = "packages/cruxible-client" },
+    { name = "cryptography", specifier = ">=46.0" },
     { name = "docling", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "docling", marker = "extra == 'pdf'", specifier = ">=2.0" },
     { name = "fastapi", specifier = ">=0.100" },
