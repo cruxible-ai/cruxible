@@ -48,6 +48,8 @@ PROJECTION_PIECE_DIRECTORY_FSYNC: Final = "projection.piece_directory_fsync"
 PROJECTION_MANIFEST_WRITE: Final = "projection.manifest_write"
 PROJECTION_MANIFEST_PUBLICATION: Final = "projection.manifest_publication"
 
+PYTHON_REFERENCE_ASSEMBLER: Final = "python-reference"
+
 PROJECTION_CRASH_POINTS: Final = (
     PROJECTION_PREBUILD,
     PROJECTION_PIECE_FILE_FSYNC,
@@ -264,7 +266,7 @@ class ProjectionAssembler:
                 request=request,
                 parsed=parsed,
                 registry=self.registry,
-                compiler=self.accepted.compiler,
+                assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
             ),
         )
         os.chmod(staged_piece, 0o400)
@@ -408,6 +410,7 @@ __all__ = [
     "PROJECTION_PIECE_DIRECTORY_FSYNC",
     "PROJECTION_PIECE_FILE_FSYNC",
     "PROJECTION_PREBUILD",
+    "PYTHON_REFERENCE_ASSEMBLER",
     "ProjectionAssembler",
     "ProjectionCrashHook",
 ]

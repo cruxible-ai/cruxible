@@ -240,6 +240,40 @@ def test_logical_export_is_independent_of_sqlite_page_layout(tmp_path: Path) -> 
     assert projection_logical_digest(original) == projection_logical_digest(repacked)
 
 
+def test_assembler_implementation_is_nonlogical_build_metadata(tmp_path: Path) -> None:
+    _assembler, result = _build(
+        tmp_path,
+        {"artifacts/fixtures/one.yaml": fixture_bytes("one", {"count": 1})},
+        name="a",
+        oid_seed="assembler-metadata",
+    )
+    original = Path(result.manifest_path).parent / result.manifest.pieces[0].name
+    alternate = tmp_path / "alternate-assembler.sqlite"
+    shutil.copyfile(original, alternate)
+    connection = sqlite3.connect(alternate)
+    try:
+        connection.execute(
+            "UPDATE assembler_metadata SET implementation = 'rust-parity' WHERE singleton = 1"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    exported = canonical_logical_export(original)
+    compiler_table = next(
+        table for table in exported["tables"] if table["name"] == "compiler_coordinates"
+    )
+    assert [column["name"] for column in compiler_table["columns"]] == [
+        "singleton",
+        "schema_version",
+        "compiler_digest",
+    ]
+    assert all(table["name"] != "assembler_metadata" for table in exported["tables"])
+    assert canonical_logical_export(alternate) == exported
+    assert projection_logical_digest(alternate) == projection_logical_digest(original)
+    assert physical_file_digest(alternate) != physical_file_digest(original)
+
+
 def test_fact_declarations_constraints_and_rows_are_in_logical_export(tmp_path: Path) -> None:
     _assembler, result = _build(
         tmp_path,

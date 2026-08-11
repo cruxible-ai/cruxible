@@ -185,7 +185,7 @@ def _load_object(content: bytes, *, path: str) -> dict[str, object]:
         payload = json.loads(decoded, object_pairs_hook=_pairs_object)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProjectionFormatError(
-            f"registered artifact must use canonical JSON-compatible YAML: {path}"
+            f"registered artifact must use strict canonical JSON (YAML-compatible): {path}"
         ) from exc
     if not isinstance(payload, dict):
         raise ProjectionFormatError(f"registered artifact must be an object: {path}")

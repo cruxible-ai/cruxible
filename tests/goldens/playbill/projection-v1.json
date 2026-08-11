@@ -1,7 +1,7 @@
 {
   "contract": "playbill-projection-logical-v1",
   "expected": {
-    "logical_digest": "sha256:c9d268605a835395eeae8899aca0f49287c4ca766c82348ac7ebb8b314ef2aac",
+    "logical_digest": "sha256:fff23d680de01ff4fbeca0a243a2eb8976d342fdcae863b1553c3e45922b99f9",
     "logical_export": {
       "schema_version": 1,
       "tables": [
@@ -39,7 +39,6 @@
         {
           "columns": [
             {"name": "singleton", "nullable": false, "type": "INTEGER"},
-            {"name": "implementation", "nullable": false, "type": "TEXT"},
             {"name": "schema_version", "nullable": false, "type": "INTEGER"},
             {"name": "compiler_digest", "nullable": false, "type": "TEXT"}
           ],
@@ -50,7 +49,6 @@
           "rows": [
             [
               1,
-              "python-reference",
               1,
               "sha256:cc2ec0b2922da1c83a65734be3f911c782a7b2ab34ce2e4a5f006e47aa52b2d4"
             ]

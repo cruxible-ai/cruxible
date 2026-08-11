@@ -29,10 +29,10 @@ from cruxible_core.playbill.projection import (
 )
 from cruxible_core.playbill.projection_artifacts import ParsedProjectionTree
 from cruxible_core.playbill.projection_extensions import ProjectionExtensionRegistry
-from cruxible_core.playbill.types import CompilerCoordinate
 
 _PIECE_RE = re.compile(r"^piece-[0-9a-f]{64}-[0-9]{4}\.sqlite$")
 _MANIFEST_RE = re.compile(r"^projection-[0-9a-f]{64}\.json$")
+_ASSEMBLER_IMPLEMENTATION_RE = re.compile(r"^[a-z][a-z0-9.-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -143,12 +143,10 @@ _TABLE_SPECS = (
         create_sql=(
             "CREATE TABLE compiler_coordinates (singleton INTEGER PRIMARY KEY "
             "CHECK(singleton = 1), "
-            "implementation TEXT NOT NULL, schema_version INTEGER NOT NULL, "
-            "compiler_digest TEXT NOT NULL) STRICT"
+            "schema_version INTEGER NOT NULL, compiler_digest TEXT NOT NULL) STRICT"
         ),
         columns=(
             ("singleton", "INTEGER", False),
-            ("implementation", "TEXT", False),
             ("schema_version", "INTEGER", False),
             ("compiler_digest", "TEXT", False),
         ),
@@ -156,6 +154,23 @@ _TABLE_SPECS = (
         constraints=("check(singleton=1)",),
         indexes=(),
         logical=True,
+    ),
+    _TableSpec(
+        name="assembler_metadata",
+        create_sql=(
+            "CREATE TABLE assembler_metadata (singleton INTEGER PRIMARY KEY "
+            "CHECK(singleton = 1), implementation TEXT NOT NULL, "
+            "contract_version INTEGER NOT NULL) STRICT"
+        ),
+        columns=(
+            ("singleton", "INTEGER", False),
+            ("implementation", "TEXT", False),
+            ("contract_version", "INTEGER", False),
+        ),
+        primary_key=("singleton",),
+        constraints=("check(singleton=1)",),
+        indexes=(),
+        logical=False,
     ),
     _TableSpec(
         name="generation_metadata",
@@ -227,9 +242,12 @@ def initialize_projection_database(
     request: AssemblerRequest,
     parsed: ParsedProjectionTree,
     registry: ProjectionExtensionRegistry,
-    compiler: CompilerCoordinate,
+    assembler_implementation: str,
 ) -> dict[str, int]:
     """Create and populate the complete PB-B one-piece SQLite projection."""
+
+    if not _ASSEMBLER_IMPLEMENTATION_RE.fullmatch(assembler_implementation):
+        raise ProjectionIntegrityError("assembler implementation identifier is not canonical")
 
     connection = sqlite3.connect(path)
     try:
@@ -292,8 +310,12 @@ def initialize_projection_database(
             ],
         )
         connection.execute(
-            "INSERT INTO compiler_coordinates VALUES (1,?,?,?)",
-            (compiler.implementation, request.schema_version, request.compiler_digest),
+            "INSERT INTO compiler_coordinates VALUES (1,?,?)",
+            (request.schema_version, request.compiler_digest),
+        )
+        connection.execute(
+            "INSERT INTO assembler_metadata VALUES (1,?,?)",
+            (assembler_implementation, request.contract_version),
         )
         connection.execute(
             "INSERT INTO generation_metadata VALUES (1,?,?,?,?,?)",
@@ -564,8 +586,10 @@ def bind_projection(
             "FROM generation_metadata WHERE singleton = 1"
         ).fetchone()
         compiler_row = connection.execute(
-            "SELECT implementation,schema_version,compiler_digest "
-            "FROM compiler_coordinates WHERE singleton = 1"
+            "SELECT schema_version,compiler_digest FROM compiler_coordinates WHERE singleton = 1"
+        ).fetchone()
+        assembler_row = connection.execute(
+            "SELECT implementation,contract_version FROM assembler_metadata WHERE singleton = 1"
         ).fetchone()
         counts = {
             spec.name: cast(
@@ -582,17 +606,25 @@ def bind_projection(
             manifest.generation_root,
         )
         expected_compiler = (
-            expected.compiler.implementation,
             expected.compiler.schema_version,
             expected.compiler.rule_digest,
         )
         integrity_value = tuple(integrity) if integrity is not None else None
         binding_metadata = tuple(metadata_row) if metadata_row is not None else None
         compiler = tuple(compiler_row) if compiler_row is not None else None
+        assembler = tuple(assembler_row) if assembler_row is not None else None
+        assembler_valid = (
+            assembler is not None
+            and len(assembler) == 2
+            and isinstance(assembler[0], str)
+            and _ASSEMBLER_IMPLEMENTATION_RE.fullmatch(assembler[0]) is not None
+            and assembler[1] == 1
+        )
         if (
             integrity_value != ("ok",)
             or binding_metadata != expected_metadata
             or compiler != expected_compiler
+            or not assembler_valid
         ):
             raise ProjectionIntegrityError("projection internal binding metadata is inconsistent")
         sorted_counts = dict(sorted(counts.items(), key=lambda item: item[0].encode("utf-8")))

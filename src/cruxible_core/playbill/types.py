@@ -144,7 +144,12 @@ class StorageLayout(StrictModel):
 
 
 class CompilerCoordinate(StrictModel):
-    """Validated compiler/schema coordinate outside the bootstrap preimage."""
+    """Validated semantic compiler/schema coordinate outside the bootstrap preimage.
+
+    ``implementation`` names the reference semantics whose rule digest is
+    accepted. The physical assembler engine that realizes those semantics is
+    recorded separately as nonlogical projection build metadata.
+    """
 
     tag: Literal["playbill-compiler-v1"] = "playbill-compiler-v1"
     implementation: Literal["python-reference"] = "python-reference"
