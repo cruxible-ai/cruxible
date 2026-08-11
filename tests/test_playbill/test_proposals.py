@@ -26,6 +26,8 @@ from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
+    ProposalEvidenceStore,
+    ProposalService,
     deterministic_rebase,
     evaluate_proposal_tree,
 )
@@ -183,7 +185,52 @@ def test_admission_refuses_local_locator_and_malformed_compilation_digest() -> N
         ProposalAdmissionRequest.model_validate({**payload, "source_path": "/tmp/doc.md"})
     with pytest.raises(ValidationError, match="source_compilation_digest"):
         ProposalAdmissionRequest.model_validate({**payload, "source_compilation_digest": "latest"})
+    with pytest.raises(ValidationError, match="limits"):
+        ProposalAdmissionRequest.model_validate({**payload, "limits": {"max_files": 1}})
     assert ProposalAdmissionRequest.model_validate(payload).source_compilation_digest is None
+
+
+def test_daemon_metadata_change_refuses_before_proposal_ref_update(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"body")
+    service = instance.proposal_service()
+    target = "refs/proposals/owner/protected-path"
+    tree = _proposal_tree(instance, _shell(body.digest))
+    tree["changesets/forged.json"] = b"{}\n"
+
+    with pytest.raises(ProposalAdmissionError, match="daemon-controlled"):
+        service.submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=_request(instance, target_ref=target),
+            candidate_tree=tree,
+            timestamp=TIMESTAMP,
+        )
+
+    assert service.transport.read_proposal_ref(target) is None
+
+
+def test_current_coordinate_provider_cannot_contradict_verified_base(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    accepted = instance.accepted_coordinate()
+    contradictory = accepted.model_copy(update={"semantic_root": "sha256:" + "99" * 32})
+    service = ProposalService(
+        instance.proposal_service().transport,
+        accepted=accepted,
+        bodies=instance.body_store(),
+        evidence=ProposalEvidenceStore(Path(instance.inspect().storage_directories["exhaust"])),
+        current_coordinate=lambda: contradictory,
+    )
+    body = instance.store_document_body(b"body")
+
+    with pytest.raises(ProposalAdmissionError, match="contradicts"):
+        service.submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=_request(instance),
+            candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+            timestamp=TIMESTAMP,
+        )
+
+    assert service.transport.read_proposal_ref(_request(instance).target_ref) is None
 
 
 def test_candidate_preimage_is_exact_oid_free_and_matches_golden() -> None:

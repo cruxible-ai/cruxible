@@ -135,6 +135,10 @@ class CandidateDigest(Sha256Value):
     kind = "candidate digest"
 
 
+class ProposalDigest(Sha256Value):
+    kind = "proposal digest"
+
+
 class SemanticDiffDigest(Sha256Value):
     kind = "semantic diff digest"
 
@@ -305,6 +309,7 @@ __all__ = [
     "ChangeSetDigest",
     "GenerationRoot",
     "LogicalDigest",
+    "ProposalDigest",
     "SemanticManifestRoot",
     "SemanticDiffDigest",
     "SemanticRoot",

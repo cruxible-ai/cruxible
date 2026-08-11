@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Callable, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -20,6 +20,7 @@ from cruxible_core.playbill.candidates import (
 )
 from cruxible_core.playbill.canonical import (
     CandidateDigest,
+    ProposalDigest,
     Sha256Value,
     canonical_bytes,
     canonical_digest,
@@ -120,7 +121,7 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     @field_validator("proposal_id")
     @classmethod
     def _proposal_id(cls, value: str) -> str:
-        CandidateDigest.from_tagged(value)
+        ProposalDigest.from_tagged(value)
         return value
 
     @field_validator("actor_id")
@@ -131,10 +132,9 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     @field_validator("target_ref")
     @classmethod
     def _target_ref(cls, value: str) -> str:
-        return ProposalAdmissionRequest(
-            target_ref=value,
-            proposed_base_oid="0" * 40,
-        ).target_ref
+        if not _PROPOSAL_REF_RE.fullmatch(value):
+            raise ValueError("proposal admission target_ref is malformed")
+        return value
 
     @field_validator("proposed_base_oid", "candidate_commit_oid", "candidate_tree_oid")
     @classmethod
@@ -159,6 +159,17 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     def _namespace_binding(self) -> "ProposalAdmissionRecord":
         if self.target_ref.split("/")[2] != self.actor_id:
             raise ValueError("admission target namespace differs from authenticated actor")
+        if (
+            len(
+                {
+                    len(self.proposed_base_oid),
+                    len(self.candidate_commit_oid),
+                    len(self.candidate_tree_oid),
+                }
+            )
+            != 1
+        ):
+            raise ValueError("proposal admission mixes Git object formats")
         return self
 
 
@@ -173,7 +184,13 @@ class ProposalEvaluationRecord(_StrictProposalModel):
     diagnostics: tuple[CompilerDiagnostic, ...] = ()
     evaluated_at: str
 
-    @field_validator("proposal_id", "candidate_digest")
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("candidate_digest")
     @classmethod
     def _candidate_digest(cls, value: str | None) -> str | None:
         if value is not None:
@@ -199,6 +216,10 @@ class ProposalEvaluationRecord(_StrictProposalModel):
                 raise ValueError("candidate evaluation record is incomplete")
         elif self.candidate_digest is not None:
             raise ValueError("refused evaluation cannot carry a candidate digest")
+        if self.evaluated_tree_oid is not None and len(self.evaluated_tree_oid) != len(
+            self.evaluated_base_oid
+        ):
+            raise ValueError("proposal evaluation mixes Git object formats")
         return self
 
 
@@ -305,6 +326,7 @@ def validate_proposal_tree(
     tree: Mapping[str, bytes],
     *,
     limits: ProposalReceiveLimits,
+    base_tree: Mapping[str, bytes] | None = None,
 ) -> dict[str, bytes]:
     if len(tree) > limits.max_files:
         raise ProposalAdmissionError("proposal exceeds its file-count limit")
@@ -313,12 +335,16 @@ def validate_proposal_tree(
         raise ProposalAdmissionError("proposal paths must already be canonical")
     total = 0
     result: dict[str, bytes] = {}
+    base = base_tree or {}
     for path in normalized:
-        if not (_DOCUMENT_PATH_RE.fullmatch(path) or _PRINCIPAL_PATH_RE.fullmatch(path)):
-            raise ProposalAdmissionError(f"proposal path is not registered for PB-C: {path}")
         content = tree[path]
         if not isinstance(content, bytes):
             raise ProposalAdmissionError("proposal tree values must be exact bytes")
+        authorable = _DOCUMENT_PATH_RE.fullmatch(path) or _PRINCIPAL_PATH_RE.fullmatch(path)
+        if not authorable and base.get(path) != content:
+            raise ProposalAdmissionError(
+                f"proposal changed a daemon-controlled or unregistered path: {path}"
+            )
         if len(content) > limits.max_file_bytes:
             raise ProposalAdmissionError(f"proposal blob exceeds its byte limit: {path}")
         if content.startswith(_LFS_PREFIX):
@@ -327,6 +353,12 @@ def validate_proposal_tree(
         if total > limits.max_total_bytes:
             raise ProposalAdmissionError("proposal exceeds its total-byte limit")
         result[path] = content
+    for path in normalize_manifest_paths(list(base)):
+        authorable = _DOCUMENT_PATH_RE.fullmatch(path) or _PRINCIPAL_PATH_RE.fullmatch(path)
+        if not authorable and path not in result:
+            raise ProposalAdmissionError(
+                f"proposal removed a daemon-controlled or unregistered path: {path}"
+            )
     return result
 
 
@@ -489,7 +521,7 @@ def _proposal_id_payload(
     admitted_at: str,
     limits: ProposalReceiveLimits,
 ) -> str:
-    return CandidateDigest(
+    return ProposalDigest(
         canonical_digest(
             "playbill-proposal-admission-v1",
             {
@@ -517,12 +549,14 @@ class ProposalService:
         bodies: BodyVerifierProtocol,
         evidence: ProposalEvidenceStore,
         receive_limits: ProposalReceiveLimits = ProposalReceiveLimits(),
+        current_coordinate: Callable[[], AcceptedProjectionCoordinate] | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
         self.bodies = bodies
         self.evidence = evidence
         self.receive_limits = receive_limits
+        self._current_coordinate = current_coordinate or (lambda: accepted)
 
     def submit(
         self,
@@ -531,10 +565,9 @@ class ProposalService:
         request: ProposalAdmissionRequest,
         candidate_tree: Mapping[str, bytes],
         timestamp: str,
-        current: AcceptedProjectionCoordinate | None = None,
     ) -> ProposalResult:
         validate_candidate_timestamp(timestamp)
-        current = current or self.accepted
+        current = self._current_coordinate()
         namespace = request.target_ref.split("/")[2]
         if namespace != actor.actor_id:
             raise ProposalAdmissionError(
@@ -543,13 +576,23 @@ class ProposalService:
         expected_oid_length = 40 if self.transport.object_format() == "sha1" else 64
         if len(request.proposed_base_oid) != expected_oid_length:
             raise ProposalAdmissionError("proposed base OID length differs from object format")
-        if current.repository_path != self.accepted.repository_path:
-            raise ProposalAdmissionError("current coordinate names a different ledger")
+        if (
+            current.instance_id != self.accepted.instance_id
+            or current.repository_path != self.accepted.repository_path
+            or current.git_object_format != self.accepted.git_object_format
+        ):
+            raise ProposalAdmissionError("current coordinate names a different instance ledger")
+        if current.git_oid == self.accepted.git_oid and current != self.accepted:
+            raise ProposalAdmissionError("current coordinate contradicts the verified base")
         if self.transport.read_main() != current.git_oid:
             raise ProposalAdmissionError("current coordinate is not the accepted main ref")
 
-        validated_tree = validate_proposal_tree(candidate_tree, limits=self.receive_limits)
         base_tree = self.transport.read_tree(request.proposed_base_oid)
+        validated_tree = validate_proposal_tree(
+            candidate_tree,
+            limits=self.receive_limits,
+            base_tree=base_tree,
+        )
         existing = self.transport.read_proposal_ref(request.target_ref)
         commit_oid, tree_oid = self.transport.create_proposal_commit(
             validated_tree,

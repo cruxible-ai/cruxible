@@ -75,7 +75,19 @@ class ContentAddressedBodyStore:
     def _path(self, digest: str) -> Path:
         value = CasDigest.from_tagged(digest)
         directory = self._algorithm_root / value.value[:2]
+        if directory.exists() or directory.is_symlink():
+            self._validate_shard(directory)
         return directory / value.value
+
+    def _validate_shard(self, directory: Path) -> None:
+        if directory.is_symlink() or not directory.is_dir():
+            raise PlaybillCasError("CAS shard directory is not trustworthy")
+        try:
+            resolved = directory.resolve(strict=True)
+        except OSError as exc:
+            raise PlaybillCasError("CAS shard directory cannot be resolved") from exc
+        if resolved.parent != self._algorithm_root or resolved.name != directory.name:
+            raise PlaybillCasError("CAS shard directory escapes the managed CAS root")
 
     def store(self, content: bytes) -> CasObjectMetadata:
         """Durably store inert bytes, idempotently, under their exact digest."""
@@ -122,6 +134,7 @@ class ContentAddressedBodyStore:
         )
 
     def _verified_bytes(self, path: Path, digest: str) -> bytes:
+        self._validate_shard(path.parent)
         if path.is_symlink() or not path.is_file():
             raise PlaybillCasError("CAS object must be a regular file")
         metadata = path.stat()

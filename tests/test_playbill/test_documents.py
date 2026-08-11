@@ -211,6 +211,19 @@ def test_corrupt_cas_object_refuses_document_binding(tmp_path: Path) -> None:
     assert result.diagnostics[0].code == "playbill.document.body_missing"
 
 
+def test_cas_reads_refuse_a_symlinked_digest_shard(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    digest = store.digest_bytes(b"body")
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / digest.value).write_bytes(b"body")
+    shard = store.root / "sha256" / digest.value[:2]
+    shard.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(PlaybillCasError, match="shard"):
+        store.verify(digest.tagged)
+
+
 def test_real_instance_body_store_survives_reopen_without_changing_main(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     before = instance.inspect()
