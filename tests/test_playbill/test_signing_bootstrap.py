@@ -69,6 +69,42 @@ def test_sha1_and_sha256_ledgers_share_semantic_roots_but_not_generation_roots(
     assert sha1.generation_root != sha256.generation_root
 
 
+def test_git_operations_ignore_ambient_repository_and_config_overrides(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    poison_objects = tmp_path / "poison-objects"
+    poison_objects.mkdir()
+    poison_config = tmp_path / "poison.gitconfig"
+    poison_config.write_text(
+        '[gpg "ssh"]\n\tprogram = /usr/bin/false\n[core]\n\thooksPath = /does/not/exist\n'
+    )
+    poison = {
+        "GIT_DIR": str(tmp_path / "wrong.git"),
+        "GIT_COMMON_DIR": str(tmp_path / "wrong-common.git"),
+        "GIT_WORK_TREE": str(tmp_path / "wrong-worktree"),
+        "GIT_OBJECT_DIRECTORY": str(poison_objects),
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(poison_objects),
+        "GIT_INDEX_FILE": str(tmp_path / "wrong-index"),
+        "GIT_NAMESPACE": "wrong-namespace",
+        "GIT_EXEC_PATH": str(tmp_path / "wrong-exec-path"),
+        "GIT_CONFIG_GLOBAL": str(poison_config),
+        "GIT_CONFIG_SYSTEM": str(poison_config),
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "gpg.ssh.program",
+        "GIT_CONFIG_VALUE_0": "/usr/bin/false",
+    }
+    for name, value in poison.items():
+        monkeypatch.setenv(name, value)
+
+    instance, _owner = initialize_local(tmp_path)
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+
+    assert reopened.inspect().head_oid == instance.inspect().head_oid
+    assert list(poison_objects.iterdir()) == []
+    assert not (tmp_path / "wrong-index").exists()
+
+
 def test_reopen_refuses_out_of_band_instance_id_or_principal_substitution(
     tmp_path: Path,
 ) -> None:

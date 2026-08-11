@@ -16,6 +16,18 @@ from cruxible_core.playbill.keys import raw_public_key_hex_from_openssh
 from cruxible_core.playbill.types import GitObjectFormat
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_PASSTHROUGH_ENVIRONMENT = ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
+_COMMAND_ENVIRONMENT = frozenset(
+    {
+        "GIT_INDEX_FILE",
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "GIT_AUTHOR_DATE",
+        "GIT_COMMITTER_DATE",
+    }
+)
 
 
 class GitLedger:
@@ -244,8 +256,23 @@ def _command(
     environment: Mapping[str, str] | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[bytes]:
-    merged_environment = os.environ.copy()
+    merged_environment = {
+        name: os.environ[name] for name in _PASSTHROUGH_ENVIRONMENT if name in os.environ
+    }
+    merged_environment.update(
+        {
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "LC_ALL": "C",
+        }
+    )
     if environment is not None:
+        unexpected = set(environment) - _COMMAND_ENVIRONMENT
+        if unexpected:
+            raise PlaybillGitError(
+                "unsupported Git command environment override: " + ", ".join(sorted(unexpected))
+            )
         merged_environment.update(environment)
     result = subprocess.run(
         list(arguments),

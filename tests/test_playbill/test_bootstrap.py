@@ -90,6 +90,7 @@ def test_inspection_exposes_posture_and_public_digests_without_private_paths(
     assert str(instance._ledger._signing_key_path) not in rendered
     assert DAEMON_PRIVATE_KEY_FILE not in rendered
     assert "PRIVATE KEY" not in rendered
+    assert "credentials" not in inspection.storage_directories
     assert all(
         principal.public_key_digest.startswith("sha256:") for principal in inspection.principals
     )

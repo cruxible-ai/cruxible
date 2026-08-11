@@ -191,7 +191,8 @@ class PlaybillInstance:
                 allowed_signers_path=credentials / ALLOWED_SIGNERS_FILE,
             )
             commit_timestamp = timestamp or format_datetime(utc_now())
-            assert commit_timestamp is not None
+            if commit_timestamp is None:
+                raise PlaybillBootstrapError("failed to produce a canonical bootstrap timestamp")
             verified = prepare_genesis(
                 ledger,
                 trust_root=trust_root,
@@ -355,8 +356,9 @@ class PlaybillInstance:
             )
             for record in self._verified_genesis.principals
         )
-        storage_directories = {name: str(path) for name, path in paths.items() if name != "ledger"}
-        storage_directories["ledger"] = str(paths["ledger"])
+        storage_directories = {
+            name: str(path) for name, path in paths.items() if name != "credentials"
+        }
         return PlaybillInspection(
             descriptor_tag=self.descriptor.tag,
             format_version=self.descriptor.format_version,

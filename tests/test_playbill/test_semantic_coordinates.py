@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -11,6 +13,8 @@ from cruxible_core.playbill.bootstrap import (
     bootstrap_changeset_digest,
     bootstrap_root,
     generation_root,
+    genesis_semantic_root,
+    genesis_tree,
 )
 from cruxible_core.playbill.canonical import (
     ArtifactDigest,
@@ -22,7 +26,7 @@ from cruxible_core.playbill.canonical import (
     canonical_bytes,
     manifest_root,
 )
-from cruxible_core.playbill.types import GenerationDescriptor, StorageLayout
+from cruxible_core.playbill.types import GenerationDescriptor, PrincipalRecord, StorageLayout
 
 
 def test_bootstrap_root_and_change_set_have_frozen_golden_preimages() -> None:
@@ -31,6 +35,32 @@ def test_bootstrap_root_and_change_set_have_frozen_golden_preimages() -> None:
     assert bootstrap_changeset_digest(root).value == (
         "e56e395804efe87678b46a65ceb937313e50ce09c8d4359c63618c670be7986b"
     )
+
+
+def test_semantic_genesis_has_a_frozen_end_to_end_golden() -> None:
+    golden_path = Path(__file__).parents[1] / "goldens" / "playbill" / "semantic-genesis-v1.json"
+    golden = json.loads(golden_path.read_bytes())
+    assert golden["format"] == "playbill-semantic-genesis-golden-v1"
+
+    principals = tuple(
+        PrincipalRecord.model_validate(record) for record in golden["input"]["principals"]
+    )
+    tree = genesis_tree(principals)
+    parent = bootstrap_root(
+        instance_id=golden["input"]["instance_id"],
+        daemon_public_key=golden["input"]["daemon_public_key"],
+    )
+    changeset, semantic = genesis_semantic_root(tree, parent=parent)
+
+    expected = golden["expected"]
+    expected_tree = {
+        path: content.encode("utf-8") for path, content in expected["canonical_tree"].items()
+    }
+    assert tree == expected_tree
+    assert parent.tagged == expected["bootstrap_root"]
+    assert manifest_root(tree).tagged == expected["manifest_root"]
+    assert changeset.tagged == expected["changeset_digest"]
+    assert semantic.tagged == expected["semantic_root"]
 
 
 def test_generation_root_uses_exact_three_field_preimage() -> None:
