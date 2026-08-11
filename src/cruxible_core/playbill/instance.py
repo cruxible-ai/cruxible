@@ -31,6 +31,7 @@ from cruxible_core.playbill.keys import (
     raw_public_key_hex_from_openssh,
 )
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate, AssemblerResult
+from cruxible_core.playbill.proposals import ProposalEvidenceStore, ProposalService
 from cruxible_core.playbill.types import (
     CompilerCoordinate,
     GenesisCoordinate,
@@ -382,11 +383,11 @@ class PlaybillInstance:
             daemon_private_key_present=(paths["credentials"] / DAEMON_PRIVATE_KEY_FILE).is_file(),
         )
 
-    def projection_assembler(self) -> ProjectionAssembler:
-        """Bind PB-B's internal assembler to this already-verified generation."""
+    def accepted_coordinate(self) -> AcceptedProjectionCoordinate:
+        """Return the verified accepted coordinate without consulting proposal refs."""
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
-        accepted = AcceptedProjectionCoordinate(
+        return AcceptedProjectionCoordinate(
             instance_id=self.descriptor.instance_id,
             repository_path=str(paths["ledger"]),
             git_object_format=self.descriptor.git_object_format,
@@ -395,9 +396,14 @@ class PlaybillInstance:
             generation_root=self._verified_genesis.generation_root.tagged,
             compiler=self.descriptor.compiler,
         )
+
+    def projection_assembler(self) -> ProjectionAssembler:
+        """Bind PB-B's internal assembler to this already-verified generation."""
+
+        paths = self._validated_paths(self.root, self.descriptor.storage)
         return ProjectionAssembler(
             self._ledger,
-            accepted=accepted,
+            accepted=self.accepted_coordinate(),
             publication_directory=paths["projections"],
         )
 
@@ -411,6 +417,17 @@ class PlaybillInstance:
         """Persist inert bytes without proposing or changing accepted state."""
 
         return self.body_store().store(content)
+
+    def proposal_service(self) -> ProposalService:
+        """Bind PB-C proposal evaluation to authenticated main and inert storage."""
+
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        return ProposalService(
+            self._ledger,
+            accepted=self.accepted_coordinate(),
+            bodies=ContentAddressedBodyStore(paths["cas"]),
+            evidence=ProposalEvidenceStore(paths["exhaust"]),
+        )
 
     def assemble_projection(
         self,

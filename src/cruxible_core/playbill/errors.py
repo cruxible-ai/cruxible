@@ -37,6 +37,14 @@ class DocumentFormatError(PlaybillError):
     """A governed Document shell is unsupported or malformed."""
 
 
+class ProposalAdmissionError(PlaybillError):
+    """An unauthenticated, mis-scoped, oversized, or malformed proposal was refused."""
+
+
+class ProposalIntegrityError(PlaybillError):
+    """Persisted proposal or candidate evidence failed deterministic verification."""
+
+
 class ProjectionError(PlaybillError):
     """Base refusal for deterministic Playbill projection operations."""
 
@@ -66,6 +74,8 @@ __all__ = [
     "PlaybillFormatError",
     "PlaybillGitError",
     "PlaybillKeyError",
+    "ProposalAdmissionError",
+    "ProposalIntegrityError",
     "ProjectionCoordinateError",
     "ProjectionError",
     "ProjectionFormatError",

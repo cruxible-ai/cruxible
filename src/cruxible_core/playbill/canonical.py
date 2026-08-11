@@ -135,6 +135,10 @@ class CandidateDigest(Sha256Value):
     kind = "candidate digest"
 
 
+class SemanticDiffDigest(Sha256Value):
+    kind = "semantic diff digest"
+
+
 class ChangeSetDigest(Sha256Value):
     kind = "change-set digest"
 
@@ -246,6 +250,52 @@ def manifest_root(tree: Mapping[str, bytes]) -> SemanticManifestRoot:
     )
 
 
+def semantic_projection(tree: Mapping[str, bytes]) -> dict[str, bytes]:
+    """Return Π(tree), excluding only deterministic daemon change-set records."""
+
+    return {
+        path: content
+        for path, content in tree.items()
+        if not normalize_ledger_path(path).startswith("changesets/")
+    }
+
+
+def semantic_diff(
+    base_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+) -> tuple[SemanticDiffDigest, tuple[str, ...]]:
+    """Hash sorted path/old/new content-digest entries, never Git object IDs."""
+
+    base = manifest_for_tree(semantic_projection(base_tree))
+    candidate = manifest_for_tree(semantic_projection(candidate_tree))
+    scope = tuple(
+        sorted(
+            {
+                *base.keys(),
+                *candidate.keys(),
+            },
+            key=lambda path: path.encode("utf-8"),
+        )
+    )
+    changed = tuple(path for path in scope if base.get(path) != candidate.get(path))
+    entries: list[CanonicalValue] = [
+        [
+            path,
+            cast(CanonicalScalar, base.get(path)),
+            cast(CanonicalScalar, candidate.get(path)),
+        ]
+        for path in changed
+    ]
+    return (
+        typed_digest(
+            SemanticDiffDigest,
+            "playbill-sdiff-v1",
+            {"entries": entries},
+        ),
+        changed,
+    )
+
+
 __all__ = [
     "ArtifactDigest",
     "BootstrapRoot",
@@ -256,6 +306,7 @@ __all__ = [
     "GenerationRoot",
     "LogicalDigest",
     "SemanticManifestRoot",
+    "SemanticDiffDigest",
     "SemanticRoot",
     "Sha256Value",
     "canonical_bytes",
@@ -266,5 +317,7 @@ __all__ = [
     "normalize_canonical",
     "normalize_ledger_path",
     "normalize_manifest_paths",
+    "semantic_diff",
+    "semantic_projection",
     "typed_digest",
 ]

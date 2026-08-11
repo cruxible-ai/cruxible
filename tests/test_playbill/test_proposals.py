@@ -1,0 +1,306 @@
+"""PB-C proposal admission, candidate identity, and deterministic rebase tests."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from cruxible_core.playbill.candidates import (
+    CandidateRecord,
+    SemanticCandidate,
+    candidate_digest,
+)
+from cruxible_core.playbill.canonical import canonical_bytes
+from cruxible_core.playbill.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+    render_document,
+)
+from cruxible_core.playbill.errors import ProposalAdmissionError
+from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.proposals import (
+    AuthenticatedActor,
+    ProposalAdmissionRequest,
+    deterministic_rebase,
+    evaluate_proposal_tree,
+)
+from tests.test_playbill._support import initialize_local
+
+TIMESTAMP = "2026-08-11T12:30:00.000000Z"
+DOCUMENT_PATH = "documents/playbill-design.yaml"
+
+
+def _shell(body_digest: str, *, title: str = "Playbill design") -> DocumentShell:
+    return DocumentShell(
+        identity="document:playbill-design",
+        document_kind="design",
+        title=title,
+        media_type="text/markdown",
+        body_digest=body_digest,
+        authority=DocumentAuthority(
+            required_tier="graph_write",
+            approval_roles=("owner", "reviewer"),
+        ),
+        governance_scope=("project:playbill",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+
+
+def _proposal_tree(instance: PlaybillInstance, shell: DocumentShell) -> dict[str, bytes]:
+    service = instance.proposal_service()
+    tree = service.transport.read_tree(instance.inspect().head_oid)
+    return {**tree, DOCUMENT_PATH: render_document(shell)}
+
+
+def _request(
+    instance: PlaybillInstance,
+    *,
+    target_ref: str = "refs/proposals/owner/document",
+) -> ProposalAdmissionRequest:
+    return ProposalAdmissionRequest(
+        target_ref=target_ref,
+        proposed_base_oid=instance.inspect().head_oid,
+        source_compilation_digest="sha256:" + "73" * 32,
+    )
+
+
+def test_store_then_propose_creates_complete_candidate_without_changing_main(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body("# Café\n".encode())
+    service = instance.proposal_service()
+    before = instance.inspect()
+
+    result = service.submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=_request(instance),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+
+    assert result.evaluation.verdict == "candidate"
+    assert result.candidate is not None
+    assert result.candidate.candidate.model_dump() == {
+        "tag": "playbill-candidate-v1",
+        "parent_semantic_root": before.semantic_root,
+        "candidate_manifest_root": result.candidate.candidate.candidate_manifest_root,
+        "semantic_diff_digest": result.candidate.candidate.semantic_diff_digest,
+        "scope": (DOCUMENT_PATH,),
+        "timestamp": TIMESTAMP,
+    }
+    assert result.candidate.required_tier == "graph_write"
+    assert result.candidate.approval_scope == ("owner", "reviewer")
+    assert result.candidate.activation_policy == "snapshot"
+    assert instance.inspect() == before
+    assert service.transport.read_main() == before.head_oid
+    assert service.transport.read_proposal_ref(_request(instance).target_ref) == (
+        result.admission.candidate_commit_oid
+    )
+    assert result.admission.source_compilation_digest == "sha256:" + "73" * 32
+
+    exhaust = Path(instance.inspect().storage_directories["exhaust"])
+    admissions = list((exhaust / "proposals").glob("*.json"))
+    candidates = list((exhaust / "candidates").glob("*.json"))
+    assert len(admissions) == len(candidates) == 1
+    persisted = json.loads(admissions[0].read_bytes())
+    assert persisted["source_compilation_digest"] == "sha256:" + "73" * 32
+    assert "source_path" not in persisted
+
+
+def test_refusal_keeps_evidence_but_creates_no_candidate(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    missing = _shell("sha256:" + "ff" * 32)
+    service = instance.proposal_service()
+    before = instance.inspect()
+
+    result = service.submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=_request(instance),
+        candidate_tree=_proposal_tree(instance, missing),
+        timestamp=TIMESTAMP,
+    )
+
+    assert result.evaluation.verdict == "refused"
+    assert result.candidate is None
+    assert [item.code for item in result.evaluation.diagnostics] == [
+        "playbill.document.body_missing"
+    ]
+    assert instance.inspect() == before
+    exhaust = Path(instance.inspect().storage_directories["exhaust"])
+    assert len(list((exhaust / "proposals").glob("*.json"))) == 1
+    assert len(list((exhaust / "evaluations").glob("*.json"))) == 1
+    assert list((exhaust / "candidates").glob("*.json")) == []
+
+
+@pytest.mark.parametrize(
+    "target_ref",
+    (
+        "refs/heads/main",
+        "refs/tags/release",
+        "refs/notes/review",
+        "refs/meta/daemon",
+    ),
+)
+def test_request_model_refuses_non_proposal_namespaces(target_ref: str) -> None:
+    with pytest.raises(ValidationError, match="target_ref"):
+        ProposalAdmissionRequest(
+            target_ref=target_ref,
+            proposed_base_oid="0" * 40,
+        )
+
+
+def test_foreign_actor_namespace_refuses_before_any_ref_changes(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"body")
+    service = instance.proposal_service()
+    before = instance.inspect()
+    target = "refs/proposals/other/document"
+
+    with pytest.raises(ProposalAdmissionError, match="authenticated actor"):
+        service.submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=_request(instance, target_ref=target),
+            candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+            timestamp=TIMESTAMP,
+        )
+
+    assert service.transport.read_proposal_ref(target) is None
+    assert instance.inspect() == before
+
+
+def test_admission_refuses_local_locator_and_malformed_compilation_digest() -> None:
+    payload = {
+        "target_ref": "refs/proposals/owner/document",
+        "proposed_base_oid": "0" * 40,
+    }
+    with pytest.raises(ValidationError, match="source_path"):
+        ProposalAdmissionRequest.model_validate({**payload, "source_path": "/tmp/doc.md"})
+    with pytest.raises(ValidationError, match="source_compilation_digest"):
+        ProposalAdmissionRequest.model_validate({**payload, "source_compilation_digest": "latest"})
+    assert ProposalAdmissionRequest.model_validate(payload).source_compilation_digest is None
+
+
+def test_candidate_preimage_is_exact_oid_free_and_matches_golden() -> None:
+    fixture_path = Path(__file__).parents[1] / "goldens" / "playbill" / "candidate-v1.json"
+    fixture = json.loads(fixture_path.read_bytes())
+    candidate = SemanticCandidate.model_validate(fixture["candidate"])
+
+    payload = candidate.model_dump(mode="json")
+    payload.pop("tag")
+    assert sorted(payload) == [
+        "candidate_manifest_root",
+        "parent_semantic_root",
+        "scope",
+        "semantic_diff_digest",
+        "timestamp",
+    ]
+    assert (
+        canonical_bytes({"tag": "playbill-candidate-v1", **payload}).decode()
+        == (fixture["canonical_preimage"])
+    )
+    assert candidate_digest(candidate).tagged == fixture["candidate_digest"]
+
+    for _qualified_object_format in ("sha1", "sha256"):
+        assert candidate_digest(SemanticCandidate.model_validate(fixture["candidate"])) == (
+            candidate_digest(candidate)
+        )
+    with pytest.raises(ValidationError, match="base_oid"):
+        SemanticCandidate.model_validate({**fixture["candidate"], "base_oid": "0" * 40})
+
+
+def test_rebase_changes_candidate_identity_and_conflicts_are_typed(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"proposed")
+    shell = _shell(body.digest)
+    base_tree = instance.proposal_service().transport.read_tree(instance.inspect().head_oid)
+    proposed_tree = {**base_tree, DOCUMENT_PATH: render_document(shell)}
+    current = instance.accepted_coordinate()
+    first = evaluate_proposal_tree(
+        base_tree=base_tree,
+        current_tree=base_tree,
+        proposed_tree=proposed_tree,
+        current=current,
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+    )
+    assert first.candidate is not None
+
+    unrelated_body = instance.store_document_body(b"unrelated")
+    unrelated = _shell(unrelated_body.digest).model_copy(
+        update={"identity": "document:unrelated", "title": "Unrelated"}
+    )
+    current_tree = {
+        **base_tree,
+        "documents/unrelated.yaml": render_document(unrelated),
+    }
+    moved = AcceptedProjectionCoordinate(
+        **{
+            **current.model_dump(),
+            "git_oid": "3" * len(current.git_oid),
+            "semantic_root": "sha256:" + "44" * 32,
+            "generation_root": "sha256:" + "55" * 32,
+        }
+    )
+    rebased = evaluate_proposal_tree(
+        base_tree=base_tree,
+        current_tree=current_tree,
+        proposed_tree=proposed_tree,
+        current=moved,
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=True,
+    )
+    assert rebased.candidate is not None
+    assert rebased.candidate.candidate.parent_semantic_root == moved.semantic_root
+    assert rebased.candidate.candidate_digest != first.candidate.candidate_digest
+
+    conflicting_body = instance.store_document_body(b"conflicting")
+    conflicting = _shell(conflicting_body.digest, title="Conflicting")
+    conflict = evaluate_proposal_tree(
+        base_tree=base_tree,
+        current_tree={**base_tree, DOCUMENT_PATH: render_document(conflicting)},
+        proposed_tree=proposed_tree,
+        current=moved,
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=True,
+    )
+    assert conflict.candidate is None
+    assert [item.code for item in conflict.diagnostics] == ["playbill.proposal.rebase_conflict"]
+
+    rebased_tree, conflicts = deterministic_rebase(
+        base_tree=base_tree,
+        current_tree=current_tree,
+        proposed_tree=proposed_tree,
+    )
+    assert not conflicts
+    assert rebased_tree["documents/unrelated.yaml"] == render_document(unrelated)
+
+
+def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
+    candidate = SemanticCandidate(
+        parent_semantic_root="sha256:" + "11" * 32,
+        candidate_manifest_root="sha256:" + "22" * 32,
+        semantic_diff_digest="sha256:" + "33" * 32,
+        scope=(DOCUMENT_PATH,),
+        timestamp=TIMESTAMP,
+    )
+    values = {
+        "candidate": candidate,
+        "candidate_digest": candidate_digest(candidate).tagged,
+        "required_tier": "governed_write",
+        "approval_scope": ("owner",),
+        "activation_policy": "snapshot",
+        "closure_paths": (DOCUMENT_PATH,),
+    }
+    with pytest.raises(ValidationError, match="does not reproduce"):
+        CandidateRecord.model_validate({**values, "candidate_digest": "sha256:" + "99" * 32})
+    with pytest.raises(ValidationError, match="closure"):
+        CandidateRecord.model_validate({**values, "closure_paths": ("documents/other.yaml",)})

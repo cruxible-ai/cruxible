@@ -17,6 +17,7 @@ from cruxible_core.playbill.keys import raw_public_key_hex_from_openssh
 from cruxible_core.playbill.types import GitObjectFormat
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
 _PASSTHROUGH_ENVIRONMENT = ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
 _COMMAND_ENVIRONMENT = frozenset(
     {
@@ -157,6 +158,103 @@ class GitLedger:
             raise PlaybillGitError("genesis commit unexpectedly has a parent")
         if not self.verify_commit(oid):
             raise PlaybillGitError("new genesis commit signature does not verify")
+        return oid
+
+    def create_proposal_commit(
+        self,
+        tree: Mapping[str, bytes],
+        *,
+        base_oid: str,
+        target_ref: str,
+        actor_id: str,
+        timestamp: str,
+        expected_ref_oid: str | None,
+    ) -> tuple[str, str]:
+        """Write one unsigned proposal commit and CAS only its actor namespace ref."""
+
+        self._validate_oid(base_oid)
+        if not _PROPOSAL_REF_RE.fullmatch(target_ref):
+            raise PlaybillGitError("proposal transport may update only canonical proposal refs")
+        actor_namespace = target_ref.split("/")[2]
+        if actor_namespace != actor_id:
+            raise PlaybillGitError("proposal ref namespace differs from authenticated actor")
+        current = self.read_proposal_ref(target_ref)
+        if current != expected_ref_oid:
+            raise PlaybillGitError("proposal ref moved before its parent-bound update")
+
+        normalized_to_raw: dict[str, str] = {}
+        for raw_path in tree:
+            normalized = normalize_manifest_paths([raw_path])[0]
+            if normalized in normalized_to_raw:
+                raise PlaybillGitError("proposal paths collide after normalization")
+            normalized_to_raw[normalized] = raw_path
+
+        with tempfile.TemporaryDirectory(prefix="playbill-proposal-index-") as temporary:
+            environment = {"GIT_INDEX_FILE": str(Path(temporary) / "index")}
+            self._git(["read-tree", "--empty"], environment=environment)
+            for path in normalize_manifest_paths(list(tree)):
+                content = tree[normalized_to_raw[path]]
+                blob_oid = self._git(["hash-object", "-w", "--stdin"], input_bytes=content)
+                self._git(
+                    [
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        "100644",
+                        blob_oid.decode().strip(),
+                        path,
+                    ],
+                    environment=environment,
+                )
+            tree_oid = self._git(["write-tree"], environment=environment).decode().strip()
+
+        commit_environment = {
+            "GIT_AUTHOR_NAME": actor_id,
+            "GIT_AUTHOR_EMAIL": f"{actor_id}@proposal.playbill.invalid",
+            "GIT_COMMITTER_NAME": "playbill-daemon",
+            "GIT_COMMITTER_EMAIL": "daemon@playbill.invalid",
+            "GIT_AUTHOR_DATE": timestamp,
+            "GIT_COMMITTER_DATE": timestamp,
+        }
+        commit_oid = (
+            self._git(
+                [
+                    "commit-tree",
+                    tree_oid,
+                    "-p",
+                    base_oid,
+                    "-m",
+                    "Record Playbill proposal",
+                ],
+                environment=commit_environment,
+            )
+            .decode()
+            .strip()
+        )
+        self._validate_oid(commit_oid)
+        zero_oid = "0" * (40 if self.object_format() == "sha1" else 64)
+        self._git(
+            ["update-ref", target_ref, commit_oid, expected_ref_oid or zero_oid],
+        )
+        return commit_oid, tree_oid
+
+    def read_proposal_ref(self, target_ref: str) -> str | None:
+        if not _PROPOSAL_REF_RE.fullmatch(target_ref):
+            raise PlaybillGitError("proposal transport may read only canonical proposal refs")
+        result = _command(
+            ["git", f"--git-dir={self.path}", "rev-parse", "--verify", target_ref],
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        oid = result.stdout.decode().strip()
+        self._validate_oid(oid)
+        return oid
+
+    def tree_oid(self, commit_oid: str) -> str:
+        self._validate_oid(commit_oid)
+        oid = self._git(["rev-parse", f"{commit_oid}^{{tree}}"]).decode().strip()
+        self._validate_oid(oid)
         return oid
 
     def set_main_genesis(self, oid: str) -> None:
