@@ -1,4 +1,4 @@
-"""PB-B's minimal registered artifact formats and normalized intermediate rows."""
+"""Registered Playbill artifact formats and normalized projection rows."""
 
 from __future__ import annotations
 
@@ -12,16 +12,24 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from cruxible_core.playbill.bootstrap import render_principal
 from cruxible_core.playbill.canonical import ArtifactDigest, canonical_bytes, file_digest
-from cruxible_core.playbill.errors import ProjectionFormatError
+from cruxible_core.playbill.cas import BodyAccessContext, BodyProjectionProtocol
+from cruxible_core.playbill.documents import document_digest, parse_document
+from cruxible_core.playbill.errors import (
+    DocumentFormatError,
+    PlaybillCasError,
+    ProjectionFormatError,
+)
 from cruxible_core.playbill.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
 )
+from cruxible_core.playbill.semantic import SemanticAddress, whole_body_mapping
 from cruxible_core.playbill.types import PrincipalRecord
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _REGISTERED_PATHS = (
     (re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$"), "principal"),
+    (re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.yaml$"), "document"),
     (re.compile(r"^artifacts/fixtures/[a-z][a-z0-9_.-]{0,255}\.yaml$"), "fixture"),
     (
         re.compile(r"^presentation/fixtures/[a-z][a-z0-9_.-]{0,255}\.json$"),
@@ -29,7 +37,7 @@ _REGISTERED_PATHS = (
     ),
 )
 
-RegisteredPathKind = Literal["principal", "fixture", "presentation"]
+RegisteredPathKind = Literal["principal", "document", "fixture", "presentation"]
 
 
 class _StrictArtifactModel(BaseModel):
@@ -200,6 +208,7 @@ def parse_projection_tree(
     blobs: dict[str, bytes],
     *,
     registry: ProjectionExtensionRegistry,
+    bodies: BodyProjectionProtocol | None = None,
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream."""
 
@@ -218,6 +227,112 @@ def parse_projection_tree(
                 principal = PrincipalRecord.model_validate(payload)
                 if render_principal(principal) != content:
                     raise ProjectionFormatError(f"principal artifact is not canonical: {path}")
+                continue
+            if kind == "document":
+                if bodies is None:
+                    raise ProjectionFormatError(
+                        "Document projection requires the managed body-metadata resolver"
+                    )
+                try:
+                    document = parse_document(content, path=path)
+                except DocumentFormatError as exc:
+                    raise ProjectionFormatError(
+                        f"registered Document failed strict validation: {path}"
+                    ) from exc
+                previous = identities.get(document.identity)
+                if previous is not None:
+                    raise ProjectionFormatError(
+                        f"duplicate semantic identity {document.identity!r}: {previous} and {path}"
+                    )
+                identities[document.identity] = path
+                try:
+                    metadata = bodies.metadata(
+                        document.body_digest,
+                        access=BodyAccessContext(
+                            principal_id="playbill-compiler",
+                            can_read_body=True,
+                        ),
+                    )
+                except PlaybillCasError as exc:
+                    raise ProjectionFormatError(
+                        f"Document body failed exact digest verification: {path}"
+                    ) from exc
+                if not metadata.present or metadata.byte_length is None:
+                    raise ProjectionFormatError(
+                        f"Document body is unavailable during projection: {path}"
+                    )
+                envelope_digest = document_digest(document).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=document.identity,
+                        kind=document.kind,
+                        format_tag=document.tag,
+                        path=path,
+                        artifact_digest=envelope_digest,
+                        predecessor_digest=document.predecessor_digest,
+                        revision=document.lifecycle.revision,
+                    )
+                )
+                pins.extend(
+                    PinRow(
+                        source_identity=document.identity,
+                        target_identity=pin.target_identity,
+                        target_digest=pin.target_digest,
+                    )
+                    for pin in document.pins
+                )
+                subject = SemanticAddress.whole_artifact(path)
+                semantic_facts.extend(
+                    (
+                        ProjectionFact(
+                            schema_id="playbill.document.subject",
+                            schema_version=1,
+                            subject_identity=document.identity,
+                            fact_key="whole_document",
+                            value={
+                                "address": subject.model_dump(mode="json"),
+                                "body_digest": {"$digest": document.body_digest},
+                                "envelope_digest": {"$digest": envelope_digest},
+                                "input_digest": {"$digest": file_digest(content).tagged},
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.document.metadata",
+                            schema_version=1,
+                            subject_identity=document.identity,
+                            fact_key="metadata",
+                            value={
+                                "authority": document.authority.model_dump(mode="json"),
+                                "document_kind": document.document_kind,
+                                "governance_scope": list(document.governance_scope),
+                                "lifecycle": document.lifecycle.model_dump(mode="json"),
+                                "media_type": document.media_type,
+                                "title": document.title,
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.document.references",
+                            schema_version=1,
+                            subject_identity=document.identity,
+                            fact_key="declared",
+                            value={
+                                "links": [item.model_dump(mode="json") for item in document.links],
+                                "pins": [item.model_dump(mode="json") for item in document.pins],
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.document.source_mapping",
+                            schema_version=1,
+                            subject_identity=document.identity,
+                            fact_key="whole_body",
+                            value=whole_body_mapping(
+                                path,
+                                document.body_digest,
+                                metadata.byte_length,
+                            ).model_dump(mode="json"),
+                        ),
+                    )
+                )
                 continue
             if kind == "fixture":
                 artifact = FixtureArtifact.model_validate(payload)

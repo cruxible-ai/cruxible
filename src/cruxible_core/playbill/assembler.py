@@ -9,6 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Final, Protocol, TypeVar
 
+from cruxible_core.playbill.cas import BodyProjectionProtocol
+from cruxible_core.playbill.compiler import projection_registry_for_compiler
 from cruxible_core.playbill.errors import (
     ProjectionCoordinateError,
     ProjectionPublicationError,
@@ -25,10 +27,7 @@ from cruxible_core.playbill.projection import (
     render_projection_manifest,
 )
 from cruxible_core.playbill.projection_artifacts import ParsedProjectionTree, parse_projection_tree
-from cruxible_core.playbill.projection_extensions import (
-    ProjectionExtensionRegistry,
-    fixture_extension_registry,
-)
+from cruxible_core.playbill.projection_extensions import ProjectionExtensionRegistry
 from cruxible_core.playbill.projection_tree import read_registered_tree
 from cruxible_core.playbill.protocols import LedgerRepositoryProtocol
 from cruxible_core.storage.playbill_projection import (
@@ -149,6 +148,7 @@ class ProjectionAssembler:
         accepted: AcceptedProjectionCoordinate,
         publication_directory: Path,
         registry: ProjectionExtensionRegistry | None = None,
+        bodies: BodyProjectionProtocol | None = None,
     ) -> None:
         if publication_directory.is_symlink() or not publication_directory.is_dir():
             raise ProjectionPublicationError(
@@ -157,7 +157,8 @@ class ProjectionAssembler:
         self._repository = repository
         self.accepted = accepted
         self.publication_directory = publication_directory.resolve(strict=True)
-        self.registry = registry or fixture_extension_registry()
+        self.registry = registry or projection_registry_for_compiler(accepted.compiler)
+        self.bodies = bodies
 
     def request(self, *, output_staging_directory: Path) -> AssemblerRequest:
         """Create the exact serializable request for this accepted coordinate."""
@@ -252,7 +253,11 @@ class ProjectionAssembler:
         parsed = _timed(
             timings,
             "parse_normalize",
-            lambda: parse_projection_tree(blob_map, registry=self.registry),
+            lambda: parse_projection_tree(
+                blob_map,
+                registry=self.registry,
+                bodies=self.bodies,
+            ),
         )
         parsed = _timed(timings, "sort", lambda: _sorted_projection_tree(parsed))
 

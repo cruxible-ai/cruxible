@@ -8,7 +8,9 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_core.playbill.candidates import SemanticCandidate, candidate_digest
 from cruxible_core.playbill.canonical import (
+    CandidateDigest,
     GenerationRoot,
     LogicalDigest,
     SemanticRoot,
@@ -84,6 +86,31 @@ class AcceptedProjectionCoordinate(_StrictProjectionModel):
         expected = 40 if self.git_object_format == "sha1" else 64
         if len(self.git_oid) != expected:
             raise ValueError("git_oid length does not match git_object_format")
+        return self
+
+
+class ProvisionalProjectionCoordinate(_StrictProjectionModel):
+    """A candidate overlay labeled with both canonical and provisional identity."""
+
+    tag: Literal["playbill-provisional-projection-coordinate-v1"] = (
+        "playbill-provisional-projection-coordinate-v1"
+    )
+    canonical: AcceptedProjectionCoordinate
+    candidate: SemanticCandidate
+    candidate_digest: str
+
+    @field_validator("candidate_digest")
+    @classmethod
+    def _candidate_digest(cls, value: str) -> str:
+        CandidateDigest.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _coordinate_binding(self) -> "ProvisionalProjectionCoordinate":
+        if self.candidate.parent_semantic_root != self.canonical.semantic_root:
+            raise ValueError("provisional candidate is not parented by the canonical coordinate")
+        if candidate_digest(self.candidate).tagged != self.candidate_digest:
+            raise ValueError("provisional candidate digest does not reproduce from C_s")
         return self
 
 
@@ -303,6 +330,7 @@ __all__ = [
     "ProjectionManifest",
     "ProjectionOrphan",
     "ProjectionPiece",
+    "ProvisionalProjectionCoordinate",
     "projection_coordinate_key",
     "projection_manifest_name",
     "projection_piece_name",

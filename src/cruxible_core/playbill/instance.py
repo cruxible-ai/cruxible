@@ -14,8 +14,12 @@ from pydantic import ValidationError
 
 from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
 from cruxible_core.playbill.bootstrap import VerifiedGenesis, prepare_genesis, verify_genesis
-from cruxible_core.playbill.canonical import canonical_bytes, canonical_digest
+from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.cas import CasObjectMetadata, ContentAddressedBodyStore
+from cruxible_core.playbill.compiler import (
+    SUPPORTED_COMPILERS,
+    current_compiler_coordinate,
+)
 from cruxible_core.playbill.errors import (
     PlaybillBootstrapError,
     PlaybillFormatError,
@@ -33,7 +37,6 @@ from cruxible_core.playbill.keys import (
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate, AssemblerResult
 from cruxible_core.playbill.proposals import ProposalEvidenceStore, ProposalService
 from cruxible_core.playbill.types import (
-    CompilerCoordinate,
     GenesisCoordinate,
     GitObjectFormat,
     OperatingProfile,
@@ -79,14 +82,6 @@ def _exclusive_write(path: Path, content: bytes, mode: int = 0o600) -> None:
         os.close(descriptor)
     os.chmod(path, mode)
     _fsync_directory(path.parent)
-
-
-def _compiler_coordinate() -> CompilerCoordinate:
-    digest = canonical_digest(
-        "playbill-compiler-v1",
-        {"implementation": "python-reference", "schema_version": 1},
-    )
-    return CompilerCoordinate(rule_digest=f"sha256:{digest}")
 
 
 def _validate_client_principals(
@@ -207,7 +202,7 @@ class PlaybillInstance:
                 instance_id=instance_id,
                 git_object_format=git_object_format,
                 daemon_public_key=trust_root.daemon_public_key,
-                compiler=_compiler_coordinate(),
+                compiler=current_compiler_coordinate(),
                 authority=initial_authority_matrix(),
                 operating_profile=operating_profile,
                 recovery_posture=recovery_posture,
@@ -264,7 +259,7 @@ class PlaybillInstance:
             raise PlaybillBootstrapError("descriptor instance ID differs from trust root")
         if descriptor.daemon_public_key != trust_root.daemon_public_key:
             raise PlaybillBootstrapError("descriptor daemon key differs from trust root")
-        if descriptor.compiler != _compiler_coordinate():
+        if descriptor.compiler not in SUPPORTED_COMPILERS:
             raise PlaybillFormatError("descriptor compiler coordinate is unsupported")
         if descriptor.authority != initial_authority_matrix():
             raise PlaybillBootstrapError(
@@ -405,6 +400,7 @@ class PlaybillInstance:
             self._ledger,
             accepted=self.accepted_coordinate(),
             publication_directory=paths["projections"],
+            bodies=ContentAddressedBodyStore(paths["cas"]),
         )
 
     def body_store(self) -> ContentAddressedBodyStore:

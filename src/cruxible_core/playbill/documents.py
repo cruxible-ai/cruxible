@@ -198,10 +198,10 @@ class DocumentShell(_StrictDocumentModel):
         def key(item: DocumentPin) -> tuple[bytes, bytes]:
             return item.role.encode("utf-8"), item.target_identity.encode("utf-8")
 
-        if tuple(sorted(value, key=key)) != value or len({key(item) for item in value}) != len(
-            value
-        ):
-            raise ValueError("document pins must be sorted and unique")
+        if tuple(sorted(value, key=key)) != value or len(
+            {item.target_identity for item in value}
+        ) != len(value):
+            raise ValueError("document pins must be sorted and unique by target identity")
         return value
 
     @property

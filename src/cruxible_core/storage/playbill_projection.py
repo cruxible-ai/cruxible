@@ -17,6 +17,7 @@ from cruxible_core.playbill.canonical import (
     canonical_bytes,
     typed_digest,
 )
+from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.errors import ProjectionIntegrityError
 from cruxible_core.playbill.projection import (
     PROJECTION_SCHEMA_VERSION,
@@ -27,8 +28,15 @@ from cruxible_core.playbill.projection import (
     projection_manifest_name,
     render_projection_manifest,
 )
-from cruxible_core.playbill.projection_artifacts import ParsedProjectionTree
-from cruxible_core.playbill.projection_extensions import ProjectionExtensionRegistry
+from cruxible_core.playbill.projection_artifacts import ArtifactEnvelopeRow, ParsedProjectionTree
+from cruxible_core.playbill.projection_documents import (
+    DocumentProjectionView,
+    document_projection_view,
+)
+from cruxible_core.playbill.projection_extensions import (
+    ProjectionExtensionRegistry,
+    ProjectionFact,
+)
 
 _PIECE_RE = re.compile(r"^piece-[0-9a-f]{64}-[0-9]{4}\.sqlite$")
 _MANIFEST_RE = re.compile(r"^projection-[0-9a-f]{64}\.json$")
@@ -492,11 +500,13 @@ class ProjectionHandle:
         manifest: ProjectionManifest,
         piece_paths: tuple[Path, ...],
         connection: sqlite3.Connection,
+        accepted: AcceptedProjectionCoordinate,
     ) -> None:
         self.manifest_path = manifest_path
         self.manifest = manifest
         self.piece_paths = piece_paths
         self._connection = connection
+        self.accepted = accepted
         self._closed = False
 
     @property
@@ -531,6 +541,71 @@ class ProjectionHandle:
                 for row in facts
             ],
         }
+
+    def document(
+        self,
+        identity: str,
+        *,
+        access: BodyAccessContext,
+    ) -> DocumentProjectionView | None:
+        """Read one canonical Document; proposal refs are outside this bound handle."""
+
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        envelope = self._connection.execute(
+            "SELECT * FROM artifact_envelopes WHERE identity = ? AND kind = 'document'",
+            (identity,),
+        ).fetchone()
+        if envelope is None:
+            return None
+        fact_rows = self._connection.execute(
+            "SELECT schema_id,schema_version,subject_identity,fact_key,value_json "
+            "FROM semantic_facts WHERE subject_identity = ? "
+            "ORDER BY schema_id,schema_version,fact_key",
+            (identity,),
+        ).fetchall()
+        facts = tuple(
+            ProjectionFact(
+                schema_id=row["schema_id"],
+                schema_version=row["schema_version"],
+                subject_identity=row["subject_identity"],
+                fact_key=row["fact_key"],
+                value=json.loads(row["value_json"]),
+            )
+            for row in fact_rows
+        )
+        return document_projection_view(
+            ArtifactEnvelopeRow(
+                identity=envelope["identity"],
+                kind=envelope["kind"],
+                format_tag=envelope["format_tag"],
+                path=envelope["path"],
+                artifact_digest=envelope["artifact_digest"],
+                predecessor_digest=envelope["predecessor_digest"],
+                revision=envelope["revision"],
+            ),
+            facts,
+            coordinate=self.accepted,
+            access=access,
+        )
+
+    def list_documents(
+        self,
+        *,
+        access: BodyAccessContext,
+    ) -> tuple[DocumentProjectionView, ...]:
+        """List canonical Documents in stable identity order."""
+
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        identities = self._connection.execute(
+            "SELECT identity FROM artifact_envelopes WHERE kind = 'document' ORDER BY identity"
+        ).fetchall()
+        return tuple(
+            view
+            for row in identities
+            if (view := self.document(cast(str, row["identity"]), access=access)) is not None
+        )
 
     def close(self) -> None:
         if not self._closed:
@@ -637,6 +712,7 @@ def bind_projection(
             manifest=manifest,
             piece_paths=tuple(pieces),
             connection=connection,
+            accepted=expected,
         )
     except sqlite3.DatabaseError as exc:
         if connection is not None:

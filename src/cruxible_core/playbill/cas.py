@@ -6,7 +6,7 @@ import hashlib
 import os
 import stat
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
@@ -31,6 +31,19 @@ class CasObjectMetadata(_StrictCasModel):
     present: bool
     byte_length: int | None
     redacted: bool
+
+
+class BodyProjectionProtocol(Protocol):
+    """Compiler-only metadata seam; public reads still require explicit access."""
+
+    def verify(self, digest: str) -> bool: ...
+
+    def metadata(
+        self,
+        digest: str,
+        *,
+        access: BodyAccessContext,
+    ) -> CasObjectMetadata: ...
 
 
 def _fsync_directory(path: Path) -> None:
@@ -160,6 +173,7 @@ class ContentAddressedBodyStore:
 
 __all__ = [
     "BodyAccessContext",
+    "BodyProjectionProtocol",
     "CasObjectMetadata",
     "ContentAddressedBodyStore",
 ]

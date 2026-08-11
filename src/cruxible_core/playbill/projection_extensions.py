@@ -22,6 +22,7 @@ from cruxible_core.playbill.errors import ProjectionFormatError
 ProjectionFactClassification = Literal["semantic", "presentation"]
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
+_SUBJECT_IDENTITY_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}(?::[a-z][a-z0-9_.-]{0,255})?$")
 
 
 class _StrictProjectionModel(BaseModel):
@@ -198,10 +199,20 @@ class ProjectionFact(_StrictProjectionModel):
     def _schema_id(cls, value: str) -> str:
         return _normalized_identifier(value, label="projection fact schema_id")
 
-    @field_validator("subject_identity", "fact_key")
+    @field_validator("subject_identity")
     @classmethod
-    def _identity(cls, value: str) -> str:
-        return _normalized_identifier(value, label="projection fact identity")
+    def _subject_identity(cls, value: str) -> str:
+        normalized = _normalized_text(value, label="projection fact subject_identity")
+        if normalized != value or not _SUBJECT_IDENTITY_RE.fullmatch(value):
+            raise ValueError(
+                "projection fact subject_identity must be canonical and optionally kind-qualified"
+            )
+        return value
+
+    @field_validator("fact_key")
+    @classmethod
+    def _fact_key(cls, value: str) -> str:
+        return _normalized_identifier(value, label="projection fact fact_key")
 
     @field_validator("value", mode="before")
     @classmethod
@@ -310,6 +321,28 @@ def fixture_extension_registry() -> ProjectionExtensionRegistry:
     )
 
 
+def playbill_extension_registry() -> ProjectionExtensionRegistry:
+    """Return the additive PB-C registry, preserving every PB-B declaration."""
+
+    fixture = fixture_extension_registry().declarations("semantic")
+    presentation = fixture_extension_registry().declarations("presentation")
+    document = tuple(
+        ProjectionFactDeclaration(
+            schema_id=schema_id,
+            schema_version=1,
+            classification="semantic",
+            constraints=("unique(subject_identity,fact_key)",),
+        )
+        for schema_id in (
+            "playbill.document.metadata",
+            "playbill.document.references",
+            "playbill.document.source_mapping",
+            "playbill.document.subject",
+        )
+    )
+    return ProjectionExtensionRegistry((*fixture, *document, *presentation))
+
+
 __all__ = [
     "ProjectionExtensionRegistry",
     "ProjectionFact",
@@ -317,4 +350,5 @@ __all__ = [
     "ProjectionFactDeclaration",
     "fixture_extension_registry",
     "normalize_projection_value",
+    "playbill_extension_registry",
 ]
