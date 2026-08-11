@@ -56,6 +56,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
     {
         Path("src/cruxible_core/storage/sqlite.py"),
+        # Playbill projections are deliberately separate immutable SQLite
+        # serving artifacts, but their concrete connection/DDL/query layer
+        # remains inside the storage implementation boundary.
+        Path("src/cruxible_core/storage/playbill_projection.py"),
         # The shared DDL executor: it exists precisely so store schemas can run
         # inside the migration lock instead of through executescript, which
         # would commit and drop the lock. It lives outside the storage package

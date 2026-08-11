@@ -1,0 +1,152 @@
+{
+  "contract": "playbill-projection-logical-v1",
+  "expected": {
+    "logical_digest": "sha256:c9d268605a835395eeae8899aca0f49287c4ca766c82348ac7ebb8b314ef2aac",
+    "logical_export": {
+      "schema_version": 1,
+      "tables": [
+        {
+          "columns": [
+            {"name": "identity", "nullable": false, "type": "TEXT"},
+            {"name": "kind", "nullable": false, "type": "TEXT"},
+            {"name": "format_tag", "nullable": false, "type": "TEXT"},
+            {"name": "path", "nullable": false, "type": "TEXT"},
+            {"name": "artifact_digest", "nullable": false, "type": "TEXT"},
+            {"name": "predecessor_digest", "nullable": true, "type": "TEXT"},
+            {"name": "revision", "nullable": false, "type": "INTEGER"}
+          ],
+          "constraints": ["check(revision>=1)", "unique(path)"],
+          "indexes": [
+            {
+              "columns": ["kind", "identity"],
+              "name": "idx_artifact_envelopes_kind"
+            }
+          ],
+          "name": "artifact_envelopes",
+          "primary_key": ["identity"],
+          "rows": [
+            [
+              "golden",
+              "fixture",
+              "playbill-fixture-v1",
+              "artifacts/fixtures/golden.yaml",
+              "sha256:b79e5a3abcc2358b932e7b2d29334545b53cfaa6b04aeb2568eccb1f607a8077",
+              null,
+              1
+            ]
+          ]
+        },
+        {
+          "columns": [
+            {"name": "singleton", "nullable": false, "type": "INTEGER"},
+            {"name": "implementation", "nullable": false, "type": "TEXT"},
+            {"name": "schema_version", "nullable": false, "type": "INTEGER"},
+            {"name": "compiler_digest", "nullable": false, "type": "TEXT"}
+          ],
+          "constraints": ["check(singleton=1)"],
+          "indexes": [],
+          "name": "compiler_coordinates",
+          "primary_key": ["singleton"],
+          "rows": [
+            [
+              1,
+              "python-reference",
+              1,
+              "sha256:cc2ec0b2922da1c83a65734be3f911c782a7b2ab34ce2e4a5f006e47aa52b2d4"
+            ]
+          ]
+        },
+        {
+          "columns": [
+            {"name": "identity", "nullable": false, "type": "TEXT"},
+            {"name": "artifact_digest", "nullable": false, "type": "TEXT"},
+            {"name": "path", "nullable": false, "type": "TEXT"}
+          ],
+          "constraints": [],
+          "indexes": [],
+          "name": "live_identities",
+          "primary_key": ["identity"],
+          "rows": [
+            [
+              "golden",
+              "sha256:b79e5a3abcc2358b932e7b2d29334545b53cfaa6b04aeb2568eccb1f607a8077",
+              "artifacts/fixtures/golden.yaml"
+            ]
+          ]
+        },
+        {
+          "columns": [
+            {"name": "source_identity", "nullable": false, "type": "TEXT"},
+            {"name": "target_identity", "nullable": false, "type": "TEXT"},
+            {"name": "target_digest", "nullable": false, "type": "TEXT"}
+          ],
+          "constraints": ["unique(source_identity,target_identity)"],
+          "indexes": [
+            {
+              "columns": ["target_identity", "source_identity"],
+              "name": "idx_pins_target"
+            }
+          ],
+          "name": "pins",
+          "primary_key": ["source_identity", "target_identity"],
+          "rows": []
+        },
+        {
+          "columns": [
+            {"name": "schema_id", "nullable": false, "type": "TEXT"},
+            {"name": "schema_version", "nullable": false, "type": "INTEGER"},
+            {"name": "constraints_json", "nullable": false, "type": "TEXT"}
+          ],
+          "constraints": ["check(schema_version>=1)"],
+          "indexes": [],
+          "name": "projection_fact_schemas",
+          "primary_key": ["schema_id", "schema_version"],
+          "rows": [
+            [
+              "playbill.fixture.fact",
+              1,
+              "[\"unique(subject_identity,fact_key)\"]"
+            ]
+          ]
+        },
+        {
+          "columns": [
+            {"name": "schema_id", "nullable": false, "type": "TEXT"},
+            {"name": "schema_version", "nullable": false, "type": "INTEGER"},
+            {"name": "subject_identity", "nullable": false, "type": "TEXT"},
+            {"name": "fact_key", "nullable": false, "type": "TEXT"},
+            {"name": "value_json", "nullable": false, "type": "TEXT"}
+          ],
+          "constraints": [
+            "unique(schema_id,schema_version,subject_identity,fact_key)"
+          ],
+          "indexes": [
+            {
+              "columns": ["subject_identity", "schema_id", "fact_key"],
+              "name": "idx_semantic_facts_subject"
+            }
+          ],
+          "name": "semantic_facts",
+          "primary_key": [
+            "schema_id",
+            "schema_version",
+            "subject_identity",
+            "fact_key"
+          ],
+          "rows": [
+            [
+              "playbill.fixture.fact",
+              1,
+              "golden",
+              "value",
+              "{\"amount\":{\"$decimal\":\"12.34\"},\"enabled\":true,\"observed_at\":{\"$timestamp\":\"2026-08-11T12:30:00Z\"}}"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "tree": {
+    "artifacts/fixtures/golden.yaml": "{\"artifact_id\":\"golden\",\"extension_facts\":[{\"fact_key\":\"value\",\"schema_id\":\"playbill.fixture.fact\",\"schema_version\":1,\"subject_identity\":\"golden\",\"value\":{\"amount\":{\"$decimal\":\"12.34\"},\"enabled\":true,\"observed_at\":{\"$timestamp\":\"2026-08-11T12:30:00Z\"}}}],\"kind\":\"fixture\",\"pins\":[],\"predecessor_digest\":null,\"revision\":1,\"tag\":\"playbill-fixture-v1\"}\n"
+  }
+}

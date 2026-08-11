@@ -7,6 +7,7 @@ import re
 import subprocess
 import tempfile
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -30,6 +31,17 @@ _COMMAND_ENVIRONMENT = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class GitTreeEntry:
+    """Metadata for one recursive tree entry, before any blob is read."""
+
+    path: str
+    mode: str
+    object_type: str
+    oid: str
+    size: int | None
+
+
 class GitLedger:
     """A daemon-owned bare repository accessed only through system Git."""
 
@@ -43,6 +55,7 @@ class GitLedger:
         self.path = path
         self._signing_key_path = signing_key_path
         self._allowed_signers_path = allowed_signers_path
+        self._object_format_cache: GitObjectFormat | None = None
 
     @classmethod
     def initialize(
@@ -81,10 +94,13 @@ class GitLedger:
             self._git(["config", name, value])
 
     def object_format(self) -> GitObjectFormat:
+        if self._object_format_cache is not None:
+            return self._object_format_cache
         value = self._git(["rev-parse", "--show-object-format"]).decode().strip()
         if value not in {"sha1", "sha256"}:
             raise PlaybillGitError(f"unsupported Git object format: {value!r}")
-        return cast(GitObjectFormat, value)
+        self._object_format_cache = cast(GitObjectFormat, value)
+        return self._object_format_cache
 
     def create_signed_genesis(
         self,
@@ -164,24 +180,86 @@ class GitLedger:
         raise PlaybillGitError("Playbill refuses merge commits on main")
 
     def read_tree(self, oid: str) -> dict[str, bytes]:
-        self._validate_oid(oid)
         tree: dict[str, bytes] = {}
-        listing = self._git(["ls-tree", "-r", "-z", "--full-tree", oid])
+        for entry in self.list_tree(oid):
+            if entry.object_type != "blob" or entry.mode != "100644":
+                raise PlaybillGitError(
+                    f"ledger tree contains unsupported {entry.mode} "
+                    f"{entry.object_type}: {entry.path}"
+                )
+            tree[entry.path] = self.read_blob(entry.oid)
+        return tree
+
+    def list_tree(self, oid: str) -> tuple[GitTreeEntry, ...]:
+        """List an exact commit recursively without reading any blob payload."""
+
+        self._validate_oid(oid)
+        entries: list[GitTreeEntry] = []
+        listing = self._git(["ls-tree", "-r", "-l", "-z", "--full-tree", oid])
         for row in listing.split(b"\x00"):
             if not row:
                 continue
             try:
                 metadata, raw_path = row.split(b"\t", 1)
-                mode, object_type, object_oid = metadata.decode("ascii").split()
+                mode, object_type, object_oid, raw_size = metadata.decode("ascii").split()
                 path = raw_path.decode("utf-8")
             except (UnicodeDecodeError, ValueError) as exc:
                 raise PlaybillGitError("ledger tree contains malformed metadata") from exc
-            if object_type != "blob" or mode != "100644":
-                raise PlaybillGitError(
-                    f"genesis tree contains unsupported {mode} {object_type}: {path}"
+            self._validate_oid(object_oid)
+            try:
+                size = None if raw_size == "-" else int(raw_size)
+            except ValueError as exc:
+                raise PlaybillGitError("ledger tree contains a malformed object size") from exc
+            entries.append(
+                GitTreeEntry(
+                    path=path,
+                    mode=mode,
+                    object_type=object_type,
+                    oid=object_oid,
+                    size=size,
                 )
-            tree[path] = self._git(["cat-file", "blob", object_oid])
-        return tree
+            )
+        return tuple(entries)
+
+    def read_blob(self, oid: str) -> bytes:
+        return self.read_blobs((oid,))[oid]
+
+    def read_blobs(self, oids: Sequence[str]) -> dict[str, bytes]:
+        """Read a bounded set of blobs through one `cat-file --batch` process."""
+
+        ordered = tuple(dict.fromkeys(oids))
+        for oid in ordered:
+            self._validate_oid(oid)
+        if not ordered:
+            return {}
+        output = self._git(
+            ["cat-file", "--batch"],
+            input_bytes=("\n".join(ordered) + "\n").encode("ascii"),
+        )
+        position = 0
+        blobs: dict[str, bytes] = {}
+        for expected_oid in ordered:
+            header_end = output.find(b"\n", position)
+            if header_end < 0:
+                raise PlaybillGitError("Git batch blob output ended before its header")
+            try:
+                actual_oid, object_type, raw_size = (
+                    output[position:header_end].decode("ascii").split()
+                )
+                size = int(raw_size)
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise PlaybillGitError("Git batch blob output has malformed metadata") from exc
+            if actual_oid != expected_oid or object_type != "blob" or size < 0:
+                raise PlaybillGitError("Git batch blob output differs from the requested blob")
+            content_start = header_end + 1
+            content_end = content_start + size
+            if content_end >= len(output) or output[content_end : content_end + 1] != b"\n":
+                raise PlaybillGitError("Git batch blob output has a truncated payload")
+            blobs[expected_oid] = output[content_start:content_end]
+            position = content_end + 1
+        if position != len(output):
+            raise PlaybillGitError("Git batch blob output contains trailing bytes")
+        return blobs
 
     def verify_commit(self, oid: str, *, principal_id: str = "daemon") -> bool:
         """Verify against exactly one expected signer, not any configured signer."""
@@ -291,4 +369,4 @@ def _command(
     return result
 
 
-__all__ = ["GitLedger"]
+__all__ = ["GitLedger", "GitTreeEntry"]

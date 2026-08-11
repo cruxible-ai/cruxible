@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
 import stat
 from collections.abc import Sequence
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
 from cruxible_core.playbill.bootstrap import VerifiedGenesis, prepare_genesis, verify_genesis
 from cruxible_core.playbill.canonical import canonical_bytes, canonical_digest
 from cruxible_core.playbill.errors import (
@@ -27,6 +29,7 @@ from cruxible_core.playbill.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
+from cruxible_core.playbill.projection import AcceptedProjectionCoordinate, AssemblerResult
 from cruxible_core.playbill.types import (
     CompilerCoordinate,
     GenesisCoordinate,
@@ -376,6 +379,39 @@ class PlaybillInstance:
             managed_root=str(self.root),
             storage_directories=storage_directories,
             daemon_private_key_present=(paths["credentials"] / DAEMON_PRIVATE_KEY_FILE).is_file(),
+        )
+
+    def projection_assembler(self) -> ProjectionAssembler:
+        """Bind PB-B's internal assembler to this already-verified generation."""
+
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        accepted = AcceptedProjectionCoordinate(
+            instance_id=self.descriptor.instance_id,
+            repository_path=str(paths["ledger"]),
+            git_object_format=self.descriptor.git_object_format,
+            git_oid=self._verified_genesis.oid,
+            semantic_root=self._verified_genesis.semantic_root.tagged,
+            generation_root=self._verified_genesis.generation_root.tagged,
+            compiler=self.descriptor.compiler,
+        )
+        return ProjectionAssembler(
+            self._ledger,
+            accepted=accepted,
+            publication_directory=paths["projections"],
+        )
+
+    def assemble_projection(
+        self,
+        *,
+        crash_hook: ProjectionCrashHook | None = None,
+    ) -> AssemblerResult:
+        """Build and publish the current verified generation for internal serving."""
+
+        assembler = self.projection_assembler()
+        staging = assembler.publication_directory / f".stage-{secrets.token_hex(12)}"
+        return assembler.assemble(
+            assembler.request(output_staging_directory=staging),
+            crash_hook=crash_hook,
         )
 
 

@@ -29,6 +29,26 @@ class PlaybillKeyError(PlaybillError):
     """Key generation, custody, or public/private correspondence failed."""
 
 
+class ProjectionError(PlaybillError):
+    """Base refusal for deterministic Playbill projection operations."""
+
+
+class ProjectionCoordinateError(ProjectionError):
+    """A build request does not match one previously verified ledger coordinate."""
+
+
+class ProjectionFormatError(ProjectionError):
+    """A ledger artifact or normalized projection fact is unsupported or malformed."""
+
+
+class ProjectionPublicationError(ProjectionError):
+    """An immutable projection could not be durably or atomically published."""
+
+
+class ProjectionIntegrityError(ProjectionError):
+    """A published manifest or physical piece failed binding verification."""
+
+
 __all__ = [
     "CanonicalEncodingError",
     "PlaybillBootstrapError",
@@ -36,4 +56,9 @@ __all__ = [
     "PlaybillFormatError",
     "PlaybillGitError",
     "PlaybillKeyError",
+    "ProjectionCoordinateError",
+    "ProjectionError",
+    "ProjectionFormatError",
+    "ProjectionIntegrityError",
+    "ProjectionPublicationError",
 ]
