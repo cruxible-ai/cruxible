@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
 from cruxible_core.playbill.bootstrap import VerifiedGenesis, prepare_genesis, verify_genesis
 from cruxible_core.playbill.canonical import canonical_bytes, canonical_digest
+from cruxible_core.playbill.cas import CasObjectMetadata, ContentAddressedBodyStore
 from cruxible_core.playbill.errors import (
     PlaybillBootstrapError,
     PlaybillFormatError,
@@ -399,6 +400,17 @@ class PlaybillInstance:
             accepted=accepted,
             publication_directory=paths["projections"],
         )
+
+    def body_store(self) -> ContentAddressedBodyStore:
+        """Return PB-C's inert, access-controlled content-addressed body store."""
+
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        return ContentAddressedBodyStore(paths["cas"])
+
+    def store_document_body(self, content: bytes) -> CasObjectMetadata:
+        """Persist inert bytes without proposing or changing accepted state."""
+
+        return self.body_store().store(content)
 
     def assemble_projection(
         self,

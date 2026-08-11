@@ -29,6 +29,14 @@ class PlaybillKeyError(PlaybillError):
     """Key generation, custody, or public/private correspondence failed."""
 
 
+class PlaybillCasError(PlaybillError):
+    """Content-addressed body storage is missing, corrupt, or unauthorized."""
+
+
+class DocumentFormatError(PlaybillError):
+    """A governed Document shell is unsupported or malformed."""
+
+
 class ProjectionError(PlaybillError):
     """Base refusal for deterministic Playbill projection operations."""
 
@@ -51,7 +59,9 @@ class ProjectionIntegrityError(ProjectionError):
 
 __all__ = [
     "CanonicalEncodingError",
+    "DocumentFormatError",
     "PlaybillBootstrapError",
+    "PlaybillCasError",
     "PlaybillError",
     "PlaybillFormatError",
     "PlaybillGitError",
