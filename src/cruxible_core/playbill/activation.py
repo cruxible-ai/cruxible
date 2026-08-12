@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol
 
-from cruxible_core.playbill.assembler import ProjectionAssembler
+from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
 from cruxible_core.playbill.cas import BodyProjectionProtocol
 from cruxible_core.playbill.errors import SettlementIntegrityError
 from cruxible_core.playbill.git import GitLedger
@@ -77,6 +77,7 @@ class ActivationPublisher:
         bundle: VerifiedGenerationBundle,
         *,
         base: AcceptedProjectionCoordinate,
+        crash_hook: ProjectionCrashHook | None = None,
     ) -> AssemblerResult:
         coordinate = bundle.projection_coordinate(base=base)
         assembler = ProjectionAssembler(
@@ -86,7 +87,10 @@ class ActivationPublisher:
             bodies=self.bodies,
         )
         stage = self.publication_directory / f".stage-{secrets.token_hex(12)}"
-        return assembler.assemble(assembler.request(output_staging_directory=stage))
+        return assembler.assemble(
+            assembler.request(output_staging_directory=stage),
+            crash_hook=crash_hook,
+        )
 
     def activate(
         self,

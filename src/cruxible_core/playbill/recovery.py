@@ -23,6 +23,7 @@ from cruxible_core.playbill.canonical import (
 )
 from cruxible_core.playbill.cas import BodyProjectionProtocol
 from cruxible_core.playbill.errors import (
+    PlaybillError,
     ProjectionIntegrityError,
     SettlementIntegrityError,
 )
@@ -327,6 +328,44 @@ def _clean_unaccepted_publications(
             ledger.collect_unreachable_generation(manifest.git_oid)
 
 
+def _clean_unaccepted_generations(
+    ledger: GitLedger,
+    *,
+    history: tuple[RecoveredGeneration, ...],
+    repository_path: str,
+    object_format: GitObjectFormat,
+    instance_id: str,
+    compiler: CompilerCoordinate,
+    bodies: BodyProjectionProtocol,
+    laws: AcceptanceLawRegistry,
+) -> None:
+    """Collect exact replay-valid generation commits that never settled on main."""
+
+    by_oid = {generation.oid: generation for generation in history}
+    for oid in ledger.unreachable_commits():
+        try:
+            parent_oid = ledger.parent_of(oid)
+            parent = by_oid.get(parent_oid or "")
+            if parent is None:
+                continue
+            _verify_successor(
+                ledger,
+                oid,
+                parent=parent,
+                repository_path=repository_path,
+                object_format=object_format,
+                instance_id=instance_id,
+                compiler=compiler,
+                bodies=bodies,
+                laws=laws,
+            )
+            ledger.collect_unreachable_generation(oid)
+        except PlaybillError:
+            # Unaccepted Git garbage cannot affect service admission. Only a
+            # complete replay-valid generation is eligible for targeted deletion.
+            continue
+
+
 def _clean_torn_projection_files(publication_directory: Path) -> None:
     """Remove detector-proven staging/unreferenced output after replay."""
 
@@ -453,6 +492,16 @@ def recover_instance(
         )
     head = history[-1]
     recovered_history = tuple(history)
+    _clean_unaccepted_generations(
+        ledger,
+        history=recovered_history,
+        repository_path=repository_path,
+        object_format=object_format,
+        instance_id=instance_id,
+        compiler=compiler,
+        bodies=bodies,
+        laws=laws,
+    )
     _clean_unaccepted_publications(
         ledger,
         history=recovered_history,

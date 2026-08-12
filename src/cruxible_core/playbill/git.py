@@ -391,8 +391,17 @@ class GitLedger:
         reachable_commits = set(self._git(["rev-list", "--all"]).decode().splitlines())
         if oid in reachable_commits:
             raise PlaybillGitError("refusing to collect a generation reachable from refs")
-        rows = self._git(["rev-list", "--objects", oid, "--not", "--all"]).decode().splitlines()
-        object_ids = tuple(sorted({row.split()[0] for row in rows if row.strip()}))
+        candidate_objects = {
+            row.split()[0]
+            for row in self._git(["rev-list", "--objects", oid]).decode().splitlines()
+            if row.strip()
+        }
+        protected_objects = {
+            row.split()[0]
+            for row in self._git(["rev-list", "--objects", "--all"]).decode().splitlines()
+            if row.strip()
+        }
+        object_ids = tuple(sorted(candidate_objects - protected_objects))
         if oid not in object_ids:
             raise PlaybillGitError("losing generation is not an independently collectable object")
         for object_id in object_ids:
@@ -423,6 +432,22 @@ class GitLedger:
             check=False,
         )
         return result.returncode == 0
+
+    def unreachable_commits(self) -> tuple[str, ...]:
+        """List unreachable commit OIDs without pruning or mutating object storage."""
+
+        rows = (
+            self._git(["fsck", "--unreachable", "--no-reflogs", "--no-progress"])
+            .decode()
+            .splitlines()
+        )
+        commits: list[str] = []
+        for row in rows:
+            fields = row.split()
+            if len(fields) == 3 and fields[:2] == ["unreachable", "commit"]:
+                self._validate_oid(fields[2])
+                commits.append(fields[2])
+        return tuple(sorted(set(commits)))
 
     def write_generation_note(self, oid: str, content: bytes) -> None:
         """Durably attach one immutable descriptor note after the winning main CAS."""

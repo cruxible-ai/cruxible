@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Final, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -57,6 +57,20 @@ from cruxible_core.playbill.types import GenerationDescriptor
 
 class _StrictSettlementModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+GENERATION_CONSTRUCTION: Final = "generation.construction"
+
+
+class SettlementCrashHook(Protocol):
+    def __call__(self, checkpoint: str) -> None: ...
+
+
+def _checkpoint(phase: str, hook: SettlementCrashHook | None) -> None:
+    if phase not in {"before", "after"}:
+        raise SettlementIntegrityError("unknown generation-construction crash phase")
+    if hook is not None:
+        hook(f"{phase}:{GENERATION_CONSTRUCTION}")
 
 
 class SettlementBinding(_StrictSettlementModel):
@@ -301,6 +315,7 @@ def prepare_generation(
     sequence: int,
     laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
     mandate_digest: str | None = None,
+    crash_hook: SettlementCrashHook | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
@@ -372,6 +387,7 @@ def prepare_generation(
     ):
         raise SettlementIntegrityError("generation semantic diff differs from C_s")
 
+    _checkpoint("before", crash_hook)
     oid = ledger.create_signed_generation(
         generation_tree,
         parent_oid=binding.base_oid,
@@ -397,7 +413,7 @@ def prepare_generation(
         git_oid=oid,
         parent_generation_root=parent_generation.value,
     )
-    return VerifiedGenerationBundle(
+    bundle = VerifiedGenerationBundle(
         settlement=binding,
         record=record,
         record_path=record_path,
@@ -409,13 +425,17 @@ def prepare_generation(
         principals=principals,
         approvals=verified_approvals,
     )
+    _checkpoint("after", crash_hook)
+    return bundle
 
 
 __all__ = [
     "ChangeActorBinding",
     "ChangeSetRecord",
     "ClosureProof",
+    "GENERATION_CONSTRUCTION",
     "SettlementBinding",
+    "SettlementCrashHook",
     "VerifiedGenerationBundle",
     "build_change_set_record",
     "change_set_digest",
