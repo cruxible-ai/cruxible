@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_core.playbill.canonical import (
     AcceptanceLawDigest,
+    ArtifactDigest,
     CandidateDigest,
     SemanticDiffDigest,
     SemanticManifestRoot,
@@ -174,6 +175,7 @@ class CandidateMemberEvidence(_StrictCandidateModel):
 
     path: str
     artifact_kind: str
+    artifact_digest: str
     disposition: MutationDisposition
     law_identifier: str
 
@@ -189,6 +191,12 @@ class CandidateMemberEvidence(_StrictCandidateModel):
     @classmethod
     def _artifact_kind(cls, value: str) -> str:
         return governance_identifier(value, label="artifact kind")
+
+    @field_validator("artifact_digest")
+    @classmethod
+    def _artifact_digest(cls, value: str) -> str:
+        ArtifactDigest.from_tagged(value)
+        return value
 
     @field_validator("law_identifier")
     @classmethod

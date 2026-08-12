@@ -1,0 +1,6 @@
+{
+  "generation_descriptor_preimage": "{\"git_oid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"parent_generation_root\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"semantic_root\":\"4ac461064eacc3ffa89396128a7522c7a77f0f534e0444e9a7557af7122aabe0\",\"tag\":\"playbill-gen-v1\"}",
+  "generation_root": "sha256:da8d3c4fa533dfe3abe3dca5e5c7c025c3641f9c2e0c58943efb55bca0fe1a0c",
+  "semantic_root": "sha256:4ac461064eacc3ffa89396128a7522c7a77f0f534e0444e9a7557af7122aabe0",
+  "settlement_preimage": "{\"base_oid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"c_s_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"tag\":\"playbill-settlement-v1\"}"
+}

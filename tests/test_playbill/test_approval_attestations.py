@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -60,6 +63,7 @@ def _candidate(*, parent: str = ROOT) -> CandidateRecord:
             CandidateMemberEvidence(
                 path=semantic.scope[0],
                 artifact_kind="document",
+                artifact_digest="sha256:" + "66" * 32,
                 disposition="replacement",
                 law_identifier="playbill.document.v1",
             ),
@@ -115,6 +119,21 @@ def test_exact_public_attestation_verifies_and_keeps_submitter_separate() -> Non
     assert approval_statement_bytes(submission.attestation) == approval_statement_bytes(
         submission.attestation.statement
     )
+
+
+def test_attestation_preimage_and_complete_envelope_digest_match_golden() -> None:
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "goldens" / "playbill" / "attestation-v1.json").read_bytes()
+    )
+    attestation = ApprovalAttestation(
+        signer_id="reviewer",
+        signing_semantic_root="sha256:" + "66" * 32,
+        payload_digest="sha256:" + "11" * 32,
+        sig=fixture["signature"],
+    )
+
+    assert approval_statement_bytes(attestation).decode() == fixture["statement_preimage"]
+    assert approval_digest(attestation).tagged == fixture["attestation_digest"]
 
 
 def test_tampered_stale_foreign_revoked_and_recovery_approvals_refuse() -> None:

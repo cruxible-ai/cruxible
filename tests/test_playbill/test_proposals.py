@@ -357,6 +357,7 @@ def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
             {
                 "path": DOCUMENT_PATH,
                 "artifact_kind": "document",
+                "artifact_digest": "sha256:" + "66" * 32,
                 "disposition": "replacement",
                 "law_identifier": "playbill.document.v1",
             },
@@ -391,6 +392,7 @@ def test_candidate_record_refuses_law_mapping_or_member_substitution() -> None:
             {
                 "path": DOCUMENT_PATH,
                 "artifact_kind": "document",
+                "artifact_digest": "sha256:" + "66" * 32,
                 "disposition": "replacement",
                 "law_identifier": "playbill.document.v1",
             },

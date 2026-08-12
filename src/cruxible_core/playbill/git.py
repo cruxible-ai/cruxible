@@ -160,6 +160,82 @@ class GitLedger:
             raise PlaybillGitError("new genesis commit signature does not verify")
         return oid
 
+    def create_signed_generation(
+        self,
+        tree: Mapping[str, bytes],
+        *,
+        parent_oid: str,
+        sequence: int,
+        timestamp: str,
+    ) -> str:
+        """Create one signed, still-unsettled generation commit over an exact parent."""
+
+        self._validate_oid(parent_oid)
+        if sequence < 1:
+            raise PlaybillGitError("non-genesis generation sequence must be positive")
+        tree_oid = self._write_tree(tree)
+        environment = {
+            "GIT_AUTHOR_NAME": "playbill-daemon",
+            "GIT_AUTHOR_EMAIL": "daemon@playbill.invalid",
+            "GIT_COMMITTER_NAME": "playbill-daemon",
+            "GIT_COMMITTER_EMAIL": "daemon@playbill.invalid",
+            "GIT_AUTHOR_DATE": timestamp,
+            "GIT_COMMITTER_DATE": timestamp,
+        }
+        oid = (
+            self._git(
+                [
+                    "commit-tree",
+                    "-S",
+                    tree_oid,
+                    "-p",
+                    parent_oid,
+                    "-m",
+                    f"Accept Playbill generation {sequence}",
+                ],
+                environment=environment,
+            )
+            .decode()
+            .strip()
+        )
+        self._validate_oid(oid)
+        if self.parent_of(oid) != parent_oid:
+            raise PlaybillGitError("new generation commit parent differs from settlement base")
+        if not self.verify_commit(oid):
+            raise PlaybillGitError("new generation commit signature does not verify")
+        return oid
+
+    def _write_tree(self, tree: Mapping[str, bytes]) -> str:
+        normalized_to_raw: dict[str, str] = {}
+        for raw_path in tree:
+            normalized = normalize_manifest_paths([raw_path])[0]
+            if normalized in normalized_to_raw:
+                raise PlaybillGitError("generation paths collide after normalization")
+            normalized_to_raw[normalized] = raw_path
+
+        with tempfile.TemporaryDirectory(prefix="playbill-generation-index-") as temporary:
+            environment = {"GIT_INDEX_FILE": str(Path(temporary) / "index")}
+            self._git(["read-tree", "--empty"], environment=environment)
+            for path in normalize_manifest_paths(list(tree)):
+                blob_oid = self._git(
+                    ["hash-object", "-w", "--stdin"],
+                    input_bytes=tree[normalized_to_raw[path]],
+                )
+                self._git(
+                    [
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        "100644",
+                        blob_oid.decode().strip(),
+                        path,
+                    ],
+                    environment=environment,
+                )
+            oid = self._git(["write-tree"], environment=environment).decode().strip()
+        self._validate_oid(oid)
+        return oid
+
     def create_proposal_commit(
         self,
         tree: Mapping[str, bytes],

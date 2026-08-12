@@ -25,6 +25,7 @@ from cruxible_core.playbill.canonical import (
     Sha256Value,
     canonical_bytes,
     canonical_digest,
+    file_digest,
     manifest_root,
     normalize_manifest_paths,
     semantic_diff,
@@ -519,6 +520,7 @@ def evaluate_proposal_tree(
             CandidateMemberEvidence(
                 path=path,
                 artifact_kind=registered_law.artifact_kind,
+                artifact_digest=file_digest(proposed_bytes).tagged,
                 disposition=disposition,
                 law_identifier=registered_law.coordinate.identifier,
             ),

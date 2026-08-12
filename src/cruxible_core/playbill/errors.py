@@ -53,6 +53,10 @@ class PrincipalIntegrityError(PlaybillError):
     """A principal registry or historical key transition failed replay."""
 
 
+class SettlementIntegrityError(PlaybillError):
+    """A candidate, change set, generation, or root correspondence failed."""
+
+
 class ProjectionError(PlaybillError):
     """Base refusal for deterministic Playbill projection operations."""
 
@@ -91,4 +95,5 @@ __all__ = [
     "ProjectionFormatError",
     "ProjectionIntegrityError",
     "ProjectionPublicationError",
+    "SettlementIntegrityError",
 ]
