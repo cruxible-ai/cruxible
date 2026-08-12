@@ -12,6 +12,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from cruxible_core.playbill.activation import ActivationPublisher
 from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
 from cruxible_core.playbill.bootstrap import VerifiedGenesis, prepare_genesis, verify_genesis
 from cruxible_core.playbill.canonical import canonical_bytes
@@ -36,6 +37,7 @@ from cruxible_core.playbill.keys import (
 )
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate, AssemblerResult
 from cruxible_core.playbill.proposals import ProposalEvidenceStore, ProposalService
+from cruxible_core.playbill.recovery import RecoveredInstanceState, recover_instance
 from cruxible_core.playbill.types import (
     GenesisCoordinate,
     GitObjectFormat,
@@ -49,6 +51,7 @@ from cruxible_core.playbill.types import (
     StorageLayout,
     initial_authority_matrix,
 )
+from cruxible_core.playbill.witness import WitnessSink
 from cruxible_core.temporal import format_datetime, utc_now
 
 DESCRIPTOR_FILE = "instance.json"
@@ -122,12 +125,14 @@ class PlaybillInstance:
         trust_root: PlaybillTrustRoot,
         ledger: GitLedger,
         verified_genesis: VerifiedGenesis,
+        recovered: RecoveredInstanceState,
     ) -> None:
         self.root = root
         self.descriptor = descriptor
         self.trust_root = trust_root
         self._ledger = ledger
         self._verified_genesis = verified_genesis
+        self._recovered = recovered
 
     @classmethod
     def initialize(
@@ -227,7 +232,13 @@ class PlaybillInstance:
             raise
 
     @classmethod
-    def open(cls, root: Path, *, trust_root: PlaybillTrustRoot) -> "PlaybillInstance":
+    def open(
+        cls,
+        root: Path,
+        *,
+        trust_root: PlaybillTrustRoot,
+        witness: WitnessSink | None = None,
+    ) -> "PlaybillInstance":
         """Reopen only after replaying descriptor, key, signature, and both roots."""
 
         managed_root = _resolved(root)
@@ -312,10 +323,11 @@ class PlaybillInstance:
                 "ledger object format differs from descriptor; object-format changes require "
                 "an explicit fork/import"
             )
-        main_oid = ledger.read_main()
-        if main_oid != descriptor.genesis.git_oid:
-            raise PlaybillBootstrapError("PB-A instance main differs from recorded genesis")
-        verified = verify_genesis(ledger, main_oid, trust_root=trust_root)
+        verified = verify_genesis(
+            ledger,
+            descriptor.genesis.git_oid,
+            trust_root=trust_root,
+        )
         expected = GenesisCoordinate(
             git_oid=verified.oid,
             bootstrap_root=verified.bootstrap_root.tagged,
@@ -324,7 +336,17 @@ class PlaybillInstance:
         )
         if expected != descriptor.genesis:
             raise PlaybillBootstrapError("recorded genesis coordinates do not reproduce")
-        return cls(managed_root, descriptor, trust_root, ledger, verified)
+        recovered = recover_instance(
+            ledger,
+            genesis=verified,
+            instance_id=descriptor.instance_id,
+            object_format=descriptor.git_object_format,
+            compiler=descriptor.compiler,
+            publication_directory=paths["projections"],
+            bodies=ContentAddressedBodyStore(paths["cas"]),
+            witness=witness,
+        )
+        return cls(managed_root, descriptor, trust_root, ledger, verified, recovered)
 
     @staticmethod
     def _validated_paths(root: Path, layout: StorageLayout) -> dict[str, Path]:
@@ -354,7 +376,7 @@ class PlaybillInstance:
                 status=record.status,
                 public_key_digest=record.public_key_digest,
             )
-            for record in self._verified_genesis.principals
+            for record in self._recovered.head.principals.principals
         )
         storage_directories = {
             name: str(path) for name, path in paths.items() if name != "credentials"
@@ -364,10 +386,10 @@ class PlaybillInstance:
             format_version=self.descriptor.format_version,
             instance_id=self.descriptor.instance_id,
             git_object_format=self.descriptor.git_object_format,
-            head_oid=self._verified_genesis.oid,
+            head_oid=self._recovered.head.oid,
             bootstrap_root=self._verified_genesis.bootstrap_root.tagged,
-            semantic_root=self._verified_genesis.semantic_root.tagged,
-            generation_root=self._verified_genesis.generation_root.tagged,
+            semantic_root=self._recovered.head.semantic_root.tagged,
+            generation_root=self._recovered.head.generation_root.tagged,
             compiler=self.descriptor.compiler,
             authority=self.descriptor.authority,
             operating_profile=self.descriptor.operating_profile,
@@ -381,16 +403,7 @@ class PlaybillInstance:
     def accepted_coordinate(self) -> AcceptedProjectionCoordinate:
         """Return the verified accepted coordinate without consulting proposal refs."""
 
-        paths = self._validated_paths(self.root, self.descriptor.storage)
-        return AcceptedProjectionCoordinate(
-            instance_id=self.descriptor.instance_id,
-            repository_path=str(paths["ledger"]),
-            git_object_format=self.descriptor.git_object_format,
-            git_oid=self._verified_genesis.oid,
-            semantic_root=self._verified_genesis.semantic_root.tagged,
-            generation_root=self._verified_genesis.generation_root.tagged,
-            compiler=self.descriptor.compiler,
-        )
+        return self._recovered.coordinate
 
     def projection_assembler(self) -> ProjectionAssembler:
         """Bind PB-B's internal assembler to this already-verified generation."""
@@ -423,6 +436,21 @@ class PlaybillInstance:
             accepted=self.accepted_coordinate(),
             bodies=ContentAddressedBodyStore(paths["cas"]),
             evidence=ProposalEvidenceStore(paths["exhaust"]),
+        )
+
+    def activation_publisher(
+        self,
+        *,
+        witness: WitnessSink | None = None,
+    ) -> ActivationPublisher:
+        """Bind PB-D activation to this instance's projection and body stores."""
+
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        return ActivationPublisher(
+            self._ledger,
+            publication_directory=paths["projections"],
+            bodies=ContentAddressedBodyStore(paths["cas"]),
+            witness=witness,
         )
 
     def assemble_projection(

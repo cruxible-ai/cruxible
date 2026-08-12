@@ -124,6 +124,10 @@ class MemoryWitness:
     def publish(self, record: WitnessRecord) -> None:
         self.records.append(record)
 
+    def latest(self, instance_id: str) -> WitnessRecord | None:
+        matches = [record for record in self.records if record.instance_id == instance_id]
+        return matches[-1] if matches else None
+
 
 def _sign(
     material: GeneratedKeyMaterial,

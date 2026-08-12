@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_core.playbill.canonical import GenerationRoot, SemanticRoot, canonical_bytes
 from cruxible_core.playbill.types import GitObjectFormat
@@ -45,11 +45,20 @@ class WitnessRecord(BaseModel):
         GenerationRoot.from_tagged(value)
         return value
 
+    @model_validator(mode="after")
+    def _oid_format(self) -> "WitnessRecord":
+        expected = 40 if self.object_format == "sha1" else 64
+        if len(self.head_oid) != expected:
+            raise ValueError("witness head OID differs from object format")
+        return self
+
 
 class WitnessSink(Protocol):
     """Optional external service seam; capture landing events use another contract."""
 
     def publish(self, record: WitnessRecord) -> None: ...
+
+    def latest(self, instance_id: str) -> WitnessRecord | None: ...
 
 
 def render_witness_record(record: WitnessRecord) -> bytes:

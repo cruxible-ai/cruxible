@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from cruxible_core.playbill.canonical import normalize_manifest_paths
 from cruxible_core.playbill.errors import PlaybillGitError
 from cruxible_core.playbill.keys import raw_public_key_hex_from_openssh
@@ -436,6 +439,21 @@ class GitLedger:
         if self.read_generation_note(oid) != content:
             raise PlaybillGitError("generation descriptor note did not persist exactly")
 
+    def write_recovered_generation_note(self, oid: str, content: bytes) -> None:
+        """Repair a missing note only for a replay-proven commit on accepted main."""
+
+        self._validate_oid(oid)
+        if not self.is_ancestor(oid, self.read_main()):
+            raise PlaybillGitError("recovered generation note target is outside main history")
+        if self.read_generation_note(oid) is not None:
+            raise PlaybillGitError("generation already carries a descriptor note")
+        self._git(
+            ["notes", "--ref=refs/notes/playbill-gen", "add", "-F", "-", oid],
+            input_bytes=content,
+        )
+        if self.read_generation_note(oid) != content:
+            raise PlaybillGitError("recovered generation descriptor note did not persist exactly")
+
     def read_generation_note(self, oid: str) -> bytes | None:
         self._validate_oid(oid)
         result = _command(
@@ -570,6 +588,74 @@ class GitLedger:
                 ],
                 check=False,
             )
+        return result.returncode == 0
+
+    def verify_commit_with_public_key(
+        self,
+        oid: str,
+        *,
+        principal_id: str,
+        public_key_hex: str,
+    ) -> bool:
+        """Verify a historical commit against exactly the replayed parent-root key."""
+
+        self._validate_oid(oid)
+        try:
+            public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
+        except ValueError as exc:
+            raise PlaybillGitError("historical daemon public key is malformed") from exc
+        openssh = public_key.public_bytes(
+            encoding=serialization.Encoding.OpenSSH,
+            format=serialization.PublicFormat.OpenSSH,
+        )
+        with tempfile.NamedTemporaryFile(prefix="playbill-historical-signer-") as signers:
+            signers.write(principal_id.encode("utf-8") + b" " + openssh + b"\n")
+            signers.flush()
+            os.fsync(signers.fileno())
+            result = _command(
+                [
+                    "git",
+                    f"--git-dir={self.path}",
+                    "-c",
+                    f"gpg.ssh.allowedSignersFile={signers.name}",
+                    "verify-commit",
+                    oid,
+                ],
+                check=False,
+            )
+        return result.returncode == 0
+
+    def main_history(self) -> tuple[str, ...]:
+        """Return the non-merge main chain in oldest-first order."""
+
+        rows = (
+            self._git(["rev-list", "--reverse", "--first-parent", "refs/heads/main"])
+            .decode()
+            .splitlines()
+        )
+        for oid in rows:
+            self._validate_oid(oid)
+            if (
+                self.parent_of(oid) is not None
+                and len(self._git(["rev-list", "--parents", "-n", "1", oid]).decode().split()) != 2
+            ):
+                raise PlaybillGitError("Playbill main history contains a merge commit")
+        return tuple(rows)
+
+    def is_ancestor(self, ancestor_oid: str, descendant_oid: str) -> bool:
+        self._validate_oid(ancestor_oid)
+        self._validate_oid(descendant_oid)
+        result = _command(
+            [
+                "git",
+                f"--git-dir={self.path}",
+                "merge-base",
+                "--is-ancestor",
+                ancestor_oid,
+                descendant_oid,
+            ],
+            check=False,
+        )
         return result.returncode == 0
 
     def _allowed_signer_entry(self, principal_id: str) -> bytes:
