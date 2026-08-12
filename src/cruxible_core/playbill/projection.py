@@ -90,7 +90,7 @@ class AcceptedProjectionCoordinate(_StrictProjectionModel):
 
 
 class ProvisionalProjectionCoordinate(_StrictProjectionModel):
-    """A candidate overlay labeled with both canonical and provisional identity."""
+    """A proposed-state read coordinate binding an accepted base to one exact candidate."""
 
     tag: Literal["playbill-provisional-projection-coordinate-v1"] = (
         "playbill-provisional-projection-coordinate-v1"

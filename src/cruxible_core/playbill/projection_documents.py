@@ -101,7 +101,7 @@ def document_projection_view(
 
 
 class ProvisionalDocumentProjection:
-    """In-memory candidate overlay; it cannot be bound through a canonical API."""
+    """In-memory candidate projection; it cannot be bound through a canonical API."""
 
     def __init__(
         self,
@@ -160,7 +160,7 @@ def compile_provisional_document_projection(
     bodies: BodyProjectionProtocol,
     registry: ProjectionExtensionRegistry | None = None,
 ) -> ProvisionalDocumentProjection:
-    """Compile an exact candidate-manifest overlay without publishing serving state."""
+    """Compile an exact candidate projection without publishing serving state."""
 
     actual = manifest_root(semantic_projection(tree)).tagged
     if actual != coordinate.candidate.candidate_manifest_root:

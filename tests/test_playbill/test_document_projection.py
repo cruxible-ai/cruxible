@@ -160,7 +160,7 @@ def test_document_compiler_emits_reproducible_facts_and_protected_exact_span(
         assert "end_byte" not in str(denied_payload)
 
 
-def test_canonical_query_ignores_candidate_overlay_and_provisional_read_names_both_coordinates(
+def test_canonical_query_ignores_candidate_projection_and_provisional_read_names_both_coordinates(
     tmp_path: Path,
 ) -> None:
     bodies = _store(tmp_path)
