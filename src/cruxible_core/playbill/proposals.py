@@ -12,6 +12,7 @@ from typing import Callable, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_core.playbill.candidates import (
+    CandidateMemberEvidence,
     CandidateRecord,
     SemanticCandidate,
     candidate_digest,
@@ -42,6 +43,8 @@ from cruxible_core.playbill.errors import (
     ProposalAdmissionError,
     ProposalIntegrityError,
 )
+from cruxible_core.playbill.governance import ApprovalRequirement, MutationDisposition
+from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.types import GitObjectFormat
@@ -501,13 +504,29 @@ def evaluate_proposal_tree(
         scope=scope,
         timestamp=timestamp,
     )
+    registered_law = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag=shell.tag)
+    disposition: MutationDisposition = (
+        "replacement" if predecessor is None else "hand-authored-successor"
+    )
     record = CandidateRecord(
         candidate=semantic_candidate,
         candidate_digest=candidate_digest(semantic_candidate).tagged,
         required_tier=law.required_tier,
-        approval_scope=law.approval_scope,
+        approval_requirements=tuple(ApprovalRequirement(role=role) for role in law.approval_scope),
         activation_policy=law.activation_policy,
         closure_paths=scope,
+        members=(
+            CandidateMemberEvidence(
+                path=path,
+                artifact_kind=registered_law.artifact_kind,
+                disposition=disposition,
+                law_identifier=registered_law.coordinate.identifier,
+            ),
+        ),
+        law_digests={
+            registered_law.coordinate.identifier: registered_law.coordinate.digest,
+        },
+        compiler_digest=current.compiler.rule_digest,
     )
     return CandidateEvaluation(candidate_tree, record, (), rebased)
 

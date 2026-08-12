@@ -97,8 +97,15 @@ def test_store_then_propose_creates_complete_candidate_without_changing_main(
         "timestamp": TIMESTAMP,
     }
     assert result.candidate.required_tier == "graph_write"
-    assert result.candidate.approval_scope == ("owner", "reviewer")
+    assert tuple(item.role for item in result.candidate.approval_requirements) == (
+        "owner",
+        "reviewer",
+    )
     assert result.candidate.activation_policy == "snapshot"
+    assert result.candidate.members[0].artifact_kind == "document"
+    assert result.candidate.members[0].law_identifier == "playbill.document.v1"
+    assert list(result.candidate.law_digests) == ["playbill.document.v1"]
+    assert result.candidate.compiler_digest == before.compiler.rule_digest
     assert instance.inspect() == before
     assert service.transport.read_main() == before.head_oid
     assert service.transport.read_proposal_ref(_request(instance).target_ref) == (
@@ -343,11 +350,60 @@ def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
         "candidate": candidate,
         "candidate_digest": candidate_digest(candidate).tagged,
         "required_tier": "governed_write",
-        "approval_scope": ("owner",),
+        "approval_requirements": ({"role": "owner"},),
         "activation_policy": "snapshot",
         "closure_paths": (DOCUMENT_PATH,),
+        "members": (
+            {
+                "path": DOCUMENT_PATH,
+                "artifact_kind": "document",
+                "disposition": "replacement",
+                "law_identifier": "playbill.document.v1",
+            },
+        ),
+        "law_digests": {
+            "playbill.document.v1": "sha256:" + "44" * 32,
+        },
+        "compiler_digest": "sha256:" + "55" * 32,
     }
     with pytest.raises(ValidationError, match="does not reproduce"):
         CandidateRecord.model_validate({**values, "candidate_digest": "sha256:" + "99" * 32})
     with pytest.raises(ValidationError, match="closure"):
         CandidateRecord.model_validate({**values, "closure_paths": ("documents/other.yaml",)})
+
+
+def test_candidate_record_refuses_law_mapping_or_member_substitution() -> None:
+    candidate = SemanticCandidate(
+        parent_semantic_root="sha256:" + "11" * 32,
+        candidate_manifest_root="sha256:" + "22" * 32,
+        semantic_diff_digest="sha256:" + "33" * 32,
+        scope=(DOCUMENT_PATH,),
+        timestamp=TIMESTAMP,
+    )
+    values = {
+        "candidate": candidate,
+        "candidate_digest": candidate_digest(candidate).tagged,
+        "required_tier": "governed_write",
+        "approval_requirements": ({"role": "owner"},),
+        "activation_policy": "snapshot",
+        "closure_paths": (DOCUMENT_PATH,),
+        "members": (
+            {
+                "path": DOCUMENT_PATH,
+                "artifact_kind": "document",
+                "disposition": "replacement",
+                "law_identifier": "playbill.document.v1",
+            },
+        ),
+        "law_digests": {"playbill.document.v1": "sha256:" + "44" * 32},
+        "compiler_digest": "sha256:" + "55" * 32,
+    }
+    with pytest.raises(ValidationError, match="mapping differ"):
+        CandidateRecord.model_validate(
+            {
+                **values,
+                "law_digests": {"playbill.other.v1": "sha256:" + "44" * 32},
+            }
+        )
+    with pytest.raises(ValidationError, match="members must enumerate"):
+        CandidateRecord.model_validate({**values, "members": ()})

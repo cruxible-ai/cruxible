@@ -8,18 +8,22 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_core.playbill.canonical import (
+    AcceptanceLawDigest,
     CandidateDigest,
     SemanticDiffDigest,
     SemanticManifestRoot,
     SemanticRoot,
+    Sha256Value,
     canonical_bytes,
     normalize_manifest_paths,
     typed_digest,
 )
-from cruxible_core.playbill.documents import (
-    DocumentActivationPolicy,
-    DocumentApprovalRole,
+from cruxible_core.playbill.governance import (
+    ActivationPolicy,
+    ApprovalRequirement,
+    MutationDisposition,
     PermissionTier,
+    governance_identifier,
 )
 
 
@@ -103,15 +107,18 @@ def candidate_digest(candidate: SemanticCandidate) -> CandidateDigest:
 
 
 class CandidateRecord(_StrictCandidateModel):
-    """Immutable proposal evidence containing the complete reviewed C_s body."""
+    """Family-neutral validated candidate and its complete law/closure evidence."""
 
-    tag: Literal["playbill-candidate-record-v1"] = "playbill-candidate-record-v1"
+    tag: Literal["playbill-validated-candidate-v1"] = "playbill-validated-candidate-v1"
     candidate: SemanticCandidate
     candidate_digest: str
     required_tier: PermissionTier
-    approval_scope: tuple[DocumentApprovalRole, ...]
-    activation_policy: DocumentActivationPolicy
+    approval_requirements: tuple[ApprovalRequirement, ...]
+    activation_policy: ActivationPolicy
     closure_paths: tuple[str, ...]
+    members: tuple["CandidateMemberEvidence", ...]
+    law_digests: dict[str, str]
+    compiler_digest: str
 
     @field_validator("candidate_digest")
     @classmethod
@@ -119,13 +126,74 @@ class CandidateRecord(_StrictCandidateModel):
         CandidateDigest.from_tagged(value)
         return value
 
+    @field_validator("approval_requirements")
+    @classmethod
+    def _approval_requirements(
+        cls, value: tuple[ApprovalRequirement, ...]
+    ) -> tuple[ApprovalRequirement, ...]:
+        roles = [requirement.role for requirement in value]
+        if roles != sorted(set(roles), key=lambda item: item.encode("utf-8")):
+            raise ValueError("approval requirements must be sorted and unique by role")
+        return value
+
+    @field_validator("law_digests")
+    @classmethod
+    def _law_digests(cls, value: dict[str, str]) -> dict[str, str]:
+        if not value:
+            raise ValueError("validated candidates require at least one acceptance law")
+        if list(value) != sorted(value, key=lambda item: item.encode("utf-8")):
+            raise ValueError("acceptance-law mapping must be sorted by identifier")
+        for identifier, digest in value.items():
+            governance_identifier(identifier, label="acceptance-law identifier")
+            AcceptanceLawDigest.from_tagged(digest)
+        return value
+
+    @field_validator("compiler_digest")
+    @classmethod
+    def _compiler_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
     @model_validator(mode="after")
     def _complete_binding(self) -> "CandidateRecord":
         if candidate_digest(self.candidate).tagged != self.candidate_digest:
             raise ValueError("candidate record digest does not reproduce from its complete C_s")
         if self.closure_paths != self.candidate.scope:
-            raise ValueError("PB-C singleton closure must equal the complete candidate scope")
+            raise ValueError("candidate closure must equal the complete candidate scope")
+        member_paths = tuple(member.path for member in self.members)
+        if member_paths != self.closure_paths:
+            raise ValueError("candidate members must enumerate the complete ordered closure")
+        used_laws = {member.law_identifier for member in self.members}
+        if used_laws != set(self.law_digests):
+            raise ValueError("candidate members and acceptance-law mapping differ")
         return self
+
+
+class CandidateMemberEvidence(_StrictCandidateModel):
+    """Per-member evidence interpreted by one digest-pinned acceptance law."""
+
+    path: str
+    artifact_kind: str
+    disposition: MutationDisposition
+    law_identifier: str
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        normalized = tuple(normalize_manifest_paths((value,)))
+        if normalized != (value,):
+            raise ValueError("candidate member path must be canonical")
+        return value
+
+    @field_validator("artifact_kind")
+    @classmethod
+    def _artifact_kind(cls, value: str) -> str:
+        return governance_identifier(value, label="artifact kind")
+
+    @field_validator("law_identifier")
+    @classmethod
+    def _law_identifier(cls, value: str) -> str:
+        return governance_identifier(value, label="acceptance-law identifier")
 
 
 def render_candidate_record(record: CandidateRecord) -> bytes:
@@ -134,6 +202,7 @@ def render_candidate_record(record: CandidateRecord) -> bytes:
 
 __all__ = [
     "CandidateRecord",
+    "CandidateMemberEvidence",
     "SemanticCandidate",
     "candidate_digest",
     "canonical_candidate_timestamp",

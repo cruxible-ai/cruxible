@@ -23,9 +23,9 @@ from cruxible_core.playbill.errors import (
     DocumentFormatError,
     PlaybillCasError,
 )
+from cruxible_core.playbill.governance import PermissionTier
 from cruxible_core.playbill.semantic import SemanticAddress
 
-PermissionTier = Literal["governed_write", "graph_write", "admin"]
 DocumentApprovalRole = Literal["owner", "reviewer"]
 DocumentActivationPolicy = Literal["snapshot"]
 
