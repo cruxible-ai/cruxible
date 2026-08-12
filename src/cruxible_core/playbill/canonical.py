@@ -139,6 +139,10 @@ class AcceptanceLawDigest(Sha256Value):
     kind = "acceptance-law digest"
 
 
+class ApprovalDigest(Sha256Value):
+    kind = "approval-attestation digest"
+
+
 class ProposalDigest(Sha256Value):
     kind = "proposal digest"
 
@@ -307,6 +311,7 @@ def semantic_diff(
 __all__ = [
     "ArtifactDigest",
     "AcceptanceLawDigest",
+    "ApprovalDigest",
     "BootstrapRoot",
     "CandidateDigest",
     "CanonicalDigester",

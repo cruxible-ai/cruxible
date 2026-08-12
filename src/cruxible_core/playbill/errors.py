@@ -45,6 +45,14 @@ class ProposalIntegrityError(PlaybillError):
     """Persisted proposal or candidate evidence failed deterministic verification."""
 
 
+class ApprovalIntegrityError(PlaybillError):
+    """An approval statement, signer, signature, or required quorum was refused."""
+
+
+class PrincipalIntegrityError(PlaybillError):
+    """A principal registry or historical key transition failed replay."""
+
+
 class ProjectionError(PlaybillError):
     """Base refusal for deterministic Playbill projection operations."""
 
@@ -67,6 +75,7 @@ class ProjectionIntegrityError(ProjectionError):
 
 __all__ = [
     "CanonicalEncodingError",
+    "ApprovalIntegrityError",
     "DocumentFormatError",
     "PlaybillBootstrapError",
     "PlaybillCasError",
@@ -74,6 +83,7 @@ __all__ = [
     "PlaybillFormatError",
     "PlaybillGitError",
     "PlaybillKeyError",
+    "PrincipalIntegrityError",
     "ProposalAdmissionError",
     "ProposalIntegrityError",
     "ProjectionCoordinateError",
