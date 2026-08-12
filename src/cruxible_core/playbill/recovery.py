@@ -179,16 +179,27 @@ def _verify_successor(
         bodies=bodies,
         timestamp=record.candidate.timestamp,
         rebased=False,
+        actor_id=record.actor_binding.actor_id,
     )
     if reevaluated.candidate != candidate or reevaluated.diagnostics:
         raise SettlementIntegrityError("generation candidate law/closure evidence diverged")
     for identifier, digest in record.law_digests.items():
         laws.require_historical(identifier=identifier, digest=digest)
+    principal_lifecycle = all(
+        member.artifact_kind == "principal-lifecycle" for member in candidate.members
+    )
     verified_approvals = verify_candidate_approvals(
         candidate,
         record.approvals,
         principals=parent.principals,
+        purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
+    if principal_lifecycle and record.actor_binding.actor_id not in {
+        approval.signer_id for approval in verified_approvals
+    }:
+        raise SettlementIntegrityError(
+            "principal lifecycle actor did not cryptographically approve the transition"
+        )
     semantic_tree = semantic_projection(tree)
     manifest = manifest_root(semantic_tree)
     if manifest.tagged != record.candidate.candidate_manifest_root:

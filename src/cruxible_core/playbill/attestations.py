@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -23,6 +24,7 @@ from cruxible_core.playbill.principals import PrincipalRegistrySnapshot
 from cruxible_core.playbill.types import PrincipalRole
 
 _SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
+ApprovalPurpose = Literal["ordinary-artifact", "principal-lifecycle"]
 
 
 class _StrictAttestationModel(BaseModel):
@@ -134,6 +136,7 @@ def verify_approval(
     *,
     candidate: SemanticCandidate,
     principals: PrincipalRegistrySnapshot,
+    purpose: ApprovalPurpose = "ordinary-artifact",
 ) -> VerifiedApproval:
     """Verify one public attestation against the exact signing-root registry."""
 
@@ -149,10 +152,10 @@ def verify_approval(
         principal = principals.require_active(attestation.signer_id)
     except PrincipalIntegrityError as exc:
         raise ApprovalIntegrityError(str(exc)) from exc
-    if principal.authority_roles in {("daemon",), ("recovery",)}:
-        raise ApprovalIntegrityError(
-            "daemon and recovery principals cannot approve ordinary artifacts"
-        )
+    if principal.authority_roles == ("daemon",):
+        raise ApprovalIntegrityError("the daemon principal cannot provide client approval")
+    if purpose == "ordinary-artifact" and principal.authority_roles == ("recovery",):
+        raise ApprovalIntegrityError("recovery principals cannot approve ordinary artifacts")
     try:
         public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(principal.public_key))
         public_key.verify(
@@ -175,6 +178,7 @@ def verify_candidate_approvals(
     submissions: tuple[ApprovalSubmission, ...],
     *,
     principals: PrincipalRegistrySnapshot,
+    purpose: ApprovalPurpose = "ordinary-artifact",
 ) -> tuple[VerifiedApproval, ...]:
     """Verify the exact role quorum with one signer usable for at most one slot."""
 
@@ -193,7 +197,12 @@ def verify_candidate_approvals(
     if len(signer_ids) != len(set(signer_ids)):
         raise ApprovalIntegrityError("a signer may submit only one approval per candidate")
     verified = tuple(
-        verify_approval(submission, candidate=candidate.candidate, principals=principals)
+        verify_approval(
+            submission,
+            candidate=candidate.candidate,
+            principals=principals,
+            purpose=purpose,
+        )
         for submission in submissions
     )
 
@@ -230,6 +239,7 @@ __all__ = [
     "ApprovalAttestation",
     "ApprovalStatement",
     "ApprovalSubmission",
+    "ApprovalPurpose",
     "VerifiedApproval",
     "approval_digest",
     "approval_statement_bytes",

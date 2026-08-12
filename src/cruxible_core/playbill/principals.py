@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -39,6 +40,9 @@ class PrincipalRegistrySnapshot(BaseModel):
         ]
         if len(daemon) != 1 or daemon[0].principal_id != "daemon":
             raise ValueError("principal registry requires exactly the daemon principal")
+        public_keys = [principal.public_key for principal in self.principals]
+        if len(public_keys) != len(set(public_keys)):
+            raise ValueError("principal registry public keys must be unique")
         return self
 
     def require_active(self, principal_id: str) -> PrincipalRecord:
@@ -59,7 +63,7 @@ class PrincipalRegistrySnapshot(BaseModel):
 
 
 def principal_registry_from_tree(
-    tree: dict[str, bytes],
+    tree: Mapping[str, bytes],
     *,
     semantic_root: str,
 ) -> PrincipalRegistrySnapshot:
@@ -94,4 +98,26 @@ def principal_registry_from_tree(
         raise PrincipalIntegrityError("principal registry snapshot is invalid") from exc
 
 
-__all__ = ["PrincipalRegistrySnapshot", "principal_registry_from_tree"]
+def parse_principal_record(content: bytes, *, path: str) -> PrincipalRecord:
+    """Parse one exact canonical principal artifact and verify path identity."""
+
+    match = _PRINCIPAL_PATH_RE.fullmatch(path)
+    if match is None:
+        raise PrincipalIntegrityError(f"principal path is not canonical: {path}")
+    try:
+        payload = json.loads(content)
+        principal = PrincipalRecord.model_validate(payload)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        raise PrincipalIntegrityError(f"invalid principal registry artifact: {path}") from exc
+    if principal.principal_id != match.group(1):
+        raise PrincipalIntegrityError(f"principal path and identity differ: {path}")
+    if render_principal(principal) != content:
+        raise PrincipalIntegrityError(f"principal registry artifact is not canonical: {path}")
+    return principal
+
+
+__all__ = [
+    "PrincipalRegistrySnapshot",
+    "parse_principal_record",
+    "principal_registry_from_tree",
+]

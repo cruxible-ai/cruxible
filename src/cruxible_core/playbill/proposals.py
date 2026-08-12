@@ -46,6 +46,7 @@ from cruxible_core.playbill.errors import (
 )
 from cruxible_core.playbill.governance import ApprovalRequirement, MutationDisposition
 from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS
+from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.types import GitObjectFormat
@@ -421,6 +422,7 @@ def evaluate_proposal_tree(
     bodies: BodyVerifierProtocol,
     timestamp: str,
     rebased: bool,
+    actor_id: str | None = None,
 ) -> CandidateEvaluation:
     candidate_tree = dict(proposed_tree)
     if rebased:
@@ -441,19 +443,55 @@ def evaluate_proposal_tree(
             return CandidateEvaluation(candidate_tree, None, diagnostics, True)
 
     diff_digest, scope = semantic_diff(current_tree, candidate_tree)
-    if len(scope) != 1 or not _DOCUMENT_PATH_RE.fullmatch(scope[0]):
+    if len(scope) != 1:
         return CandidateEvaluation(
             candidate_tree,
             None,
             (
                 _diagnostic(
-                    "playbill.proposal.non_singleton_document_scope",
-                    "PB-C proposals must change exactly one registered Document shell.",
+                    "playbill.proposal.non_singleton_scope",
+                    "PB-D proposals must change exactly one registered semantic member.",
                 ),
             ),
             rebased,
         )
     path = scope[0]
+    if _PRINCIPAL_PATH_RE.fullmatch(path):
+        lifecycle = evaluate_principal_lifecycle(
+            current_tree=current_tree,
+            proposed_tree=candidate_tree,
+            current=current,
+            path=path,
+            actor_id=actor_id,
+            timestamp=timestamp,
+        )
+        if lifecycle.candidate is None:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (
+                    _diagnostic(
+                        lifecycle.error_code or "playbill.principal.transition_refused",
+                        lifecycle.error_message or "Principal transition was refused.",
+                        path,
+                    ),
+                ),
+                rebased,
+            )
+        return CandidateEvaluation(candidate_tree, lifecycle.candidate, (), rebased)
+    if not _DOCUMENT_PATH_RE.fullmatch(path):
+        return CandidateEvaluation(
+            candidate_tree,
+            None,
+            (
+                _diagnostic(
+                    "playbill.proposal.unregistered_semantic_kind",
+                    "No accepted proposal law is registered for the changed path.",
+                    path,
+                ),
+            ),
+            rebased,
+        )
     proposed_bytes = candidate_tree.get(path)
     if proposed_bytes is None:
         return CandidateEvaluation(
@@ -654,6 +692,7 @@ class ProposalService:
             bodies=self.bodies,
             timestamp=timestamp,
             rebased=is_rebase,
+            actor_id=actor.actor_id,
         )
 
         evaluated_tree_oid: str | None = tree_oid

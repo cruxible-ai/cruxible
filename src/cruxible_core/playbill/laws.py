@@ -9,6 +9,7 @@ from cruxible_core.playbill.errors import ProposalIntegrityError
 from cruxible_core.playbill.governance import AcceptanceLawCoordinate
 
 DOCUMENT_LAW_IDENTIFIER = "playbill.document.v1"
+PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
 
 
 def _document_law_coordinate() -> AcceptanceLawCoordinate:
@@ -35,6 +36,24 @@ def _document_law_coordinate() -> AcceptanceLawCoordinate:
 
 
 DOCUMENT_LAW = _document_law_coordinate()
+
+
+def _principal_lifecycle_law_coordinate() -> AcceptanceLawCoordinate:
+    return AcceptanceLawCoordinate(
+        identifier=PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER,
+        digest=typed_digest(
+            AcceptanceLawDigest,
+            "playbill-law-v1",
+            {
+                "identifier": PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER,
+                "artifact_tag": "playbill-principal-v1",
+                "semantic_revision": 1,
+            },
+        ).tagged,
+    )
+
+
+PRINCIPAL_LIFECYCLE_LAW = _principal_lifecycle_law_coordinate()
 
 
 @dataclass(frozen=True)
@@ -92,7 +111,14 @@ DOCUMENT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="document",
     artifact_tag="playbill-document-v1",
 )
-PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry((DOCUMENT_ACCEPTANCE_LAW,))
+PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=PRINCIPAL_LIFECYCLE_LAW,
+    artifact_kind="principal-lifecycle",
+    artifact_tag="playbill-principal-v1",
+)
+PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
+    (DOCUMENT_ACCEPTANCE_LAW, PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW)
+)
 
 
 __all__ = [
@@ -102,4 +128,7 @@ __all__ = [
     "DOCUMENT_LAW_IDENTIFIER",
     "InstalledAcceptanceLaw",
     "PLAYBILL_ACCEPTANCE_LAWS",
+    "PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW",
+    "PRINCIPAL_LIFECYCLE_LAW",
+    "PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER",
 ]

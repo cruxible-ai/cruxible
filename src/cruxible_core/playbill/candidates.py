@@ -178,6 +178,7 @@ class CandidateMemberEvidence(_StrictCandidateModel):
     artifact_digest: str
     disposition: MutationDisposition
     law_identifier: str
+    governance_operation: str | None = None
 
     @field_validator("path")
     @classmethod
@@ -202,6 +203,13 @@ class CandidateMemberEvidence(_StrictCandidateModel):
     @classmethod
     def _law_identifier(cls, value: str) -> str:
         return governance_identifier(value, label="acceptance-law identifier")
+
+    @field_validator("governance_operation")
+    @classmethod
+    def _governance_operation(cls, value: str | None) -> str | None:
+        if value is not None:
+            return governance_identifier(value, label="governance operation")
+        return value
 
 
 def render_candidate_record(record: CandidateRecord) -> bytes:
