@@ -251,6 +251,16 @@ class ProjectionExtensionRegistry:
             )
         )
 
+    def supports(
+        self,
+        schema_id: str,
+        schema_version: int,
+        *,
+        classification: ProjectionFactClassification,
+    ) -> bool:
+        declaration = self._declarations.get((schema_id, schema_version))
+        return declaration is not None and declaration.classification == classification
+
     def validate(
         self,
         facts: Iterable[ProjectionFact],
@@ -343,6 +353,28 @@ def playbill_extension_registry() -> ProjectionExtensionRegistry:
     return ProjectionExtensionRegistry((*fixture, *document, *presentation))
 
 
+def playbill_governance_extension_registry() -> ProjectionExtensionRegistry:
+    """Return PB-D's additive accepted-governance explanation schemas."""
+
+    pb_c_semantic = playbill_extension_registry().declarations("semantic")
+    presentation = playbill_extension_registry().declarations("presentation")
+    explanation = tuple(
+        ProjectionFactDeclaration(
+            schema_id=schema_id,
+            schema_version=1,
+            classification="semantic",
+            constraints=("unique(subject_identity,fact_key)",),
+        )
+        for schema_id in (
+            "playbill.document.attestation_coverage",
+            "playbill.document.governance",
+            "playbill.document.history",
+            "playbill.document.provenance",
+        )
+    )
+    return ProjectionExtensionRegistry((*pb_c_semantic, *explanation, *presentation))
+
+
 __all__ = [
     "ProjectionExtensionRegistry",
     "ProjectionFact",
@@ -351,4 +383,5 @@ __all__ = [
     "fixture_extension_registry",
     "normalize_projection_value",
     "playbill_extension_registry",
+    "playbill_governance_extension_registry",
 ]

@@ -6,7 +6,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -19,12 +19,19 @@ from cruxible_core.playbill.errors import (
     PlaybillCasError,
     ProjectionFormatError,
 )
+from cruxible_core.playbill.explanation import (
+    ProjectionCoordinateContext,
+    accepted_document_explanation_facts,
+)
 from cruxible_core.playbill.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
 )
 from cruxible_core.playbill.semantic import SemanticAddress, whole_body_mapping
 from cruxible_core.playbill.types import PrincipalRecord
+
+if TYPE_CHECKING:
+    from cruxible_core.playbill.settlement import ChangeSetRecord
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _REGISTERED_PATHS = (
@@ -210,14 +217,39 @@ def parse_projection_tree(
     *,
     registry: ProjectionExtensionRegistry,
     bodies: BodyProjectionProtocol | None = None,
+    coordinate: ProjectionCoordinateContext | None = None,
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream."""
+
+    from cruxible_core.playbill.settlement import ChangeSetRecord, render_change_set
 
     envelopes: list[ArtifactEnvelopeRow] = []
     pins: list[PinRow] = []
     semantic_facts: list[ProjectionFact] = []
     presentation_facts: list[ProjectionFact] = []
     identities: dict[str, str] = {}
+    change_sets: list[tuple[str, ChangeSetRecord]] = []
+
+    for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
+        if registered_path_kind(path) != "changeset":
+            continue
+        content = blobs[path]
+        payload = _load_object(content, path=path)
+        try:
+            record = ChangeSetRecord.model_validate(payload)
+        except ValidationError as exc:
+            raise ProjectionFormatError(
+                f"change-set record failed strict validation: {path}"
+            ) from exc
+        if render_change_set(record) != content:
+            raise ProjectionFormatError(f"change-set record is not canonical: {path}")
+        expected_path = f"changesets/cs-{record.sequence:020d}.json"
+        if path != expected_path:
+            raise ProjectionFormatError("change-set sequence differs from its canonical path")
+        change_sets.append((path, record))
+    if [record.sequence for _path, record in change_sets] != list(range(1, len(change_sets) + 1)):
+        raise ProjectionFormatError("change-set history must be contiguous from sequence one")
+    accepted_change_sets = tuple(change_sets)
 
     for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
         content = blobs[path]
@@ -230,8 +262,6 @@ def parse_projection_tree(
                     raise ProjectionFormatError(f"principal artifact is not canonical: {path}")
                 continue
             if kind == "changeset":
-                if canonical_bytes(payload) + b"\n" != content:
-                    raise ProjectionFormatError(f"change-set record is not canonical: {path}")
                 continue
             if kind == "document":
                 if bodies is None:
@@ -338,6 +368,22 @@ def parse_projection_tree(
                         ),
                     )
                 )
+                if coordinate is not None and registry.supports(
+                    "playbill.document.attestation_coverage",
+                    1,
+                    classification="semantic",
+                ):
+                    semantic_facts.extend(
+                        accepted_document_explanation_facts(
+                            document_identity=document.identity,
+                            document_path=path,
+                            input_digest=file_digest(content).tagged,
+                            artifact_digest=envelope_digest,
+                            predecessor_digest=document.predecessor_digest,
+                            records=accepted_change_sets,
+                            coordinate=coordinate,
+                        )
+                    )
                 continue
             if kind == "fixture":
                 artifact = FixtureArtifact.model_validate(payload)

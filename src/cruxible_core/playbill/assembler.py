@@ -272,6 +272,7 @@ class ProjectionAssembler:
                 blob_map,
                 registry=self.registry,
                 bodies=self.bodies,
+                coordinate=request,
             ),
         )
         parsed = _timed(timings, "sort", lambda: _sorted_projection_tree(parsed))
