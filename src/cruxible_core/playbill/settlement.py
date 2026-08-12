@@ -47,7 +47,10 @@ from cruxible_core.playbill.principals import (
     PrincipalRegistrySnapshot,
     principal_registry_from_tree,
 )
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.projection import (
+    AcceptedProjectionCoordinate,
+    CandidateGenerationProjectionCoordinate,
+)
 from cruxible_core.playbill.proposals import evaluate_proposal_tree
 from cruxible_core.playbill.types import GenerationDescriptor
 
@@ -225,6 +228,10 @@ def render_change_set(record: ChangeSetRecord) -> bytes:
     return canonical_bytes(record.model_dump(mode="json")) + b"\n"
 
 
+def render_generation_descriptor(descriptor: GenerationDescriptor) -> bytes:
+    return canonical_bytes(descriptor.model_dump(mode="json")) + b"\n"
+
+
 def compute_semantic_root(
     *,
     manifest_root_value: str,
@@ -262,6 +269,24 @@ class VerifiedGenerationBundle:
     generation_root: GenerationRoot
     principals: PrincipalRegistrySnapshot
     approvals: tuple[VerifiedApproval, ...]
+
+    def projection_coordinate(
+        self,
+        *,
+        base: AcceptedProjectionCoordinate,
+    ) -> CandidateGenerationProjectionCoordinate:
+        if self.settlement.base_oid != base.git_oid:
+            raise SettlementIntegrityError("generation bundle and projection base differ")
+        return CandidateGenerationProjectionCoordinate(
+            instance_id=base.instance_id,
+            repository_path=base.repository_path,
+            git_object_format=base.git_object_format,
+            git_oid=self.oid,
+            semantic_root=self.semantic_root.tagged,
+            generation_root=self.generation_root.tagged,
+            compiler=base.compiler,
+            base_git_oid=base.git_oid,
+        )
 
 
 def prepare_generation(
@@ -387,4 +412,5 @@ __all__ = [
     "compute_semantic_root",
     "prepare_generation",
     "render_change_set",
+    "render_generation_descriptor",
 ]

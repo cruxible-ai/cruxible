@@ -35,9 +35,10 @@ _REGISTERED_PATHS = (
         re.compile(r"^presentation/fixtures/[a-z][a-z0-9_.-]{0,255}\.json$"),
         "presentation",
     ),
+    (re.compile(r"^changesets/cs-[0-9]{20}\.json$"), "changeset"),
 )
 
-RegisteredPathKind = Literal["principal", "document", "fixture", "presentation"]
+RegisteredPathKind = Literal["changeset", "document", "fixture", "presentation", "principal"]
 
 
 class _StrictArtifactModel(BaseModel):
@@ -227,6 +228,10 @@ def parse_projection_tree(
                 principal = PrincipalRecord.model_validate(payload)
                 if render_principal(principal) != content:
                     raise ProjectionFormatError(f"principal artifact is not canonical: {path}")
+                continue
+            if kind == "changeset":
+                if canonical_bytes(payload) + b"\n" != content:
+                    raise ProjectionFormatError(f"change-set record is not canonical: {path}")
                 continue
             if kind == "document":
                 if bodies is None:

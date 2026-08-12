@@ -89,6 +89,55 @@ class AcceptedProjectionCoordinate(_StrictProjectionModel):
         return self
 
 
+class CandidateGenerationProjectionCoordinate(_StrictProjectionModel):
+    """A verified, unaccepted generation eligible only for durable prebuild."""
+
+    tag: Literal["playbill-candidate-generation-coordinate-v1"] = (
+        "playbill-candidate-generation-coordinate-v1"
+    )
+    instance_id: str = Field(min_length=1, max_length=256)
+    repository_path: str
+    git_object_format: GitObjectFormat
+    git_oid: str
+    semantic_root: str
+    generation_root: str
+    compiler: CompilerCoordinate
+    base_git_oid: str
+
+    @field_validator("repository_path")
+    @classmethod
+    def _repository_path(cls, value: str) -> str:
+        return _absolute_path(value, label="repository_path")
+
+    @field_validator("git_oid", "base_git_oid")
+    @classmethod
+    def _git_oid(cls, value: str) -> str:
+        if not _OID_RE.fullmatch(value):
+            raise ValueError("candidate generation Git OID is malformed")
+        return value
+
+    @field_validator("semantic_root")
+    @classmethod
+    def _semantic_root(cls, value: str) -> str:
+        SemanticRoot.from_tagged(value)
+        return value
+
+    @field_validator("generation_root")
+    @classmethod
+    def _generation_root(cls, value: str) -> str:
+        GenerationRoot.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _oid_matches_format(self) -> "CandidateGenerationProjectionCoordinate":
+        expected = 40 if self.git_object_format == "sha1" else 64
+        if len(self.git_oid) != expected or len(self.base_git_oid) != expected:
+            raise ValueError("candidate generation OID length does not match object format")
+        if self.git_oid == self.base_git_oid:
+            raise ValueError("candidate generation must differ from its settlement base")
+        return self
+
+
 class ProvisionalProjectionCoordinate(_StrictProjectionModel):
     """A proposed-state read coordinate binding an accepted base to one exact candidate."""
 
@@ -346,6 +395,7 @@ def render_projection_manifest(manifest: ProjectionManifest) -> bytes:
 
 __all__ = [
     "AcceptedProjectionCoordinate",
+    "CandidateGenerationProjectionCoordinate",
     "AssemblerRequest",
     "AssemblerResult",
     "BuildInstrumentation",

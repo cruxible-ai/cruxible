@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import subprocess
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -337,6 +339,119 @@ class GitLedger:
         self._validate_oid(oid)
         zero_oid = "0" * (40 if self.object_format() == "sha1" else 64)
         self._git(["update-ref", "refs/heads/main", oid, zero_oid])
+
+    def compare_and_set_main(self, oid: str, *, expected_oid: str) -> bool:
+        """Advance main exactly once over its expected parent, or report a race loss."""
+
+        self._validate_oid(oid)
+        self._validate_oid(expected_oid)
+        if self.parent_of(oid) != expected_oid:
+            raise PlaybillGitError("main CAS target is not parented by the expected OID")
+        result = _command(
+            [
+                "git",
+                f"--git-dir={self.path}",
+                "update-ref",
+                "refs/heads/main",
+                oid,
+                expected_oid,
+            ],
+            check=False,
+        )
+        if result.returncode == 0:
+            return True
+        if self.read_main() != expected_oid:
+            return False
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise PlaybillGitError(f"main CAS failed without a competing ref update: {detail}")
+
+    @contextmanager
+    def activation_lock(self) -> Iterator[None]:
+        """Serialize activation/publication and targeted loser collection across processes."""
+
+        path = self.path / "playbill-activation.lock"
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            os.chmod(path, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+    def collect_unreachable_generation(self, oid: str) -> tuple[str, ...]:
+        """Delete only loose objects proven reachable solely from one losing generation."""
+
+        self._validate_oid(oid)
+        if self.read_main() == oid:
+            raise PlaybillGitError("refusing to collect the accepted main generation")
+        reachable_commits = set(self._git(["rev-list", "--all"]).decode().splitlines())
+        if oid in reachable_commits:
+            raise PlaybillGitError("refusing to collect a generation reachable from refs")
+        rows = self._git(["rev-list", "--objects", oid, "--not", "--all"]).decode().splitlines()
+        object_ids = tuple(sorted({row.split()[0] for row in rows if row.strip()}))
+        if oid not in object_ids:
+            raise PlaybillGitError("losing generation is not an independently collectable object")
+        for object_id in object_ids:
+            self._validate_oid(object_id)
+        deleted: list[str] = []
+        fsync_directories: set[Path] = set()
+        for object_id in object_ids:
+            path = self.path / "objects" / object_id[:2] / object_id[2:]
+            if not path.exists():
+                continue
+            if path.is_symlink() or not path.is_file():
+                raise PlaybillGitError("loose Git object cleanup target is not a regular file")
+            path.unlink()
+            deleted.append(object_id)
+            fsync_directories.add(path.parent)
+        for directory in sorted(fsync_directories, key=str):
+            descriptor = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        return tuple(deleted)
+
+    def object_exists(self, oid: str) -> bool:
+        self._validate_oid(oid)
+        result = _command(
+            ["git", f"--git-dir={self.path}", "cat-file", "-e", oid],
+            check=False,
+        )
+        return result.returncode == 0
+
+    def write_generation_note(self, oid: str, content: bytes) -> None:
+        """Durably attach one immutable descriptor note after the winning main CAS."""
+
+        self._validate_oid(oid)
+        if self.read_main() != oid:
+            raise PlaybillGitError("generation note target is not the current main ref")
+        if self.read_generation_note(oid) is not None:
+            raise PlaybillGitError("generation already carries a descriptor note")
+        self._git(
+            ["notes", "--ref=refs/notes/playbill-gen", "add", "-F", "-", oid],
+            input_bytes=content,
+        )
+        if self.read_generation_note(oid) != content:
+            raise PlaybillGitError("generation descriptor note did not persist exactly")
+
+    def read_generation_note(self, oid: str) -> bytes | None:
+        self._validate_oid(oid)
+        result = _command(
+            [
+                "git",
+                f"--git-dir={self.path}",
+                "notes",
+                "--ref=refs/notes/playbill-gen",
+                "show",
+                oid,
+            ],
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
 
     def read_main(self) -> str:
         result = self._git(["rev-parse", "--verify", "refs/heads/main"])

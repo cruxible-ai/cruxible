@@ -20,6 +20,7 @@ from cruxible_core.playbill.projection import (
     AssemblerRequest,
     AssemblerResult,
     BuildInstrumentation,
+    CandidateGenerationProjectionCoordinate,
     ProjectionManifest,
     ProjectionPiece,
     projection_manifest_name,
@@ -145,7 +146,7 @@ class ProjectionAssembler:
         self,
         repository: LedgerRepositoryProtocol,
         *,
-        accepted: AcceptedProjectionCoordinate,
+        accepted: AcceptedProjectionCoordinate | CandidateGenerationProjectionCoordinate,
         publication_directory: Path,
         registry: ProjectionExtensionRegistry | None = None,
         bodies: BodyProjectionProtocol | None = None,
@@ -161,7 +162,7 @@ class ProjectionAssembler:
         self.bodies = bodies
 
     def request(self, *, output_staging_directory: Path) -> AssemblerRequest:
-        """Create the exact serializable request for this accepted coordinate."""
+        """Create the exact serializable request for this verified coordinate."""
 
         return AssemblerRequest(
             instance_id=self.accepted.instance_id,
@@ -219,6 +220,20 @@ class ProjectionAssembler:
             raise ProjectionPublicationError("output staging directory must not already exist")
         if self._repository.object_format() != request.git_object_format:
             raise ProjectionCoordinateError("repository object format differs from request")
+        if isinstance(self.accepted, AcceptedProjectionCoordinate):
+            if self._repository.read_main() != request.git_oid:
+                raise ProjectionCoordinateError(
+                    "accepted projection coordinate is not the repository main ref"
+                )
+        else:
+            if self._repository.read_main() != self.accepted.base_git_oid:
+                raise ProjectionCoordinateError(
+                    "candidate projection base moved before durable prebuild"
+                )
+            if self._repository.parent_of(request.git_oid) != self.accepted.base_git_oid:
+                raise ProjectionCoordinateError(
+                    "candidate generation parent differs from its verified base"
+                )
         if not self._repository.verify_commit(request.git_oid):
             raise ProjectionCoordinateError("requested generation commit signature does not verify")
         return staging

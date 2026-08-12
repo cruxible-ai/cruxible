@@ -9,6 +9,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from cruxible_core.playbill.activation import ActivationPublisher
 from cruxible_core.playbill.attestations import (
     ApprovalAttestation,
     ApprovalStatement,
@@ -17,7 +18,7 @@ from cruxible_core.playbill.attestations import (
 )
 from cruxible_core.playbill.bootstrap import generation_root, prepare_genesis
 from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.cas import ContentAddressedBodyStore
+from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.compiler import current_compiler_coordinate
 from cruxible_core.playbill.documents import (
     DocumentAuthority,
@@ -39,6 +40,7 @@ from cruxible_core.playbill.proposals import (
     ProposalAdmissionRequest,
     evaluate_proposal_tree,
 )
+from cruxible_core.playbill.serving import SERVING_MANIFEST_FILE, bind_current_projection
 from cruxible_core.playbill.settlement import (
     ChangeActorBinding,
     SettlementBinding,
@@ -47,6 +49,7 @@ from cruxible_core.playbill.settlement import (
     prepare_generation,
 )
 from cruxible_core.playbill.types import GenerationDescriptor, PlaybillTrustRoot
+from cruxible_core.playbill.witness import WitnessRecord
 
 from ._support import FIXED_TIMESTAMP, generate_client
 
@@ -78,12 +81,17 @@ def _instance(tmp_path: Path):
     return instance, owner, reviewer
 
 
-def _candidate(instance: PlaybillInstance):
-    body = instance.store_document_body(b"# Accepted design\n")
+def _candidate(
+    instance: PlaybillInstance,
+    *,
+    title: str = "Accepted design",
+    body_content: bytes = b"# Accepted design\n",
+):
+    body = instance.store_document_body(body_content)
     shell = DocumentShell(
         identity="document:design",
         document_kind="design",
-        title="Accepted design",
+        title=title,
         media_type="text/markdown",
         body_digest=body.digest,
         authority=DocumentAuthority(
@@ -107,6 +115,14 @@ def _candidate(instance: PlaybillInstance):
     )
     assert result.candidate is not None
     return base, tree, result.candidate
+
+
+class MemoryWitness:
+    def __init__(self) -> None:
+        self.records: list[WitnessRecord] = []
+
+    def publish(self, record: WitnessRecord) -> None:
+        self.records.append(record)
 
 
 def _sign(
@@ -178,6 +194,135 @@ def test_prepare_generation_binds_complete_change_set_without_advancing_main(
     assert bundle.descriptor.git_oid == bundle.oid
     assert bundle.descriptor.semantic_root == bundle.semantic_root.value
     assert bundle.generation_root.tagged != base.generation_root
+
+
+def test_prebuild_is_unserved_until_winning_cas_then_switches_atomically(
+    tmp_path: Path,
+) -> None:
+    instance, owner, reviewer = _instance(tmp_path)
+    base, tree, candidate = _candidate(instance)
+    submissions = tuple(
+        sorted(
+            (
+                _sign(owner, candidate.candidate_digest, base.semantic_root),
+                _sign(reviewer, candidate.candidate_digest, base.semantic_root),
+            ),
+            key=lambda item: item.attestation.signer_id,
+        )
+    )
+    bundle = prepare_generation(
+        instance._ledger,
+        base=base,
+        candidate_tree=tree,
+        candidate=candidate,
+        approval_submissions=submissions,
+        bodies=instance.body_store(),
+        actor_binding=ChangeActorBinding(actor_id="owner"),
+        sequence=1,
+    )
+    publication = Path(instance.inspect().storage_directories["projections"])
+    witness = MemoryWitness()
+    publisher = ActivationPublisher(
+        instance._ledger,
+        publication_directory=publication,
+        bodies=instance.body_store(),
+        witness=witness,
+    )
+
+    projection = publisher.prebuild(bundle, base=base)
+
+    assert Path(projection.manifest_path).is_file()
+    assert not (publication / SERVING_MANIFEST_FILE).exists()
+    assert instance._ledger.read_main() == base.git_oid
+
+    result = publisher.activate(bundle, projection, base=base)
+
+    assert result.status == "accepted"
+    assert result.accepted is not None
+    assert instance._ledger.read_main() == bundle.oid
+    assert instance._ledger.read_generation_note(bundle.oid) is not None
+    assert witness.records == [
+        WitnessRecord(
+            instance_id=base.instance_id,
+            object_format=base.git_object_format,
+            head_oid=bundle.oid,
+            semantic_root=bundle.semantic_root.tagged,
+            generation_root=bundle.generation_root.tagged,
+            sequence=1,
+        )
+    ]
+    with bind_current_projection(publication, expected=result.accepted) as handle:
+        view = handle.document(
+            "document:design",
+            access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        )
+        assert view is not None
+        metadata = next(
+            fact for fact in view.facts if fact.schema_id == "playbill.document.metadata"
+        )
+        assert metadata.value["title"] == "Accepted design"
+
+
+def test_two_candidates_from_one_base_leave_one_winner_and_no_loser_projection(
+    tmp_path: Path,
+) -> None:
+    instance, owner, reviewer = _instance(tmp_path)
+    base, first_tree, first = _candidate(instance, title="First", body_content=b"first")
+    _same_base, second_tree, second = _candidate(
+        instance,
+        title="Second",
+        body_content=b"second",
+    )
+
+    def prepare(tree, candidate):
+        submissions = tuple(
+            sorted(
+                (
+                    _sign(owner, candidate.candidate_digest, base.semantic_root),
+                    _sign(reviewer, candidate.candidate_digest, base.semantic_root),
+                ),
+                key=lambda item: item.attestation.signer_id,
+            )
+        )
+        return prepare_generation(
+            instance._ledger,
+            base=base,
+            candidate_tree=tree,
+            candidate=candidate,
+            approval_submissions=submissions,
+            bodies=instance.body_store(),
+            actor_binding=ChangeActorBinding(actor_id="owner"),
+            sequence=1,
+        )
+
+    first_bundle = prepare(first_tree, first)
+    second_bundle = prepare(second_tree, second)
+    publication = Path(instance.inspect().storage_directories["projections"])
+    witness = MemoryWitness()
+    publisher = ActivationPublisher(
+        instance._ledger,
+        publication_directory=publication,
+        bodies=instance.body_store(),
+        witness=witness,
+    )
+    first_projection = publisher.prebuild(first_bundle, base=base)
+    second_projection = publisher.prebuild(second_bundle, base=base)
+    loser_piece_paths = tuple(
+        Path(second_projection.manifest_path).parent / piece.name
+        for piece in second_projection.manifest.pieces
+    )
+
+    winner = publisher.activate(first_bundle, first_projection, base=base)
+    loser = publisher.activate(second_bundle, second_projection, base=base)
+
+    assert winner.status == "accepted"
+    assert loser.status == "lost_cas"
+    assert instance._ledger.read_main() == first_bundle.oid
+    assert instance._ledger.read_generation_note(second_bundle.oid) is None
+    assert not instance._ledger.object_exists(second_bundle.oid)
+    assert not Path(second_projection.manifest_path).exists()
+    assert all(not path.exists() for path in loser_piece_paths)
+    assert [record.head_oid for record in witness.records] == [first_bundle.oid]
 
 
 def test_prepare_generation_refuses_tampered_law_or_candidate_tree(tmp_path: Path) -> None:
