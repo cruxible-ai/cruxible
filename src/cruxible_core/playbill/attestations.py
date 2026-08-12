@@ -215,20 +215,47 @@ def verify_candidate_approvals(
         role: tuple(
             index for index, approval in enumerate(verified) if role in approval.signer_roles
         )
-        for role in set(slots)
+        for role in dict.fromkeys(slots)
     }
 
-    def assign(position: int, used: frozenset[int]) -> bool:
-        if position == len(slots):
-            return True
-        role = slots[position]
-        return any(
-            assign(position + 1, used | {index})
-            for index in eligible.get(role, ())
-            if index not in used
-        )
+    # Find a maximum one-to-one slot/signer assignment with deterministic
+    # augmenting paths. This preserves the independent-role semantics without
+    # the exponential worst case of enumerating every possible assignment.
+    slot_to_signer: list[int | None] = [None] * len(slots)
+    signer_to_slot: list[int | None] = [None] * len(verified)
 
-    if not assign(0, frozenset()):
+    def augment(root_slot: int) -> bool:
+        queued_slots = [root_slot]
+        seen_slots = {root_slot}
+        seen_signers: set[int] = set()
+        signer_predecessor: dict[int, int] = {}
+        cursor = 0
+
+        while cursor < len(queued_slots):
+            slot = queued_slots[cursor]
+            cursor += 1
+            for signer in eligible.get(slots[slot], ()):
+                if signer in seen_signers:
+                    continue
+                seen_signers.add(signer)
+                signer_predecessor[signer] = slot
+                matched_slot = signer_to_slot[signer]
+                if matched_slot is None:
+                    current_signer = signer
+                    while True:
+                        current_slot = signer_predecessor[current_signer]
+                        displaced_signer = slot_to_signer[current_slot]
+                        slot_to_signer[current_slot] = current_signer
+                        signer_to_slot[current_signer] = current_slot
+                        if displaced_signer is None:
+                            return True
+                        current_signer = displaced_signer
+                if matched_slot not in seen_slots:
+                    seen_slots.add(matched_slot)
+                    queued_slots.append(matched_slot)
+        return False
+
+    if len(slots) > len(verified) or any(not augment(slot) for slot in range(len(slots))):
         raise ApprovalIntegrityError(
             "verified approvals do not satisfy every independent candidate role"
         )

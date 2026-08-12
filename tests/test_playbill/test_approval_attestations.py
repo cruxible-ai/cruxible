@@ -41,7 +41,14 @@ def _key(principal_id: str, roles: tuple[str, ...]):
     return private, record
 
 
-def _candidate(*, parent: str = ROOT) -> CandidateRecord:
+def _candidate(
+    *,
+    parent: str = ROOT,
+    approval_requirements: tuple[ApprovalRequirement, ...] = (
+        ApprovalRequirement(role="owner"),
+        ApprovalRequirement(role="reviewer"),
+    ),
+) -> CandidateRecord:
     semantic = SemanticCandidate(
         parent_semantic_root=parent,
         candidate_manifest_root="sha256:" + "22" * 32,
@@ -53,10 +60,7 @@ def _candidate(*, parent: str = ROOT) -> CandidateRecord:
         candidate=semantic,
         candidate_digest=candidate_digest(semantic).tagged,
         required_tier="graph_write",
-        approval_requirements=(
-            ApprovalRequirement(role="owner"),
-            ApprovalRequirement(role="reviewer"),
-        ),
+        approval_requirements=approval_requirements,
         activation_policy="snapshot",
         closure_paths=semantic.scope,
         members=(
@@ -193,6 +197,47 @@ def test_distinct_signers_must_fill_independent_roles() -> None:
         principals=_registry(both, reviewer),
     )
     assert {item.signer_id for item in verified} == {"both", "reviewer"}
+
+
+def test_quorum_matching_reassigns_a_multirole_signer() -> None:
+    both_private, both = _key("a-both", ("owner", "reviewer"))
+    owner_private, owner = _key("b-owner", ("owner",))
+    candidate = _candidate()
+    submissions = (
+        _submission(both_private, candidate, signer_id="a-both"),
+        _submission(owner_private, candidate, signer_id="b-owner"),
+    )
+
+    verified = verify_candidate_approvals(
+        candidate,
+        submissions,
+        principals=_registry(both, owner),
+    )
+
+    assert tuple(item.signer_id for item in verified) == ("a-both", "b-owner")
+
+
+def test_unsatisfied_overlapping_quorum_is_bounded() -> None:
+    candidate = _candidate(
+        approval_requirements=(
+            ApprovalRequirement(role="owner", minimum_distinct_signers=10),
+            ApprovalRequirement(role="reviewer", minimum_distinct_signers=9),
+        )
+    )
+    keys_and_records = tuple(
+        _key(f"both-{index:02d}", ("owner", "reviewer")) for index in range(18)
+    )
+    submissions = tuple(
+        _submission(private, candidate, signer_id=record.principal_id)
+        for private, record in keys_and_records
+    )
+
+    with pytest.raises(ApprovalIntegrityError, match="independent"):
+        verify_candidate_approvals(
+            candidate,
+            submissions,
+            principals=_registry(*(record for _private, record in keys_and_records)),
+        )
 
 
 def test_principal_role_model_prevents_recovery_or_daemon_authority_expansion() -> None:
