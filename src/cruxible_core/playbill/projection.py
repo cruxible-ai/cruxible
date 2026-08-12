@@ -279,6 +279,29 @@ class AssemblerResult(_StrictProjectionModel):
     def _manifest_path(cls, value: str) -> str:
         return _absolute_path(value, label="manifest_path")
 
+    @model_validator(mode="after")
+    def _manifest_consistency(self) -> "AssemblerResult":
+        expected = {
+            "git_oid": self.manifest.git_oid,
+            "semantic_root": self.manifest.semantic_root,
+            "generation_root": self.manifest.generation_root,
+            "logical_digest": self.manifest.logical_digest,
+            "row_counts": self.manifest.row_counts,
+        }
+        actual = {
+            "git_oid": self.git_oid,
+            "semantic_root": self.semantic_root,
+            "generation_root": self.generation_root,
+            "logical_digest": self.logical_digest,
+            "row_counts": self.row_counts,
+        }
+        mismatches = [name for name in expected if actual[name] != expected[name]]
+        if mismatches:
+            raise ValueError(
+                "assembler result differs from its embedded manifest: " + ", ".join(mismatches)
+            )
+        return self
+
 
 OrphanKind = Literal[
     "staging-build",

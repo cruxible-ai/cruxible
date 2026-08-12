@@ -85,6 +85,30 @@ def test_request_and_result_are_serializable_and_coordinate_mismatch_precedes_tr
     }
 
 
+def test_result_refuses_echo_fields_that_differ_from_embedded_manifest(tmp_path: Path) -> None:
+    repository = MemoryLedger(
+        tmp_path / "repository",
+        {"artifacts/fixtures/one.yaml": fixture_bytes("one", {"enabled": True})},
+    )
+    _assembler_value, result = _build(tmp_path, repository)
+    row_counts = dict(result.row_counts)
+    first_table = next(iter(row_counts))
+    row_counts[first_table] += 1
+    replacements = {
+        "git_oid": "0" * len(result.git_oid),
+        "semantic_root": "sha256:" + "44" * 32,
+        "generation_root": "sha256:" + "55" * 32,
+        "logical_digest": "sha256:" + "66" * 32,
+        "row_counts": row_counts,
+    }
+
+    for field, replacement in replacements.items():
+        payload = result.model_dump(mode="json")
+        payload[field] = replacement
+        with pytest.raises(ValueError, match=field):
+            AssemblerResult.model_validate(payload)
+
+
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
 def test_real_pb_a_instance_builds_and_binds_its_exact_genesis_projection(
     tmp_path: Path,
