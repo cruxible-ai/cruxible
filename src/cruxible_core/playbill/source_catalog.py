@@ -5,8 +5,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import stat
 from pathlib import Path, PurePosixPath
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -65,6 +67,20 @@ class SourceCatalogEntry(_StrictCatalogModel):
         if any(part in {"", ".", ".."} for part in parts):
             raise ValueError("catalog locator must be an explicit normalized file path")
         return self
+
+    @field_validator("public_uri")
+    @classmethod
+    def _public_uri(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if not parsed.scheme or parsed.scheme.lower() == "file":
+            raise ValueError("public_uri must be an explicit non-file URI")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("public_uri must not contain embedded credentials")
+        if parsed.scheme.lower() in {"http", "https"} and not parsed.netloc:
+            raise ValueError("HTTP public_uri requires an authority")
+        return value
 
 
 class SourceCatalog(_StrictCatalogModel):
@@ -272,7 +288,7 @@ def compile_source_catalog(
             root = resolved_root
             relative = entry.locator
         path = _resolve_declared_file(root, relative)
-        content = path.read_bytes()
+        content = _read_stable_file(path)
         body_digest = content_digest_bytes(content)
         previous = accepted_documents.get(entry.document_id)
         revision = 1 if previous is None else previous.lifecycle.revision + 1
@@ -388,6 +404,42 @@ def _resolve_declared_file(root: Path, locator: str) -> Path:
     if not resolved.is_file() or os.path.islink(resolved) or metadata.st_nlink < 1:
         raise PlaybillFormatError(f"declared source must be a regular file: {locator}")
     return resolved
+
+
+def _read_stable_file(path: Path) -> bytes:
+    """Read one resolved regular file once, refusing final-link swaps and in-read edits."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise PlaybillFormatError(f"declared source cannot be opened safely: {path.name}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise PlaybillFormatError(f"declared source must be a regular file: {path.name}")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            content = handle.read()
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    stable_before = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    stable_after = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if stable_before != stable_after or len(content) != after.st_size:
+        raise PlaybillFormatError(f"declared source changed while compiling: {path.name}")
+    return content
 
 
 __all__ = [

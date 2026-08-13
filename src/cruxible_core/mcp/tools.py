@@ -1932,6 +1932,173 @@ def register_tools(
         return handlers.handle_state_pull_apply(instance_id, expected_apply_digest)
 
     @_tool
+    def cruxible_playbill_init(
+        instance_id: str,
+        principals: list[dict[str, Any]],
+        operating_profile: Literal["local", "cloud"] = "local",
+    ) -> contracts.PlaybillInitResult:
+        """Bootstrap opt-in Playbill state from client-generated public principals."""
+        return handlers.handle_playbill_init(instance_id, principals, operating_profile)
+
+    @_tool
+    def cruxible_playbill_store_body(
+        instance_id: str, content_base64: str
+    ) -> contracts.PlaybillCasObjectResult:
+        """Store inert exact body bytes without creating a proposal or authority."""
+        return handlers.handle_playbill_store_body(instance_id, content_base64)
+
+    @_tool
+    def cruxible_playbill_propose_document(
+        instance_id: str,
+        shell: dict[str, Any],
+        proposal_name: str,
+        source_compilation_digest: str | None = None,
+    ) -> contracts.PlaybillProposalInspection:
+        """Propose one stored-body Document create or supersession."""
+        return handlers.handle_playbill_propose_document(
+            instance_id, shell, proposal_name, source_compilation_digest
+        )
+
+    @_tool
+    def cruxible_playbill_inspect_proposal(
+        instance_id: str, proposal_id: str
+    ) -> contracts.PlaybillProposalInspection:
+        """Inspect immutable admission, evaluation, diagnostics, and candidate evidence."""
+        return handlers.handle_playbill_inspect_proposal(instance_id, proposal_id)
+
+    @_tool
+    def cruxible_playbill_review(
+        instance_id: str,
+        proposal_id: str,
+        include_body: bool = False,
+    ) -> contracts.PlaybillProposalReview:
+        """Review the complete candidate with permission-filtered readable diffs."""
+        return handlers.handle_playbill_review(instance_id, proposal_id, include_body=include_body)
+
+    @_tool
+    def cruxible_playbill_prepare_approval(
+        instance_id: str,
+        proposal_id: str,
+        signer_id: str,
+        include_body: bool = False,
+    ) -> contracts.PlaybillApprovalChallenge:
+        """Fetch the exact public statement for a client-held signer."""
+        return handlers.handle_playbill_prepare_approval(
+            instance_id,
+            proposal_id,
+            signer_id=signer_id,
+            include_body=include_body,
+        )
+
+    @_tool
+    def cruxible_playbill_submit_approval(
+        instance_id: str,
+        proposal_id: str,
+        attestation: dict[str, Any],
+    ) -> contracts.PlaybillApprovalReceipt:
+        """Submit a public approval attestation produced outside the daemon."""
+        return handlers.handle_playbill_submit_approval(instance_id, proposal_id, attestation)
+
+    @_tool
+    def cruxible_playbill_activate(
+        instance_id: str, proposal_id: str
+    ) -> contracts.PlaybillActivationReceipt:
+        """Settle an approved candidate by parent-bound compare-and-set."""
+        return handlers.handle_playbill_activate(instance_id, proposal_id)
+
+    @_tool
+    def cruxible_playbill_list_documents(
+        instance_id: str,
+    ) -> contracts.PlaybillDocumentList:
+        """List accepted Documents at the current exact coordinate."""
+        return handlers.handle_playbill_list_documents(instance_id)
+
+    @_tool
+    def cruxible_playbill_get_document(
+        instance_id: str, identity: str
+    ) -> contracts.PlaybillDocumentView:
+        """Read one accepted Document envelope and structured facts."""
+        return handlers.handle_playbill_get_document(instance_id, identity)
+
+    @_tool
+    def cruxible_playbill_dereference(
+        instance_id: str, identity: str
+    ) -> contracts.PlaybillBodyRead:
+        """Dereference verified accepted Document body bytes."""
+        return handlers.handle_playbill_dereference(instance_id, identity)
+
+    @_tool
+    def cruxible_playbill_history(
+        instance_id: str, identity: str
+    ) -> contracts.PlaybillDocumentHistory:
+        """Read the replay-verified accepted history of one Document."""
+        return handlers.handle_playbill_history(instance_id, identity)
+
+    @_tool
+    def cruxible_playbill_explain(
+        instance_id: str,
+        subject: dict[str, Any],
+        at: dict[str, Any],
+        detail: Literal["summary", "evidence", "proof"] = "summary",
+        include_body: bool = False,
+    ) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
+        """Explain governance and provenance at one exact accepted coordinate."""
+        return handlers.handle_playbill_explain(
+            instance_id,
+            subject,
+            at,
+            detail=detail,
+            include_body=include_body,
+        )
+
+    @_tool
+    def cruxible_playbill_source_context(
+        instance_id: str,
+    ) -> contracts.PlaybillSourceContext:
+        """Fetch path-free accepted inputs for local source compilation."""
+        return handlers.handle_playbill_source_context(instance_id)
+
+    @_tool
+    def cruxible_playbill_check_source_bundle(
+        instance_id: str, bundle: dict[str, Any]
+    ) -> contracts.PlaybillSourceCheckResult:
+        """Compare an exact client-compiled bundle with accepted/pending state."""
+        return handlers.handle_playbill_check_source_bundle(instance_id, bundle)
+
+    @_tool
+    def cruxible_playbill_propose_source_bundle(
+        instance_id: str,
+        bundle: dict[str, Any],
+        source_name: str,
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        """Propose frozen bundle bytes without dereferencing a client path."""
+        return handlers.handle_playbill_propose_source_bundle(
+            instance_id,
+            bundle,
+            source_name=source_name,
+            proposal_name=proposal_name,
+        )
+
+    @_tool
+    def cruxible_playbill_list_principals(
+        instance_id: str,
+    ) -> contracts.PlaybillPrincipalList:
+        """List accepted public principal records and their exact coordinate."""
+        return handlers.handle_playbill_list_principals(instance_id)
+
+    @_tool
+    def cruxible_playbill_propose_principal_change(
+        instance_id: str,
+        principal: dict[str, Any],
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        """Propose governed registration, rotation, revocation, or recovery."""
+        return handlers.handle_playbill_propose_principal_change(
+            instance_id, principal, proposal_name
+        )
+
+    @_tool
     def cruxible_get_entity(
         instance_id: str,
         entity_type: str,

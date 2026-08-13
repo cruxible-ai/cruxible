@@ -6,8 +6,8 @@ import builtins
 import json
 import os
 import warnings
-from collections.abc import Mapping, Sequence
-from typing import Any, TypeVar
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Literal, TypeVar
 
 import httpx
 from pydantic import BaseModel
@@ -2349,3 +2349,277 @@ class CruxibleClient:
             params=params,
         )
         return self._parse_model(response, contracts.ListResolutionsToolResult)
+
+    @staticmethod
+    def _playbill_coordinate_params(
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None,
+    ) -> dict[str, str]:
+        if at is None:
+            return {}
+        value = at.model_dump(mode="json") if isinstance(at, BaseModel) else dict(at)
+        return {
+            name: str(value[name])
+            for name in ("git_oid", "semantic_root", "generation_root", "compiler_digest")
+        }
+
+    def init_playbill(
+        self,
+        instance_id: str,
+        *,
+        principals: Sequence[Mapping[str, Any]],
+        operating_profile: Literal["local", "cloud"] = "local",
+    ) -> contracts.PlaybillInitResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/init",
+            json={
+                "principals": [dict(item) for item in principals],
+                "operating_profile": operating_profile,
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillInitResult)
+
+    def store_playbill_body(
+        self,
+        instance_id: str,
+        content: bytes,
+    ) -> contracts.PlaybillCasObjectResult:
+        import base64
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/bodies",
+            json={"content_base64": base64.b64encode(content).decode("ascii")},
+        )
+        return self._parse_model(response, contracts.PlaybillCasObjectResult)
+
+    def propose_playbill_document(
+        self,
+        instance_id: str,
+        *,
+        shell: Mapping[str, Any],
+        proposal_name: str,
+        source_compilation_digest: str | None = None,
+        base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillProposalInspection:
+        payload: dict[str, Any] = {
+            "shell": dict(shell),
+            "proposal_name": proposal_name,
+            "source_compilation_digest": source_compilation_digest,
+        }
+        if base is not None:
+            payload["base"] = (
+                base.model_dump(mode="json") if isinstance(base, BaseModel) else dict(base)
+            )
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/documents/proposals", json=payload
+        )
+        return self._parse_model(response, contracts.PlaybillProposalInspection)
+
+    def propose_playbill_principal_change(
+        self,
+        instance_id: str,
+        *,
+        principal: Mapping[str, Any],
+        proposal_name: str,
+        base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillProposalInspection:
+        payload: dict[str, Any] = {
+            "principal": dict(principal),
+            "proposal_name": proposal_name,
+        }
+        if base is not None:
+            payload["base"] = (
+                base.model_dump(mode="json") if isinstance(base, BaseModel) else dict(base)
+            )
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/principals/proposals", json=payload
+        )
+        return self._parse_model(response, contracts.PlaybillProposalInspection)
+
+    def list_playbill_principals(self, instance_id: str) -> contracts.PlaybillPrincipalList:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/principals")
+        return self._parse_model(response, contracts.PlaybillPrincipalList)
+
+    def inspect_playbill_proposal(
+        self, instance_id: str, proposal_id: str
+    ) -> contracts.PlaybillProposalInspection:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}")
+        return self._parse_model(response, contracts.PlaybillProposalInspection)
+
+    def inspect_playbill_refusal(
+        self, instance_id: str, proposal_id: str
+    ) -> contracts.PlaybillRefusalInspection:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/refusal"
+        )
+        return self._parse_model(response, contracts.PlaybillRefusalInspection)
+
+    def review_playbill_proposal(
+        self,
+        instance_id: str,
+        proposal_id: str,
+        *,
+        include_body: bool = False,
+    ) -> contracts.PlaybillProposalReview:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/review",
+            json={"include_body": include_body},
+        )
+        return self._parse_model(response, contracts.PlaybillProposalReview)
+
+    def prepare_playbill_approval(
+        self,
+        instance_id: str,
+        proposal_id: str,
+        *,
+        signer_id: str,
+        include_body: bool = False,
+    ) -> contracts.PlaybillApprovalChallenge:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
+            json={"signer_id": signer_id, "include_body": include_body},
+        )
+        return self._parse_model(response, contracts.PlaybillApprovalChallenge)
+
+    def submit_playbill_approval(
+        self,
+        instance_id: str,
+        proposal_id: str,
+        *,
+        attestation: Mapping[str, Any],
+    ) -> contracts.PlaybillApprovalReceipt:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+            json={"attestation": dict(attestation)},
+        )
+        return self._parse_model(response, contracts.PlaybillApprovalReceipt)
+
+    def approve_playbill_proposal(
+        self,
+        instance_id: str,
+        proposal_id: str,
+        *,
+        signer_id: str,
+        signer: Callable[[dict[str, Any]], Mapping[str, Any]],
+        include_body: bool = False,
+    ) -> contracts.PlaybillApprovalReceipt:
+        """Invoke a client-held signer callback and submit only its public attestation."""
+
+        challenge = self.prepare_playbill_approval(
+            instance_id,
+            proposal_id,
+            signer_id=signer_id,
+            include_body=include_body,
+        )
+        attestation = signer(dict(challenge.statement))
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+            json={"attestation": dict(attestation)},
+        )
+        return self._parse_model(response, contracts.PlaybillApprovalReceipt)
+
+    def activate_playbill_proposal(
+        self, instance_id: str, proposal_id: str
+    ) -> contracts.PlaybillActivationReceipt:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate"
+        )
+        return self._parse_model(response, contracts.PlaybillActivationReceipt)
+
+    def list_playbill_documents(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillDocumentList:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/documents",
+            params=self._playbill_coordinate_params(at),
+        )
+        return self._parse_model(response, contracts.PlaybillDocumentList)
+
+    def get_playbill_document(
+        self,
+        instance_id: str,
+        identity: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillDocumentView:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/documents/{identity}",
+            params=self._playbill_coordinate_params(at),
+        )
+        return self._parse_model(response, contracts.PlaybillDocumentView)
+
+    def dereference_playbill_document(
+        self,
+        instance_id: str,
+        identity: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillBodyRead:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/documents/{identity}/body",
+            params=self._playbill_coordinate_params(at),
+        )
+        return self._parse_model(response, contracts.PlaybillBodyRead)
+
+    def playbill_document_history(
+        self, instance_id: str, identity: str
+    ) -> contracts.PlaybillDocumentHistory:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/documents/{identity}/history")
+        return self._parse_model(response, contracts.PlaybillDocumentHistory)
+
+    def explain_playbill_subject(
+        self,
+        instance_id: str,
+        *,
+        subject: Mapping[str, Any],
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any],
+        detail: Literal["summary", "evidence", "proof"] = "summary",
+        include_body: bool = False,
+    ) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
+        coordinate = at.model_dump(mode="json") if isinstance(at, BaseModel) else dict(at)
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/explain",
+            json={
+                "subject": dict(subject),
+                "at": coordinate,
+                "detail": detail,
+                "include_body": include_body,
+            },
+        )
+        payload = self._parse_json(response)
+        if payload.get("tag") == "playbill-explain-v1":
+            return contracts.PlaybillExplainResult.model_validate(payload)
+        return contracts.PlaybillExplainUnsupportedDetail.model_validate(payload)
+
+    def playbill_source_context(self, instance_id: str) -> contracts.PlaybillSourceContext:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/sources/context")
+        return self._parse_model(response, contracts.PlaybillSourceContext)
+
+    def check_playbill_source_bundle(
+        self, instance_id: str, *, bundle: Mapping[str, Any]
+    ) -> contracts.PlaybillSourceCheckResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/sources/check",
+            json={"bundle": dict(bundle)},
+        )
+        return self._parse_model(response, contracts.PlaybillSourceCheckResult)
+
+    def propose_playbill_source_bundle(
+        self,
+        instance_id: str,
+        *,
+        bundle: Mapping[str, Any],
+        source_name: str,
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/sources/proposals",
+            json={
+                "bundle": dict(bundle),
+                "source_name": source_name,
+                "proposal_name": proposal_name,
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillProposalInspection)

@@ -111,6 +111,15 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("attest", "record"): "active",
     ("attest", "resolve"): "active",
     ("migrate",): "active",
+    ("playbill", "init"): "active",
+    ("playbill", "body", "store"): "active",
+    ("playbill", "document", "propose"): "active",
+    ("playbill", "proposal", "approve"): "active",
+    ("playbill", "proposal", "activate"): "active",
+    ("playbill", "sources", "propose"): "active",
+    ("playbill", "principal", "rotate"): "active",
+    ("playbill", "principal", "recover"): "active",
+    ("playbill", "principal", "revoke"): "active",
 }
 
 
@@ -427,6 +436,102 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "procedures",
         "migrate_cmd",
         "Converge live v1 procedures through supervised v2 re-acceptance.",
+    ),
+    "playbill": _group(
+        "Govern Documents through Playbill's proposal and acceptance ledger.",
+        {
+            "init": _command("playbill", "init_playbill", "Bootstrap opt-in Playbill state."),
+            "body": _group(
+                "Store inert Document body bytes.",
+                {
+                    "store": _command(
+                        "playbill", "store_body", "Store exact bytes without creating authority."
+                    )
+                },
+                module="playbill",
+                attr="body_group",
+            ),
+            "document": _group(
+                "Propose and read governed Documents.",
+                {
+                    "propose": _command(
+                        "playbill", "propose_document", "Propose a Document envelope."
+                    ),
+                    "list": _command("playbill", "list_documents", "List accepted Documents."),
+                    "get": _command("playbill", "get_document", "Read an accepted Document."),
+                    "body": _command(
+                        "playbill", "get_document_body", "Dereference verified body bytes."
+                    ),
+                    "history": _command(
+                        "playbill", "document_history", "Read accepted Document history."
+                    ),
+                },
+                module="playbill",
+                attr="document_group",
+            ),
+            "proposal": _group(
+                "Inspect, review, approve, and activate candidates.",
+                {
+                    "inspect": _command(
+                        "playbill", "inspect_proposal", "Inspect immutable proposal evidence."
+                    ),
+                    "refusal": _command(
+                        "playbill", "inspect_refusal", "Inspect typed refusal diagnostics."
+                    ),
+                    "review": _command(
+                        "playbill", "review_proposal", "Render structured candidate review."
+                    ),
+                    "approve": _command(
+                        "playbill", "approve_proposal", "Sign locally and submit an attestation."
+                    ),
+                    "activate": _command(
+                        "playbill", "activate_proposal", "Settle an approved candidate."
+                    ),
+                },
+                module="playbill",
+                attr="proposal_group",
+            ),
+            "explain": _command(
+                "playbill", "explain", "Explain governance at an accepted coordinate."
+            ),
+            "sources": _group(
+                "Compile declared local files into exact-byte bundles.",
+                {
+                    "compile": _command(
+                        "playbill", "compile_sources", "Compile a read-only frozen bundle."
+                    ),
+                    "check": _command(
+                        "playbill", "check_sources", "Compare local bytes with accepted state."
+                    ),
+                    "propose": _command(
+                        "playbill", "propose_sources", "Propose one exact compiled source."
+                    ),
+                },
+                module="playbill",
+                attr="sources_group",
+            ),
+            "principal": _group(
+                "Govern owner, reviewer, and recovery public keys.",
+                {
+                    "list": _command(
+                        "playbill", "list_principals", "List accepted principal keys."
+                    ),
+                    "rotate": _command(
+                        "playbill", "rotate_principal", "Self-rotate a principal key."
+                    ),
+                    "recover": _command(
+                        "playbill", "recover_principal", "Recover a principal key narrowly."
+                    ),
+                    "revoke": _command(
+                        "playbill", "revoke_principal", "Propose principal revocation."
+                    ),
+                },
+                module="playbill",
+                attr="principal_group",
+            ),
+        },
+        module="playbill",
+        attr="playbill_group",
     ),
     "context": _group(
         "Manage remembered governed server and instance context.",

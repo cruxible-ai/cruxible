@@ -45,6 +45,7 @@ from cruxible_core.server.routes.mutations import router as mutations_router
 from cruxible_core.server.routes.outcome_contracts import (
     router as outcome_contracts_router,
 )
+from cruxible_core.server.routes.playbill import router as playbill_router
 from cruxible_core.server.routes.procedures import router as procedures_router
 from cruxible_core.server.routes.queries import router as queries_router
 from cruxible_core.server.routes.runtime_credentials import (
@@ -206,6 +207,7 @@ def create_app() -> FastAPI:
     app.include_router(decision_records_router)
     app.include_router(attestations_router)
     app.include_router(outcome_contracts_router)
+    app.include_router(playbill_router)
     app.include_router(mutations_router)
     app.include_router(feedback_router)
     app.include_router(gates_router)

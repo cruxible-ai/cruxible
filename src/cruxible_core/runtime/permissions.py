@@ -152,6 +152,16 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_list_snapshots": PermissionMode.READ_ONLY,
     "cruxible_dereference_source_evidence": PermissionMode.READ_ONLY,
     "cruxible_plan_workflow": PermissionMode.READ_ONLY,
+    "cruxible_playbill_inspect_proposal": PermissionMode.READ_ONLY,
+    "cruxible_playbill_review": PermissionMode.READ_ONLY,
+    "cruxible_playbill_prepare_approval": PermissionMode.READ_ONLY,
+    "cruxible_playbill_explain": PermissionMode.READ_ONLY,
+    "cruxible_playbill_list_documents": PermissionMode.READ_ONLY,
+    "cruxible_playbill_get_document": PermissionMode.READ_ONLY,
+    "cruxible_playbill_history": PermissionMode.READ_ONLY,
+    "cruxible_playbill_source_context": PermissionMode.READ_ONLY,
+    "cruxible_playbill_check_source_bundle": PermissionMode.READ_ONLY,
+    "cruxible_playbill_list_principals": PermissionMode.READ_ONLY,
     # GOVERNED_WRITE tools
     "cruxible_feedback": PermissionMode.GOVERNED_WRITE,
     "cruxible_feedback_batch": PermissionMode.GOVERNED_WRITE,
@@ -176,6 +186,10 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_finalize_decision_record": PermissionMode.GOVERNED_WRITE,
     "cruxible_abandon_decision_record": PermissionMode.GOVERNED_WRITE,
     "cruxible_register_source_artifact": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_store_body": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_propose_document": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_propose_source_bundle": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_dereference": PermissionMode.GOVERNED_WRITE,
     # GRAPH_WRITE tools
     "cruxible_add_entity": PermissionMode.GRAPH_WRITE,
     "cruxible_add_relationship": PermissionMode.GRAPH_WRITE,
@@ -196,9 +210,13 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     # is invalidated by it, which is the same class of authority as committing
     # governed state -- not a governed-operator convenience. (wi-governance-narrows)
     "cruxible_create_snapshot": PermissionMode.GRAPH_WRITE,
+    "cruxible_playbill_submit_approval": PermissionMode.GRAPH_WRITE,
+    "cruxible_playbill_activate": PermissionMode.GRAPH_WRITE,
     # ADMIN tools
     "cruxible_lock_workflow": PermissionMode.ADMIN,
     "cruxible_reload_config": PermissionMode.ADMIN,
+    "cruxible_playbill_init": PermissionMode.ADMIN,
+    "cruxible_playbill_propose_principal_change": PermissionMode.ADMIN,
     # Constraints and decision policies are ACTIVE CONFIG. They are persisted to
     # the config file and change how every subsequent query/workflow is
     # adjudicated, exactly like the config replacement ``cruxible_reload_config``
@@ -230,6 +248,14 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_telemetry_summary": PermissionMode.READ_ONLY,
     "cruxible_list_source_artifacts": PermissionMode.READ_ONLY,
     "cruxible_get_source_artifact": PermissionMode.READ_ONLY,
+    # Playbill HTTP/CLI operations share these family-level gates where one
+    # public operation has no one-to-one MCP tool (for example, refusal
+    # inspection and body-bearing variants of review/explain).
+    "cruxible_playbill_inspect": PermissionMode.READ_ONLY,
+    "cruxible_playbill_read": PermissionMode.READ_ONLY,
+    "cruxible_playbill_propose": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_body_read": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_principal_change": PermissionMode.ADMIN,
     # Install-ledger reads: exposed over HTTP (GET /installs and
     # /installs/{install_id}) and deliberately NOT MCP tools. The ledger's
     # write surface stays service-internal until the installer exists, so

@@ -17561,6 +17561,2788 @@
         "outcome_id"
       ]
     },
+    "PlaybillAcceptedCoordinate": {
+      "fields": {
+        "compiler_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "compiler_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Compiler Digest",
+            "type": "string"
+          }
+        },
+        "generation_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation_root",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Generation Root",
+            "type": "string"
+          }
+        },
+        "git_oid": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "git_oid",
+          "required": true,
+          "schema": {
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "title": "Git Oid",
+            "type": "string"
+          }
+        },
+        "semantic_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "semantic_root",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Semantic Root",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-accepted-coordinate-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-accepted-coordinate-v1",
+            "default": "playbill-accepted-coordinate-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "compiler_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Compiler Digest",
+            "type": "string"
+          },
+          "generation_root": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Generation Root",
+            "type": "string"
+          },
+          "git_oid": {
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "title": "Git Oid",
+            "type": "string"
+          },
+          "semantic_root": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Semantic Root",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-accepted-coordinate-v1",
+            "default": "playbill-accepted-coordinate-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "git_oid",
+          "semantic_root",
+          "generation_root",
+          "compiler_digest"
+        ],
+        "title": "PlaybillAcceptedCoordinate",
+        "type": "object"
+      },
+      "required_fields": [
+        "compiler_digest",
+        "generation_root",
+        "git_oid",
+        "semantic_root"
+      ]
+    },
+    "PlaybillActivationReceipt": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "accepted",
+              "lost_cas"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-activation-receipt-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-activation-receipt-v1",
+            "default": "playbill-activation-receipt-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "accepted_coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "lost_cas"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-activation-receipt-v1",
+            "default": "playbill-activation-receipt-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "status",
+          "accepted_coordinate"
+        ],
+        "title": "PlaybillActivationReceipt",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate",
+        "proposal_id",
+        "status"
+      ]
+    },
+    "PlaybillApprovalChallenge": {
+      "fields": {
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "review": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "review",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillProposalReview"
+          }
+        },
+        "signer_key_history_ref": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "signer_key_history_ref",
+          "required": true,
+          "schema": {
+            "title": "Signer Key History Ref",
+            "type": "string"
+          }
+        },
+        "signer_principal": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "signer_principal",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Signer Principal",
+            "type": "object"
+          }
+        },
+        "statement": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "statement",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Statement",
+            "type": "object"
+          }
+        },
+        "tag": {
+          "default": "playbill-approval-challenge-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-approval-challenge-v1",
+            "default": "playbill-approval-challenge-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillProposalReview": {
+            "additionalProperties": false,
+            "properties": {
+              "attestation_coverage": {
+                "additionalProperties": true,
+                "title": "Attestation Coverage",
+                "type": "object"
+              },
+              "base_oid": {
+                "title": "Base Oid",
+                "type": "string"
+              },
+              "candidate": {
+                "additionalProperties": true,
+                "title": "Candidate",
+                "type": "object"
+              },
+              "candidate_digest": {
+                "title": "Candidate Digest",
+                "type": "string"
+              },
+              "complete_members": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Complete Members",
+                "type": "array"
+              },
+              "coordinate_kind": {
+                "const": "provisional",
+                "default": "provisional",
+                "title": "Coordinate Kind",
+                "type": "string"
+              },
+              "documents": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Documents",
+                "type": "array"
+              },
+              "governance": {
+                "additionalProperties": true,
+                "title": "Governance",
+                "type": "object"
+              },
+              "parent_semantic_root": {
+                "title": "Parent Semantic Root",
+                "type": "string"
+              },
+              "proposal_id": {
+                "title": "Proposal Id",
+                "type": "string"
+              },
+              "provenance": {
+                "additionalProperties": true,
+                "title": "Provenance",
+                "type": "object"
+              },
+              "redactions": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Redactions",
+                "type": "array"
+              },
+              "settlement_base": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "tag": {
+                "const": "playbill-proposal-review-v1",
+                "default": "playbill-proposal-review-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal_id",
+              "candidate",
+              "candidate_digest",
+              "parent_semantic_root",
+              "settlement_base",
+              "base_oid",
+              "complete_members",
+              "governance",
+              "provenance",
+              "attestation_coverage",
+              "documents",
+              "redactions"
+            ],
+            "title": "PlaybillProposalReview",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "review": {
+            "$ref": "#/$defs/PlaybillProposalReview"
+          },
+          "signer_key_history_ref": {
+            "title": "Signer Key History Ref",
+            "type": "string"
+          },
+          "signer_principal": {
+            "additionalProperties": true,
+            "title": "Signer Principal",
+            "type": "object"
+          },
+          "statement": {
+            "additionalProperties": true,
+            "title": "Statement",
+            "type": "object"
+          },
+          "tag": {
+            "const": "playbill-approval-challenge-v1",
+            "default": "playbill-approval-challenge-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "signer_principal",
+          "signer_key_history_ref",
+          "statement",
+          "review"
+        ],
+        "title": "PlaybillApprovalChallenge",
+        "type": "object"
+      },
+      "required_fields": [
+        "proposal_id",
+        "review",
+        "signer_key_history_ref",
+        "signer_principal",
+        "statement"
+      ]
+    },
+    "PlaybillApprovalReceipt": {
+      "fields": {
+        "attestation_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "attestation_digest",
+          "required": true,
+          "schema": {
+            "title": "Attestation Digest",
+            "type": "string"
+          }
+        },
+        "candidate_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "candidate_digest",
+          "required": true,
+          "schema": {
+            "title": "Candidate Digest",
+            "type": "string"
+          }
+        },
+        "key_history_ref": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "key_history_ref",
+          "required": true,
+          "schema": {
+            "title": "Key History Ref",
+            "type": "string"
+          }
+        },
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "signer_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "signer_id",
+          "required": true,
+          "schema": {
+            "title": "Signer Id",
+            "type": "string"
+          }
+        },
+        "signing_semantic_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "signing_semantic_root",
+          "required": true,
+          "schema": {
+            "title": "Signing Semantic Root",
+            "type": "string"
+          }
+        },
+        "submitted_by": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "submitted_by",
+          "required": true,
+          "schema": {
+            "title": "Submitted By",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-approval-receipt-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-approval-receipt-v1",
+            "default": "playbill-approval-receipt-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "attestation_digest": {
+            "title": "Attestation Digest",
+            "type": "string"
+          },
+          "candidate_digest": {
+            "title": "Candidate Digest",
+            "type": "string"
+          },
+          "key_history_ref": {
+            "title": "Key History Ref",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "signer_id": {
+            "title": "Signer Id",
+            "type": "string"
+          },
+          "signing_semantic_root": {
+            "title": "Signing Semantic Root",
+            "type": "string"
+          },
+          "submitted_by": {
+            "title": "Submitted By",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-approval-receipt-v1",
+            "default": "playbill-approval-receipt-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "candidate_digest",
+          "signer_id",
+          "submitted_by",
+          "signing_semantic_root",
+          "attestation_digest",
+          "key_history_ref"
+        ],
+        "title": "PlaybillApprovalReceipt",
+        "type": "object"
+      },
+      "required_fields": [
+        "attestation_digest",
+        "candidate_digest",
+        "key_history_ref",
+        "proposal_id",
+        "signer_id",
+        "signing_semantic_root",
+        "submitted_by"
+      ]
+    },
+    "PlaybillBodyRead": {
+      "fields": {
+        "body_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "body_digest",
+          "required": true,
+          "schema": {
+            "title": "Body Digest",
+            "type": "string"
+          }
+        },
+        "content_base64": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "content_base64",
+          "required": true,
+          "schema": {
+            "title": "Content Base64",
+            "type": "string"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "title": "Identity",
+            "type": "string"
+          }
+        },
+        "media_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "media_type",
+          "required": true,
+          "schema": {
+            "title": "Media Type",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-document-body-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-document-body-v1",
+            "default": "playbill-document-body-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "body_digest": {
+            "title": "Body Digest",
+            "type": "string"
+          },
+          "content_base64": {
+            "title": "Content Base64",
+            "type": "string"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "identity": {
+            "title": "Identity",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-document-body-v1",
+            "default": "playbill-document-body-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "coordinate",
+          "body_digest",
+          "media_type",
+          "content_base64"
+        ],
+        "title": "PlaybillBodyRead",
+        "type": "object"
+      },
+      "required_fields": [
+        "body_digest",
+        "content_base64",
+        "coordinate",
+        "identity",
+        "media_type"
+      ]
+    },
+    "PlaybillCasObjectResult": {
+      "fields": {
+        "byte_length": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "byte_length",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Byte Length"
+          }
+        },
+        "digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "digest",
+          "required": true,
+          "schema": {
+            "title": "Digest",
+            "type": "string"
+          }
+        },
+        "present": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "present",
+          "required": true,
+          "schema": {
+            "title": "Present",
+            "type": "boolean"
+          }
+        },
+        "redacted": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "redacted",
+          "required": true,
+          "schema": {
+            "title": "Redacted",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Byte Length"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "present": {
+            "title": "Present",
+            "type": "boolean"
+          },
+          "redacted": {
+            "title": "Redacted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "digest",
+          "present",
+          "byte_length",
+          "redacted"
+        ],
+        "title": "PlaybillCasObjectResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "byte_length",
+        "digest",
+        "present",
+        "redacted"
+      ]
+    },
+    "PlaybillDocumentHistory": {
+      "fields": {
+        "entries": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entries",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "title": "Identity",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-document-history-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-document-history-v1",
+            "default": "playbill-document-history-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "identity": {
+            "title": "Identity",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-document-history-v1",
+            "default": "playbill-document-history-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "entries"
+        ],
+        "title": "PlaybillDocumentHistory",
+        "type": "object"
+      },
+      "required_fields": [
+        "entries",
+        "identity"
+      ]
+    },
+    "PlaybillDocumentList": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "documents": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "documents",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillDocumentView"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-document-list-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-document-list-v1",
+            "default": "playbill-document-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillDocumentView": {
+            "additionalProperties": false,
+            "properties": {
+              "coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "coordinate_kind": {
+                "const": "canonical",
+                "default": "canonical",
+                "title": "Coordinate Kind",
+                "type": "string"
+              },
+              "envelope": {
+                "additionalProperties": true,
+                "title": "Envelope",
+                "type": "object"
+              },
+              "facts": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Facts",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-document-read-v1",
+                "default": "playbill-document-read-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "coordinate",
+              "envelope",
+              "facts"
+            ],
+            "title": "PlaybillDocumentView",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/$defs/PlaybillDocumentView"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-document-list-v1",
+            "default": "playbill-document-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "documents"
+        ],
+        "title": "PlaybillDocumentList",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "documents"
+      ]
+    },
+    "PlaybillDocumentView": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "coordinate_kind": {
+          "default": "canonical",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate_kind",
+          "required": false,
+          "schema": {
+            "const": "canonical",
+            "default": "canonical",
+            "title": "Coordinate Kind",
+            "type": "string"
+          }
+        },
+        "envelope": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "envelope",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Envelope",
+            "type": "object"
+          }
+        },
+        "facts": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "facts",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Facts",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-document-read-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-document-read-v1",
+            "default": "playbill-document-read-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "coordinate_kind": {
+            "const": "canonical",
+            "default": "canonical",
+            "title": "Coordinate Kind",
+            "type": "string"
+          },
+          "envelope": {
+            "additionalProperties": true,
+            "title": "Envelope",
+            "type": "object"
+          },
+          "facts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Facts",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-document-read-v1",
+            "default": "playbill-document-read-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "envelope",
+          "facts"
+        ],
+        "title": "PlaybillDocumentView",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "envelope",
+        "facts"
+      ]
+    },
+    "PlaybillExplainResult": {
+      "fields": {
+        "attestation_coverage": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "attestation_coverage",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Attestation Coverage",
+            "type": "object"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "detail": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": true,
+          "schema": {
+            "enum": [
+              "summary",
+              "evidence"
+            ],
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "governance": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "governance",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Governance",
+            "type": "object"
+          }
+        },
+        "history": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "history",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "History",
+            "type": "object"
+          }
+        },
+        "proof_references": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proof_references",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Proof References",
+            "type": "array"
+          }
+        },
+        "provenance": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provenance",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          }
+        },
+        "redactions": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "redactions",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redactions",
+            "type": "array"
+          }
+        },
+        "source_mapping": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_mapping",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Mapping"
+          }
+        },
+        "subject": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Subject",
+            "type": "object"
+          }
+        },
+        "supported_details": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "supported_details",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Details",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-explain-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-explain-v1",
+            "default": "playbill-explain-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "attestation_coverage": {
+            "additionalProperties": true,
+            "title": "Attestation Coverage",
+            "type": "object"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "detail": {
+            "enum": [
+              "summary",
+              "evidence"
+            ],
+            "title": "Detail",
+            "type": "string"
+          },
+          "governance": {
+            "additionalProperties": true,
+            "title": "Governance",
+            "type": "object"
+          },
+          "history": {
+            "additionalProperties": true,
+            "title": "History",
+            "type": "object"
+          },
+          "proof_references": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Proof References",
+            "type": "array"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          },
+          "redactions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redactions",
+            "type": "array"
+          },
+          "source_mapping": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Mapping"
+          },
+          "subject": {
+            "additionalProperties": true,
+            "title": "Subject",
+            "type": "object"
+          },
+          "supported_details": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Details",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-explain-v1",
+            "default": "playbill-explain-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "coordinate",
+          "detail",
+          "governance",
+          "provenance",
+          "attestation_coverage",
+          "history",
+          "source_mapping",
+          "proof_references",
+          "redactions",
+          "supported_details"
+        ],
+        "title": "PlaybillExplainResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "attestation_coverage",
+        "coordinate",
+        "detail",
+        "governance",
+        "history",
+        "proof_references",
+        "provenance",
+        "redactions",
+        "source_mapping",
+        "subject",
+        "supported_details"
+      ]
+    },
+    "PlaybillExplainUnsupportedDetail": {
+      "fields": {
+        "code": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "code",
+          "required": true,
+          "schema": {
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "message": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "message",
+          "required": true,
+          "schema": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "requested_detail": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "requested_detail",
+          "required": true,
+          "schema": {
+            "const": "proof",
+            "title": "Requested Detail",
+            "type": "string"
+          }
+        },
+        "subject": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Subject",
+            "type": "object"
+          }
+        },
+        "supported_details": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "supported_details",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Details",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-explain-unsupported-detail-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-explain-unsupported-detail-v1",
+            "default": "playbill-explain-unsupported-detail-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "requested_detail": {
+            "const": "proof",
+            "title": "Requested Detail",
+            "type": "string"
+          },
+          "subject": {
+            "additionalProperties": true,
+            "title": "Subject",
+            "type": "object"
+          },
+          "supported_details": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Details",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-explain-unsupported-detail-v1",
+            "default": "playbill-explain-unsupported-detail-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "coordinate",
+          "requested_detail",
+          "code",
+          "message",
+          "supported_details"
+        ],
+        "title": "PlaybillExplainUnsupportedDetail",
+        "type": "object"
+      },
+      "required_fields": [
+        "code",
+        "coordinate",
+        "message",
+        "requested_detail",
+        "subject",
+        "supported_details"
+      ]
+    },
+    "PlaybillInitResult": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "recovery_posture": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "recovery_posture",
+          "required": true,
+          "schema": {
+            "title": "Recovery Posture",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-init-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-init-v1",
+            "default": "playbill-init-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "trust_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "trust_root",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Trust Root",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "recovery_posture": {
+            "title": "Recovery Posture",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-init-v1",
+            "default": "playbill-init-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "trust_root": {
+            "additionalProperties": true,
+            "title": "Trust Root",
+            "type": "object"
+          }
+        },
+        "required": [
+          "instance_id",
+          "coordinate",
+          "trust_root",
+          "recovery_posture"
+        ],
+        "title": "PlaybillInitResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "instance_id",
+        "recovery_posture",
+        "trust_root"
+      ]
+    },
+    "PlaybillPrincipalList": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "principals": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "principals",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Principals",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-principal-list-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-principal-list-v1",
+            "default": "playbill-principal-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "principals": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Principals",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-principal-list-v1",
+            "default": "playbill-principal-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "principals"
+        ],
+        "title": "PlaybillPrincipalList",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "principals"
+      ]
+    },
+    "PlaybillProposalInspection": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "proposal": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Proposal",
+            "type": "object"
+          }
+        },
+        "tag": {
+          "default": "playbill-proposal-inspection-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-proposal-inspection-v1",
+            "default": "playbill-proposal-inspection-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "accepted_coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "proposal": {
+            "additionalProperties": true,
+            "title": "Proposal",
+            "type": "object"
+          },
+          "tag": {
+            "const": "playbill-proposal-inspection-v1",
+            "default": "playbill-proposal-inspection-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal",
+          "accepted_coordinate"
+        ],
+        "title": "PlaybillProposalInspection",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate",
+        "proposal"
+      ]
+    },
+    "PlaybillProposalReview": {
+      "fields": {
+        "attestation_coverage": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "attestation_coverage",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Attestation Coverage",
+            "type": "object"
+          }
+        },
+        "base_oid": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "base_oid",
+          "required": true,
+          "schema": {
+            "title": "Base Oid",
+            "type": "string"
+          }
+        },
+        "candidate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "candidate",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Candidate",
+            "type": "object"
+          }
+        },
+        "candidate_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "candidate_digest",
+          "required": true,
+          "schema": {
+            "title": "Candidate Digest",
+            "type": "string"
+          }
+        },
+        "complete_members": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "complete_members",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Complete Members",
+            "type": "array"
+          }
+        },
+        "coordinate_kind": {
+          "default": "provisional",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate_kind",
+          "required": false,
+          "schema": {
+            "const": "provisional",
+            "default": "provisional",
+            "title": "Coordinate Kind",
+            "type": "string"
+          }
+        },
+        "documents": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "documents",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "governance": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "governance",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Governance",
+            "type": "object"
+          }
+        },
+        "parent_semantic_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "parent_semantic_root",
+          "required": true,
+          "schema": {
+            "title": "Parent Semantic Root",
+            "type": "string"
+          }
+        },
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "provenance": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provenance",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          }
+        },
+        "redactions": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "redactions",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redactions",
+            "type": "array"
+          }
+        },
+        "settlement_base": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "settlement_base",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "tag": {
+          "default": "playbill-proposal-review-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-proposal-review-v1",
+            "default": "playbill-proposal-review-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "attestation_coverage": {
+            "additionalProperties": true,
+            "title": "Attestation Coverage",
+            "type": "object"
+          },
+          "base_oid": {
+            "title": "Base Oid",
+            "type": "string"
+          },
+          "candidate": {
+            "additionalProperties": true,
+            "title": "Candidate",
+            "type": "object"
+          },
+          "candidate_digest": {
+            "title": "Candidate Digest",
+            "type": "string"
+          },
+          "complete_members": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Complete Members",
+            "type": "array"
+          },
+          "coordinate_kind": {
+            "const": "provisional",
+            "default": "provisional",
+            "title": "Coordinate Kind",
+            "type": "string"
+          },
+          "documents": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "governance": {
+            "additionalProperties": true,
+            "title": "Governance",
+            "type": "object"
+          },
+          "parent_semantic_root": {
+            "title": "Parent Semantic Root",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          },
+          "redactions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redactions",
+            "type": "array"
+          },
+          "settlement_base": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "tag": {
+            "const": "playbill-proposal-review-v1",
+            "default": "playbill-proposal-review-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "candidate",
+          "candidate_digest",
+          "parent_semantic_root",
+          "settlement_base",
+          "base_oid",
+          "complete_members",
+          "governance",
+          "provenance",
+          "attestation_coverage",
+          "documents",
+          "redactions"
+        ],
+        "title": "PlaybillProposalReview",
+        "type": "object"
+      },
+      "required_fields": [
+        "attestation_coverage",
+        "base_oid",
+        "candidate",
+        "candidate_digest",
+        "complete_members",
+        "documents",
+        "governance",
+        "parent_semantic_root",
+        "proposal_id",
+        "provenance",
+        "redactions",
+        "settlement_base"
+      ]
+    },
+    "PlaybillRefusalInspection": {
+      "fields": {
+        "diagnostics": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "diagnostics",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          }
+        },
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-refusal-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-refusal-v1",
+            "default": "playbill-refusal-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "enum": [
+              "candidate",
+              "refused"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-refusal-v1",
+            "default": "playbill-refusal-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "candidate",
+              "refused"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "verdict",
+          "diagnostics"
+        ],
+        "title": "PlaybillRefusalInspection",
+        "type": "object"
+      },
+      "required_fields": [
+        "diagnostics",
+        "proposal_id",
+        "verdict"
+      ]
+    },
+    "PlaybillSourceCheckResult": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "alignments": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "alignments",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Alignments",
+            "type": "array"
+          }
+        },
+        "compilation_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "compilation_digest",
+          "required": true,
+          "schema": {
+            "title": "Compilation Digest",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-source-check-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-source-check-v1",
+            "default": "playbill-source-check-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "accepted_coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "alignments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Alignments",
+            "type": "array"
+          },
+          "compilation_digest": {
+            "title": "Compilation Digest",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-source-check-v1",
+            "default": "playbill-source-check-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "compilation_digest",
+          "accepted_coordinate",
+          "alignments"
+        ],
+        "title": "PlaybillSourceCheckResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate",
+        "alignments",
+        "compilation_digest"
+      ]
+    },
+    "PlaybillSourceContext": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "documents": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "documents",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-source-context-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-source-context-v1",
+            "default": "playbill-source-context-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "accepted_coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "documents": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-source-context-v1",
+            "default": "playbill-source-context-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "accepted_coordinate",
+          "documents"
+        ],
+        "title": "PlaybillSourceContext",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate",
+        "documents"
+      ]
+    },
     "PropertyChangeItem": {
       "fields": {
         "from_value": {

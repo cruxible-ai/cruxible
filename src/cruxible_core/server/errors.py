@@ -47,6 +47,19 @@ from cruxible_core.errors import (
     TerminalLifecycleWriteRefusedError,
     TraceNotFoundError,
 )
+from cruxible_core.playbill.errors import (
+    ApprovalIntegrityError,
+    CanonicalEncodingError,
+    DocumentFormatError,
+    DocumentNotFoundError,
+    PlaybillBootstrapError,
+    PlaybillFormatError,
+    PrincipalIntegrityError,
+    ProjectionCoordinateError,
+    ProposalAdmissionError,
+    ProposalIntegrityError,
+    SettlementIntegrityError,
+)
 
 STANDARD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     400: {"model": ErrorResponse, "description": "Bad request error envelope"},
@@ -87,6 +100,10 @@ def _status_for_error(exc: CoreError) -> int:
             QueryExecutionError,
             IngestionError,
             SlotBindingRefusedError,
+            CanonicalEncodingError,
+            DocumentFormatError,
+            PlaybillFormatError,
+            ProposalAdmissionError,
         ),
     ):
         # A refused bind is a bad REQUEST, not a denied tier: the caller offered
@@ -122,6 +139,7 @@ def _status_for_error(exc: CoreError) -> int:
             RuntimeCredentialNotFoundError,
             InstallNotFoundError,
             BindingNotFoundError,
+            DocumentNotFoundError,
         ),
     ):
         return 404
@@ -139,6 +157,12 @@ def _status_for_error(exc: CoreError) -> int:
             InstallPhaseRequirementError,
             InstallOwnershipCollisionError,
             SlotAlreadyBoundError,
+            ApprovalIntegrityError,
+            PlaybillBootstrapError,
+            PrincipalIntegrityError,
+            ProposalIntegrityError,
+            ProjectionCoordinateError,
+            SettlementIntegrityError,
         ),
     ):
         # 409: a pending-edge refusal is a STATE conflict, not a policy or tier

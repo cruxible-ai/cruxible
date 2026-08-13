@@ -70,6 +70,15 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("attest", "record"): "active",
     ("attest", "resolve"): "active",
     ("migrate",): "active",
+    ("playbill", "init"): "active",
+    ("playbill", "body", "store"): "active",
+    ("playbill", "document", "propose"): "active",
+    ("playbill", "proposal", "approve"): "active",
+    ("playbill", "proposal", "activate"): "active",
+    ("playbill", "sources", "propose"): "active",
+    ("playbill", "principal", "rotate"): "active",
+    ("playbill", "principal", "recover"): "active",
+    ("playbill", "principal", "revoke"): "active",
 }
 
 

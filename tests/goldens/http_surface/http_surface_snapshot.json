@@ -171,6 +171,63 @@
   "/api/v1/{instance_id}/outcomes/analyze": {
     "POST": "AnalyzeOutcomesResult"
   },
+  "/api/v1/{instance_id}/playbill/bodies": {
+    "POST": "PlaybillCasObjectResult"
+  },
+  "/api/v1/{instance_id}/playbill/documents": {
+    "GET": "PlaybillDocumentList"
+  },
+  "/api/v1/{instance_id}/playbill/documents/proposals": {
+    "POST": "PlaybillProposalInspection"
+  },
+  "/api/v1/{instance_id}/playbill/documents/{identity}": {
+    "GET": "PlaybillDocumentView"
+  },
+  "/api/v1/{instance_id}/playbill/documents/{identity}/body": {
+    "GET": "PlaybillBodyRead"
+  },
+  "/api/v1/{instance_id}/playbill/documents/{identity}/history": {
+    "GET": "PlaybillDocumentHistory"
+  },
+  "/api/v1/{instance_id}/playbill/explain": {
+    "POST": "PlaybillExplainResult | PlaybillExplainUnsupportedDetail"
+  },
+  "/api/v1/{instance_id}/playbill/init": {
+    "POST": "PlaybillInitResult"
+  },
+  "/api/v1/{instance_id}/playbill/principals": {
+    "GET": "PlaybillPrincipalList"
+  },
+  "/api/v1/{instance_id}/playbill/principals/proposals": {
+    "POST": "PlaybillProposalInspection"
+  },
+  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}": {
+    "GET": "PlaybillProposalInspection"
+  },
+  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate": {
+    "POST": "PlaybillActivationReceipt"
+  },
+  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge": {
+    "POST": "PlaybillApprovalChallenge"
+  },
+  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals": {
+    "POST": "PlaybillApprovalReceipt"
+  },
+  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/refusal": {
+    "GET": "PlaybillRefusalInspection"
+  },
+  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/review": {
+    "POST": "PlaybillProposalReview"
+  },
+  "/api/v1/{instance_id}/playbill/sources/check": {
+    "POST": "PlaybillSourceCheckResult"
+  },
+  "/api/v1/{instance_id}/playbill/sources/context": {
+    "GET": "PlaybillSourceContext"
+  },
+  "/api/v1/{instance_id}/playbill/sources/proposals": {
+    "POST": "PlaybillProposalInspection"
+  },
   "/api/v1/{instance_id}/procedures": {
     "GET": "ListResult"
   },

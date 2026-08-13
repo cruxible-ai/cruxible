@@ -2447,3 +2447,183 @@ unchanged `source_evidence` locators.
 - Unknown `instance_id` or missing daemon configuration.
 - Permission mode too low for this tool.
 - Ambiguous relationship tuple without `edge_key`.
+
+## cruxible_playbill_init
+
+**Permission:** `ADMIN`
+
+**Purpose:** Use when you need to bootstrap opt-in Playbill state from client-generated public keys.
+
+**Arguments:** `instance_id`, `principals`, `operating_profile`.
+
+Only public principal records cross this surface. Private key bytes and key paths are not accepted.
+
+## cruxible_playbill_store_body
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Use when you need to store exact Document bytes inertly before proposing them.
+
+**Arguments:** `instance_id`, `content_base64`.
+
+CAS storage creates no proposal, candidate, approval, or accepted authority.
+
+## cruxible_playbill_propose_document
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Use when you need to propose a governed Document create or supersession.
+
+**Arguments:** `instance_id`, `shell`, `proposal_name`, `source_compilation_digest`.
+
+The daemon derives actor identity from request authentication and evaluates the exact envelope.
+
+## cruxible_playbill_inspect_proposal
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need immutable proposal evaluation, diagnostics, and candidate evidence.
+
+**Arguments:** `instance_id`, `proposal_id`.
+
+Candidate coordinates are provisional and cannot be used as accepted read handles.
+
+## cruxible_playbill_review
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need a structured candidate review and permission-filtered prose diff.
+
+**Arguments:** `instance_id`, `proposal_id`, `include_body`.
+
+The result keeps the candidate digest, parent semantic root, and settlement base OID separate.
+
+## cruxible_playbill_prepare_approval
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when a client-held signer needs the exact immutable approval statement.
+
+**Arguments:** `instance_id`, `proposal_id`, `signer_id`, `include_body`.
+
+This returns public review and signing material only; it performs no signing or approval.
+
+## cruxible_playbill_submit_approval
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Use when you have a public approval attestation produced outside the daemon.
+
+**Arguments:** `instance_id`, `proposal_id`, `attestation`.
+
+The `attestation` is verified against historical accepted principal state. No private-key input exists.
+
+## cruxible_playbill_activate
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Use when a Playbill candidate has its required approvals and is ready to settle.
+
+**Arguments:** `instance_id`, `proposal_id`.
+
+Activation uses parent-bound compare-and-set and returns either an accepted coordinate or `lost_cas`.
+
+## cruxible_playbill_list_documents
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need accepted Documents and the exact coordinate that supplied them.
+
+**Arguments:** `instance_id`.
+
+Every result carries Git OID, semantic root, generation root, and compiler digest.
+
+## cruxible_playbill_get_document
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need one accepted Document envelope and its structured facts.
+
+**Arguments:** `instance_id`, `identity`.
+
+This reads accepted projection state; it never treats proposal or local-source coordinates as canonical.
+
+## cruxible_playbill_dereference
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Use when you need verified accepted Document body bytes and have body-read permission.
+
+**Arguments:** `instance_id`, `identity`.
+
+The returned bytes are reverified against the envelope's bound CAS digest.
+
+## cruxible_playbill_history
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need the replay-verified accepted revision history of a Document.
+
+**Arguments:** `instance_id`, `identity`.
+
+Entries name accepted coordinates, body/envelope digests, and their immutable change-set record.
+
+## cruxible_playbill_explain
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need coordinate-bound governance, provenance, and attestation coverage.
+
+**Arguments:** `instance_id`, `subject`, `at`, `detail`, `include_body`.
+
+`summary` and `evidence` are supported. `proof` returns a typed deferred-detail result; the operation has no mutation affordance.
+
+## cruxible_playbill_source_context
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when a local client needs path-free accepted inputs before compiling source files.
+
+**Arguments:** `instance_id`.
+
+The response contains accepted envelopes and coordinates, never client filesystem locators.
+
+## cruxible_playbill_check_source_bundle
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need to compare an exact compiled bundle with accepted and pending state.
+
+**Arguments:** `instance_id`, `bundle`.
+
+The daemon verifies bundle digests and returns explicit alignment states without dereferencing a path.
+
+## cruxible_playbill_propose_source_bundle
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Use when you need to propose frozen source bytes without sending a local path.
+
+**Arguments:** `instance_id`, `bundle`, `source_name`, `proposal_name`.
+
+The selected source's bytes come from the canonical bundle even if the original local file later changes.
+
+## cruxible_playbill_list_principals
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need accepted owner, reviewer, recovery, and daemon public-key records.
+
+**Arguments:** `instance_id`.
+
+Only public key material and the exact accepted coordinate are returned.
+
+## cruxible_playbill_propose_principal_change
+
+**Permission:** `ADMIN`
+
+**Purpose:** Use when you need a governed principal registration, rotation, revocation, or recovery.
+
+**Arguments:** `instance_id`, `principal`, `proposal_name`.
+
+The principal-lifecycle acceptance law constrains actor scope; recovery authority does not imply ordinary Document approval.

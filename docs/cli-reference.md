@@ -3997,6 +3997,326 @@ File hygiene and tamper honesty:
 - Missing or stale `--instance-id` for daemon-backed commands.
 - No local `.cruxible/` instance found (local mode).
 
+## cruxible playbill
+
+**Usage:** `cruxible playbill COMMAND`
+
+**Purpose:** Govern Family-1 Documents through Playbill's proposal and acceptance ledger.
+
+## cruxible playbill init
+
+**Usage:** `cruxible playbill init [OPTIONS]`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--key-dir` | yes |  | path | Client owner-key custody directory outside the workspace. |
+| `--principal-id` | no | `operator` | string | Owner principal matching the authenticated actor. |
+| `--recovery-key-dir` | no |  | path | Optional offline recovery-key custody directory. |
+| `--recovery-principal-id` | no | `recovery` | string | Recovery principal identifier. |
+| `--profile` | no | `local` | choice | `local` or `cloud`; cloud requires recovery. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Generate client-held keys and bootstrap opt-in Playbill state with public principals only.
+
+## cruxible playbill body
+
+**Usage:** `cruxible playbill body COMMAND`
+
+**Purpose:** Work with inert content-addressed Document body bytes.
+
+## cruxible playbill body store
+
+**Usage:** `cruxible playbill body store [OPTIONS] PATH`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PATH` | yes |  | path | Local file read by the client. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Store exact bytes in inert CAS without creating a proposal or authority.
+
+## cruxible playbill document
+
+**Usage:** `cruxible playbill document COMMAND`
+
+**Purpose:** Propose and read governed Documents.
+
+## cruxible playbill document propose
+
+**Usage:** `cruxible playbill document propose [OPTIONS]`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--envelope` | yes |  | path | Canonical Document envelope file. |
+| `--name` | yes |  | string | Proposal ref name. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Submit and deterministically evaluate a Document create or supersession.
+
+## cruxible playbill document list
+
+**Usage:** `cruxible playbill document list [OPTIONS]`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** List accepted Documents and their exact accepted coordinate.
+
+## cruxible playbill document get
+
+**Usage:** `cruxible playbill document get [OPTIONS] IDENTITY`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `IDENTITY` | yes |  | string | Document identity, such as `document:design`. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Read one accepted Document envelope and its structured facts.
+
+## cruxible playbill document body
+
+**Usage:** `cruxible playbill document body [OPTIONS] IDENTITY`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `IDENTITY` | yes |  | string | Accepted Document identity. |
+| `--output` | no |  | path | Create this file instead of writing UTF-8 bytes to stdout. |
+| `--json` | no | `False` | boolean | Return the base64 wire model as JSON. |
+
+**Purpose:** Dereference body bytes after verifying the accepted digest binding.
+
+## cruxible playbill document history
+
+**Usage:** `cruxible playbill document history [OPTIONS] IDENTITY`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `IDENTITY` | yes |  | string | Accepted Document identity. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Read replay-verified accepted revisions and their change-set coordinates.
+
+## cruxible playbill proposal
+
+**Usage:** `cruxible playbill proposal COMMAND`
+
+**Purpose:** Inspect, review, approve, and activate immutable candidates.
+
+## cruxible playbill proposal inspect
+
+**Usage:** `cruxible playbill proposal inspect [OPTIONS] PROPOSAL_ID`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROPOSAL_ID` | yes |  | string | Immutable proposal admission ID. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Inspect proposal admission, evaluation, diagnostics, and candidate evidence.
+
+## cruxible playbill proposal refusal
+
+**Usage:** `cruxible playbill proposal refusal [OPTIONS] PROPOSAL_ID`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROPOSAL_ID` | yes |  | string | Refused or candidate proposal ID. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Read typed deterministic refusal diagnostics.
+
+## cruxible playbill proposal review
+
+**Usage:** `cruxible playbill proposal review [OPTIONS] PROPOSAL_ID`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROPOSAL_ID` | yes |  | string | Candidate proposal ID. |
+| `--include-body`, `--redacted` | no | include | boolean | Request readable prose or a permission-filtered digest view. |
+| `--json` | no | `False` | boolean | Output the complete structured review. |
+
+**Purpose:** Render a complete candidate review while labeling its coordinate provisional.
+
+## cruxible playbill proposal approve
+
+**Usage:** `cruxible playbill proposal approve [OPTIONS] PROPOSAL_ID`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROPOSAL_ID` | yes |  | string | Candidate proposal ID. |
+| `--signer-id` | yes |  | string | Accepted owner/reviewer principal. |
+| `--key` | yes |  | path | Client-held Ed25519 private key; never sent to the daemon. |
+| `--yes` | no | `False` | boolean | Skip the interactive confirmation after rendering. |
+| `--json` | no | `False` | boolean | Output the public approval receipt as JSON. |
+
+**Purpose:** Fetch the exact candidate, sign locally, and submit only a public attestation.
+
+## cruxible playbill proposal activate
+
+**Usage:** `cruxible playbill proposal activate [OPTIONS] PROPOSAL_ID`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PROPOSAL_ID` | yes |  | string | Independently approved candidate proposal ID. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Settle an approved candidate through parent-bound compare-and-set.
+
+## cruxible playbill explain
+
+**Usage:** `cruxible playbill explain [OPTIONS] IDENTITY`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `IDENTITY` | yes |  | string | Accepted Document identity. |
+| `--detail` | no | `summary` | choice | `summary`, `evidence`, or typed-deferred `proof`. |
+| `--include-body` | no | `False` | boolean | Include authorized source mapping detail. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Explain governance, provenance, and attestation coverage at an exact accepted coordinate.
+
+## cruxible playbill sources
+
+**Usage:** `cruxible playbill sources COMMAND`
+
+**Purpose:** Compile declared local files into path-free exact-byte bundles.
+
+## cruxible playbill sources compile
+
+**Usage:** `cruxible playbill sources compile [OPTIONS]`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--catalog` | yes |  | path | Portable source catalog. |
+| `--local-catalog` | no |  | path | Ignored machine-local overlay. |
+| `--root` | yes |  | path | Repository root for portable locators. |
+| `--root-alias` | no |  | NAME=PATH | Repeat for explicit local roots. |
+| `--output` | yes |  | path | New canonical frozen-bundle file. |
+| `--json` | no | `False` | boolean | Output manifest metadata as JSON. |
+
+**Purpose:** Read only declared client files and emit a canonical compilation bundle without mutating state.
+
+## cruxible playbill sources check
+
+**Usage:** `cruxible playbill sources check [OPTIONS]`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--catalog` | yes |  | path | Portable source catalog. |
+| `--local-catalog` | no |  | path | Ignored machine-local overlay. |
+| `--root` | yes |  | path | Repository root for portable locators. |
+| `--root-alias` | no |  | NAME=PATH | Repeat for explicit local roots. |
+| `--json` | no | `False` | boolean | Output exact alignment states as JSON. |
+
+**Purpose:** Snapshot declared bytes and compare their digests with accepted and pending state.
+
+## cruxible playbill sources propose
+
+**Usage:** `cruxible playbill sources propose [OPTIONS]`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--bundle` | yes |  | path | Previously compiled frozen bundle. |
+| `--source` | yes |  | string | Exact named source within the bundle. |
+| `--name` | yes |  | string | Proposal ref name. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Upload the bundle's exact bytes and propose them without daemon-side path access.
+
+## cruxible playbill principal
+
+**Usage:** `cruxible playbill principal COMMAND`
+
+**Purpose:** Inspect and govern public owner, reviewer, and recovery keys.
+
+## cruxible playbill principal list
+
+**Usage:** `cruxible playbill principal list [OPTIONS]`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** List accepted public principal records at the current coordinate.
+
+## cruxible playbill principal rotate
+
+**Usage:** `cruxible playbill principal rotate [OPTIONS] PRINCIPAL_ID`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PRINCIPAL_ID` | yes |  | string | Principal to self-rotate. |
+| `--key-dir` | yes |  | path | New client-key custody directory. |
+| `--name` | yes |  | string | Proposal ref name. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Generate a successor key locally and propose an authorized self-rotation.
+
+## cruxible playbill principal recover
+
+**Usage:** `cruxible playbill principal recover [OPTIONS] PRINCIPAL_ID`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PRINCIPAL_ID` | yes |  | string | Principal whose key is being recovered. |
+| `--key-dir` | yes |  | path | New client-key custody directory. |
+| `--name` | yes |  | string | Proposal ref name. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Use authenticated recovery authority for narrowly scoped key replacement.
+
+## cruxible playbill principal revoke
+
+**Usage:** `cruxible playbill principal revoke [OPTIONS] PRINCIPAL_ID`
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `PRINCIPAL_ID` | yes |  | string | Principal to revoke. |
+| `--name` | yes |  | string | Proposal ref name. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Purpose:** Propose governed revocation of an accepted public principal.
+
 ## cruxible ws path
 
 **Usage:** `cruxible ws path [OPTIONS]`

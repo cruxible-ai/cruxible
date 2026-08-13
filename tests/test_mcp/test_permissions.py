@@ -394,6 +394,14 @@ class TestValidation:
         } <= actual
         assert "cruxible_batch_direct_write" not in actual
         assert "cruxible_state_publish" not in actual
+        assert {
+            "cruxible_playbill_review",
+            "cruxible_playbill_prepare_approval",
+            "cruxible_playbill_submit_approval",
+            "cruxible_playbill_activate",
+            "cruxible_playbill_explain",
+        } <= actual
+        assert "cruxible_playbill_propose_document" not in actual
         validate_runtime_tools(server)
 
     def test_tools_list_filters_by_state_authoring_profile(self, monkeypatch):
@@ -412,6 +420,13 @@ class TestValidation:
         assert "cruxible_attest" not in actual
         assert "cruxible_propose_group" not in actual
         assert "cruxible_state_publish" not in actual
+        assert {
+            "cruxible_playbill_store_body",
+            "cruxible_playbill_propose_document",
+            "cruxible_playbill_propose_source_bundle",
+            "cruxible_playbill_explain",
+        } <= actual
+        assert "cruxible_playbill_submit_approval" not in actual
         validate_runtime_tools(server)
 
     def test_tools_list_filters_by_explicit_allowlist(self, monkeypatch):

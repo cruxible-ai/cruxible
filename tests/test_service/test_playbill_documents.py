@@ -14,6 +14,7 @@ from cruxible_core.playbill.documents import (
     DocumentShell,
 )
 from cruxible_core.playbill.errors import (
+    ApprovalIntegrityError,
     DocumentNotFoundError,
     PlaybillCasError,
     PlaybillFormatError,
@@ -27,13 +28,17 @@ from cruxible_core.service.playbill_documents import (
     service_inspect_playbill_proposal,
     service_inspect_playbill_refusal,
     service_list_playbill_documents,
+    service_list_playbill_principals,
     service_playbill_document_history,
     service_propose_playbill_document,
+    service_propose_playbill_principal_change,
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
+from cruxible_core.service.playbill_review import service_prepare_playbill_approval
 from tests.test_playbill._support import FIXED_TIMESTAMP, generate_client
 from tests.test_playbill.test_activation import _sign
+from tests.test_playbill.test_principal_history import _cloud_instance, _replacement_key
 
 TIMESTAMP = "2026-08-13T12:00:00.000000Z"
 
@@ -196,4 +201,121 @@ def test_service_refusal_and_coordinate_mixing_are_typed(tmp_path: Path) -> None
             instance,
             access=BodyAccessContext(principal_id="reader"),
             at=mixed,
+        )
+
+
+def test_service_owner_rotation_and_scoped_recovery_use_public_approval_path(
+    tmp_path: Path,
+) -> None:
+    instance, owner, recovery = _cloud_instance(tmp_path)
+    rotated_owner = _replacement_key(
+        tmp_path,
+        instance,
+        custody_name="service-owner-rotated",
+        principal_id="owner",
+        roles=("owner",),
+    )
+    rotated = service_propose_playbill_principal_change(
+        instance,
+        principal=rotated_owner.principal,
+        actor_id="owner",
+        proposal_name="service-owner-rotation",
+        timestamp="2026-08-13T12:01:00.000000Z",
+    ).proposal
+    assert rotated.candidate is not None
+    rotation_challenge = service_prepare_playbill_approval(
+        instance,
+        proposal_id=rotated.admission.proposal_id,
+        signer_id="owner",
+        access=BodyAccessContext(principal_id="owner"),
+    )
+    rotation_signature = _sign(
+        owner,
+        rotation_challenge.statement.payload_digest,
+        rotation_challenge.statement.signing_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=rotated.admission.proposal_id,
+        attestation=rotation_signature.attestation,
+        authenticated_submitter="owner",
+    )
+    service_activate_playbill_proposal(instance, proposal_id=rotated.admission.proposal_id)
+    assert (
+        next(
+            item
+            for item in service_list_playbill_principals(instance).principals
+            if item.principal_id == "owner"
+        )
+        == rotated_owner.principal
+    )
+
+    recovered_owner = _replacement_key(
+        tmp_path,
+        instance,
+        custody_name="service-owner-recovered",
+        principal_id="owner",
+        roles=("owner",),
+    )
+    recovered = service_propose_playbill_principal_change(
+        instance,
+        principal=recovered_owner.principal,
+        actor_id="recovery",
+        proposal_name="service-owner-recovery",
+        timestamp="2026-08-13T12:02:00.000000Z",
+    ).proposal
+    assert recovered.candidate is not None
+    recovery_challenge = service_prepare_playbill_approval(
+        instance,
+        proposal_id=recovered.admission.proposal_id,
+        signer_id="recovery",
+        access=BodyAccessContext(principal_id="recovery"),
+    )
+    recovery_signature = _sign(
+        recovery,
+        recovery_challenge.statement.payload_digest,
+        recovery_challenge.statement.signing_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=recovered.admission.proposal_id,
+        attestation=recovery_signature.attestation,
+        authenticated_submitter="recovery",
+    )
+    service_activate_playbill_proposal(instance, proposal_id=recovered.admission.proposal_id)
+    assert (
+        next(
+            item
+            for item in service_list_playbill_principals(instance).principals
+            if item.principal_id == "owner"
+        )
+        == recovered_owner.principal
+    )
+
+    body = service_store_playbill_body(instance, content=b"# Ordinary document\n")
+    ordinary = service_propose_playbill_document(
+        instance,
+        shell=DocumentShell(
+            identity="document:ordinary",
+            document_kind="design",
+            title="Ordinary",
+            media_type="text/markdown",
+            body_digest=body.digest,
+            authority=DocumentAuthority(
+                required_tier="graph_write",
+                approval_roles=("owner",),
+            ),
+            governance_scope=("project:playbill",),
+            lifecycle=DocumentLifecycle(revision=1),
+        ),
+        actor_id="owner",
+        proposal_name="ordinary-after-recovery",
+        timestamp="2026-08-13T12:03:00.000000Z",
+    ).proposal
+    with pytest.raises(ApprovalIntegrityError, match="recovery principal"):
+        service_prepare_playbill_approval(
+            instance,
+            proposal_id=ordinary.admission.proposal_id,
+            signer_id="recovery",
+            access=BodyAccessContext(principal_id="recovery"),
         )

@@ -44,6 +44,14 @@ class PlaybillSourceCheckResult(_StrictSourceServiceModel):
     alignments: tuple[SourceAlignment, ...]
 
 
+class PlaybillSourceContext(_StrictSourceServiceModel):
+    """Path-free accepted inputs needed for deterministic client-side compilation."""
+
+    tag: Literal["playbill-source-context-v1"] = "playbill-source-context-v1"
+    accepted_coordinate: PlaybillAcceptedCoordinate
+    documents: tuple[DocumentShell, ...]
+
+
 def _accepted_documents(instance: PlaybillInstance) -> dict[str, DocumentShell]:
     result: dict[str, DocumentShell] = {}
     for path, content in instance.tree_at(instance.accepted_coordinate().git_oid).items():
@@ -52,6 +60,18 @@ def _accepted_documents(instance: PlaybillInstance) -> dict[str, DocumentShell]:
         shell = parse_document(content, path=path)
         result[shell.document_id] = shell
     return result
+
+
+def service_playbill_source_context(instance: PlaybillInstance) -> PlaybillSourceContext:
+    documents = _accepted_documents(instance)
+    return PlaybillSourceContext(
+        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
+            instance.accepted_coordinate()
+        ),
+        documents=tuple(
+            documents[key] for key in sorted(documents, key=lambda item: item.encode())
+        ),
+    )
 
 
 def service_compile_playbill_sources(
@@ -218,9 +238,11 @@ def service_propose_playbill_source_bundle(
 
 
 __all__ = [
+    "PlaybillSourceContext",
     "PlaybillSourceCheckResult",
     "service_check_playbill_source_bundle",
     "service_check_playbill_sources",
     "service_compile_playbill_sources",
     "service_propose_playbill_source_bundle",
+    "service_playbill_source_context",
 ]

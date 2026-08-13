@@ -37,6 +37,60 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need to create a governed instance from a config or reconnect "
         "to an existing instance after a daemon restart."
     ),
+    "cruxible_playbill_init": (
+        "Use when you need to bootstrap opt-in Playbill state from client-generated public keys."
+    ),
+    "cruxible_playbill_store_body": (
+        "Use when you need to store exact Document bytes inertly before proposing them."
+    ),
+    "cruxible_playbill_propose_document": (
+        "Use when you need to propose a governed Document create or supersession."
+    ),
+    "cruxible_playbill_inspect_proposal": (
+        "Use when you need immutable proposal evaluation, diagnostics, and candidate evidence."
+    ),
+    "cruxible_playbill_review": (
+        "Use when you need a structured candidate review and permission-filtered prose diff."
+    ),
+    "cruxible_playbill_prepare_approval": (
+        "Use when a client-held signer needs the exact immutable approval statement."
+    ),
+    "cruxible_playbill_submit_approval": (
+        "Use when you have a public approval attestation produced outside the daemon."
+    ),
+    "cruxible_playbill_activate": (
+        "Use when a Playbill candidate has its required approvals and is ready to settle."
+    ),
+    "cruxible_playbill_list_documents": (
+        "Use when you need accepted Documents and the exact coordinate that supplied them."
+    ),
+    "cruxible_playbill_get_document": (
+        "Use when you need one accepted Document envelope and its structured facts."
+    ),
+    "cruxible_playbill_dereference": (
+        "Use when you need verified accepted Document body bytes and have body-read permission."
+    ),
+    "cruxible_playbill_history": (
+        "Use when you need the replay-verified accepted revision history of a Document."
+    ),
+    "cruxible_playbill_explain": (
+        "Use when you need coordinate-bound governance, provenance, and attestation coverage."
+    ),
+    "cruxible_playbill_source_context": (
+        "Use when a local client needs path-free accepted inputs before compiling source files."
+    ),
+    "cruxible_playbill_check_source_bundle": (
+        "Use when you need to compare an exact compiled bundle with accepted and pending state."
+    ),
+    "cruxible_playbill_propose_source_bundle": (
+        "Use when you need to propose frozen source bytes without sending a local path."
+    ),
+    "cruxible_playbill_list_principals": (
+        "Use when you need accepted owner, reviewer, recovery, and daemon public-key records."
+    ),
+    "cruxible_playbill_propose_principal_change": (
+        "Use when you need a governed principal registration, rotation, revocation, or recovery."
+    ),
     "cruxible_validate": (
         "Use when you need to check whether a Cruxible config is valid before "
         "creating or reloading an instance."
