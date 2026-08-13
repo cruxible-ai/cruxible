@@ -132,6 +132,14 @@ from cruxible_core.service.playbill_documents import (
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
+from cruxible_core.service.playbill_explain import (
+    PLAYBILL_EXPLAIN_SUPPORTED_DETAILS,
+    PlaybillExplainDetail,
+    PlaybillExplainResponse,
+    PlaybillExplainResult,
+    PlaybillExplainUnsupportedDetail,
+    service_explain_playbill_subject,
+)
 from cruxible_core.service.procedure_migrations import (
     READING_CONTINUITY_REPORT,
     ProcedureMigrationActorIdentity,
@@ -330,6 +338,11 @@ __all__ = [
     "PlaybillDocumentView",
     "PlaybillProposalInspection",
     "PlaybillRefusalInspection",
+    "PLAYBILL_EXPLAIN_SUPPORTED_DETAILS",
+    "PlaybillExplainDetail",
+    "PlaybillExplainResponse",
+    "PlaybillExplainResult",
+    "PlaybillExplainUnsupportedDetail",
     "AddEntityResult",
     "AddConstraintServiceResult",
     "AddDecisionPolicyServiceResult",
@@ -437,6 +450,7 @@ __all__ = [
     "service_propose_playbill_principal_change",
     "service_store_playbill_body",
     "service_submit_playbill_approval",
+    "service_explain_playbill_subject",
     "service_lock",
     "service_config_status",
     "service_state_status",
