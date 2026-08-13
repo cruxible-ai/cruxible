@@ -18,6 +18,8 @@ here is what the code ships.
   config: what to type, what to govern, what to leave out.
 - **[For AI agents](for-ai-agents.md)** — the operating guide written
   for the agents themselves.
+- **[Playbill Family 1](playbill-family-1.md)** — the opt-in governed
+  Document lifecycle, local source alignment, and explicit legacy boundary.
 
 ## Kits
 
