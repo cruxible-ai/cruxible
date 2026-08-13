@@ -54,6 +54,7 @@ from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
+from cruxible_core.playbill.source_catalog import SourceCompilationManifest
 from cruxible_core.playbill.types import GitObjectFormat
 
 _ACTOR_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -305,6 +306,7 @@ class ProposalEvidenceStore:
         self.evaluations = self._directory("evaluations")
         self.candidates = self._directory("candidates")
         self.approvals = self._directory("approvals")
+        self.source_compilations = self._directory("source-compilations")
 
     def _directory(self, name: str) -> Path:
         path = self.root / name
@@ -333,6 +335,27 @@ class ProposalEvidenceStore:
         _exclusive_canonical_write(path, render_candidate_record(record))
         return path
 
+    def write_source_compilation(self, manifest: SourceCompilationManifest) -> Path:
+        """Persist a path-free immutable compile receipt beside proposal exhaust."""
+
+        path = self.source_compilations / (
+            f"{manifest.compilation_digest.removeprefix('sha256:')}.json"
+        )
+        _exclusive_canonical_write(
+            path,
+            canonical_bytes(manifest.model_dump(mode="json")) + b"\n",
+        )
+        return path
+
+    def read_source_compilation(self, compilation_digest: str) -> SourceCompilationManifest:
+        Sha256Value.from_tagged(compilation_digest)
+        path = self.source_compilations / f"{compilation_digest.removeprefix('sha256:')}.json"
+        return self._read_model(
+            path,
+            SourceCompilationManifest,
+            label="source compilation",
+        )
+
     def read_admission(self, proposal_id: str) -> ProposalAdmissionRecord:
         """Read one canonical immutable admission by its public proposal ID."""
 
@@ -354,6 +377,14 @@ class ProposalEvidenceStore:
                 "proposal evidence must contain exactly one evaluation for the admission"
             )
         return matches[0]
+
+    def list_evaluations(self) -> tuple[ProposalEvaluationRecord, ...]:
+        """List canonical evaluations in stable evidence-filename order."""
+
+        return tuple(
+            self._read_model(path, ProposalEvaluationRecord, label="proposal evaluation")
+            for path in sorted(self.evaluations.glob("*.json"), key=lambda item: item.name)
+        )
 
     def read_candidate(self, candidate_digest_value: str) -> CandidateRecord:
         """Read one canonical validated candidate by its frozen C_s digest."""

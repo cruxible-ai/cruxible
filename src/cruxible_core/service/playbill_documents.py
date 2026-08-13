@@ -30,7 +30,7 @@ from cruxible_core.playbill.errors import (
     SettlementIntegrityError,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_documents import DocumentProjectionView
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
@@ -45,26 +45,7 @@ class _StrictServiceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class PlaybillAcceptedCoordinate(_StrictServiceModel):
-    """Public canonical handle; server-local repository paths are intentionally absent."""
-
-    tag: Literal["playbill-accepted-coordinate-v1"] = "playbill-accepted-coordinate-v1"
-    git_oid: str
-    semantic_root: str
-    generation_root: str
-    compiler_digest: str
-
-    @classmethod
-    def from_internal(
-        cls,
-        coordinate: AcceptedProjectionCoordinate,
-    ) -> PlaybillAcceptedCoordinate:
-        return cls(
-            git_oid=coordinate.git_oid,
-            semantic_root=coordinate.semantic_root,
-            generation_root=coordinate.generation_root,
-            compiler_digest=coordinate.compiler.rule_digest,
-        )
+PlaybillAcceptedCoordinate = AcceptedCoordinate
 
 
 class PlaybillDocumentView(_StrictServiceModel):

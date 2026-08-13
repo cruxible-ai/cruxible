@@ -89,6 +89,49 @@ class AcceptedProjectionCoordinate(_StrictProjectionModel):
         return self
 
 
+class AcceptedCoordinate(_StrictProjectionModel):
+    """Path-free public handle for one fully verified accepted generation."""
+
+    tag: Literal["playbill-accepted-coordinate-v1"] = "playbill-accepted-coordinate-v1"
+    git_oid: str
+    semantic_root: str
+    generation_root: str
+    compiler_digest: str
+
+    @field_validator("git_oid")
+    @classmethod
+    def _git_oid(cls, value: str) -> str:
+        if not _OID_RE.fullmatch(value):
+            raise ValueError("accepted-coordinate Git OID is malformed")
+        return value
+
+    @field_validator("semantic_root")
+    @classmethod
+    def _semantic_root(cls, value: str) -> str:
+        SemanticRoot.from_tagged(value)
+        return value
+
+    @field_validator("generation_root")
+    @classmethod
+    def _generation_root(cls, value: str) -> str:
+        GenerationRoot.from_tagged(value)
+        return value
+
+    @field_validator("compiler_digest")
+    @classmethod
+    def _compiler_digest(cls, value: str) -> str:
+        return _tagged_sha256(value, label="compiler_digest")
+
+    @classmethod
+    def from_internal(cls, coordinate: AcceptedProjectionCoordinate) -> AcceptedCoordinate:
+        return cls(
+            git_oid=coordinate.git_oid,
+            semantic_root=coordinate.semantic_root,
+            generation_root=coordinate.generation_root,
+            compiler_digest=coordinate.compiler.rule_digest,
+        )
+
+
 class CandidateGenerationProjectionCoordinate(_StrictProjectionModel):
     """A verified, unaccepted generation eligible only for durable prebuild."""
 
@@ -394,6 +437,7 @@ def render_projection_manifest(manifest: ProjectionManifest) -> bytes:
 
 
 __all__ = [
+    "AcceptedCoordinate",
     "AcceptedProjectionCoordinate",
     "CandidateGenerationProjectionCoordinate",
     "AssemblerRequest",
