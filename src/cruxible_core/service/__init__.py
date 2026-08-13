@@ -140,6 +140,14 @@ from cruxible_core.service.playbill_explain import (
     PlaybillExplainUnsupportedDetail,
     service_explain_playbill_subject,
 )
+from cruxible_core.service.playbill_review import (
+    PlaybillApprovalChallenge,
+    PlaybillProposalReview,
+    PlaybillReviewedDocument,
+    render_playbill_proposal_review,
+    service_prepare_playbill_approval,
+    service_review_playbill_proposal,
+)
 from cruxible_core.service.playbill_source_catalog import (
     PlaybillSourceCheckResult,
     service_check_playbill_source_bundle,
@@ -351,6 +359,9 @@ __all__ = [
     "PlaybillExplainResult",
     "PlaybillExplainUnsupportedDetail",
     "PlaybillSourceCheckResult",
+    "PlaybillApprovalChallenge",
+    "PlaybillProposalReview",
+    "PlaybillReviewedDocument",
     "AddEntityResult",
     "AddConstraintServiceResult",
     "AddDecisionPolicyServiceResult",
@@ -463,6 +474,9 @@ __all__ = [
     "service_check_playbill_sources",
     "service_compile_playbill_sources",
     "service_propose_playbill_source_bundle",
+    "render_playbill_proposal_review",
+    "service_prepare_playbill_approval",
+    "service_review_playbill_proposal",
     "service_lock",
     "service_config_status",
     "service_state_status",
