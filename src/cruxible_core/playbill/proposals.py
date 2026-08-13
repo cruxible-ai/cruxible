@@ -7,10 +7,15 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal, Protocol
+from typing import Callable, Literal, Protocol, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from cruxible_core.playbill.attestations import (
+    ApprovalSubmission,
+    approval_digest,
+    approval_statement_bytes,
+)
 from cruxible_core.playbill.candidates import (
     CandidateMemberEvidence,
     CandidateRecord,
@@ -57,6 +62,7 @@ _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _PRINCIPAL_PATH_RE = re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$")
 _LFS_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
+_EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
 
 
 class _StrictProposalModel(BaseModel):
@@ -298,6 +304,7 @@ class ProposalEvidenceStore:
         self.proposals = self._directory("proposals")
         self.evaluations = self._directory("evaluations")
         self.candidates = self._directory("candidates")
+        self.approvals = self._directory("approvals")
 
     def _directory(self, name: str) -> Path:
         path = self.root / name
@@ -325,6 +332,106 @@ class ProposalEvidenceStore:
         path = self.candidates / f"{record.candidate_digest.removeprefix('sha256:')}.json"
         _exclusive_canonical_write(path, render_candidate_record(record))
         return path
+
+    def read_admission(self, proposal_id: str) -> ProposalAdmissionRecord:
+        """Read one canonical immutable admission by its public proposal ID."""
+
+        ProposalDigest.from_tagged(proposal_id)
+        path = self.proposals / f"{proposal_id.removeprefix('sha256:')}.json"
+        return self._read_model(path, ProposalAdmissionRecord, label="proposal admission")
+
+    def read_evaluation(self, proposal_id: str) -> ProposalEvaluationRecord:
+        """Resolve the sole canonical evaluation recorded for one admission."""
+
+        ProposalDigest.from_tagged(proposal_id)
+        matches: list[ProposalEvaluationRecord] = []
+        for path in sorted(self.evaluations.glob("*.json"), key=lambda item: item.name):
+            record = self._read_model(path, ProposalEvaluationRecord, label="proposal evaluation")
+            if record.proposal_id == proposal_id:
+                matches.append(record)
+        if len(matches) != 1:
+            raise ProposalIntegrityError(
+                "proposal evidence must contain exactly one evaluation for the admission"
+            )
+        return matches[0]
+
+    def read_candidate(self, candidate_digest_value: str) -> CandidateRecord:
+        """Read one canonical validated candidate by its frozen C_s digest."""
+
+        CandidateDigest.from_tagged(candidate_digest_value)
+        path = self.candidates / f"{candidate_digest_value.removeprefix('sha256:')}.json"
+        return self._read_model(path, CandidateRecord, label="validated candidate")
+
+    def write_approval(
+        self,
+        candidate_digest_value: str,
+        submission: ApprovalSubmission,
+    ) -> Path:
+        """Persist one public approval per candidate/signer; never private material."""
+
+        CandidateDigest.from_tagged(candidate_digest_value)
+        if submission.attestation.payload_digest != candidate_digest_value:
+            raise ProposalIntegrityError("approval payload differs from evidence candidate")
+        candidate_directory = self.approvals / candidate_digest_value.removeprefix("sha256:")
+        candidate_directory.mkdir(mode=0o700, exist_ok=True)
+        if candidate_directory.is_symlink() or not candidate_directory.is_dir():
+            raise ProposalIntegrityError("approval evidence directory is not trustworthy")
+        os.chmod(candidate_directory, 0o700)
+        path = candidate_directory / f"{submission.attestation.signer_id}.json"
+        _exclusive_canonical_write(
+            path,
+            canonical_bytes(submission.model_dump(mode="json")) + b"\n",
+        )
+        return path
+
+    def read_approvals(self, candidate_digest_value: str) -> tuple[ApprovalSubmission, ...]:
+        """Return canonical public approvals in the verifier's required signer order."""
+
+        CandidateDigest.from_tagged(candidate_digest_value)
+        candidate_directory = self.approvals / candidate_digest_value.removeprefix("sha256:")
+        if not candidate_directory.exists():
+            return ()
+        if candidate_directory.is_symlink() or not candidate_directory.is_dir():
+            raise ProposalIntegrityError("approval evidence directory is not trustworthy")
+        submissions = tuple(
+            self._read_model(path, ApprovalSubmission, label="approval submission")
+            for path in sorted(candidate_directory.glob("*.json"), key=lambda item: item.name)
+        )
+        signer_ids = tuple(item.attestation.signer_id for item in submissions)
+        if signer_ids != tuple(sorted(set(signer_ids), key=lambda value: value.encode("utf-8"))):
+            raise ProposalIntegrityError("approval evidence is not uniquely signer-ordered")
+        for path, submission in zip(
+            sorted(candidate_directory.glob("*.json"), key=lambda item: item.name),
+            submissions,
+        ):
+            if path.name != f"{submission.attestation.signer_id}.json":
+                raise ProposalIntegrityError("approval evidence filename differs from signer")
+            if submission.attestation.payload_digest != candidate_digest_value:
+                raise ProposalIntegrityError("approval evidence names another candidate")
+            # Exercise the frozen preimage parser at the storage boundary; this
+            # is deliberately verification-free because the historical key is
+            # selected by the service/replay layer.
+            approval_statement_bytes(submission.attestation)
+            approval_digest(submission.attestation)
+        return submissions
+
+    @staticmethod
+    def _read_model(
+        path: Path,
+        model: type[_EvidenceModelT],
+        *,
+        label: str,
+    ) -> _EvidenceModelT:
+        if path.is_symlink() or not path.is_file():
+            raise ProposalIntegrityError(f"{label} evidence is missing or not a regular file")
+        try:
+            raw = path.read_bytes()
+            value = model.model_validate_json(raw)
+        except (OSError, ValidationError, ValueError) as exc:
+            raise ProposalIntegrityError(f"{label} evidence is malformed") from exc
+        if canonical_bytes(value.model_dump(mode="json")) + b"\n" != raw:
+            raise ProposalIntegrityError(f"{label} evidence is not canonical")
+        return value
 
 
 def validate_proposal_tree(

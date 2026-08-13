@@ -37,6 +37,10 @@ class DocumentFormatError(PlaybillError):
     """A governed Document shell is unsupported or malformed."""
 
 
+class DocumentNotFoundError(PlaybillError):
+    """A requested accepted Document identity is absent at the coordinate."""
+
+
 class ProposalAdmissionError(PlaybillError):
     """An unauthenticated, mis-scoped, oversized, or malformed proposal was refused."""
 
@@ -81,6 +85,7 @@ __all__ = [
     "CanonicalEncodingError",
     "ApprovalIntegrityError",
     "DocumentFormatError",
+    "DocumentNotFoundError",
     "PlaybillBootstrapError",
     "PlaybillCasError",
     "PlaybillError",

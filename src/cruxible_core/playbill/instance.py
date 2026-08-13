@@ -14,7 +14,9 @@ from pydantic import ValidationError
 
 from cruxible_core.playbill.activation import ActivationPublisher
 from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
+from cruxible_core.playbill.attestations import ApprovalSubmission
 from cruxible_core.playbill.bootstrap import VerifiedGenesis, prepare_genesis, verify_genesis
+from cruxible_core.playbill.candidates import CandidateRecord
 from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.cas import CasObjectMetadata, ContentAddressedBodyStore
 from cruxible_core.playbill.compiler import (
@@ -35,9 +37,23 @@ from cruxible_core.playbill.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate, AssemblerResult
+from cruxible_core.playbill.projection import (
+    AcceptedProjectionCoordinate,
+    AssemblerResult,
+    projection_manifest_name,
+)
 from cruxible_core.playbill.proposals import ProposalEvidenceStore, ProposalService
-from cruxible_core.playbill.recovery import RecoveredInstanceState, recover_instance
+from cruxible_core.playbill.recovery import (
+    RecoveredGeneration,
+    RecoveredInstanceState,
+    recover_instance,
+)
+from cruxible_core.playbill.serving import bind_current_projection
+from cruxible_core.playbill.settlement import (
+    ChangeActorBinding,
+    VerifiedGenerationBundle,
+    prepare_generation,
+)
 from cruxible_core.playbill.types import (
     GenesisCoordinate,
     GitObjectFormat,
@@ -52,6 +68,7 @@ from cruxible_core.playbill.types import (
     initial_authority_matrix,
 )
 from cruxible_core.playbill.witness import WitnessSink
+from cruxible_core.storage.playbill_projection import ProjectionHandle, bind_projection
 from cruxible_core.temporal import format_datetime, utc_now
 
 DESCRIPTOR_FILE = "instance.json"
@@ -436,7 +453,126 @@ class PlaybillInstance:
             accepted=self.accepted_coordinate(),
             bodies=ContentAddressedBodyStore(paths["cas"]),
             evidence=ProposalEvidenceStore(paths["exhaust"]),
+            current_coordinate=self.accepted_coordinate,
         )
+
+    def proposal_evidence(self) -> ProposalEvidenceStore:
+        """Return the immutable non-authoritative proposal/approval evidence store."""
+
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        return ProposalEvidenceStore(paths["exhaust"])
+
+    def accepted_history(self) -> tuple[RecoveredGeneration, ...]:
+        """Return the genesis-rooted, replay-verified accepted history."""
+
+        return self._recovered.history
+
+    def coordinate_for_oid(self, oid: str) -> AcceptedProjectionCoordinate:
+        """Resolve one accepted historical OID to its complete verified coordinate."""
+
+        matches = tuple(
+            generation for generation in self._recovered.history if generation.oid == oid
+        )
+        if len(matches) != 1:
+            raise PlaybillFormatError("Git OID is not one accepted generation of this instance")
+        generation = matches[0]
+        return AcceptedProjectionCoordinate(
+            instance_id=self.descriptor.instance_id,
+            repository_path=str(self._ledger.path.resolve(strict=True)),
+            git_object_format=self.descriptor.git_object_format,
+            git_oid=generation.oid,
+            semantic_root=generation.semantic_root.tagged,
+            generation_root=generation.generation_root.tagged,
+            compiler=self.descriptor.compiler,
+        )
+
+    def generation_for_semantic_root(self, semantic_root: str) -> RecoveredGeneration:
+        """Resolve one historical signing root without consulting mutable proposal state."""
+
+        matches = tuple(
+            generation
+            for generation in self._recovered.history
+            if generation.semantic_root.tagged == semantic_root
+        )
+        if len(matches) != 1:
+            raise PlaybillFormatError(
+                "semantic root is not one accepted generation of this instance"
+            )
+        return matches[0]
+
+    def tree_at(self, oid: str) -> dict[str, bytes]:
+        """Read an exact Git tree only after proving the OID is accepted history."""
+
+        self.coordinate_for_oid(oid)
+        return self._ledger.read_tree(oid)
+
+    def proposal_tree(self, oid: str) -> dict[str, bytes]:
+        """Read one proposal commit tree for evidence-bound settlement."""
+
+        return self._ledger.read_tree(oid)
+
+    def resolve_accepted_coordinate(
+        self,
+        *,
+        git_oid: str,
+        semantic_root: str,
+        generation_root: str,
+        compiler_digest: str | None = None,
+    ) -> AcceptedProjectionCoordinate:
+        """Verify exact triple/compiler correspondence against replayed history."""
+
+        coordinate = self.coordinate_for_oid(git_oid)
+        if (
+            coordinate.semantic_root != semantic_root
+            or coordinate.generation_root != generation_root
+        ):
+            raise PlaybillFormatError("accepted coordinate triple has mixed members")
+        if compiler_digest is not None and coordinate.compiler.rule_digest != compiler_digest:
+            raise PlaybillFormatError("accepted coordinate compiler digest is unsupported")
+        return coordinate
+
+    def bind_accepted_projection(
+        self,
+        coordinate: AcceptedProjectionCoordinate,
+    ) -> ProjectionHandle:
+        """Bind a current serving or retained historical immutable projection."""
+
+        verified = self.resolve_accepted_coordinate(
+            git_oid=coordinate.git_oid,
+            semantic_root=coordinate.semantic_root,
+            generation_root=coordinate.generation_root,
+            compiler_digest=coordinate.compiler.rule_digest,
+        )
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        if verified == self.accepted_coordinate():
+            return bind_current_projection(paths["projections"], expected=verified)
+        assembler = ProjectionAssembler(
+            self._ledger,
+            accepted=verified,
+            publication_directory=paths["projections"],
+            bodies=ContentAddressedBodyStore(paths["cas"]),
+        )
+        request = assembler.request(
+            output_staging_directory=paths["projections"] / ".historical-bind"
+        )
+        manifest_path = paths["projections"] / projection_manifest_name(request)
+        return bind_projection(manifest_path, expected=verified)
+
+    def refresh(self, *, witness: WitnessSink | None = None) -> AcceptedProjectionCoordinate:
+        """Replay accepted state after activation and repair its serving boundary."""
+
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        self._recovered = recover_instance(
+            self._ledger,
+            genesis=self._verified_genesis,
+            instance_id=self.descriptor.instance_id,
+            object_format=self.descriptor.git_object_format,
+            compiler=self.descriptor.compiler,
+            publication_directory=paths["projections"],
+            bodies=ContentAddressedBodyStore(paths["cas"]),
+            witness=witness,
+        )
+        return self.accepted_coordinate()
 
     def activation_publisher(
         self,
@@ -451,6 +587,29 @@ class PlaybillInstance:
             publication_directory=paths["projections"],
             bodies=ContentAddressedBodyStore(paths["cas"]),
             witness=witness,
+        )
+
+    def prepare_generation(
+        self,
+        *,
+        base: AcceptedProjectionCoordinate,
+        candidate_tree: dict[str, bytes],
+        candidate: CandidateRecord,
+        approvals: tuple[ApprovalSubmission, ...],
+        actor_binding: ChangeActorBinding,
+        sequence: int,
+    ) -> VerifiedGenerationBundle:
+        """Construct one verified generation without exposing the Git ledger to surfaces."""
+
+        return prepare_generation(
+            self._ledger,
+            base=base,
+            candidate_tree=candidate_tree,
+            candidate=candidate,
+            approval_submissions=approvals,
+            bodies=self.body_store(),
+            actor_binding=actor_binding,
+            sequence=sequence,
         )
 
     def assemble_projection(
