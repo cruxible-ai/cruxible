@@ -1,423 +1,87 @@
-# Guide For AI Agents
-
-This guide is the operating playbook for agents that use Cruxible. The
-agent supplies interpretation and planning. Cruxible supplies deterministic
-execution, governed state transitions, receipts, traces, review groups, and
-query surfaces.
-
-Prefer a local Cruxible daemon (`cruxible server start`). MCP should be
-a structured adapter over the daemon, not the place where workflow policy lives.
-
-## Runtime Boundary
-
-Use this split when permissions matter:
-
-- Daemon environment: `pip install "cruxible[mcp]"` (the daemon ships in the default install)
-- Agent/client environment: `pip install cruxible-client`
-- Agent access path: MCP or HTTP client
-- State path: daemon-owned `CRUXIBLE_SERVER_STATE_DIR`, outside the agent
-  workspace
-
-Permission modes are enforced at the daemon boundary. If the agent can import
-the `cruxible` runtime, read daemon state files, or control the daemon runtime, local
-permission modes are advisory.
-
-For auth bootstrapping, runtime credentials, and reviewer/writer identity
-boundaries, see [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md).
-
-Recommended agent mode:
-
-```bash
-CRUXIBLE_MODE=governed_write
-CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
-```
-
-Use `admin` only for bootstrap, lock regeneration, canonical apply, and explicit
-operator-approved maintenance.
-
-## Two Governance Axes
-
-Permission mode is one axis; direct-write policy is a second, **independent**
-one. Do not confuse them — and note that the permission tiers are cumulative, so
-a `graph_write` actor can both direct-add and propose. There is no permission
-tier meaning "may propose but may not direct-add."
-
-- **Permission mode** — `CRUXIBLE_MODE` (`read_only` ⊂ `governed_write` ⊂
-  `graph_write` ⊂ `admin`), enforced as a boundary on the **daemon and MCP
-  surfaces**, where the serving process fixes its ceiling at startup. The local
-  CLI reads the operator's own environment, so it is an operator console at
-  operator tier by design — not a sandbox against the person at the shell.
-  Agents should reach state through MCP or the daemon, not a shell on the state
-  host. See
-  [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md#where-permission-tiers-are-enforced).
-- **Direct-write policy** — `refuse_direct_writes`. A type marked
-  `write_policy: proposal_only` (per-type, via the instance
-  `runtime.default_write_policy`, or via the daemon `CRUXIBLE_REFUSE_DIRECT_WRITES`
-  env kill-switch) **refuses** direct graph-write verbs (`add_entity` /
-  `add_relationship` / `batch_direct_write` / lifecycle write) with
-  `DirectWriteRefusedError` (HTTP 403). This is a **hard** constraint independent
-  of permission tier — even `admin` is refused.
-
-  When you hit `DirectWriteRefusedError`, do not retry or escalate the
-  permission mode. Route the write through the governed path instead:
-  - relationships: `group propose` → resolve, or `add-relationship --pending` to
-    stage an edge for review (pending writes are always allowed);
-  - entities/relationships in bulk: a canonical `apply_entities` /
-    `apply_relationships` workflow.
-
-  See [Direct-Write Governance](config-reference.md#direct-write-governance-refuse_direct_writes)
-  for the precedence table and the three knobs.
-
-- **Adjudication tier** — `feedback accept` / `reject` / `correct` decide a
-  claim's fate, so they require `graph_write` regardless of the feedback tool's
-  own `governed_write` tier. A `governed_write` agent may stage evidence
-  (`attest`, `--pending`, `group propose`) — including `attest --stance
-  contradict` to register a doubt about an existing claim — but it cannot
-  approve its own proposal. Escalating is a human's call: hand the proposal to a
-  reviewer rather than retrying.
-
-- **Pending proposals are immutable while staged** — writing onto a tuple whose
-  edge is still `pending` is refused (`pending_edge_write_refused`, HTTP 409)
-  instead of quietly replacing what the reviewer is looking at. Withdraw and
-  re-propose (or stage a corrected edge with `pending=true` after the current
-  one is resolved) rather than overwriting.
-
-There is **no** `CRUXIBLE_AGENT_MODE` env var — if older docs or skills mention
-it, they are stale. The real knobs are `CRUXIBLE_MODE` and the
-`refuse_direct_writes` policy above.
-
-## Deterministic identity signals on write surfaces
-
-Entity types may declare three deterministic same-type identity controls:
-
-- `identity_hint: [property, ...]` lets a create succeed but adds a structured
-  `identity_warnings[].similar_existing_entity` result naming the reusable
-  entity ID and the matched properties. Inspect this array after
-  `cruxible_add_entity` and `cruxible_batch_direct_write`; do not create more
-  relationships on the new ID until you have decided whether to reuse the
-  named entity.
-- `unique_by: [property, ...]` rejects a normalized duplicate with
-  `DataValidationError` (HTTP 400) and names the existing entity ID. Reuse that
-  ID or deliberately change the declared identity properties; retrying with a
-  third ID cannot succeed.
-- `id_pattern: 'regex'` rejects IDs that do not fully match the type's declared
-  convention and names the required pattern. It also applies to updates and
-  lifecycle transitions, so choose a pattern that admits any pre-existing IDs
-  that must remain updatable.
-
-`identity_hint` and `unique_by` NFC-normalize, case-fold, trim/collapse
-whitespace, and delete Unicode punctuation before exact composite-key
-comparison. Punctuation deletion does not add a space: `Gold-Card` becomes
-`goldcard`, while `Gold Card` becomes `gold card`, so they do not collide. They
-do not perform fuzzy or semantic matching, never compare across entity types,
-and never merge entities automatically. Avoid putting the primary-key property
-in `unique_by`: its derived `entity_id` value is normalized too and usually
-defeats duplicate detection on the remaining business fields. Reference-image
-apply, state pull, and snapshot restore bypass the shared write chokepoint by
-design. See [Declared entity identity keys](config-reference.md#declared-entity-identity-keys).
-
-## Core Responsibilities
-
-The agent should:
-
-- read the kit README, generated config views, and source artifacts
-- edit config and provider code when authoring or customizing kits
-- run validation, lock, workflow preview, proposal, and query tools
-- explain receipts, traces, pending groups, and resolution choices to humans
-- collect human decisions and apply them through Cruxible surfaces
-- write prose properties (note bodies, descriptions, rationale) as Markdown —
-  GFM renders in UIs, so use headings, lists, and tables for structure instead
-  of ad-hoc separators; property descriptions in the schema say which fields
-  render this way
-
-The agent should not:
-
-- write graph state by editing SQLite, snapshots, or graph files directly
-- treat chat notes as accepted operational state
-- bypass governed proposal workflows for relationship judgments
-- use legacy `ingest` as the default path for new configs
-
-## Standard Lifecycle
-
-Use this lifecycle for existing kits:
-
-```text
-read kit docs
-  -> validate config
-  -> lock workflows after changes
-  -> refresh canonical state by preview/apply
-  -> run proposal workflows
-  -> inspect pending groups
-  -> resolve or defer proposals
-  -> query accepted state
-  -> inspect receipts/traces
-```
-
-Use this lifecycle for new or customized kits:
-
-```text
-inspect source data
-  -> define config schema and contracts
-  -> add providers only where source adaptation or domain policy is needed
-  -> use common step types for generic row mechanics
-  -> validate
-  -> lock
-  -> run workflow tests or focused previews
-  -> regenerate generated docs/readme blocks
-```
-
-When authoring graph schemas, keep configs compact: entity and relationship
-properties default to `type: string` and optional, `{}` is valid for optional
-string fields, and `required: true` is the positive form for required non-ID
-fields. Contract fields are different: they still need explicit `type`.
-For operation-style kits, use the reusable axes in
-[Kit Authoring And Distribution](kit-authoring.md#operation-style-relationship-axes)
-before adding domain-specific variants: sequencing dependencies, impediment
-blockers, composition roll-ups, lineage/follow-up, replacement, review gates,
-and durable state notes should remain distinct relationships.
-
-## Read-Visibility State (`--state`)
-
-Reads are gated at one read-visibility state, set with the `--state` flag (CLI),
-the `state` MCP/HTTP parameter, or the `relationship_state` query-config field
-(default `live` for named queries; inspection surfaces — `entity inspect`,
-including the expanded neighborhood read, and edge listing — default to `all`:
-every stored edge with its markers, filtered only on request). The SAME
-selector gates **entities** (by lifecycle) and **relationships** (by review AND
-lifecycle), so one flag controls every surface:
-
-| State | Entities (lifecycle) | Relationships (review + lifecycle) |
-|-------|----------------------|------------------------------------|
-| `live` (default) | Only `lifecycle.status == live` entities. | Active edges whose review state is neither `pending` nor `rejected`. |
-| `accepted` | Resolves to `live` (entities have no review axis). | Active edges whose review status is `approved`. |
-| `all` | Every entity, regardless of lifecycle. | Every stored edge, regardless of review/lifecycle. |
-| `not-live` | Exactly the gated-out set: `retired`/`superseded` entities. | Edges hidden from live reads: review-`rejected` OR lifecycle closed/retracted/superseded. |
-| `pending` | Resolves to `live`. | Active edges whose review status is `pending` (proposals awaiting review). |
-| `reviewable` | Resolves to `live`. | `live` edges plus pending edges — triage/context in one evidence path. |
-
-An explicit by-id `entity get` is **never gated**: it returns the entity and
-shows its `lifecycle.status` even when hidden from live reads (recovery path).
-
-`pending` and `reviewable` require `result_shape: path` or `relationship` and do
-not allow `dedupe: entity` (they refine the relationship review axis). See
-[Config Reference](config-reference.md) for the full query-field rules.
-
-## Recipe: Validate And Lock After Edits
-
-Use this after changing `config.yaml`, provider refs, provider code, artifacts,
-contracts, workflows, or decision policies.
-
-CLI:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 validate --config config.yaml
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> lock
-```
-
-MCP:
-
-```text
-cruxible_validate(config_path="config.yaml")
-cruxible_lock_workflow(instance_id)
-```
-
-If locking fails, inspect the named provider, artifact, contract, or workflow
-step in the error. Do not run workflows from an unlocked or stale config.
-
-## Recipe: Refresh Canonical State
-
-Canonical workflows mutate accepted state only after preview verification.
-
-CLI:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> run \
-  --workflow build_local_state \
-  --save-preview preview.json
-
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> apply \
-  --preview-file preview.json
-```
-
-MCP:
-
-```text
-preview = cruxible_run_workflow(instance_id, "build_local_state")
-cruxible_apply_workflow(
-  instance_id,
-  "build_local_state",
-  expected_apply_digest=preview.apply_digest,
-  expected_head_snapshot_id=preview.head_snapshot_id,
-)
-```
-
-Before apply, summarize the changed entities/relationships, receipt ID, trace
-IDs, and any warnings. If the source artifact changed unexpectedly, stop and ask
-for operator confirmation.
-
-## Recipe: Run A Proposal Workflow
-
-Use proposal workflows for relationship state that needs review, evidence, or
-classification. The workflow output is bridged into a candidate group.
-
-CLI:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> propose \
-  --workflow propose_asset_exposure
-```
-
-MCP:
-
-```text
-cruxible_propose_workflow(instance_id, "propose_asset_exposure")
-```
-
-If no group is created, check the workflow output status first. Some proposal
-workflows intentionally complete without creating a group when there are no
-candidates; those return `status: no_candidates` and `group_created: false`.
-Treat that as a terminal "nothing to review" outcome, not as a failed proposal.
-For other no-group outcomes, inspect suppressed members and prerequisite state.
-In KEV triage, for example, asset exposure proposals depend on accepted
-asset-product mappings and public vulnerability-product reference state.
-
-## Recipe: Inspect A Pending Group
-
-Always inspect the group before resolving it.
-
-CLI:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> group list \
-  --status pending_review
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> group get \
-  --group <group-id>
-```
-
-MCP:
-
-```text
-cruxible_list_groups(instance_id, status="pending_review")
-cruxible_get_group(instance_id, group_id)
-```
-
-Present:
-
-- thesis and thesis facts
-- relationship type and member count
-- member-level signals: support, unsure, contradict
-- review priority
-- pending version
-- source workflow receipt and trace IDs
-- suppressed members or prior resolution history when present
-
-## Recipe: Resolve Or Defer A Proposal
-
-Resolve only from the pending version the reviewer saw.
-
-CLI:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> group resolve \
-  --group <group-id> \
-  --action approve \
-  --expected-pending-version <pending-version> \
-  --rationale "Reviewed evidence and accepted the proposal"
-```
-
-MCP:
-
-```text
-cruxible_resolve_group(
-  instance_id,
-  group_id,
-  action="approve",
-  expected_pending_version=pending_version,
-  rationale="Reviewed evidence and accepted the proposal",
-)
-```
-
-Use rejection when the proposal is wrong. Use no action when evidence is not
-ready. Do not create accepted edges manually just to skip group review.
-
-## Recipe: Debug Provider Failure
-
-When a workflow fails:
-
-1. Capture the workflow name, step ID, provider name, receipt ID if present,
-   and trace IDs if present.
-2. Inspect the provider declaration and contracts in the generated config view.
-3. Check artifact names and hashes against the lock.
-4. Re-run with the smallest input payload that reproduces the failure.
-5. Fix the provider or config, then validate and lock again.
-
-Useful commands:
-
-```bash
-cruxible config views --config config.yaml --runtime --view workflow-steps
-cruxible config views --config config.yaml --runtime --view signal-policy-catalog
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> decision-record events \
-  --trace <trace-id>
-```
-
-Receipts prove how a query or state transition was decided. Execution traces
-prove what provider ran, with which provider version, artifact hash, inputs,
-outputs, status, error, and timing.
-
-## Recipe: Update Source Data Safely
-
-When a source artifact changes:
-
-1. Confirm the file path belongs to the kit or local workspace.
-2. Validate the config.
-3. Regenerate the workflow lock. Use `--force` only when intentionally accepting
-   new live canonical artifact hashes.
-4. Run the canonical workflow in preview mode.
-5. Summarize the changed examples and receipt/trace evidence.
-6. Apply only after the operator accepts the preview.
-7. Run dependent proposal workflows and inspect new or refreshed groups.
-
-Do not edit SQLite or graph snapshots to "fix" source state.
-
-## Recipe: Regenerate Kit Docs
-
-Generated kit README blocks are code-owned. After changing a kit config, refresh
-the marked blocks:
-
-```bash
-cruxible config views --config kits/kev-triage/config.yaml --runtime \
-  --update-readme kits/kev-triage/README.md
-```
-
-The generated docs are grounding material for the agent and reviewer. They are
-not a substitute for MCP/CLI review actions.
-
-## Modeling Guidance
-
-Use Cruxible for shared operational truth:
-
-- accepted facts and relationships
-- governed judgments and review history
-- deterministic workflow outputs
-- receipts, traces, decision records, feedback, and outcomes
-
-Keep temporary reasoning in the agent. Commit only state that future agents,
-humans, or software should rely on.
-
-Use providers for source adapters, external services, model calls, and
-domain-specific policy. Use built-in step types for generic deterministic
-mechanics such as shaping rows, joining item sets, filtering, deduping, building
-graph objects, and applying canonical state.
-
-## Handoff Checklist
-
-Before handing work back to a human or another agent, report:
-
-- active instance ID and kit
-- current config/lock status
-- workflows run and whether they previewed, applied, or proposed
-- receipt IDs and trace IDs for meaningful operations
-- pending groups requiring review
-- accepted state changed
-- rejected/deferred proposals and rationale
-- next safe command to run
+# Operating Playbill as an AI agent
+
+Playbill is designed so first-order discovery is cheap and exact. Start with
+filenames, identities, subjects, and compact summaries. Expand governance,
+provenance, evidence, and history only when the task requires it.
+
+## Operating rules
+
+1. Treat accepted coordinates as state and candidate coordinates as provisional.
+2. Store bytes before proposing an envelope, but never describe CAS presence as
+   acceptance.
+3. Review the frozen candidate before asking a human or another agent to sign.
+4. Never request, transmit, or place a principal private key in a repository.
+5. Use explain for governance/provenance context; do not infer authority from
+   presentation metadata.
+6. Search for an existing subject or Claim before minting an adjacent concept.
+7. Record contradiction as negative evidence instead of creating only a new
+   positive inverse.
+8. Treat diagnostic actions as links to governed proposal operations, never as
+   mutation authority.
+
+## Discovery ladder
+
+Use the cheapest sufficient layer:
+
+1. grep or file listing for known identities and terms;
+2. list Documents or, once implemented, Claim/Procedure summaries;
+3. inspect a specific accepted subject;
+4. request explain summary;
+5. request evidence detail;
+6. read body bytes or full history only when necessary.
+
+This avoids loading an entire structured graph into context merely to answer a
+local question. Stable subject identities, ClaimType contracts, Procedure
+contracts, and recall-only tags are the intended “double-click” points.
+
+## Write lifecycle
+
+For Documents:
+
+~~~text
+store body -> propose envelope -> inspect/review -> prepare challenge
+-> sign locally -> submit public attestation -> activate
+~~~
+
+Do not combine stages. A proposal can be refused. An approval may become stale.
+Activation can lose a compare-and-set race. Handle each typed result rather than
+assuming success.
+
+## Source alignment
+
+Local files do not enter the event stream automatically. A catalog declares
+which files are indexed. sources check validates current alignment without
+writing. sources compile emits a frozen path-free bundle. sources propose
+submits that exact bundle.
+
+CI may run check/compile as a lint, but acceptance still requires an explicit
+proposal, approval, and activation.
+
+## MCP and CLI
+
+The MCP tool set is Playbill-only and mirrors the same service core as CLI and
+HTTP. Use MCP for structured agent calls and CLI for human-readable review or
+local key custody.
+
+Approval is intentionally split:
+
+- prepare_approval obtains the exact challenge;
+- the client signs it with a local key;
+- submit_approval sends only the public attestation.
+
+The convenience CLI command playbill proposal approve performs those steps
+without exposing the key to the daemon.
+
+## Fail closed
+
+Stop and surface the typed refusal when:
+
+- the accepted parent changed;
+- the candidate digest or compiler digest differs;
+- approval roles are insufficient;
+- a principal is revoked or outside its authority;
+- a source file escapes its declared root or is a symlink;
+- a requested proof detail is not implemented;
+- a coordinate is provisional when accepted state was requested.
+
+Recovery is a governed principal operation, not a bypass for ordinary approval.

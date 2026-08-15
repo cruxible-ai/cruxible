@@ -1,25 +1,10 @@
-"""Keep documented mutation-guard condition types synchronized with config schema."""
+"""Freeze the legacy mutation-guard donor vocabulary until its parity batch."""
 
 from __future__ import annotations
-
-import re
-from pathlib import Path
 
 from pydantic import TypeAdapter
 
 from cruxible_core.config.schema import MutationGuardConditionSchema
-
-
-def _documented_condition_types(path: str | Path) -> set[str]:
-    """Extract condition discriminators from the mutation-guard type table."""
-    text = Path(path).read_text()
-    marker = "The `condition.type` discriminator selects the condition variant:"
-    _, separator, tail = text.partition(marker)
-    assert separator, "config-reference.md is missing the mutation-guard condition table"
-    table_region = tail.split("\n### ", maxsplit=1)[0]
-    condition_types = set(re.findall(r"^\| `(?P<type>[a-z_]+)` \|", table_region, re.MULTILINE))
-    condition_types.discard("type")
-    return condition_types
 
 
 def _implemented_condition_types() -> set[str]:
@@ -32,18 +17,13 @@ def _implemented_condition_types() -> set[str]:
     return set(mapping)
 
 
-def test_config_reference_condition_types_set_equal_schema_union() -> None:
-    """Every implemented mutation-guard condition has exactly one table row."""
-    documented = _documented_condition_types("docs/config-reference.md")
-    implemented = _implemented_condition_types()
-
-    code_not_docs = sorted(implemented - documented)
-    docs_not_code = sorted(documented - implemented)
-    assert code_not_docs == [], (
-        "Mutation-guard condition types missing from docs/config-reference.md "
-        f"(in code, not docs): {code_not_docs}"
-    )
-    assert docs_not_code == [], (
-        "docs/config-reference.md documents mutation-guard condition types absent "
-        f"from the config schema (in docs, not code): {docs_not_code}"
-    )
+def test_mutation_guard_donor_condition_vocabulary_is_frozen() -> None:
+    """Destructive doc removal must not silently change donor semantics."""
+    assert _implemented_condition_types() == {
+        "actor",
+        "co_write",
+        "evidence",
+        "frozen",
+        "query",
+        "requires_resolution_contract",
+    }

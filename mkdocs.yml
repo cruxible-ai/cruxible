@@ -6,9 +6,8 @@
 site_name: Cruxible Docs
 site_url: https://docs.cruxible.ai
 site_description: >-
-  Documentation for Cruxible — one shared truth for humans and AI agents.
-  Quickstart, concepts, kits, CLI and config reference, MCP tools, and
-  operations guides.
+  Documentation for the Cruxible Playbill development core: governed semantic
+  state, exact provenance, signed review, and reproducible accepted generations.
 repo_url: https://github.com/cruxible-ai/cruxible
 repo_name: cruxible-ai/cruxible
 edit_uri: edit/main/docs/
@@ -65,14 +64,13 @@ nav:
   - Getting started:
       - Quickstart: quickstart.md
       - Concepts: concepts.md
+      - Architecture: architecture.md
       - Modeling state: modeling-state.md
       - For AI agents: for-ai-agents.md
+      - Family 1 Documents: playbill-family-1.md
   - Reference:
       - CLI reference: cli-reference.md
-      - Blueprint format: blueprints.md
-      - Config reference: config-reference.md
       - MCP tools: mcp-tools.md
-      - Common providers: common-providers.md
   - Operations:
       - Auth and agent roles: runtime-auth-and-agent-roles.md
       - Isolated deployment: isolated-deployment.md

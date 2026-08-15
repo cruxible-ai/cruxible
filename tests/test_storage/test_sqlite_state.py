@@ -63,15 +63,6 @@ DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
         Path("src/cruxible_core/procedure/reading_store.py"),
         Path("src/cruxible_core/attestation/store.py"),
         Path("src/cruxible_core/resolution_contracts/store.py"),
-        # Boundary telemetry deliberately does NOT join the UnitOfWork, so it
-        # cannot borrow the shared transaction's connection: fail-open telemetry
-        # must never join or block the request transaction. It opens its own
-        # connection with ``timeout=0`` from the off-request flusher thread and
-        # drops the batch when the DB is busy, so a counter write can never
-        # delay, fail, or roll back the work the request came to do. The same
-        # exemption is spelled out in
-        # ``tests/test_guardrails/test_store_registration.py``.
-        Path("src/cruxible_core/telemetry/store.py"),
         Path("src/cruxible_core/server/registry.py"),
         Path("src/cruxible_core/server/credentials.py"),
         # FastAPI exception registration needs the concrete sqlite exception

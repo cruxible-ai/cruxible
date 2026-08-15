@@ -1,222 +1,127 @@
-# Quickstart
+# Playbill developer quickstart
 
-Get from install to your first Crux — a governed, kit-backed state model — in
-a few minutes.
+This quickstart targets the breaking Playbill development branch.
 
-The recommended shape is a local Cruxible daemon, launched with
-`cruxible server start`. The daemon
-owns state; the CLI, MCP server, client SDK, GUI, and agent harness talk to it
-through Cruxible surfaces.
+## Install
 
-This guide assumes a **fresh daemon** with no instance yet. If you already
-have a daemon from the README's Get Started, it holds that instance — leave
-it running and start a second daemon alongside it, on its own port and
-state directory:
+Requirements are Python 3.11+, Git, and uv.
 
-```bash
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server-quickstart" \
-  cruxible server start --port 8101
-```
+~~~bash
+uv sync --all-extras
+~~~
 
-Then use `http://127.0.0.1:8101` wherever the commands below say
-`http://127.0.0.1:8100`. See
-[Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md#one-daemon-one-instance-02)
-for the model behind this.
+## Start the daemon
 
-## Prerequisites
+In shell one:
 
-- Python 3.11 or later (with pip)
-- An MCP-capable AI agent if you want agent orchestration
-- [git](https://git-scm.com/) and [uv](https://docs.astral.sh/uv/) only if
-  you develop from source
+~~~bash
+uv run cruxible server start \
+  --state-dir /tmp/cruxible-playbill-dev \
+  --bootstrap-secret-file /tmp/cruxible-playbill-bootstrap
+~~~
 
-## Install And Start The Daemon
+The daemon creates a one-time bootstrap secret with mode 0600.
 
-```bash
-pip install cruxible
-```
+In shell two:
 
-The daemon ships in the default install, and the built-in kit aliases
-(`init --kit agent-operation`, `--kit supply-chain-blast-radius`, ...)
-resolve from digest-pinned release bundles — no checkout needed. To hack on
-kits instead, clone the repo and run from the checkout
-(`uv sync --all-extras`); a source tree's `kits/` always wins over the
-published bundles.
+~~~bash
+export CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
+export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat /tmp/cruxible-playbill-bootstrap)"
+~~~
 
-Start the local daemon:
+Allocate an empty daemon-owned host. The CLI remembers it as the active
+instance:
 
-```bash
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
-```
+~~~bash
+uv run cruxible playbill host create --instance-id playbill-demo
+~~~
 
-Without auth, this is sandbox mode: writes are attributed to a built-in
-`operator` identity, visible as such in provenance. Turn auth on (below)
-when agents join and identity should be credential-backed.
+Initialize Playbill and generate the owner key outside the repository:
 
-The daemon runs in the foreground — run the commands below from another activated
-shell, or start it in the background.
+~~~bash
+uv run cruxible playbill init \
+  --key-dir /tmp/cruxible-playbill-owner \
+  --principal-id bootstrap-admin
+~~~
 
-Use a durable state directory such as `~/.cruxible/server` or
-`/var/lib/cruxible`. Do not put long-lived daemon state under `/tmp`,
-`/var/tmp`, or macOS private temp directories; Cruxible warns at startup when
-the configured server state path resolves under a known volatile temp location.
+The private key remains in the client directory. The daemon receives only the
+public principal record.
 
-The daemon binds locally by default. For a simple local hardening layer, start
-it with:
+## Govern a Document
 
-```bash
-CRUXIBLE_SERVER_AUTH=true \
-CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once \
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
-```
+Create a body:
 
-Claim the bootstrap secret with `cruxible credential claim-bootstrap` to create
-an admin runtime credential, then use that runtime credential as
-`CRUXIBLE_SERVER_BEARER_TOKEN` for authenticated CLI or client calls. See
-[Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md) for the full
-bootstrap and agent-role flow.
+~~~bash
+printf '# Demo policy\n\nExact governed bytes.\n' > /tmp/demo-policy.md
+BODY_DIGEST="$(uv run cruxible playbill body store /tmp/demo-policy.md)"
+~~~
 
-Use `cruxible-client` in a separate agent environment when the agent should not
-import the runtime directly:
+Create an envelope at /tmp/demo-envelope.json, substituting the entire
+`BODY_DIGEST_FROM_PREVIOUS_COMMAND` value with the printed digest:
 
-```bash
-pip install cruxible-client
-```
-
-## First Instance: The Supply-Chain Demo
-
-Create an instance from two kits — the agent-operation base and the
-supply-chain demo domain — and connect the CLI context so commands stop
-needing per-call flags. (agent-operation is optional: it is the work-item
-and review operations layer for teams running agents on the loop; for a
-domain-only instance, pass just the domain kit.)
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --kit supply-chain-blast-radius
-cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
-```
-
-Build the seeded world. Canonical workflows are preview-first: `run` executes
-against a clone and returns an apply digest; `apply` re-verifies it against
-the current config, lockfile, and head snapshot before committing:
-
-```bash
-cruxible run --workflow build_seed_state
-cruxible apply --workflow build_seed_state --from-last-preview
-cruxible run --workflow ingest_incidents
-cruxible apply --workflow ingest_incidents --from-last-preview
-```
-
-Incident-to-supplier impact is a governed relationship: every live direct
-write is refused, at any permission tier, and in this kit it is minted only
-through proposal and review. The proposal workflow bridges its output into
-a candidate group, each member carrying the signals and evidence that
-matched it:
-
-```bash
-cruxible propose --workflow propose_incident_impacts_supplier
-cruxible group list --status pending_review
-cruxible group get --group <group-id>
-```
-
-Review the thesis, member signals, and pending version, then resolve. The
-`--expected-pending-version` flag pins your decision to the exact pending
-state you reviewed — a group that changed underneath you refuses to resolve:
-
-```bash
-cruxible group resolve --group <group-id> --action approve \
-  --rationale "Confirmed against supplier geography" \
-  --expected-pending-version <pending-version>
-```
-
-Ask the questions those edges now answer:
-
-```bash
-cruxible query run open_incident_impacts --json
-cruxible query run incident_impacted_suppliers --param incident_id=INC-TW-RAIL-2026-07 --json
-```
-
-Every query returns a receipt ID: the deterministic path from parameters to
-traversed edges to rows. Render it with `cruxible explain --receipt
-<receipt-id>`, or in MCP with `cruxible_receipt(instance_id, "<receipt-id>")`.
-
-The approved supplier impacts unlock the next cascade:
-`cruxible propose --workflow propose_incident_impacts_component` fills the
-queue with component-level candidates, and once judged,
-`single_source_components_for_incident` names exposed components with no
-alternative supplier.
-
-For the retained KEV donor workflow, see the [KEV Guide](kev-guide.md).
-
-## Point An Agent At Cruxible
-
-Bootstrap and canonical apply usually require an admin surface. Day-to-day
-agent work should use `governed_write` unless the agent is explicitly acting as
-an administrator.
-
-**Claude Code / Cursor**:
-
-```json
+~~~json
 {
-  "mcpServers": {
-    "cruxible": {
-      "command": "cruxible-mcp",
-      "env": {
-        "CRUXIBLE_MODE": "governed_write",
-        "CRUXIBLE_SERVER_URL": "http://127.0.0.1:8100"
-      }
-    }
-  }
+  "identity": "document:demo-policy",
+  "document_kind": "policy",
+  "title": "Demo policy",
+  "media_type": "text/markdown",
+  "body_digest": "BODY_DIGEST_FROM_PREVIOUS_COMMAND",
+  "governance_scope": ["project:demo"],
+  "lifecycle": {"revision": 1}
 }
-```
+~~~
 
-**Codex**:
+Propose it:
 
-```toml
-[mcp_servers.cruxible]
-command = "cruxible-mcp"
+~~~bash
+uv run cruxible playbill document propose \
+  --envelope /tmp/demo-envelope.json \
+  --name add-demo-policy \
+  --json
+~~~
 
-[mcp_servers.cruxible.env]
-CRUXIBLE_MODE = "governed_write"
-CRUXIBLE_SERVER_URL = "http://127.0.0.1:8100"
-```
+Copy the proposal ID from the response, then review, approve, and activate:
 
-With auth on, add `CRUXIBLE_INSTANCE_ID` and `CRUXIBLE_SERVER_BEARER_TOKEN` to
-the same `env` blocks so every session starts authenticated as its role — the
-natural shape for synchronous harnesses that run each task in their own
-session. See [Agent Environment](runtime-auth-and-agent-roles.md#agent-environment)
-for choosing between harness-configured and orchestrator-managed credentials,
-and treat any config file carrying a token as credential material.
+~~~bash
+uv run cruxible playbill proposal review PROPOSAL_ID
+uv run cruxible playbill proposal approve PROPOSAL_ID \
+  --signer-id bootstrap-admin \
+  --key /tmp/cruxible-playbill-owner/bootstrap-admin.ed25519 \
+  --yes
+uv run cruxible playbill proposal activate PROPOSAL_ID
+~~~
 
-If the agent should not have direct state access, keep
-`CRUXIBLE_SERVER_STATE_DIR` outside the workspace and install only
-`cruxible-client` in the agent environment. See
-[Isolated Deployment](isolated-deployment.md) for stronger local separation.
+Read accepted state and its explanation:
 
-## Build Your Own
+~~~bash
+uv run cruxible playbill document get document:demo-policy
+uv run cruxible playbill document body document:demo-policy
+uv run cruxible playbill explain document:demo-policy --detail evidence
+uv run cruxible playbill document history document:demo-policy
+~~~
 
-Use kits for repeatable work:
+Storing body bytes was inert. Proposing created a frozen candidate. Signing
+approved exactly that candidate. Only activation changed accepted state.
 
-- A **base kit** supplies cross-domain operating state. Kit initialization uses
-  the configured default base (`agent-operation`) unless you pass `--bare`.
-- A **standalone kit** creates a domain state model without requiring another
-  domain kit.
-- An **overlay kit** extends a published reference state.
-- Provider refs use `kit://...::callable`.
-- Deterministic state loading should be workflow-based: parse source artifacts,
-  shape/filter/join/dedupe rows, make graph objects, preview, then apply.
-- Inference, matching, classification, and reviewable judgment should go
-  through proposal workflows and candidate groups.
+## Source catalogs
 
-For hands-on kit creation, see [Kit Walkthroughs](kit-walkthroughs.md). For the
-manifest and distribution rules, see [Kit Authoring And Distribution](kit-authoring.md).
+For local or external files, author a portable catalog and optional ignored
+local overlay. Compilation is client-side:
 
-## Next Steps
+~~~bash
+uv run cruxible playbill sources compile \
+  --catalog sources.yaml \
+  --root . \
+  --output /tmp/source-bundle.json
+~~~
 
-- [Concepts](concepts.md) - Architecture and vocabulary
-- [KEV Guide](kev-guide.md) - Subscribe to the vulnerability reference and work the triage queue
-- [Guide For AI Agents](for-ai-agents.md) - Agent operating recipes
-- [Kit Walkthroughs](kit-walkthroughs.md) - Build and customize kits
-- [Config Reference](config-reference.md) - YAML schema
-- [MCP Tools Reference](mcp-tools.md) - MCP surface
-- [CLI Reference](cli-reference.md) - Terminal commands
+Use sources check for read-only alignment validation and sources propose to
+submit the frozen path-free bundle. The daemon never dereferences a client path.
+
+## Verify the branch
+
+~~~bash
+uv run pytest -q tests/test_playbill tests/test_architecture/test_playbill_dp0_boundaries.py
+uv run mypy src/cruxible_core/playbill src/cruxible_core/service
+uv run ruff check src packages/cruxible-client/src tests
+~~~

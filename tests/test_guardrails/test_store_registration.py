@@ -58,22 +58,14 @@ Offending modules and the step they missed:"""
 # Adding an entry here is a design decision, not a way past a red test: the
 # reason must say why joining the transaction would be WRONG for this store,
 # not merely inconvenient.
-UOW_EXEMPT_STORES: dict[Path, str] = {
-    Path("src/cruxible_core/telemetry/store.py"): (
-        "fail-open telemetry must never join or block the request transaction: "
-        "counters are aggregated in memory and written from an off-request "
-        "flusher on its own connection with timeout=0, dropping the batch when "
-        "the DB is busy, so a counter write can never delay, fail, or roll back "
-        "the work the request came to do"
-    ),
-}
+UOW_EXEMPT_STORES: dict[Path, str] = {}
 
 
 def _store_modules() -> list[Path]:
     modules = sorted(SRC_ROOT.glob("*/store.py"))
     # Non-vacuity floor: discovery finding fewer modules than the known set
     # means the glob root is wrong, not that stores disappeared.
-    assert len(modules) >= 7, f"store discovery found only {len(modules)} modules under {SRC_ROOT}"
+    assert len(modules) >= 6, f"store discovery found only {len(modules)} modules under {SRC_ROOT}"
     return modules
 
 

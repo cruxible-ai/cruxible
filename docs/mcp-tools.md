@@ -1,289 +1,72 @@
-# MCP Tools Reference
+# MCP tool reference
 
-This reference is generated from the Playbill-only MCP registration surface.
-Removed legacy tools are intentionally absent.
+The MCP surface is Playbill-only. All tools delegate to the same service core as
+HTTP and CLI.
 
-## cruxible_playbill_activate
+## Runtime
 
-**Permission:** `GRAPH_WRITE`
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_version` | Return package/runtime version information | `READ_ONLY` |
+| `cruxible_server_info` | Return daemon transport and state metadata | `READ_ONLY` |
 
-**Purpose:** Use when an approved Playbill candidate is ready to settle.
+## Host and initialization
 
-**Inputs:**
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_playbill_host_create` | Allocate an empty daemon-owned host | `ADMIN` |
+| `cruxible_playbill_init` | Bootstrap a host with public principal records | `ADMIN` |
 
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `proposal_id` | yes | Tool input. |
+## Documents and proposals
 
-## cruxible_playbill_check_source_bundle
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_playbill_store_body` | Store inert body bytes in CAS | `GOVERNED_WRITE` |
+| `cruxible_playbill_propose_document` | Propose a canonical Document envelope | `GOVERNED_WRITE` |
+| `cruxible_playbill_inspect_proposal` | Inspect a frozen candidate | `READ_ONLY` |
+| `cruxible_playbill_inspect_refusal` | Inspect deterministic refusal evidence | `READ_ONLY` |
+| `cruxible_playbill_review` | Render review material | `READ_ONLY` |
+| `cruxible_playbill_prepare_approval` | Return the exact approval challenge | `READ_ONLY` |
+| `cruxible_playbill_submit_approval` | Submit a public signed attestation | `GRAPH_WRITE` |
+| `cruxible_playbill_activate` | Verify and activate by compare-and-set | `GRAPH_WRITE` |
 
-**Permission:** `READ_ONLY`
+MCP never accepts a client private key. Signing occurs outside the server and
+outside the language server/MCP process.
 
-**Purpose:** Use when you need to compare compiled source bytes with accepted state.
+## Accepted reads
 
-**Inputs:**
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_playbill_list_documents` | List accepted Documents and coordinate | `READ_ONLY` |
+| `cruxible_playbill_get_document` | Read an accepted Document envelope | `READ_ONLY` |
+| `cruxible_playbill_dereference` | Read permission-gated body bytes | `GOVERNED_WRITE` |
+| `cruxible_playbill_history` | Read accepted history | `READ_ONLY` |
+| `cruxible_playbill_explain` | Explain governance, provenance, coverage, and history | `READ_ONLY` |
 
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `bundle` | yes | Tool input. |
+## Sources
 
-## cruxible_playbill_dereference
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_playbill_source_context` | Return source alignment context | `READ_ONLY` |
+| `cruxible_playbill_check_source_bundle` | Validate a compiled bundle | `READ_ONLY` |
+| `cruxible_playbill_propose_source_bundle` | Propose a frozen compiled bundle | `GOVERNED_WRITE` |
 
-**Permission:** `GOVERNED_WRITE`
+Local path traversal and compilation remain client-side CLI/library concerns.
+MCP receives canonical path-free bundles.
 
-**Purpose:** Use when you need verified accepted body bytes and have body-read permission.
+## Principals
 
-**Inputs:**
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_playbill_list_principals` | List accepted public principals | `READ_ONLY` |
+| `cruxible_playbill_propose_principal_change` | Propose rotation, revocation, or recovery | `ADMIN` |
 
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `identity` | yes | Tool input. |
+## Permission tiers
 
-## cruxible_playbill_explain
+Read operations require read_only. CAS/proposal operations require
+governed_write. Approval submission and activation require graph_write. Host
+allocation, initialization, and principal changes require admin.
 
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need coordinate-bound governance, provenance, and attestation coverage.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `subject` | yes | Tool input. |
-| `at` | yes | Tool input. |
-| `detail` | no | Tool input. |
-| `include_body` | no | Tool input. |
-
-## cruxible_playbill_get_document
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need one accepted Document envelope and structured facts.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `identity` | yes | Tool input. |
-
-## cruxible_playbill_history
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need one Document's replay-verified accepted history.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `identity` | yes | Tool input. |
-
-## cruxible_playbill_host_create
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need an empty daemon-owned host before Playbill bootstrap; this adopts no config or semantic state.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | no | Tool input. |
-
-## cruxible_playbill_init
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need to bootstrap Playbill from client-generated public keys.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `principals` | yes | Tool input. |
-| `operating_profile` | no | Tool input. |
-
-## cruxible_playbill_inspect_proposal
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need immutable proposal evaluation and candidate evidence.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `proposal_id` | yes | Tool input. |
-
-## cruxible_playbill_inspect_refusal
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need typed admission or acceptance-law diagnostics for a proposal.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `proposal_id` | yes | Tool input. |
-
-## cruxible_playbill_list_documents
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need accepted Documents and their exact coordinate.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-
-## cruxible_playbill_list_principals
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need accepted public principal records and their coordinate.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-
-## cruxible_playbill_prepare_approval
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when a client-held signer needs the exact immutable approval statement.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `proposal_id` | yes | Tool input. |
-| `signer_id` | yes | Tool input. |
-| `include_body` | no | Tool input. |
-
-## cruxible_playbill_propose_document
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to propose a governed Document create or supersession.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `shell` | yes | Tool input. |
-| `proposal_name` | yes | Tool input. |
-| `source_compilation_digest` | no | Tool input. |
-
-## cruxible_playbill_propose_principal_change
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need a governed principal registration, rotation, revocation, or recovery.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `principal` | yes | Tool input. |
-| `proposal_name` | yes | Tool input. |
-
-## cruxible_playbill_propose_source_bundle
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to propose frozen source bytes without sending a local path.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `bundle` | yes | Tool input. |
-| `source_name` | yes | Tool input. |
-| `proposal_name` | yes | Tool input. |
-
-## cruxible_playbill_review
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need a structured candidate review and permission-filtered diff.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `proposal_id` | yes | Tool input. |
-| `include_body` | no | Tool input. |
-
-## cruxible_playbill_source_context
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when a local client needs path-free accepted inputs before compiling sources.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-
-## cruxible_playbill_store_body
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to store exact Document bytes inertly before proposing them.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `content_base64` | yes | Tool input. |
-
-## cruxible_playbill_submit_approval
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when you have a public approval attestation produced outside the daemon.
-
-**Inputs:**
-
-| Name | Required | Description |
-|---|---:|---|
-| `instance_id` | yes | Tool input. |
-| `proposal_id` | yes | Tool input. |
-| `attestation` | yes | Tool input. |
-
-## cruxible_server_info
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need live daemon version, state-directory, authentication, or instance-count information.
-
-**Inputs:** None.
-
-## cruxible_version
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to confirm which cruxible build is running.
-
-**Inputs:** None.
+The daemon capability ceiling and bearer credential tier both apply. A
+Playbill principal signature is an additional governance condition, not a
+replacement for transport authorization.

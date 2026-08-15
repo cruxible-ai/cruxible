@@ -1,100 +1,90 @@
-# Modeling State in Cruxible: Gates, Tags, and Flags
+# Modeling semantic state in Playbill
 
-Cruxible holds durable, shared state that both people and AI agents work from.
-When you decide what to put in that state, every piece of information you add
-plays one of three roles. You don't label the role directly — it's defined by
-**what Cruxible does with the information, and when.**
+This branch no longer uses one YAML config as the authority for a mutable entity
+graph. Model accepted knowledge around semantic subjects and external sources.
 
-Getting these roles right is the heart of good modeling. It's also what keeps
-the system trustworthy without making it rigid.
+## Start with source ownership
 
-## The three moments
+For every source, decide:
 
-An agent working with Cruxible moves through three moments, and each role acts in
-exactly one of them:
+- what system is authoritative for the underlying record;
+- how a stable record or query coordinate is expressed;
+- whether exact bytes can be pinned;
+- what change cadence and freshness matter;
+- which observations are exhaust versus candidates for governance.
 
-1. **Reading** — before it acts, an agent reads the current state into its
-   working view. *What it sees here shapes what it does.*
-2. **Saving** — when the agent makes a change, that change has to be saved back.
-   *What's allowed to be saved is what's guaranteed.*
-3. **Maintaining** — separately, on a regular cadence, you check the health of
-   the state and tidy it up. *What gets surfaced here is what needs attention.*
+Playbill should not copy an external database merely to point at it. A Claim may
+refer to a source coordinate and evidence digest while the database remains the
+record authority.
 
-The three roles map one-to-one onto these moments.
+## Choose the governance unit
 
-## The three roles
+Use a Document when exact prose or a whole artifact is genuinely the review
+unit. Use a Claim when the useful unit is a proposition. Use a Procedure when
+the useful unit is a bounded, reusable way of acting.
 
-| Role | What it means | When it acts | How it's set up | Does it block? |
-| --- | --- | --- | --- | --- |
-| **Tag** | Helps you find, filter, and group things — changes what you *see* | Reading | named queries | No — purely informational |
-| **Gate** | A rule Cruxible enforces — changes what's *allowed* | Saving | mutation guards | **Yes** — refuses the save if the rule isn't met |
-| **Flag** | A health check that points out problems to fix later — changes what's *surfaced for cleanup* | Maintaining | quality checks, constraints (warning or error) | No — it reports, never blocks |
+One Document can yield many candidate Claims. Extraction is deterministic, but
+selection is explicit: proposing one candidate does not govern every statement
+in the body.
 
-### Tags — what you see
+## Stable subjects
 
-A tag is a way of organizing. "Which area does this work belong to?" "Group these
-by priority." Tags make state findable and let an agent pull the right things
-into view. They never stop anyone from doing anything — they just shape what
-shows up. *Most* of what you model is tags, and that's healthy.
+Subjects are discovery anchors. Prefer canonical identities tied to domain
+referents rather than whichever phrase an author happened to use.
 
-### Gates — what's allowed
+Before minting a new subject:
 
-A gate is a rule the system actually enforces at the moment a change is saved.
-For example: *a piece of work can't be marked "done" until an approved review is
-attached to it.* If the rule isn't satisfied, the save is **refused** — not
-warned about, refused. Gates are how Cruxible makes promises that hold no matter
-who, or which agent, is doing the work. They are powerful, and they have a cost:
-every gate is one more rule to satisfy, so it adds a little friction to every
-change it touches.
+1. search exact identity and aliases;
+2. search type and namespace;
+3. search optional recall-only tags;
+4. inspect near candidates;
+5. choose reuse, alias, or an explicit distinct-from disposition.
 
-### Flags — what needs attention
+Aliases affect resolution and therefore require stronger authority than
+recall-only tags.
 
-A flag is a health check that runs when you *review* the state, not when a change
-is saved. For example: *every work item should be linked to a product area.* If
-one isn't, the review surfaces it as something to clean up — but nothing was
-blocked when that work item was created. Flags come in two strengths: a
-**warning** (a gentle nudge) and an **error** (a louder "this really should be
-fixed"). Either way, a flag points; it never stops.
+## Claim design
 
-## How to decide which one you need
+A ClaimType should state:
 
-When you add something to the model, ask one question: **what should happen if
-this isn't right?**
+- proposition shape and required fields;
+- subject roles;
+- canonicalization and identity rules;
+- acceptance policy;
+- allowed attestation/evidence forms;
+- projection and explanation expectations.
 
-- **Nothing should be allowed to proceed → make it a Gate.** Use a gate only when
-  breaking the rule would cause real harm, because gates add friction to every
-  change. Reserve them for the promises that genuinely matter.
-- **It should be caught and fixed later, but not block work now → make it a
-  Flag.** Good for hygiene and consistency you care about but don't need to
-  enforce in the moment.
-- **Nothing needs enforcing — you just want to find and group it → make it a
-  Tag.** This is the default, and most things land here.
+Do not encode current truth into the type itself. Claims carry propositions;
+attestations and acceptance history carry epistemic development.
 
-A useful rule of thumb: **a thing earns heavier treatment — its own type, its own
-gates — only when you enforce a real rule over it.** If you only ever filter or
-group by something, a simple tag is the right, low-cost choice. Promoting
-everything to a gate makes the system rigid and tiring to use; leaving real
-guarantees as mere tags makes it untrustworthy. The skill is matching the role to
-the stakes.
+## Procedure design
 
-## An example
+A Procedure contract should let an agent decide whether to invoke it without
+loading implementation details:
 
-Say you're tracking project work:
+- contract in;
+- contract out;
+- preconditions;
+- exported capabilities;
+- budgets and terminal caps;
+- pinned dependencies;
+- governance metadata and track record.
 
-- *"Group work items by the product area they touch."* → **Tag.** It organizes;
-  it enforces nothing.
-- *"A work item can't be closed until an approved review is attached."* →
-  **Gate.** Try to close one without a review and the save is refused.
-- *"Every work item should be linked to a product area."* → **Flag.** If one
-  isn't, your next health check lists it — but it was never blocked from being
-  created.
+## Defaults and policy
 
-Same three pieces of information, three different roles, because you want three
-different things to happen when each one isn't right.
+Authoring must be progressive. Common ClaimTypes and Procedures should inherit
+safe defaults for acceptance, evidence, and explanation. Explicit policy is
+required only where the domain differs.
 
----
+Defaults must remain visible after compilation. They are deterministic authored
+semantics, not hidden runtime guesses.
 
-*Related, and a separate topic: this guide covers how state is **read and
-enforced** once it's there. How state is allowed **in** — direct writes versus
-governed proposals, evidence requirements, and review — is its own dimension,
-covered in the resolution and governance docs.*
+## Query model
+
+Queries operate over accepted semantic projections and may join subjects whose
+evidence originates in different data silos. A cloud graph/search database can
+accelerate traversal, but its contents are projections of accepted state and
+source references, not a new ground truth.
+
+Start with grep-friendly files and local SQLite. Add indexes, piecewise
+projections, or graph databases only when measured demand requires them.

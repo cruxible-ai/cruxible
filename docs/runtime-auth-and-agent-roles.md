@@ -1,331 +1,98 @@
-# Runtime Auth And Agent Roles
-
-Cruxible can run as a local library, but agent workflows that rely on review
-gates should run through an authenticated daemon. The daemon owns state and
-credentials. Agents use scoped runtime credentials to read, write, propose, or
-review state through Cruxible APIs.
-
-## What Auth Protects
+# Authentication, credentials, and Playbill principals
 
-Review gates only matter if Cruxible can distinguish the actor doing the work
-from the actor approving it. A writer agent must not be able to approve its own
-work by sending a request body that claims to be the reviewer.
+Playbill uses two independent authorization layers.
 
-The core rule is:
+## Runtime bearer credentials
 
-> Authentication chooses the actor. Request payloads may carry correlation
-> context, but they may not choose identity.
-
-Use authenticated daemon mode when:
-
-- multiple agents collaborate on the same state;
-- one agent writes state and another reviews it;
-- mutation guards depend on actor identity;
-- the state directory should stay outside the agent workspace;
-- a hosted or long-lived runtime is being exercised.
-
-Unauthenticated local mode is suitable only for single-user scratch work.
-
-## Bootstrap Flow
-
-Start the daemon with auth enabled and a one-time bootstrap secret:
+A bearer credential authenticates HTTP/MCP/CLI transport to one daemon-managed
+instance. It carries a permission tier:
 
-```bash
-CRUXIBLE_SERVER_AUTH=true
-CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=<one-time-secret>
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" \
-  cruxible server start
-```
-
-The first trusted operator claims the bootstrap secret for the target instance:
+| Tier | Meaning |
+|---|---|
+| read_only | Accepted reads, review rendering, explanation, checks |
+| governed_write | Read plus body storage and proposal creation |
+| graph_write | Governed write plus approval submission and activation |
+| admin | Instance allocation, initialization, credentials, principal changes |
 
-```text
-POST /api/v1/{instance_id}/runtime/bootstrap/claim
-{ "bootstrap_secret": "..." }
-```
+The daemon has an immutable capability ceiling. A credential cannot exceed it.
 
-The daemon returns one plaintext `ADMIN` runtime credential token. Store it in
-a secret manager or local operator-owned file outside the agent session. For
-local dogfooding, use a file with restrictive permissions such as:
-
-```bash
-# ~/.cruxible/auth/agent-operation-admin.env
-export CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
-export CRUXIBLE_INSTANCE_ID=inst_...
-export CRUXIBLE_SERVER_BEARER_TOKEN=<admin-runtime-token>
-```
-
-The bootstrap secret cannot be claimed again.
-
-Use the admin credential to create narrower credentials for agents and humans:
-
-```text
-POST /api/v1/{instance_id}/runtime/credentials
-{
-  "label": "writer-agent",
-  "permission_mode": "graph_write"
-}
-```
-
-Runtime credential tokens are stored server-side as hashes. Plaintext token
-material is returned only when a credential is created, rotated, or bootstrap is
-claimed.
-
-## One Daemon, One Instance (0.2)
-
-On an auth-enabled daemon, only the bootstrap bearer can create an instance.
-Every runtime credential minted afterwards — including `ADMIN` — is scoped to
-exactly one instance, and the bootstrap secret is consumed by its first
-claim. The practical model: a daemon whose bootstrap has been claimed
-serves the instance it bootstrapped, and any `init` sent with an
-instance-scoped credential fails with `InstanceScopeError` regardless of
-permission mode. The bootstrap secret cannot help at that point; it is
-already spent.
-
-To create a second instance, stand up a second daemon with its own port,
-state directory, and bootstrap file:
-
-```bash
-CRUXIBLE_SERVER_AUTH=true CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server-2" \
-  cruxible server start --port 8101 \
-  --bootstrap-secret-file "$HOME/.cruxible/bootstrap-2.secret"
-```
-
-Then bootstrap it exactly as before, pointing at the new port:
-
-```bash
-export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$HOME/.cruxible/bootstrap-2.secret")"
-cruxible --server-url http://127.0.0.1:8101 init --kit <kit> --bootstrap
-cruxible context connect --server-url http://127.0.0.1:8101 --instance-id <instance-id>
-cruxible credential claim-bootstrap --secret-file "$HOME/.cruxible/bootstrap-2.secret"
-```
-
-Alternatively, restarting an existing auth-on daemon (same state directory,
-auth still on) issues a fresh one-time bootstrap secret, which can authorize
-one more `init --kit <kit> --bootstrap` plus claim on that daemon. Existing
-instances and their credentials survive the restart untouched. Prefer the
-second daemon when other agents are mid-session; a restart interrupts them.
-
-## Credential Custody
-
-Runtime credentials are bearer secrets. Any process that can read a token can
-exercise that token's permissions. Treat them like passwords, API keys, or SSH
-private keys:
-
-- do not paste tokens into prompts, tickets, logs, or shared documents;
-- do not put broad admin credentials in ordinary agent sessions;
-- do not give one agent session both writer and reviewer tokens if independent
-  review matters;
-- revoke or rotate tokens when a session ends or a token may have leaked.
-
-Cruxible enforces the identity and permission of the token presented on each
-request. It cannot prevent a local process from using another token that the
-operating system allows that process to read. Strong role separation therefore
-requires credential custody outside Cruxible: separate OS users, shell sessions,
-keychains, password managers, containers, VMs, or hosted user accounts.
-
-## Agent Environment
-
-Agents should not pass bearer tokens on every individual command. Start the
-agent or MCP process with its role token in the environment:
-
-```bash
-export CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
-export CRUXIBLE_INSTANCE_ID=inst_...
-export CRUXIBLE_SERVER_BEARER_TOKEN=<agent-runtime-token>
-```
-
-Then server-mode CLI, MCP, and client calls can reuse that credential without
-printing it in prompts, shell history, or logs.
-
-### Where that environment lives: orchestrator or harness
-
-There are two workable custody topologies, matching two harness shapes.
-
-**Orchestrator-managed.** One long-lived manager agent (a Claude Code session,
-for example) exports the block above in its own shell, works while subagents
-run in the background, and controls which credential any dispatched work sees.
-Custody stays with the manager; role separation follows the dispatch boundary.
-This is the shape the rest of this document assumes.
-
-**Harness-configured.** A synchronous harness (Codex and most single-agent
-CLIs) runs each task to completion in its own session — there is no manager
-process to inherit an environment from, and nothing returns for a prompt while
-work runs. Configure the credential in the harness itself so every session
-starts authenticated: put the three variables in the `env` block of the
-harness's Cruxible MCP server entry (see the config examples in the
-[Quickstart](quickstart.md#point-an-agent-at-cruxible)), and — if the agent
-also drives the `cruxible` CLI through its shell — in whatever environment the
-harness gives shell commands (its settings' env mechanism, or a profile file
-it sources). The MCP `env` block covers only the MCP process, not the shell.
-
-Three rules keep harness-configured credentials honest:
-
-- **One harness, one role credential.** A token in the harness config makes
-  every session in that harness act as that role. Run reviewer work in a
-  separately configured harness (or through an orchestrator) — one harness
-  holding both writer and reviewer tokens collapses the independence the
-  [Agent Role Pattern](#agent-role-pattern) exists to enforce.
-- **A config file carrying a token is credential material.** Same custody
-  rules as above: keep it out of repositories, restrict it to the OS user
-  (`chmod 600`), rotate on suspected leak.
-- **Attribution comes from the credential.** Every write from the harness is
-  attributed to the authenticated principal rather than a caller-supplied name.
-
-## Actor Identity
-
-For auth-on runtime credentials, Cruxible derives actor identity from the credential:
-
-- `actor_type`: `service_account`
-- `actor_id`: runtime credential label
-- `org_id`: instance ID
-- `operation_id`: generated per request
-
-If a request supplies `actor_context`, it must match the authenticated runtime
-credential identity. Request payloads may preserve correlation context such as
-`request_id`, but they cannot change `actor_type`, `actor_id`, or `org_id`.
-
-This blocks the unsafe pattern:
-
-```text
-writer-agent token + actor_context.actor_id = "reviewer"
-```
-
-Mutation guards that check actor identity should use this credential-derived
-actor context. With server auth disabled, hosted write routes instead use a
-declared local operator context (`actor_type=human_user`, `actor_id=operator`,
-`org_id=local`) so local sandbox writes remain attributed without credentials.
-
-### Under auth-on, every actor derives to `agent` (Robert, 2026-07-25)
-
-A runtime credential is a `service_account`, so `derived_actor_kind` returns
-`agent` for every credentialed writer — there is no way to be a *human* on an
-auth-on daemon today. That is deliberate, and it is not an exemption: an actor
-that derives to `agent` **owes a `reason_code` wherever a feedback or outcome
-profile requires one of non-human writers**. The rule is not waived because the
-human behind the credential is obvious to whoever set it up; the record has to
-stand on its own.
-
-This is a known gap, not a permanent design: human-typed credentials (a
-credential whose `actor_type` is genuinely `human_user`, established at mint
-time rather than declared per request) are the future path. Until they exist,
-"who is the human here" is answered by credential custody and the role split
-above, not by anything the writer says about itself. The retired self-declared
-`human`/`agent` axis is not reopened — a caller-supplied claim was exactly what
-let an agent skip the accountability rule written for it.
-
-## Agent Role Pattern
-
-For a review-gated agent workflow, create separate credentials for each role:
-
-- `admin`: bootstrap, credential rotation, and operator maintenance
-- `writer-agent`: normal graph writes and proposal creation
-- `reviewer-agent`: review decisions and guarded approvals
-- `human-reviewer`: optional human approval path
-
-Keep the writer and reviewer credentials separate even on a local machine. If
-one agent holds both tokens, Cruxible can no longer enforce that the reviewer is
-independent from the writer.
-
-Keep the admin credential separate from normal writer/reviewer agent sessions.
-An admin token can mint, revoke, and rotate other runtime credentials, so
-exposing it to an ordinary agent collapses the local role boundary.
-
-Treat agent credentials as disposable. If a Codex or Claude session closes and
-loses its token, use the stored operator/admin credential to mint a replacement
-role credential and optionally revoke the old one. Do not restart the daemon
-without auth to work around a lost agent token.
-
-## Restart Discipline
-
-For persistent agent-operated instances, treat auth as sticky operational
-state. If a daemon has been started with auth for a state directory, restart it
-with auth enabled for that same state directory.
-
-Cruxible records this requirement in server state. Normal startup should fail
-if that state directory has previously required auth but the daemon is started
-without `CRUXIBLE_SERVER_AUTH=true`.
-
-Do not restart a review-gated daemon without auth just because the process is
-unresponsive. Restart scripts and supervisor configs should preserve:
-
-- `CRUXIBLE_SERVER_AUTH=true`
-- the same `CRUXIBLE_SERVER_STATE_DIR`
-- the runtime credential store
-- any bootstrap or secret-manager wiring needed for recovery
-
-If you intentionally need unauthenticated scratch mode, use a separate state
-directory.
-
-## Where Permission Tiers Are Enforced
-
-The four `CRUXIBLE_MODE` tiers (`read_only` ⊂ `governed_write` ⊂ `graph_write`
-⊂ `admin`) do **not** gate every session equally. Be precise about which surface
-you are on:
-
-| Surface | Who fixes the tier | Is it a boundary? |
-|---|---|---|
-| Daemon (HTTP API) | the daemon process at startup, as an immutable capability ceiling; runtime credentials may narrow it further | **Yes.** No request can raise it. |
-| MCP server | the MCP server process at startup | **Yes.** The agent talks to the server; it does not own the process. |
-| Local CLI | the operator's own shell environment | **No.** Whoever can run `cruxible` can also set `CRUXIBLE_MODE`. |
-
-The local CLI is an **operator console at operator tier by design**. It is built
-for the human who already owns the machine, the state directory, and the
-environment — restricting it against that same human would be theatre, not
-security. `CRUXIBLE_MODE` on the CLI is an ergonomic guard rail (a way to keep
-yourself from fat-fingering an apply), not an authorization boundary.
-
-The deployment this implies:
-
-- agents get MCP or the daemon, with a scoped runtime credential;
-- agents never get a shell on the state host;
-- if an agent can run `cruxible` locally, it holds operator tier, whatever
-  `CRUXIBLE_MODE` says — because it can change `CRUXIBLE_MODE`.
-
-Reviewer-independence guarantees are provable only on auth-ON daemons; auth-off
-surfaces resolve all actors to the local operator.
-
-## Local Boundary
-
-Local auth is a product boundary, not a hardened OS sandbox. A local machine
-owner can still intervene out of band by changing process environment, state
-files, or databases. That is acceptable for local recovery.
-
-The intended boundary is that normal Cruxible API calls preserve credential
-identity and permission mode once auth is on. Stronger isolation requires a
-separate user, VM, container boundary, or hosted runtime.
-
-Local users remain responsible for token custody. If a single process can read
-multiple role tokens, it can choose any of those roles. Cruxible will still
-record which credential acted, reject request-body identity spoofing, and apply
-permission checks, but it cannot make readable bearer secrets unusable.
-
-## Recovering Access
-
-If every admin runtime token for a local server state directory is lost, stop the
-daemon before attempting recovery. Local recovery treats filesystem ownership of
-the server state directory and its `runtime_credentials.db` as the root of trust.
-It is not a network operation and does not weaken server auth.
-
-Run recovery directly against the stopped daemon's state dir:
-
-```bash
-cruxible credential recover-admin --state-dir "$HOME/.cruxible/server"
-```
-
-The command verifies that the invoking uid owns both the state dir and
-`runtime_credentials.db`, takes a SQLite `BEGIN IMMEDIATE` lock, mints one new
-`ADMIN` credential, records a recovery audit event, and prints the plaintext
-token once.
-
-Stop the daemon yourself before running recovery. The lock check is
-best-effort only: it refuses when another connection is mid-write, but a
-running daemon that is idle holds no SQLite lock and will NOT be detected.
-Recovery against a live daemon does not corrupt state (credentials are read
-fresh on every request), but the operator — not the lock — is the guarantee
-that nothing else is serving the state dir.
-
-After recovery, restart the daemon with auth enabled and use the new admin token
-to mint, rotate, or revoke credentials. Existing admin credentials are not
-revoked automatically; if the old token should no longer work, revoke it after
-you regain access.
+server start generates a one-time bootstrap secret. Use
+credential claim-bootstrap to exchange it for the first persistent admin token,
+or use the secret for the initial local bootstrap session. Tokens are secrets:
+keep them out of repositories, prompts, logs, and source bundles.
+
+Credential rotation mints a replacement and revokes the old credential.
+recover-admin is a local-filesystem ownership recovery path for daemon
+administration; it is not a Playbill content-approval bypass.
+
+## Playbill principals
+
+A Playbill principal is an accepted public-key record with one or more roles:
+
+- owner;
+- reviewer;
+- recovery.
+
+Principal authority is evaluated against the candidate, governance scope, and
+accepted key history.
+
+The CLI generates unencrypted OpenSSH Ed25519 key material:
+
+~~~text
+<principal-id>.ed25519       private, mode 0600
+<principal-id>.ed25519.pub   public, mode 0644
+~~~
+
+Ed25519 is a modern public-key signature algorithm. The private key creates a
+signature over an exact approval challenge. Anyone with the public key can
+verify that signature, but cannot create another one.
+
+Client key directories must be outside the workspace and outside daemon-managed
+roots. The daemon receives only public principal records and signed
+attestations. It never receives a principal private key or client key path.
+
+## Approval flow
+
+~~~text
+daemon: prepare exact candidate challenge
+client: verify rendered candidate
+client: sign challenge with principal private key
+daemon: receive public attestation
+daemon: verify key history, role, scope, digest, and coordinate
+daemon: activation re-verifies before compare-and-set
+~~~
+
+A stale or mismatched challenge fails. A valid signature does not by itself
+activate state.
+
+## Daemon key
+
+Each Playbill instance has a separate daemon-held Ed25519 key for ledger commit
+mechanics and bootstrap verification. It is not an owner/reviewer principal and
+cannot satisfy human/agent approval roles.
+
+## Rotation and revocation
+
+Principal changes are governed proposals. Rotation introduces a new public key
+while retaining history needed to verify old approvals. Revocation prevents new
+authority from the revoked principal without making historical signatures
+unverifiable.
+
+## Recovery
+
+Recovery principals may repair owner/reviewer key state after custody loss.
+They cannot approve ordinary Document candidates. This narrow authority avoids
+turning recovery into a universal governance bypass.
+
+Keep recovery private keys offline when practical and in a custody directory
+separate from normal owner/reviewer keys.
+
+## Agents
+
+Give each agent or harness its own runtime credential and principal identity
+when it needs to propose or review. Attribution should not collapse several
+agents into one shared token/key.
+
+An agent may prepare or submit an approval only within its assigned role. Human
+review tooling can use the same challenge/signature protocol without sharing
+private keys with the daemon or with another agent.
