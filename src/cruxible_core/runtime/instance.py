@@ -52,8 +52,6 @@ from cruxible_core.storage.sqlite import (
     SQLiteStorageBackend,
     SQLiteUnitOfWork,
 )
-from cruxible_core.telemetry.buffer import telemetry_buffer
-from cruxible_core.telemetry.types import BoundaryTelemetrySummary
 from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import (
     LOCK_FILE_NAME,
@@ -350,48 +348,6 @@ class CruxibleInstance(InstanceProtocol):
         """
         value = self._get_snapshot_state(_READ_REVISION_STATE_KEY)
         return int(value) if isinstance(value, int) else 0
-
-    def record_boundary_telemetry(
-        self,
-        surface_name: str,
-        *,
-        response_bytes: int,
-        duration_ms: float,
-        error: bool,
-    ) -> None:
-        """Merge one observation in memory; the flusher writes it off-path.
-
-        Called from the event loop (HTTP, MCP) and from the CLI foreground, so
-        it does no I/O and takes no DB lock: an observation costs one dict
-        update. See ``cruxible_core.telemetry.buffer``.
-        """
-        telemetry_buffer(self._state_db_path()).add(
-            surface_name,
-            response_bytes=response_bytes,
-            duration_ms=duration_ms,
-            error=error,
-        )
-
-    def record_boundary_telemetry_drops(self, *, dropped_events: int) -> None:
-        """Record events a capture site could not hold, on the same terms.
-
-        Same contract as ``record_boundary_telemetry``: an in-memory add, no
-        I/O and no lock held across it. The count rides the next flush so a
-        summary reports the gap next to the counters it is missing from.
-        """
-        telemetry_buffer(self._state_db_path()).add_dropped_events(dropped_events)
-
-    def get_boundary_telemetry_summary(self) -> BoundaryTelemetrySummary:
-        """Read this instance's aggregate boundary counters.
-
-        Flushes this instance's own buffer first — and before opening the read
-        connection, so the two never contend — so a summary reflects calls made
-        since the last periodic flush rather than lagging it.
-        """
-        self._ensure_state_initialized()
-        telemetry_buffer(self._state_db_path()).flush()
-        with self._storage_backend().telemetry_repository() as telemetry:
-            return telemetry.summary()
 
     def get_upstream_metadata(self) -> UpstreamMetadata | None:
         """Return typed upstream metadata for release-backed overlay instances."""

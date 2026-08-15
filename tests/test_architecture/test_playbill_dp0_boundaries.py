@@ -269,6 +269,7 @@ def test_dp0c_deleted_products_are_absent() -> None:
         "decision",
         "feedback",
         "installs",
+        "telemetry",
         "ui_static",
     ):
         package_root = CORE / package
@@ -283,6 +284,7 @@ def test_dp0c_deleted_products_are_absent() -> None:
         "decisions.py",
         "feedback.py",
         "installs.py",
+        "telemetry.py",
         "views.py",
     ):
         assert not (CORE / "service" / service_module).exists()
@@ -292,6 +294,7 @@ def test_dp0c_deleted_products_are_absent() -> None:
         "test_decision",
         "test_feedback",
         "test_installs",
+        "test_telemetry",
         "test_ui_static",
     ):
         family_root = ROOT / "tests" / family
@@ -301,6 +304,7 @@ def test_dp0c_deleted_products_are_absent() -> None:
         )
     assert not (ROOT / "docs" / "blueprints.md").exists()
     assert not (CORE / "cli" / "formatting.py").exists()
+    assert not (CORE / "server" / "telemetry.py").exists()
 
 
 def test_public_registration_catalogs_are_playbill_only() -> None:

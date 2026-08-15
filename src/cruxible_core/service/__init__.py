@@ -190,7 +190,6 @@ from cruxible_core.service.state_diff import (
     service_state_diff,
     service_state_diff_artifact,
 )
-from cruxible_core.service.telemetry import service_telemetry_summary
 from cruxible_core.service.types import (
     AddConstraintServiceResult,
     AddEntityResult,
@@ -268,7 +267,6 @@ from cruxible_core.service.types import (
     ValidateServiceResult,
     WorkflowTestCaseServiceResult,
 )
-from cruxible_core.telemetry.instrumentation import instrument_cli_service
 
 __all__ = [
     # Types
@@ -500,16 +498,5 @@ __all__ = [
     "service_schema",
     "service_server_info",
     "service_stats",
-    "service_telemetry_summary",
     "service_validate",
 ]
-
-# CLI commands import service verbs through this public package. Wrap that
-# boundary once so local CLI accounting stays complete without leaking
-# presentation concerns into every service module. The wrapper is a no-op when
-# no CLI command collection context is active.
-for _service_name in __all__:
-    if _service_name.startswith("service_"):
-        globals()[_service_name] = instrument_cli_service(globals()[_service_name])
-
-del _service_name
