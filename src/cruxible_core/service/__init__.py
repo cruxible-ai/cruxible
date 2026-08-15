@@ -19,10 +19,6 @@ from cruxible_core.service.attestations import (
     service_list_attestations,
     service_resolve_attestation,
 )
-from cruxible_core.service.config_mutations import (
-    service_add_constraint,
-    service_add_decision_policy,
-)
 from cruxible_core.service.execution import (
     apply_preview_reference_from_receipt,
     service_apply_workflow,
@@ -418,8 +414,6 @@ __all__ = [
     "service_get_relationship",
     "service_get_relationship_lineage",
     "service_get_trace",
-    "service_add_constraint",
-    "service_add_decision_policy",
     "service_init",
     "service_init_governed_upload",
     "service_list",

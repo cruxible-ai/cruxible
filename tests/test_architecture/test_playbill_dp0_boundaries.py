@@ -286,6 +286,7 @@ def test_dp0c_deleted_products_are_absent() -> None:
     for service_module in (
         "analysis.py",
         "bindings.py",
+        "config_mutations.py",
         "decisions.py",
         "feedback.py",
         "installs.py",
