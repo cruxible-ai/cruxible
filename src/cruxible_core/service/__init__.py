@@ -253,7 +253,6 @@ from cruxible_core.service.types import (
     BatchDirectWriteInput,
     BatchDirectWriteResult,
     BatchRelationshipWriteInput,
-    CanonicalViewResult,
     ClaimLifecycleResult,
     CloneSnapshotResult,
     ConfigStatusResult,
@@ -268,7 +267,6 @@ from cruxible_core.service.types import (
     EntityChangeHistoryResult,
     EntityLifecycleResult,
     EntityWriteInput,
-    ExportEdgesResult,
     FeedbackBatchServiceResult,
     FeedbackGroupSummary,
     FeedbackItemInput,
@@ -311,7 +309,6 @@ from cruxible_core.service.types import (
     QueryPolicySuggestion,
     QueryServiceResult,
     QuerySurfaceServiceResult,
-    ReceiptExplanationResult,
     RelationshipLineageResult,
     RelationshipTargetInput,
     RelationshipWriteInput,
@@ -337,11 +334,6 @@ from cruxible_core.service.types import (
     UpdateTrustStatusResult,
     ValidateServiceResult,
     WorkflowTestCaseServiceResult,
-)
-from cruxible_core.service.views import (
-    service_explain_receipt,
-    service_export_edges,
-    service_inspect_view,
 )
 from cruxible_core.telemetry.instrumentation import instrument_cli_service
 
@@ -397,14 +389,12 @@ __all__ = [
     "GateEvaluationResult",
     "CloneSnapshotResult",
     "ConfigStatusResult",
-    "CanonicalViewResult",
     "EntityChangeHistoryItem",
     "EntityChangeHistoryResult",
     "GetGroupResult",
     "GroupMemberInput",
     "GroupMemberReviewResult",
     "GroupSignalInput",
-    "ExportEdgesResult",
     "InspectEntityResult",
     "InspectNeighborhoodResult",
     "InspectNeighborResult",
@@ -442,7 +432,6 @@ __all__ = [
     "QueryParamHints",
     "QueryServiceResult",
     "QuerySurfaceServiceResult",
-    "ReceiptExplanationResult",
     "RelationshipLineageResult",
     "RelationshipTargetInput",
     "RelationshipWriteInput",
@@ -512,9 +501,6 @@ __all__ = [
     "service_list_snapshots",
     "service_relocate_instance",
     "service_restore_instance",
-    "service_explain_receipt",
-    "service_export_edges",
-    "service_inspect_view",
     # Analysis
     "service_evaluate",
     "service_state_health",

@@ -260,6 +260,25 @@ def test_legacy_public_modules_and_mixed_runtime_facade_are_absent() -> None:
     assert all(not (CORE / "server" / "routes" / name).exists() for name in deleted_routes)
 
 
+def test_dp0c_rendering_authoring_and_ui_products_are_absent() -> None:
+    """The first DP-0C slice has no compatibility package or orphaned test surface."""
+    for package in ("blueprint", "canonical_views", "ui_static"):
+        package_root = CORE / package
+        assert not any(
+            path.is_file() and "__pycache__" not in path.parts
+            for path in package_root.rglob("*")
+        )
+
+    assert not (CORE / "service" / "views.py").exists()
+    for family in ("test_blueprint", "test_ui_static"):
+        family_root = ROOT / "tests" / family
+        assert not any(
+            path.is_file() and "__pycache__" not in path.parts
+            for path in family_root.rglob("*")
+        )
+    assert not (ROOT / "docs" / "blueprints.md").exists()
+
+
 def test_public_registration_catalogs_are_playbill_only() -> None:
     from mcp.server.fastmcp import FastMCP
 
