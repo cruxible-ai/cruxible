@@ -255,134 +255,6 @@ def test_credential_mint_list_and_revoke_round_trip(
     }
 
 
-def test_server_mode_init_bootstrap_uses_hosted_kit_route(
-    monkeypatch: pytest.MonkeyPatch,
-    runner: CliRunner,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    captured: dict[str, object] = {}
-
-    class StubClient:
-        def init(self, **_kwargs: object):
-            raise AssertionError("plain init route should not be used")
-
-        def init_hosted_instance(self, **kwargs: object):
-            captured.update(kwargs)
-            return contracts.HostedInstanceInitResult(
-                instance_id="inst_hosted",
-                status="initialized",
-                source_type="kit",
-                source_ref="kev-reference",
-                warnings=[],
-            )
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    result = runner.invoke(
-        cli,
-        ["--server-url", "http://server", "init", "--kit", "kev-reference", "--bootstrap"],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert captured["source_type"] == "kit"
-    assert captured["kit_refs"] == ["kev-reference"]
-    assert "Instance ID: inst_hosted" in result.output
-    assert "Active instance: inst_hosted" in result.output
-
-
-def test_init_bootstrap_requires_server_mode(runner: CliRunner) -> None:
-    result = runner.invoke(cli, ["init", "--kit", "kev-reference", "--bootstrap"])
-
-    assert result.exit_code == 2
-    assert "--bootstrap requires server mode." in result.output
-
-
-def test_init_bootstrap_requires_kit(runner: CliRunner) -> None:
-    result = runner.invoke(cli, ["--server-url", "http://server", "init", "--bootstrap"])
-
-    assert result.exit_code == 2
-    assert "--bootstrap requires --kit." in result.output
-
-
-@pytest.mark.parametrize(
-    "extra_args",
-    [
-        ["--config", "cruxible.yaml"],
-        ["--data-dir", "data"],
-        ["--root-dir", "."],
-    ],
-)
-def test_init_bootstrap_rejects_local_init_options(
-    runner: CliRunner,
-    extra_args: list[str],
-) -> None:
-    result = runner.invoke(
-        cli,
-        [
-            "--server-url",
-            "http://server",
-            "init",
-            "--kit",
-            "kev-reference",
-            "--bootstrap",
-            *extra_args,
-        ],
-    )
-
-    assert result.exit_code == 2
-    assert (
-        "--bootstrap uses hosted kit init and accepts only --kit, --bare, and --activate."
-        in result.output
-    )
-
-
-def test_server_mode_init_bootstrap_auth_error_guides_next_steps(
-    monkeypatch: pytest.MonkeyPatch,
-    runner: CliRunner,
-) -> None:
-    from cruxible_client.errors import AuthenticationError
-
-    class StubClient:
-        def init_hosted_instance(self, **_kwargs: object):
-            raise AuthenticationError("Unauthorized")
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    result = runner.invoke(
-        cli,
-        ["--server-url", "http://server", "init", "--kit", "kev-reference", "--bootstrap"],
-    )
-
-    assert result.exit_code == 1
-    assert "Server auth rejected hosted bootstrap init." in result.output
-    assert "bootstrap secret was already claimed" in result.output
-    assert "cruxible credential claim-bootstrap" in result.output
-    assert "CRUXIBLE_SERVER_BEARER_TOKEN to that ADMIN token" in result.output
-    assert "cruxible credential mint" in result.output
-    assert "CRUXIBLE_SERVER_BEARER_TOKEN to the BOOTSTRAP secret" in result.output
-    assert "Traceback" not in result.output
-
-
-def test_server_mode_plain_kit_init_auth_error_points_to_bootstrap_path(
-    monkeypatch: pytest.MonkeyPatch,
-    runner: CliRunner,
-) -> None:
-    from cruxible_client.errors import AuthenticationError
-
-    class StubClient:
-        def init(self, **_kwargs: object):
-            raise AuthenticationError("Unauthorized")
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    result = runner.invoke(
-        cli,
-        ["--server-url", "http://server", "init", "--kit", "kev-reference"],
-    )
-
-    assert result.exit_code == 2
-    assert "cruxible init --kit kev-reference --bootstrap" in result.output
-    assert "cruxible credential claim-bootstrap" in result.output
-
-
 def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
@@ -410,7 +282,7 @@ def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
     assert secret_file.read_text().strip() == generated
     assert stat.S_IMODE(secret_file.stat().st_mode) == 0o600
     assert f"Wrote bootstrap secret file: {secret_file} (0600)" in result.output
-    assert "cruxible init --kit <ref> --bootstrap" in result.output
+    assert "cruxible playbill host create" in result.output
     assert "credential claim-bootstrap --secret-file" in result.output
     assert captured == {
         "host": None,

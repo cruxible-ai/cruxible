@@ -29,13 +29,13 @@ from typing import Any, Protocol
 
 from cruxible_core.errors import TerminalLifecycleWriteRefusedError
 from cruxible_core.graph.assertion_state import (
-    EntityLifecycleStatus,
-    RelationshipLifecycleStatus,
     TERMINAL_ENTITY_LIFECYCLE_STATUSES,
     TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES,
     WRITABLE_ENTITY_LIFECYCLE_STATUSES,
     WRITABLE_RELATIONSHIP_LIFECYCLE_STATUSES,
+    EntityLifecycleStatus,
     RelationshipLifecycleState,
+    RelationshipLifecycleStatus,
 )
 from cruxible_core.graph.assertion_state import (
     EntityLifecycleState as _EntityLifecycleState,

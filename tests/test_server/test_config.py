@@ -10,7 +10,6 @@ import pytest
 
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp.permissions import reset_permissions
-from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.server import app as server_app
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
@@ -24,8 +23,6 @@ from cruxible_core.server.credentials import (
     reset_runtime_credential_store,
 )
 from cruxible_core.server.registry import get_registry, reset_registry
-from cruxible_core.service import service_init
-from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
 def test_default_localhost_without_auth_is_valid() -> None:
@@ -226,71 +223,6 @@ def test_run_server_reaches_uvicorn_for_valid_public_bind(
     assert called["port"] == 8123
 
 
-def test_run_server_refuses_hand_edited_materialized_config(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
-    reset_registry()
-    reset_runtime_credential_store()
-    workspace_root = tmp_path / "project"
-    workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
-    instance = service_init(
-        Path(registered.record.location),
-        config_yaml=CAR_PARTS_YAML,
-        instance_mode=CruxibleInstance.GOVERNED_MODE,
-    ).instance
-    active = instance.get_config_path()
-    active.write_text(active.read_text() + "# hand edit\n")
-    monkeypatch.setenv("CRUXIBLE_HOST", "127.0.0.1")
-    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
-    monkeypatch.delenv("CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH", raising=False)
-
-    try:
-        with pytest.raises(ConfigError, match="ACTIVE CONFIG WAS HAND-EDITED"):
-            server_app.run_server()
-    finally:
-        reset_registry()
-        reset_runtime_credential_store()
-
-
-def test_run_server_integrity_override_allows_recovery(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    called: dict[str, object] = {}
-
-    def capture_run(*_args: object, **kwargs: object) -> None:
-        called.update(kwargs)
-
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
-    reset_registry()
-    reset_runtime_credential_store()
-    workspace_root = tmp_path / "project"
-    workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
-    instance = service_init(
-        Path(registered.record.location),
-        config_yaml=CAR_PARTS_YAML,
-        instance_mode=CruxibleInstance.GOVERNED_MODE,
-    ).instance
-    active = instance.get_config_path()
-    active.write_text(active.read_text() + "# hand edit\n")
-    monkeypatch.setenv("CRUXIBLE_HOST", "127.0.0.1")
-    monkeypatch.setenv("CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH", "true")
-    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
-    monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=capture_run))
-
-    try:
-        server_app.run_server()
-    finally:
-        reset_registry()
-        reset_runtime_credential_store()
-
-    assert called["host"] == "127.0.0.1"
-
-
 def test_run_server_warns_for_volatile_state_dir_and_instance_location(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -304,9 +236,7 @@ def test_run_server_warns_for_volatile_state_dir_and_instance_location(
     monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
     reset_registry()
     reset_runtime_credential_store()
-    workspace_root = tmp_path / "project"
-    workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+    registered = get_registry().create_governed_instance_with_id("inst_volatile")
 
     monkeypatch.setenv("CRUXIBLE_HOST", "127.0.0.1")
     monkeypatch.setenv("CRUXIBLE_PORT", "8126")
@@ -342,9 +272,7 @@ def test_run_server_reaches_uvicorn_with_stored_runtime_credentials(
     monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
     reset_registry()
     reset_runtime_credential_store()
-    workspace_root = tmp_path / "project"
-    workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+    registered = get_registry().create_governed_instance_with_id("inst_cloud_dispatch")
     get_runtime_credential_store().create_credential(
         instance_id=registered.record.instance_id,
         label="cloud-dispatch",
@@ -374,9 +302,7 @@ def test_run_server_fails_when_runtime_credentials_exist_but_auth_is_disabled(
     monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
     reset_registry()
     reset_runtime_credential_store()
-    workspace_root = tmp_path / "project"
-    workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+    registered = get_registry().create_governed_instance_with_id("inst_local_admin")
     get_runtime_credential_store().create_credential(
         instance_id=registered.record.instance_id,
         label="local-admin",

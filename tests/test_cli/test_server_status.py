@@ -22,7 +22,7 @@ from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
-from cruxible_core.runtime.instance_manager import get_manager
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import reset_registry
@@ -130,7 +130,7 @@ def ephemeral_daemon_client(
     reset_registry()
     reset_runtime_credential_store()
     reset_client_cache()
-    get_manager().clear()
+    get_playbill_manager().clear()
 
     test_client = TestClient(create_app())
     client = CruxibleClient(base_url="http://cruxible-daemon")
@@ -139,7 +139,7 @@ def ephemeral_daemon_client(
         yield client
     finally:
         test_client.close()
-        get_manager().clear()
+        get_playbill_manager().clear()
 
 
 def test_status_against_ephemeral_daemon_reports_live_fields(

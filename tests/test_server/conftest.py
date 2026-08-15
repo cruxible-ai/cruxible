@@ -21,22 +21,20 @@ def playbill_http(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[TestClient, str, Path]]:
     state = tmp_path / "server-state"
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
     monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(state))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     reset_permissions()
     reset_registry()
     get_playbill_manager().clear()
-    registered = get_registry().create_governed_instance(workspace_root=workspace)
+    registered = get_registry().create_governed_instance_with_id("inst_playbill_http")
     instance_id = registered.record.instance_id
     managed = Path(registered.record.location) / ".cruxible" / "playbill-v1"
     owner = generate_client_principal_key(
         tmp_path / "owner-custody",
         principal_id="operator",
         authority_roles=("owner",),
-        forbidden_roots=(workspace, managed),
+        forbidden_roots=(managed,),
     )
     with TestClient(create_app()) as client:
         initialized = client.post(
