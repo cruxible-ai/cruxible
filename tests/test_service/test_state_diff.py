@@ -36,11 +36,8 @@ from cruxible_core.service import (
     service_state_diff_artifact,
 )
 from cruxible_core.service.snapshots import service_create_snapshot
-from cruxible_core.service.state_diff import (
-    compare_pending_relationships,
-    parse_state_coordinate,
-    resolve_state_coordinate,
-)
+from cruxible_core.service.state_diff import parse_state_coordinate, resolve_state_coordinate
+from cruxible_core.workflow.proposal_preview import compare_pending_relationships
 
 STATE_MODEL_YAML = """\
 version: "1.0"

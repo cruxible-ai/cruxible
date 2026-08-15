@@ -26,6 +26,7 @@ from typing import Any
 
 from cruxible_core.graph.assertion_state import GroupApprovalDrift
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.property_diffs import property_delta
 from cruxible_core.graph.provenance import provenance_group_id
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.temporal import utc_now
@@ -61,10 +62,6 @@ def content_change(
     property-less touch as "removed everything" and a ``"5"``-for-``5`` restate
     as a change — an over-eager marker, which is worse than no marker.
     """
-    # Deferred import: ``service.property_diffs`` pulls in the ``service``
-    # package, which imports ``graph``. Importing it here breaks that cycle.
-    from cruxible_core.service.property_diffs import property_delta
-
     delta = property_delta(dict(incoming.properties), dict(existing.properties))
     return sorted({*delta.changed, *delta.added, *delta.removed})
 

@@ -49,11 +49,11 @@ from cruxible_core.graph.legacy_identity import (
     legacy_identity_map_digest,
     load_legacy_identity_map,
 )
+from cruxible_core.graph.property_diffs import property_delta, property_value_changes
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.types import ProcedureRecord
 from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.service.property_diffs import property_delta, property_value_changes
 from cruxible_core.service.types import (
     StateDiffArtifactRef,
     StateDiffArtifactResult,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
@@ -24,6 +25,22 @@ from cruxible_core.governance.actors import (
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.temporal import utc_now
+
+
+@dataclass
+class SuppressedProposalMember:
+    """One proposal member suppressed by existing graph or pending-group state."""
+
+    relationship_type: str
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    reason: Literal["existing_edge", "pending_proposal"]
+    existing_group_id: str | None = None
+    existing_group_status: str | None = None
+    existing_signature: str | None = None
+    source_workflow_name: str | None = None
 
 SignalValue = Literal["support", "contradict", "unsure"]
 """Tri-state signal value produced by a signal source about a candidate."""

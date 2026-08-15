@@ -22,6 +22,12 @@ from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.assertion_state import RelationshipLifecycleState
 from cruxible_core.graph.entity_identity import EntityIdentityWarning
 from cruxible_core.graph.evidence import EvidenceRef
+from cruxible_core.graph.property_diffs import (
+    PropertyChangeItem as PropertyChangeItem,
+)
+from cruxible_core.graph.property_diffs import (
+    PropertyDeltaResult as PropertyDeltaResult,
+)
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import (
     CandidateGroup,
@@ -31,6 +37,7 @@ from cruxible_core.group.types import (
     QuerySourceEvidence,
     ResolutionAction,
     ReviewPriority,
+    SuppressedProposalMember,
     TrustStatus,
 )
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -388,13 +395,6 @@ class InspectNeighborhoodResult:
     resumable: bool = False
     cursor_nodes_seen: int = 0
     cursor_edges_seen: int = 0
-
-
-@dataclass
-class PropertyChangeItem:
-    property: str
-    from_value: Any | None = None
-    to_value: Any | None = None
 
 
 @dataclass
@@ -875,20 +875,6 @@ class TestServiceResult:
 
 
 @dataclass
-class SuppressedProposalMember:
-    relationship_type: str
-    from_type: str
-    from_id: str
-    to_type: str
-    to_id: str
-    reason: Literal["existing_edge", "pending_proposal"]
-    existing_group_id: str | None = None
-    existing_group_status: str | None = None
-    existing_signature: str | None = None
-    source_workflow_name: str | None = None
-
-
-@dataclass
 class ProposeWorkflowResult:
     workflow: str
     output: Any
@@ -1133,14 +1119,6 @@ class ResolveGroupResult:
     # Count of pre-existing edges blessed with the group's review status and
     # provenance when ``stamp_existing`` was requested (0 otherwise).
     edges_stamped: int = 0
-
-
-@dataclass
-class PropertyDeltaResult:
-    added: list[str] = field(default_factory=list)
-    removed: list[str] = field(default_factory=list)
-    changed: list[str] = field(default_factory=list)
-    unchanged: list[str] = field(default_factory=list)
 
 
 @dataclass

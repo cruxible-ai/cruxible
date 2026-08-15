@@ -1,10 +1,24 @@
-"""Shared property diff helpers for service read and mutation models."""
+"""Pure property-diff models and helpers shared by retained graph donors."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
-from cruxible_core.service.types import PropertyChangeItem, PropertyDeltaResult
+
+@dataclass
+class PropertyChangeItem:
+    property: str
+    from_value: Any | None = None
+    to_value: Any | None = None
+
+
+@dataclass
+class PropertyDeltaResult:
+    added: list[str] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+    changed: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
 
 
 def property_delta(
@@ -46,3 +60,11 @@ def property_value_changes(
         )
         for property_name in sorted(property_names)
     ]
+
+
+__all__ = [
+    "PropertyChangeItem",
+    "PropertyDeltaResult",
+    "property_delta",
+    "property_value_changes",
+]

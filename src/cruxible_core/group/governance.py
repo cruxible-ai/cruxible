@@ -15,12 +15,12 @@ from cruxible_core.group.types import (
     CandidateMember,
     GroupResolution,
     ReviewPriority,
+    SuppressedProposalMember,
     is_unevidenced_support_signal,
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol
 from cruxible_core.primitives import canonical_json, ordered_unique
 from cruxible_core.query.filters import matches_exact_filter
-from cruxible_core.service.types import SuppressedProposalMember
 from cruxible_core.temporal import is_expired
 
 

@@ -34,6 +34,7 @@ from cruxible_core.graph.operations import (
     validate_entity,
     validate_relationship,
 )
+from cruxible_core.graph.property_diffs import property_value_changes
 from cruxible_core.graph.provenance import SOURCE_REF_BATCH_DIRECT_WRITE, provenance_group_id
 from cruxible_core.graph.types import (
     EntityInstance,
@@ -70,7 +71,6 @@ from cruxible_core.service.mutation_proposals import (
     relationship_instance_member,
 )
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
-from cruxible_core.service.property_diffs import property_value_changes
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,

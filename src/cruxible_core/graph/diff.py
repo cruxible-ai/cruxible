@@ -544,11 +544,9 @@ def _property_channel(
 ) -> dict[str, Any] | None:
     """Key- and value-level property delta through the shared typed helpers.
 
-    Imported lazily for the same reason ``graph/group_drift.py`` does it: the
-    property-diff helpers live in ``service`` and the graph layer must not take
-    a module-level dependency upward.
+    Imported lazily to keep the graph diff module's import cost bounded.
     """
-    from cruxible_core.service.property_diffs import property_delta, property_value_changes
+    from cruxible_core.graph.property_diffs import property_delta, property_value_changes
 
     delta = property_delta(to_properties, from_properties)
     if not (delta.added or delta.removed or delta.changed):
