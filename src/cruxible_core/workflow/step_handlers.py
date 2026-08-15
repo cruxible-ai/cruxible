@@ -1173,7 +1173,7 @@ def execute_propose_group_from_handler(
             force_review=True,
         )
         effective_members = proposal_plan.effective_members
-    from cruxible_core.service.state_diff import compare_pending_relationships
+    from cruxible_core.workflow.proposal_preview import compare_pending_relationships
 
     would_change = compare_pending_relationships(
         context.graph,

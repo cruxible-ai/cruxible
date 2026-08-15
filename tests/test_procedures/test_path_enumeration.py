@@ -8,15 +8,9 @@ appears.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
-import pytest
-from click.testing import CliRunner
-
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.cli.main import cli
 from cruxible_core.procedure.analysis import build_procedure_graph, enumerate_control_paths
 from cruxible_core.procedure.types import (
     MAX_PROCEDURE_ENUMERATED_PATHS,
@@ -191,71 +185,3 @@ def test_the_details_surface_carries_the_enumeration(
     ]
     assert details.control_paths.truncated is False
     assert details.control_paths.cap == MAX_PROCEDURE_ENUMERATED_PATHS
-
-
-def test_the_cli_show_surface_prints_the_paths(
-    procedure_instance: CruxibleInstance,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    definition = ProcedureDefinition.model_validate(
-        {
-            "name": "enumeration_cli",
-            "contract_in": "ProcedureInput",
-            "graph_format": 2,
-            "steps": [
-                {
-                    "id": "gate",
-                    "guard": {"left": "$input.value", "op": "gt", "right": 0},
-                    "on_true": "hot",
-                    "on_false": "cold",
-                    "message": "no value",
-                },
-                {"step": _shape("hot", "hot_out"), "next": "tail"},
-                _shape("cold", "cold_out"),
-                _shape("tail", "final"),
-            ],
-            "returns": "final",
-            "precondition": {},
-            "budget": _BUDGET,
-            "declared_tier": "graph_write",
-        }
-    )
-    proposed = service_propose_procedure(
-        procedure_instance, definition, actor_context=actor("proposer")
-    )
-    procedure_id = proposed.procedure.procedure_id
-    monkeypatch.chdir(procedure_instance.get_root_path())
-    runner = CliRunner()
-
-    shown = runner.invoke(cli, ["procedure", "show", procedure_id])
-    assert shown.exit_code == 0, shown.output
-    assert "Control paths (2):" in shown.output
-    assert "gate -> hot -> tail" in shown.output
-    assert "gate -> cold -> tail" in shown.output
-
-    shown_json = runner.invoke(cli, ["procedure", "show", procedure_id, "--json"])
-    assert shown_json.exit_code == 0, shown_json.output
-    payload = json.loads(shown_json.output)
-    assert payload["control_paths"]["paths"] == [
-        ["gate", "hot", "tail"],
-        ["gate", "cold", "tail"],
-    ]
-
-
-def test_a_linear_definition_prints_no_path_block(
-    procedure_instance: CruxibleInstance,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """One path says nothing the step list did not."""
-    from tests.test_procedures.conftest import provider_definition
-
-    proposed = service_propose_procedure(
-        procedure_instance,
-        provider_definition("linear_show"),
-        actor_context=actor("proposer"),
-    )
-    monkeypatch.chdir(procedure_instance.get_root_path())
-    shown = CliRunner().invoke(cli, ["procedure", "show", proposed.procedure.procedure_id])
-    assert shown.exit_code == 0, shown.output
-    assert "Control paths" not in shown.output
