@@ -33,6 +33,7 @@ from cruxible_core.graph.types import (
     RelationshipMetadata,
     mint_claim_id,
 )
+from cruxible_core.instance_protocol import UpstreamMetadata
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.service import (
@@ -65,7 +66,6 @@ from cruxible_core.service import (
 from cruxible_core.service import queries as queries_module
 from cruxible_core.service.queries import _warn_on_dropped_read
 from cruxible_core.service.types import QueryServiceResult
-from cruxible_core.snapshot.types import UpstreamMetadata
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 STATUS_HISTORY_YAML = """\

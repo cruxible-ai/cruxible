@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cruxible_core.errors import ConfigError
-from cruxible_core.transport.types import parse_transport_ref
 
 
 @dataclass(frozen=True)
@@ -46,6 +45,15 @@ STATE_CATALOG: dict[str, StateCatalogEntry] = {
         description="Published KEV reference state",
     ),
 }
+
+
+def _parse_transport_ref(ref: str) -> tuple[str, str]:
+    if "://" not in ref:
+        raise ConfigError("Transport ref must include a scheme, e.g. file:// or oci://")
+    scheme, remainder = ref.split("://", 1)
+    if not scheme or not remainder:
+        raise ConfigError("Transport ref must include both scheme and target")
+    return scheme, remainder
 
 
 def get_state_catalog() -> dict[str, StateCatalogEntry]:
@@ -118,7 +126,7 @@ def _validate_state_ref_part(value: str, *, label: str) -> None:
 
 
 def _compose_release_ref(base_transport_ref: str, release_id: str) -> str:
-    scheme, remainder = parse_transport_ref(base_transport_ref)
+    scheme, remainder = _parse_transport_ref(base_transport_ref)
     if scheme == "oci":
         leaf = remainder.rsplit("/", 1)[-1]
         if ":" in leaf or "@" in leaf:

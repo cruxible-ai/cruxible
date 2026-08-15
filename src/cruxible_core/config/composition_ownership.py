@@ -14,8 +14,7 @@ from cruxible_core.config.composer import (
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
-from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.snapshot.upstream_verification import verify_tracked_upstream
+from cruxible_core.instance_protocol import InstanceProtocol, verify_tracked_upstream
 
 OwnershipSource = Literal["upstream_metadata", "extends", "unavailable"]
 

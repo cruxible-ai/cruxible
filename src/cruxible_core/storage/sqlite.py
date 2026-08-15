@@ -19,12 +19,12 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.legacy_identity import dump_legacy_identity_map
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.store import GroupStore
+from cruxible_core.instance_protocol import StateSnapshot
 from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.reading_store import ProcedureReadingStore
 from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.resolution_contracts.store import ResolutionContractStore
-from cruxible_core.snapshot.types import StateSnapshot
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 from cruxible_core.source_artifacts.types import (
     SourceArtifactChunk,

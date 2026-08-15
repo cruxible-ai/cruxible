@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from cruxible_core.errors import OwnershipError
-from cruxible_core.snapshot.types import UpstreamMetadata
+from cruxible_core.instance_protocol import UpstreamMetadata
 
 
 def check_upstream_type_ownership(

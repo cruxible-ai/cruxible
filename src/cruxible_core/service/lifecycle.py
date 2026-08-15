@@ -29,7 +29,7 @@ from cruxible_core.config.provenance import (
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
-from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.instance_protocol import InstanceProtocol, verify_tracked_upstream
 from cruxible_core.kit_defaults import DEFAULT_BASE_KIT_ENV
 from cruxible_core.kit_distribution import published_kit_ids
 from cruxible_core.kits import (
@@ -57,7 +57,6 @@ from cruxible_core.service.types import (
     ReloadConfigResult,
     ValidateServiceResult,
 )
-from cruxible_core.snapshot.upstream_verification import verify_tracked_upstream
 from cruxible_core.workflow.compiler import (
     LOCK_FILE_NAME,
     build_lock,

@@ -8,11 +8,20 @@ contract at class-definition time.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.temporal import utc_now
 
 if TYPE_CHECKING:
     from cruxible_core.attestation.types import (
@@ -24,7 +33,6 @@ if TYPE_CHECKING:
     )
     from cruxible_core.config.provenance import ConfigProvenanceMetadata
     from cruxible_core.config.schema import CoreConfig
-    from cruxible_core.governance.actors import GovernedActorContext
     from cruxible_core.graph.entity_graph import EntityGraph
     from cruxible_core.graph.types import EntityInstance, RelationshipInstance
     from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
@@ -49,9 +57,135 @@ if TYPE_CHECKING:
         ResolutionContract,
         ResolutionDisposition,
     )
-    from cruxible_core.snapshot.types import StateSnapshot, UpstreamMetadata
     from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
     from cruxible_core.storage.protocols import UnitOfWorkProtocol
+
+
+_RELEASE_ID_PATTERN = re.compile(r"[a-zA-Z0-9._-]+")
+UpstreamMember = Literal["manifest.json", "graph.json", "config.yaml", "cruxible.lock.yaml"]
+ALL_UPSTREAM_MEMBERS: tuple[UpstreamMember, ...] = (
+    "manifest.json",
+    "graph.json",
+    "config.yaml",
+    "cruxible.lock.yaml",
+)
+_UPSTREAM_MEMBER_FIELDS: dict[UpstreamMember, tuple[str, str]] = {
+    "manifest.json": ("manifest_path", "manifest_digest"),
+    "graph.json": ("graph_path", "graph_digest"),
+    "config.yaml": ("upstream_config_path", "upstream_config_digest"),
+    "cruxible.lock.yaml": ("lock_path", "upstream_lock_digest"),
+}
+
+
+def _validate_path_safe_id(value: str, field_name: str) -> str:
+    if (
+        not _RELEASE_ID_PATTERN.fullmatch(value)
+        or value in {"", ".", ".."}
+        or value.startswith(".")
+    ):
+        raise ValueError(f"{field_name} must match [a-zA-Z0-9._-]+ and cannot be dot-relative")
+    return value
+
+
+class StateSnapshot(BaseModel):
+    """Temporary immutable-state model retained by the donor parity harness."""
+
+    snapshot_id: str
+    created_at: datetime = Field(default_factory=utc_now)
+    label: str | None = None
+    config_digest: str
+    lock_digest: str | None = None
+    graph_digest: str
+    parent_snapshot_id: str | None = None
+    origin_snapshot_id: str | None = None
+    actor_context: GovernedActorContext | None = None
+
+
+class UpstreamMetadata(BaseModel):
+    """Temporary overlay metadata retained by legacy donor tests."""
+
+    format_version: int = 1
+    state_id: str
+    release_id: str
+    snapshot_id: str
+    compatibility: Literal["data_only", "additive_schema", "breaking"]
+    owned_entity_types: list[str] = Field(default_factory=list)
+    owned_relationship_types: list[str] = Field(default_factory=list)
+    parent_release_id: str | None = None
+    bundle_format_version: int | None = None
+    members_digest: str | None = None
+    transport_ref: str
+    requested_source_ref: str | None = None
+    requested_transport_ref: str | None = None
+    overlay_config_path: str = "config.yaml"
+    manifest_path: str = ".cruxible/upstream/current/manifest.json"
+    graph_path: str = ".cruxible/upstream/current/graph.json"
+    upstream_config_path: str = ".cruxible/upstream/current/config.yaml"
+    lock_path: str = ".cruxible/upstream/current/cruxible.lock.yaml"
+    manifest_digest: str | None = None
+    graph_digest: str | None = None
+    upstream_config_digest: str | None = None
+    upstream_lock_digest: str | None = None
+    identity_map_digest: str | None = None
+
+    @field_validator("state_id")
+    @classmethod
+    def validate_state_id(cls, value: str) -> str:
+        return _validate_path_safe_id(value, "state_id")
+
+    @field_validator("release_id")
+    @classmethod
+    def validate_release_id(cls, value: str) -> str:
+        return _validate_path_safe_id(value, "release_id")
+
+
+def sha256_file(path: Path) -> str | None:
+    """Return the donor file's sha256 commitment, or ``None`` when absent."""
+
+    if not path.exists():
+        return None
+    return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+
+
+def verify_tracked_upstream(
+    root: Path,
+    upstream: UpstreamMetadata,
+    *,
+    members: tuple[UpstreamMember, ...] = ALL_UPSTREAM_MEMBERS,
+) -> None:
+    """Preserve exact-byte verification while overlay donors remain."""
+
+    for member in members:
+        path_field, digest_field = _UPSTREAM_MEMBER_FIELDS[member]
+        expected = getattr(upstream, digest_field)
+        if expected is None:
+            continue
+        relative_path = getattr(upstream, path_field)
+        path = root / relative_path
+        if not path.exists():
+            raise ConfigError(
+                f"Tracked upstream release {upstream.state_id}:{upstream.release_id} is "
+                f"missing its materialized '{member}' at {relative_path}, which upstream "
+                f"tracking pins at {expected}. Re-pull the release in REPAIR mode "
+                "(`cruxible state pull-preview --repair` then "
+                "`cruxible state pull-apply --repair --apply-digest ...`) or re-create the "
+                "overlay from the published release; nothing may be read from a missing "
+                "upstream. Repair preserves claim ids -- a plain re-pull of the release "
+                "already tracked is refused as a no-op."
+            )
+        actual = sha256_file(path)
+        if actual != expected:
+            raise ConfigError(
+                f"Tracked upstream release {upstream.state_id}:{upstream.release_id} no "
+                f"longer matches its recorded '{member}' digest: expected {expected}, "
+                f"found {actual} at {relative_path}. The materialized upstream was edited "
+                "locally, and pulled state must stay byte-identical to what was published. "
+                "Restore the file from the published release -- re-pull it in REPAIR mode "
+                "(`cruxible state pull-preview --repair` then "
+                "`cruxible state pull-apply --repair --apply-digest ...`) or re-create the "
+                "overlay -- then retry. Repair preserves claim ids; a plain re-pull of the "
+                "release already tracked is refused as a no-op."
+            )
 
 
 class ReceiptStoreProtocol(ABC):

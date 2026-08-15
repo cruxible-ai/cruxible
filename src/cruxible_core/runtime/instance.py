@@ -36,7 +36,12 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.legacy_identity import backfill_legacy_graph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
-from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
+from cruxible_core.instance_protocol import (
+    InstanceProtocol,
+    ProcedureStoreProtocol,
+    StateSnapshot,
+    UpstreamMetadata,
+)
 from cruxible_core.primitives import new_id
 from cruxible_core.procedure.digest import compute_node_digests
 from cruxible_core.procedure.graph_format import refuse_unknown_artifact_format
@@ -46,7 +51,6 @@ from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.procedure.types import ProcedureRecord
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.resolution_contracts.store import ResolutionContractStore
-from cruxible_core.snapshot.types import StateSnapshot, UpstreamMetadata
 from cruxible_core.storage.sqlite import (
     SQLiteSourceArtifactStore,
     SQLiteStorageBackend,

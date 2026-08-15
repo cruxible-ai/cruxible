@@ -15,8 +15,8 @@ from cruxible_core.instance_protocol import (
     ProcedureStoreProtocol,
     ReceiptStoreProtocol,
     ResolutionContractStoreProtocol,
+    StateSnapshot,
 )
-from cruxible_core.snapshot.types import StateSnapshot
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 
 

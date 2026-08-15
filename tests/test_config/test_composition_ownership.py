@@ -6,8 +6,8 @@ from pathlib import Path
 
 from cruxible_core.config.composer import write_runtime_composed_config
 from cruxible_core.config.composition_ownership import resolve_composition_for_instance
+from cruxible_core.instance_protocol import UpstreamMetadata
 from cruxible_core.runtime.instance import CruxibleInstance
-from cruxible_core.snapshot.types import UpstreamMetadata
 
 BASE_CONFIG = """\
 version: "1.0"

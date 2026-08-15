@@ -16,13 +16,13 @@ from cruxible_core.group.types import (
     CandidateSignal,
     GroupResolution,
 )
+from cruxible_core.instance_protocol import UpstreamMetadata
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     service_propose_group,
     service_resolve_group,
     service_update_trust_status,
 )
-from cruxible_core.snapshot.types import UpstreamMetadata
 
 CONFIG_YAML = """\
 version: "1.0"

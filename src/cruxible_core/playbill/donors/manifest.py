@@ -95,7 +95,7 @@ DONOR_MANIFEST: tuple[DonorEntry, ...] = (
     DonorEntry(
         "cruxible_core.instance_protocol",
         "PC-F",
-        "temporary donor-parity interface harness",
+        "temporary donor-parity interface, snapshot-metadata, and integrity harness",
     ),
     DonorEntry(
         "cruxible_core.governance.actors",
