@@ -16,32 +16,87 @@ class DonorEntry:
 DONOR_MANIFEST_VERSION = "playbill-donor-manifest-v1"
 
 DONOR_MANIFEST: tuple[DonorEntry, ...] = (
-    DonorEntry("cruxible_core.procedure", "PC-A2", "procedure domain seed"),
-    DonorEntry("cruxible_core.workflow", "PC-C2", "procedure execution seed"),
-    DonorEntry("cruxible_core.config", "PC-A1", "selected schema vocabulary only"),
-    DonorEntry("cruxible_core.predicate", "PC-A2", "guard predicate seed"),
-    DonorEntry("cruxible_core.query", "PC-D", "projection/query implementation seed"),
-    DonorEntry("cruxible_core.graph", "PC-D", "projection/query implementation seed"),
-    DonorEntry("cruxible_core.receipt", "PC-C2", "procedure receipt seed"),
-    DonorEntry("cruxible_core.attestation", "PC-B2", "attestation model seed"),
+    DonorEntry(
+        "cruxible_core.procedure",
+        "PC-E2",
+        "definition, digest, static-law, and run/read donor through the final transplant",
+    ),
+    DonorEntry(
+        "cruxible_core.workflow",
+        "PC-E2",
+        "compiler, contract, transform, and executor donor through line runtime parity",
+    ),
+    DonorEntry(
+        "cruxible_core.config.schema",
+        "PC-F",
+        "selected step, query, provider, and contract schema donor",
+    ),
+    DonorEntry(
+        "cruxible_core.predicate",
+        "PC-F",
+        "typed comparison and coercion donor through query parity",
+    ),
+    DonorEntry(
+        "cruxible_core.query",
+        "PC-F",
+        "traversal, filtering, and projection behavior donor",
+    ),
+    DonorEntry(
+        "cruxible_core.graph",
+        "PC-F",
+        "query-oracle types and EvidenceRef behavior donor",
+    ),
+    DonorEntry("cruxible_core.receipt", "PC-E1", "exhaust receipt-tree donor"),
+    DonorEntry(
+        "cruxible_core.attestation",
+        "PC-C",
+        "stance, disposition, and idempotency semantics donor",
+    ),
     DonorEntry(
         "cruxible_core.resolution_contracts",
-        "PC-A2",
-        "resolution contract seed",
+        "PC-E1",
+        "resolution declaration, activation, and disposition donor",
     ),
     DonorEntry(
-        "cruxible_core.source_artifacts",
-        "PC-B1",
-        "source-reference implementation seed",
+        "cruxible_core.source_artifacts.markdown",
+        "PC-C",
+        "deterministic markdown span-extraction donor",
     ),
-    DonorEntry("cruxible_core.markdown", "PC-B1", "source parser seed"),
-    DonorEntry("cruxible_core.provider", "PC-C2", "procedure provider seed"),
-    DonorEntry("cruxible_core.providers", "PC-C2", "procedure provider seed"),
-    DonorEntry("cruxible_core.group", "PC-B2", "attestation grouping seed"),
-    DonorEntry("cruxible_core.kits", "PC-G", "kit migration seed"),
-    DonorEntry("cruxible_core.runtime.instance", "DP-0C", "storage migration donor"),
-    DonorEntry("cruxible_core.storage.sqlite", "DP-0C", "storage migration donor"),
-    DonorEntry("cruxible_core.instance_protocol", "DP-0C", "storage migration donor"),
+    DonorEntry(
+        "cruxible_core.provider",
+        "PC-E2",
+        "provider contract, registry, and trace donor through line runtime parity",
+    ),
+    DonorEntry(
+        "cruxible_core.providers",
+        "PC-E2",
+        "provider implementations retained through line runtime parity",
+    ),
+    DonorEntry(
+        "cruxible_core.group",
+        "PC-D",
+        "frozen propose_group_from verifier support only",
+    ),
+    DonorEntry(
+        "cruxible_core.kits",
+        "PC-D",
+        "old-compiler helper pieces retained for frozen verification only",
+    ),
+    DonorEntry(
+        "cruxible_core.runtime.instance",
+        "PC-F",
+        "temporary donor-parity harness",
+    ),
+    DonorEntry(
+        "cruxible_core.storage.sqlite",
+        "PC-F",
+        "temporary donor-parity storage harness",
+    ),
+    DonorEntry(
+        "cruxible_core.instance_protocol",
+        "PC-F",
+        "temporary donor-parity interface harness",
+    ),
     DonorEntry(
         "cruxible_core.governance.actors",
         "PC-A1",

@@ -24,6 +24,27 @@ ORACLE_COMMITS = {
     "procedure_graph_program": "986307d56649eb51747ca227228fbe19f73e3895",
 }
 
+RATIFIED_DONOR_REMOVAL_BATCHES = {
+    "cruxible_core.procedure": "PC-E2",
+    "cruxible_core.workflow": "PC-E2",
+    "cruxible_core.config.schema": "PC-F",
+    "cruxible_core.predicate": "PC-F",
+    "cruxible_core.query": "PC-F",
+    "cruxible_core.graph": "PC-F",
+    "cruxible_core.receipt": "PC-E1",
+    "cruxible_core.attestation": "PC-C",
+    "cruxible_core.resolution_contracts": "PC-E1",
+    "cruxible_core.source_artifacts.markdown": "PC-C",
+    "cruxible_core.provider": "PC-E2",
+    "cruxible_core.providers": "PC-E2",
+    "cruxible_core.group": "PC-D",
+    "cruxible_core.kits": "PC-D",
+    "cruxible_core.runtime.instance": "PC-F",
+    "cruxible_core.storage.sqlite": "PC-F",
+    "cruxible_core.instance_protocol": "PC-F",
+    "cruxible_core.governance.actors": "PC-A1",
+}
+
 SERVED_ROOTS = (
     "cruxible_core.runtime.playbill_api",
     "cruxible_core.runtime.playbill_manager",
@@ -201,6 +222,11 @@ def test_playbill_legacy_imports_are_adapter_only_and_manifested() -> None:
         assert len(donor_imports) == 1
         imported = next(iter(donor_imports))
         assert donor_for(imported).adapter == adapter  # type: ignore[union-attr]
+
+
+def test_donor_manifest_matches_ratified_removal_batches() -> None:
+    actual = {entry.module_prefix: entry.removal_batch for entry in DONOR_MANIFEST}
+    assert actual == RATIFIED_DONOR_REMOVAL_BATCHES
 
 
 def test_destructive_pass_oracles_are_exact_and_immutable() -> None:
