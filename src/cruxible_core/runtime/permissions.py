@@ -103,15 +103,26 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_principal_change": PermissionMode.ADMIN,
     "cruxible_runtime_credentials": PermissionMode.ADMIN,
     "cruxible_server_restart": PermissionMode.ADMIN,
-    # Unserved donor operations retained only so frozen Procedure/evidence
-    # parity tests can execute until their scheduled transplant batches.
+}
+
+# Unserved operations retained only for donor behavior and parity tests. Keeping
+# these names separate from ``TOOL_PERMISSIONS`` and
+# ``RUNTIME_OPERATION_PERMISSIONS`` makes their lack of a public transport
+# registration explicit while preserving the service-layer permission law
+# until the owning behavior is transplanted or removed.
+DONOR_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_feedback_adjudicate": PermissionMode.GRAPH_WRITE,
     "cruxible_resolve_group": PermissionMode.GRAPH_WRITE,
+    "cruxible_supersede_claim": PermissionMode.GRAPH_WRITE,
+    "cruxible_retract_claim": PermissionMode.GRAPH_WRITE,
+    "cruxible_supersede_entity": PermissionMode.GRAPH_WRITE,
+    "cruxible_retire_entity": PermissionMode.GRAPH_WRITE,
 }
 
 PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
     **TOOL_PERMISSIONS,
     **RUNTIME_OPERATION_PERMISSIONS,
+    **DONOR_OPERATION_PERMISSIONS,
 }
 
 # ---------------------------------------------------------------------------
@@ -161,11 +172,12 @@ FEEDBACK_ADJUDICATION_OPERATION = "cruxible_feedback_adjudicate"
 # Group resolution — the same adjudication act, reached by a second door
 # ---------------------------------------------------------------------------
 #
-# ``cruxible_resolve_group`` is GRAPH_WRITE in the map above, so the MCP/HTTP
-# surface is covered. The exported ``service_resolve_group`` is not: a direct
-# library caller holding only GOVERNED_WRITE could reach the transition (and
-# with ``stamp_existing=True`` bless a pending edge) with no tier check at all,
-# because the facade owns the only one. Since wi-feedback-approval-rail chose
+# ``cruxible_resolve_group`` remains GRAPH_WRITE in the donor-operation map
+# above even though its MCP/HTTP surface is gone. The exported
+# ``service_resolve_group`` can still be called by donor parity code: a direct
+# library caller holding only GOVERNED_WRITE could otherwise reach the
+# transition (and with ``stamp_existing=True`` bless a pending edge) with no
+# tier check at all. Since wi-feedback-approval-rail chose
 # the SERVICE layer as the enforcement seam for adjudication, group resolution
 # is made consistent with it: the transition re-asserts the requirement inside
 # its own mutation-receipt scope, so the refusal is receipted and every door
