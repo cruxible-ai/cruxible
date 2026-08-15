@@ -279,7 +279,7 @@ what ordinary reads RETURN:
   let page 1 be read at revision N, a contradiction be recorded, and page 2's
   token still validate -- a paginated read spanning two different states with
   nothing to detect it;
-* working-set freshness keys off the same counter and would go stale.
+* continuation freshness keys off the same counter and would go stale.
 
 Attesting advancing the revision is CORRECT and remains pinned by the donor
 storage tests until this backend retires.
@@ -292,8 +292,7 @@ block from those rows: starting a run and finalizing one each change what a
 plain ``procedure list``/``get`` returns, so leaving them revision-silent would
 let a page read at revision N, a run land, and the next page's token still
 validate against an unchanged counter -- exactly the paginated-read-spanning-
-two-states hole described above, plus stale working-set records that nothing
-could detect.
+two-states hole described above.
 
 The two evidence tables stay. Not because a run's declared evidence is
 uninteresting to reads, but because those rows are only ever written in the

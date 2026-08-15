@@ -12,9 +12,10 @@ prove the three properties an adversarial reviewer cares about:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from cruxible_client import contracts
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import TerminalLifecycleWriteRefusedError
 from cruxible_core.graph.assertion_state import (
@@ -236,35 +237,36 @@ def test_lifecycle_write_cannot_mutate_review_state(
     assert after.metadata.assertion.group_override is True
 
 
-def test_relationship_lifecycle_contract_forbids_review_fields() -> None:
-    """The contract input is structurally incapable of carrying review state.
-
-    The typed split is the whole point: a lifecycle write cannot smuggle a review
-    approval/rejection or group_override flip through this channel because the
-    input model forbids any field other than status/reason.
-    """
-    # Valid lifecycle-only input parses.
-    contracts.RelationshipLifecycleInput.model_validate({"status": "retracted"})
-
-    # Attempting to attach a review approval is rejected (extra="forbid").
-    with pytest.raises(Exception):
-        contracts.RelationshipLifecycleInput.model_validate(
-            {"status": "retracted", "review": {"status": "approved"}}
+def test_relationship_lifecycle_mapper_cannot_carry_review_fields() -> None:
+    """The retained mapper copies only lifecycle state into the core model."""
+    state = relationship_lifecycle_state(
+        SimpleNamespace(
+            status="active",
+            reason="because",
+            review={"status": "approved"},
+            group_override=True,
         )
-    # Same for group_override.
-    with pytest.raises(Exception):
-        contracts.RelationshipLifecycleInput.model_validate(
-            {"status": "retracted", "group_override": True}
-        )
-    # The model has no review / group_override fields at all.
-    assert "review" not in contracts.RelationshipLifecycleInput.model_fields
-    assert "group_override" not in contracts.RelationshipLifecycleInput.model_fields
+    )
+
+    assert state is not None
+    assert state.model_dump(mode="json") == {
+        "status": "active",
+        "reason": "because",
+        "effective_from": None,
+        "effective_until": None,
+        "closed_at": None,
+        "closed_by": None,
+        "supersedes": None,
+        "superseded_by": None,
+    }
+    assert "review" not in RelationshipLifecycleState.model_fields
+    assert "group_override" not in RelationshipLifecycleState.model_fields
 
 
 def test_relationship_lifecycle_status_validated_against_relationship_vocab() -> None:
     """An entity-only status (`retired`) is rejected for a relationship lifecycle."""
     with pytest.raises(Exception):
-        contracts.RelationshipLifecycleInput.model_validate({"status": "retired"})
+        relationship_lifecycle_state(SimpleNamespace(status="retired", reason=None))
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +284,7 @@ def test_terminal_relationship_lifecycle_is_refused_on_the_free_write_path(
         match="cruxible relationship retract",
     ):
         relationship_lifecycle_state(
-            contracts.RelationshipLifecycleInput(status=status, reason="because")  # type: ignore[arg-type]
+            SimpleNamespace(status=status, reason="because")  # type: ignore[arg-type]
         )
 
 
@@ -290,7 +292,7 @@ def test_terminal_relationship_lifecycle_is_refused_on_the_free_write_path(
 def test_non_terminal_relationship_lifecycle_stays_writable(status: str) -> None:
     """Participation flips are reversible and remain a plain write."""
     state = relationship_lifecycle_state(
-        contracts.RelationshipLifecycleInput(status=status, reason="because")  # type: ignore[arg-type]
+        SimpleNamespace(status=status, reason="because")  # type: ignore[arg-type]
     )
     assert state is not None
     assert state.status == status
@@ -406,14 +408,8 @@ def test_terminal_lifecycle_refused_on_a_NEW_edge_too(
 
 
 # ---------------------------------------------------------------------------
-# add_relationship path (MCP / HTTP): lifecycle is HONORED, not dropped
+# Retained direct-service relationship lifecycle path
 # ---------------------------------------------------------------------------
-#
-# Regression for the MAJOR finding: a lifecycle write via the non-batch
-# add_relationship path (the one ``cruxible_add_relationship`` MCP + the HTTP
-# add-relationship route use) used to validate, be accepted, then be silently
-# discarded -- a no-op. These tests drive that exact path end to end and prove
-# the lifecycle is applied while review/group_override stay untouched.
 
 
 def _deactivate_fits_via_add_relationship(
@@ -422,48 +418,30 @@ def _deactivate_fits_via_add_relationship(
     status: str = "inactive",
     reason: str | None = "paused via add path",
 ) -> None:
-    """Retract the edge through the non-batch add_relationship path.
-
-    Goes through the runtime contract -> service mapping the MCP/HTTP add-
-    relationship surfaces use (``add_relationships_with_provenance`` ->
-    ``_relationship_input_to_service`` -> ``service_add_relationship_inputs``),
-    NOT the batch direct-write path.
-    """
-    from cruxible_core.runtime import api
-    from cruxible_core.runtime.instance_manager import get_manager
-
-    manager = get_manager()
-    manager.clear()
-    instance_id = "inst-rel-lifecycle-add"
-    manager.register(instance_id, instance)
-    try:
-        api.add_relationships_with_provenance(
-            instance_id,
-            [
-                contracts.RelationshipInput(
-                    from_type="Part",
-                    from_id="BP-1001",
-                    relationship_type="fits",
-                    to_type="Vehicle",
-                    to_id="V-2024-CIVIC-EX",
-                    properties={"verified": True, "source": "catalog"},
-                    lifecycle=contracts.RelationshipLifecycleInput(
-                        status=status,  # type: ignore[arg-type]
-                        reason=reason,
-                    ),
-                )
-            ],
-            provenance_source="mcp_add",
-            provenance_source_ref="add_relationship",
-        )
-    finally:
-        manager.clear()
+    service_add_relationship_inputs(
+        instance,
+        [
+            RelationshipWriteInput(
+                from_type="Part",
+                from_id="BP-1001",
+                relationship_type="fits",
+                to_type="Vehicle",
+                to_id="V-2024-CIVIC-EX",
+                properties={"verified": True, "source": "catalog"},
+                lifecycle=RelationshipLifecycleState(
+                    status=status,  # type: ignore[arg-type]
+                    reason=reason,
+                ),
+            )
+        ],
+        source="direct_service_add",
+        source_ref="test_relationship_lifecycle",
+    )
 
 
 def test_add_relationship_path_applies_lifecycle(
     populated_instance: CruxibleInstance,
 ) -> None:
-    """The non-batch add_relationship path actually applies the lifecycle write."""
     before = _get_fits(populated_instance)
     assert before is not None
     assert before.metadata.assertion.lifecycle.status == "active"
@@ -472,22 +450,14 @@ def test_add_relationship_path_applies_lifecycle(
 
     after = _get_fits(populated_instance)
     assert after is not None
-    # Lifecycle is HONORED (was a silent no-op before the fix).
     assert after.metadata.assertion.lifecycle.status == "inactive"
     assert after.metadata.assertion.lifecycle.reason == "paused via add path"
-    # Edge properties untouched.
     assert after.properties["verified"] is True
 
 
 def test_add_relationship_lifecycle_write_preserves_review_and_override(
     populated_instance: CruxibleInstance,
 ) -> None:
-    """The add-path lifecycle write leaves review / group_override untouched.
-
-    Same review-safety property the batch path guarantees: seed an approved,
-    group-overridden edge, then drive a lifecycle write through the add path and
-    assert ONLY ``assertion.lifecycle`` changed.
-    """
     graph = populated_instance.load_graph()
     rel = graph.get_relationship("Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits")
     assert rel is not None
@@ -525,8 +495,6 @@ def test_add_relationship_lifecycle_write_preserves_review_and_override(
 
     after = _get_fits(populated_instance)
     assert after is not None
-    # Lifecycle changed via the typed channel...
     assert after.metadata.assertion.lifecycle.status == "inactive"
-    # ...but review state and group_override are byte-identical (review-safe).
     assert after.metadata.assertion.review.model_dump(mode="json") == review_before
     assert after.metadata.assertion.group_override is True

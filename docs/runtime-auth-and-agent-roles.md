@@ -169,9 +169,8 @@ Three rules keep harness-configured credentials honest:
 - **A config file carrying a token is credential material.** Same custody
   rules as above: keep it out of repositories, restrict it to the OS user
   (`chmod 600`), rotate on suspected leak.
-- **Attribution and cache scoping come free.** Every write from the harness is
-  attributed to its credential, and the agent-local working set is
-  credential-scoped, so two harnesses on one host never share caches.
+- **Attribution comes from the credential.** Every write from the harness is
+  attributed to the authenticated principal rather than a caller-supplied name.
 
 ## Actor Identity
 

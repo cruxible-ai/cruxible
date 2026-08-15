@@ -301,26 +301,6 @@ traversal and evidence path, and can attach bounded one-hop side context with
 patch windows are part of the query contract. Use read tools for ad hoc context
 that is not stable enough to belong in the named query surface.
 
-## The Working Set
-
-The working set is an opt-in, agent-local, NON-AUTHORITATIVE read cache — an
-answer to re-querying for facts an agent already fetched this session. With
-capture enabled (`--ws` on supported `--json` reads, or
-`CRUXIBLE_WORKING_SET=1`, or persisted via `cruxible ws enable`), every entity
-and edge a read returns is also appended, in the compact profile, to a
-per-instance JSONL file. Re-finding something then costs a grep instead of a
-round trip.
-
-It is a cache with honest freshness accounting, not state: every record
-carries the `read_revision` and config digest it was captured at, `ws verify`
-classifies records fresh/stale/unknown against the live instance (missing
-coordinates are `unknown`, never fresh), and `ws refresh` re-fetches stale
-records. `ws catalog` additionally maintains a digest-stamped index of the
-instance's control plane — entity types, relationship types, named queries,
-and state-held governed procedures — so an agent can grep what exists before
-deciding what to read. No write path or other command ever reads the cache,
-and records are hints to re-verify, never proof.
-
 ## Receipts, Traces, And Decision Records
 
 A **receipt** is a structured proof for a query, workflow run, canonical apply,

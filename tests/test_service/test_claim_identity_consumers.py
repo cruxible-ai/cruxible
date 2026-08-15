@@ -1,4 +1,4 @@
-"""The consumers of edge identity: receipts, records, working set, dry runs.
+"""The retained receipt and preview consumers of durable edge identity.
 
 Grouped here because they share one question -- when a claim's identity is
 available, does the thing that records something ABOUT that claim record the
@@ -14,7 +14,6 @@ import pytest
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import service_add_entities, service_add_relationships
-from cruxible_core.working_set import normalize_edge_record, record_identity, validate_record
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
@@ -108,97 +107,3 @@ def test_dry_run_results_exclude_claim_id(instance: CruxibleInstance) -> None:
     # And the preview really did not write.
     instance.invalidate_graph_cache()
     assert instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits") is None
-
-
-# ------------------------------------------------------------- working set
-
-
-def _normalized(payload: dict) -> dict:
-    return normalize_edge_record(
-        payload,
-        read_revision=1,
-        as_of="2026-01-01T00:00:00Z",
-        receipt_refs=[],
-        source_cmd="test",
-    )
-
-
-def test_working_set_normalization_keeps_claim_id() -> None:
-    """The normalizer drops unknown fields; claim_id must be a KNOWN one."""
-    record = _normalized(
-        {
-            "relationship_type": "fits",
-            "from_type": "Part",
-            "from_id": "BP-1",
-            "to_type": "Vehicle",
-            "to_id": "V-1",
-            "edge_key": 3,
-            "claim_id": "CLM-abc",
-            "properties": {},
-            "metadata": {},
-        }
-    )
-    assert record["claim_id"] == "CLM-abc"
-    assert validate_record(record) is None
-
-
-def test_working_set_dedupes_on_claim_id_across_a_re_key() -> None:
-    """One claim, two edge_keys (a pull re-keyed it) -> ONE cache identity."""
-    before = _normalized(
-        {
-            "relationship_type": "fits",
-            "from_type": "Part",
-            "from_id": "BP-1",
-            "to_type": "Vehicle",
-            "to_id": "V-1",
-            "edge_key": 3,
-            "claim_id": "CLM-abc",
-            "properties": {},
-            "metadata": {},
-        }
-    )
-    after = dict(before, edge_key=11)
-    assert record_identity(before) == record_identity(after)
-
-
-def test_working_set_falls_back_to_tuple_and_edge_key_without_an_id() -> None:
-    """Pre-identity cache lines keep dedupling exactly as they always did."""
-    legacy = _normalized(
-        {
-            "relationship_type": "fits",
-            "from_type": "Part",
-            "from_id": "BP-1",
-            "to_type": "Vehicle",
-            "to_id": "V-1",
-            "edge_key": 3,
-            "properties": {},
-            "metadata": {},
-        }
-    )
-    assert legacy["claim_id"] is None
-    assert record_identity(legacy) == (
-        "edge",
-        "fits",
-        "Part",
-        "BP-1",
-        "Vehicle",
-        "V-1",
-        3,
-    )
-    assert record_identity(dict(legacy, edge_key=11)) != record_identity(legacy)
-
-
-def test_working_set_rejects_a_non_string_claim_id() -> None:
-    record = _normalized(
-        {
-            "relationship_type": "fits",
-            "from_type": "Part",
-            "from_id": "BP-1",
-            "to_type": "Vehicle",
-            "to_id": "V-1",
-            "properties": {},
-            "metadata": {},
-        }
-    )
-    record["claim_id"] = 7
-    assert validate_record(record) == "claim_id must be a string or null"

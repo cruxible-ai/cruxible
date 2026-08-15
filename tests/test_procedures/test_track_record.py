@@ -425,7 +425,7 @@ def test_run_ledger_writes_advance_the_read_revision_once_each(
     run write would let a page be read at revision N, a run land, and the next
     page's continuation token still validate against an unchanged counter --
     a paginated read spanning two different states with nothing to detect it,
-    and a working-set record that reads fresh while its buckets are stale.
+    while its visible track-record buckets are stale.
     """
     procedure = service_propose_procedure(
         procedure_instance,

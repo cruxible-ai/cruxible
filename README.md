@@ -192,8 +192,8 @@ until state pins an approved review ([how](#the-rules-run)).
   recurring answers outside the model
 - Query receipts identify the state revision and graph paths used; truncation
   and pagination are explicit rather than silently incomplete
-- Compact output profiles, bounded neighborhoods, graph-shaped results, and a
-  local read working set keep agent context proportional to the question
+- Compact output profiles, bounded neighborhoods, and graph-shaped results keep
+  agent context proportional to the question
 </details>
 
 <details>

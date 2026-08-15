@@ -316,7 +316,11 @@ def test_dp0c_deleted_products_are_absent() -> None:
     assert not (ROOT / "docs" / "publishing-states.md").exists()
     assert not (ROOT / "docs" / "state-resolution-and-maintenance.md").exists()
     assert not (CORE / "cli" / "formatting.py").exists()
+    assert not (CORE / "working_set.py").exists()
+    assert not (CORE / "runtime" / "instance_manager.py").exists()
+    assert not (CORE / "mcp" / "kit_surface.py").exists()
     assert not (CORE / "server" / "telemetry.py").exists()
+    assert not (ROOT / "tests" / "test_working_set_capture.py").exists()
 
 
 def test_public_registration_catalogs_are_playbill_only() -> None:

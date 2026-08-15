@@ -13,7 +13,6 @@ Loop vocabulary: **Discover → Anchor → Expand → Compute → Prove.**
 2. `wi-read-output-profiles` — cross-cutting projection contract
 3. `wi-bounded-neighborhood-inspect` — Expand
 4. `wi-read-revision-and-continuation` — freshness + no silent loss
-5. `wi-agent-local-working-set` — CLI-side cache (prototype, opt-in)
 
 Sequential on this branch; each WI = one commit, impl + independent review.
 
@@ -147,30 +146,6 @@ Decisions (implemented):
   Queries keep their existing truncation machinery (already explicit).
 - Invariant: no read may report `total > 0` with empty `items` without
   `truncated=true` and a reason.
-
-## 5. Agent-local working set (opt-in prototype)
-
-CLI-side only; no server/contract change; will not touch freeze snapshots.
-
-- Opt-in via `CRUXIBLE_WORKING_SET=1` or `--ws`. Off by default (promotion to
-  default read path is gated on the RuneBench prototype).
-- On any `--json` read (incl. `relationship get`), append normalized JSONL
-  lines to `~/.cruxible/working-set/<instance-key>/records.jsonl`. The key is
-  credential-scoped in authenticated server mode
-  (`<instance-id>-cred-<salted-token-hash>`, salt persisted 0600, no token
-  material); local mode keys on the resolved root. One line per entity/edge
-  seen: `{kind, entity_type, entity_id, props (compact profile), lifecycle,
-  review, read_revision, config_digest, as_of, receipt_refs, source_cmd}`.
-  Dedupe by (kind, type, id): newest revision wins.
-- `cruxible ws verify` — fresh requires BOTH current `read_revision` and
-  matching active `config_digest`; digest mismatch = stale ("config
-  changed"); missing revision/digest = unknown, never silently fresh.
-  `cruxible ws refresh` — re-fetch stale/unknown records (compact); deleted
-  edges are dropped only when the confirming scan was not budget-truncated
-  (depth-only truncation is authoritative). `cruxible ws clear`.
-  `cruxible ws path` — print file path for rg.
-- File header line marks the cache NON-AUTHORITATIVE; never consulted by any
-  write path.
 
 ## Test + guardrail obligations (every WI)
 
