@@ -1939,16 +1939,6 @@ class TestList:
         result = service_list(populated_instance, "receipts")
         assert result.total >= 1
 
-    def test_feedback(self, populated_instance: CruxibleInstance) -> None:
-        result = service_list(populated_instance, "feedback")
-        assert result.total == 0
-        assert result.items == []
-
-    def test_outcomes(self, populated_instance: CruxibleInstance) -> None:
-        result = service_list(populated_instance, "outcomes")
-        assert result.total == 0
-        assert result.items == []
-
     def test_entities_requires_type(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(ConfigError, match="entity_type is required"):
             service_list(populated_instance, "entities")
@@ -2235,10 +2225,10 @@ class TestReadPipelineDropDetection:
 
     def test_list_silent_on_legitimate_empty(
         self,
-        populated_instance: CruxibleInstance,
+        initialized_instance: CruxibleInstance,
     ) -> None:
         with structlog.testing.capture_logs() as events:
-            result = service_list(populated_instance, "outcomes")
+            result = service_list(initialized_instance, "receipts")
         assert result.total == 0
         assert result.items == []
         assert _drop_warnings(events) == []

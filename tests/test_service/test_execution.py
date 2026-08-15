@@ -20,11 +20,8 @@ from cruxible_core.service import (
     EntityWriteInput,
     service_apply_workflow,
     service_batch_direct_write,
-    service_clone_snapshot,
-    service_create_snapshot,
     service_find_apply_preview,
     service_init,
-    service_list_snapshots,
     service_lock,
     service_plan,
     service_propose_group,
@@ -1855,41 +1852,3 @@ class TestWorkflowExecutionServices:
             receipt_store.close()
         assert saved_receipt is not None
         assert saved_receipt.results[0]["output"] == result.output
-
-    def test_snapshot_create_list_and_overlay(
-        self, proposal_workflow_instance: CruxibleInstance, tmp_path: Path
-    ) -> None:
-        service_lock(proposal_workflow_instance)
-        proposed = service_propose_workflow(
-            proposal_workflow_instance,
-            "propose_campaign_recommendations",
-            {"campaign_id": "CMP-1"},
-        )
-        resolved = service_resolve_group(
-            proposal_workflow_instance,
-            proposed.group_id,
-            "approve",
-            expected_pending_version=1,
-        )
-        assert resolved.edges_created == 2
-
-        created = service_create_snapshot(proposal_workflow_instance, label="baseline")
-        listed = service_list_snapshots(proposal_workflow_instance)
-
-        assert created.snapshot.snapshot_id.startswith("snap_")
-        assert listed.items[0].snapshot_id == created.snapshot.snapshot_id
-        assert listed.items[0].label == "baseline"
-
-        overlay_root = tmp_path / "cloned"
-        overlay_result = service_clone_snapshot(
-            proposal_workflow_instance,
-            created.snapshot.snapshot_id,
-            overlay_root,
-        )
-
-        assert overlay_result.snapshot.snapshot_id == created.snapshot.snapshot_id
-        assert overlay_result.instance.get_root_path() == overlay_root
-        assert overlay_result.instance.metadata.origin_snapshot_id == created.snapshot.snapshot_id
-        assert (overlay_root / ".cruxible" / "cruxible.lock.yaml").exists()
-        overlay_graph = overlay_result.instance.load_graph()
-        assert overlay_graph.edge_count("recommended_for") == 2

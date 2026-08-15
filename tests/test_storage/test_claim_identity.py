@@ -27,22 +27,12 @@ from tests.test_cli.conftest import CAR_PARTS_YAML
 
 import cruxible_core.storage.sqlite as sqlite_storage
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.legacy_identity import load_legacy_identity_map
 from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
     mint_claim_id,
-)
-from cruxible_core.service.snapshots import (
-    _INSTANCE_BACKUP_MANIFEST_V2,
-    service_backup_instance,
-    service_restore_instance,
-)
-from cruxible_core.snapshot.types import (
-    INSTANCE_BACKUP_FORMAT_VERSION,
-    InstanceBackupManifest,
 )
 from cruxible_core.sqlite_ddl import split_schema_statements
 from cruxible_core.storage.sqlite import (
@@ -545,98 +535,3 @@ def test_clone_backfills_a_legacy_snapshot_without_rewriting_its_artifacts(
     # The clone re-saved the SAME artifact bytes; nothing was rewritten.
     cloned_bytes = clone._read_snapshot_artifacts(snapshot.snapshot_id)["graph.json"]  # noqa: SLF001
     assert cloned_bytes == source_bytes
-
-
-# ------------------------------------------------------------ backup downgrade
-
-
-def test_restore_refuses_a_backup_that_needs_a_newer_reader(
-    instance: CruxibleInstance,
-    tmp_path: Path,
-) -> None:
-    artifact = tmp_path / "backup.zip"
-    service_backup_instance(instance, instance_id="inst-1", artifact_path=artifact)
-
-    # Rewrite the manifest to declare a future minimum reader, exactly as a
-    # later storage migration would.
-    import zipfile
-
-    with zipfile.ZipFile(artifact) as archive:
-        contents = {name: archive.read(name) for name in archive.namelist()}
-    manifest = InstanceBackupManifest.model_validate_json(contents[_INSTANCE_BACKUP_MANIFEST_V2])
-    bumped = manifest.model_copy(
-        update={"min_reader_format_version": INSTANCE_BACKUP_FORMAT_VERSION + 1}
-    )
-    contents[_INSTANCE_BACKUP_MANIFEST_V2] = json.dumps(bumped.model_dump(mode="json")).encode(
-        "utf-8"
-    )
-    with zipfile.ZipFile(artifact, "w") as archive:
-        for name, payload in contents.items():
-            archive.writestr(name, payload)
-
-    with pytest.raises(ConfigError, match="requires a newer Cruxible"):
-        service_restore_instance(artifact_path=artifact, root_dir=tmp_path / "restored")
-    # Refused BEFORE installation: nothing was written to the target.
-    assert not (tmp_path / "restored").exists()
-
-
-def test_backup_manifest_declares_the_bumped_format(instance: CruxibleInstance, tmp_path: Path):
-    result = service_backup_instance(
-        instance,
-        instance_id="inst-1",
-        artifact_path=tmp_path / "backup.zip",
-    )
-    assert result.manifest.format_version == INSTANCE_BACKUP_FORMAT_VERSION
-    assert result.manifest.min_reader_format_version == INSTANCE_BACKUP_FORMAT_VERSION
-    assert INSTANCE_BACKUP_FORMAT_VERSION >= 2
-
-
-def test_format_2_renames_the_manifest_so_old_readers_fail_before_installing(
-    instance: CruxibleInstance, tmp_path: Path
-) -> None:
-    """The downgrade refusal has to work in readers that never heard of it.
-
-    ``min_reader_format_version`` only refuses in a build that reads the field.
-    Every already-shipped pre-identity reader does not -- it would install a
-    post-0004 ``state.db`` and fail later, on a dropped column, with a broken
-    instance on disk. The renamed member trips that reader's required-members
-    check instead, which runs before anything is written.
-    """
-    import zipfile
-
-    artifact = tmp_path / "backup.zip"
-    service_backup_instance(instance, instance_id="inst-1", artifact_path=artifact)
-    with zipfile.ZipFile(artifact) as archive:
-        names = set(archive.namelist())
-    assert _INSTANCE_BACKUP_MANIFEST_V2 in names
-    # A pre-identity reader requires "manifest.json" and will not find it.
-    assert "manifest.json" not in names
-
-
-def test_a_v1_backup_still_restores(instance: CruxibleInstance, tmp_path: Path) -> None:
-    """The rename is forward-only: existing v1 artifacts keep working."""
-    import zipfile
-
-    artifact = tmp_path / "backup.zip"
-    service_backup_instance(instance, instance_id="inst-1", artifact_path=artifact)
-    with zipfile.ZipFile(artifact) as archive:
-        contents = {name: archive.read(name) for name in archive.namelist()}
-    contents["manifest.json"] = contents.pop(_INSTANCE_BACKUP_MANIFEST_V2)
-    with zipfile.ZipFile(artifact, "w") as archive:
-        for name, payload in contents.items():
-            archive.writestr(name, payload)
-
-    result = service_restore_instance(artifact_path=artifact, root_dir=tmp_path / "restored-v1")
-    assert result.manifest.format_version == INSTANCE_BACKUP_FORMAT_VERSION
-    assert (tmp_path / "restored-v1" / "config.yaml").exists()
-
-
-def test_a_manifest_less_artifact_is_refused_by_name(tmp_path: Path) -> None:
-    import zipfile
-
-    artifact = tmp_path / "backup.zip"
-    with zipfile.ZipFile(artifact, "w") as archive:
-        archive.writestr("state.db", b"")
-    with pytest.raises(ConfigError, match="missing its manifest"):
-        service_restore_instance(artifact_path=artifact, root_dir=tmp_path / "nope")
-    assert not (tmp_path / "nope").exists()

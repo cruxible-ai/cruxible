@@ -25,7 +25,6 @@ from cruxible_core.procedure.types import ProcedureDefinition, ProcedureRecord
 from cruxible_core.receipt.types import OperationType, Receipt
 from cruxible_core.runtime.instance import _load_snapshot_procedures
 from cruxible_core.service import service_run_procedure
-from cruxible_core.service.state_diff import ResolvedStateCoordinate
 from tests.test_procedures.conftest import actor, provider_definition
 from tests.test_procedures.test_execution import _accept, _receipt, _stub_provider
 
@@ -241,27 +240,11 @@ def test_an_unreadable_format_is_refused_by_the_snapshot_loader() -> None:
         _load_snapshot_procedures(artifact, snapshot_id="SNP-future-definition")
 
 
-def test_an_unreadable_format_is_refused_by_the_state_diff_reader() -> None:
-    """Parse path 3 of 3.
+def test_an_unreadable_format_is_refused_by_the_record_reader() -> None:
+    """The retained canonical record reader fails closed on future formats."""
 
-    `load_procedures` never checks a format version of its own, and does not
-    need to: the refusal rides the model every one of these paths validates
-    through, so all three fail closed without three separate checks to keep in
-    step.
-    """
-    coordinate = ResolvedStateCoordinate(
-        kind="snapshot",
-        spec="SNP-future-definition",
-        identity={"snapshot_id": "SNP-future-definition"},
-        sections={},
-        digests={},
-        ownership="unowned",
-        procedures_source=json.dumps(
-            {"format_version": 2, "procedures": [_record_payload(_future_format_dump())]}
-        ).encode("utf-8"),
-    )
     with pytest.raises(ConfigError, match="supported: 1, 2"):
-        coordinate.load_procedures()
+        ProcedureRecord.model_validate(_record_payload(_future_format_dump()))
 
 
 def test_an_explicit_format_one_is_refused_on_every_parse_path() -> None:

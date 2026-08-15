@@ -21,11 +21,8 @@ from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
 from cruxible_core.providers.common.tabular import load_tabular_artifact_bundle
 from cruxible_core.service import (
     service_apply_workflow,
-    service_create_state_overlay,
-    service_init,
     service_lock,
     service_propose_workflow,
-    service_publish_state,
     service_query,
     service_resolve_group,
     service_run,
@@ -1621,43 +1618,3 @@ def test_exposure_reconciliation_no_candidates_completes_without_group(
     finally:
         group_store.close()
     assert groups == []
-
-
-def test_release_backed_kev_overlay_can_propose_asset_products(tmp_path: Path) -> None:
-    reference_root = tmp_path / "reference"
-    reference = service_init(reference_root, kits=["kev-reference"]).instance
-    service_lock(reference)
-    _apply_canonical_workflow(reference, "build_public_kev_reference")
-    product = reference.load_graph().list_entities("Product")[0]
-    assert product.properties.get("vendor_id")
-
-    release_dir = tmp_path / "releases" / "current"
-    service_publish_state(
-        reference,
-        transport_ref=f"file://{release_dir}",
-        state_id="kev-reference",
-        release_id="2026-03-31",
-        compatibility="data_only",
-    )
-
-    overlay_root = tmp_path / "overlay"
-    overlay = service_create_state_overlay(
-        transport_ref=f"file://{release_dir}",
-        kit="kev-triage",
-        root_dir=overlay_root,
-    ).instance
-
-    proposed = service_propose_workflow(overlay, "propose_asset_products", {})
-    assert proposed.group_id is not None
-    assert proposed.receipt is not None
-    assert any(
-        node.detail.get("step_id") == "inventory_tables"
-        and node.detail.get("provider_name") == "parse_local_seed_bundle"
-        for node in proposed.receipt.nodes
-    )
-    assert any(
-        node.detail.get("step_id") == "inventory"
-        and node.detail.get("kind") == "shape_items"
-        and node.detail.get("output_count", 0) > 0
-        for node in proposed.receipt.nodes
-    )

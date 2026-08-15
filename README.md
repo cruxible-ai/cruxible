@@ -180,9 +180,6 @@ until state pins an approved review ([how](#the-rules-run)).
 - Per-type `write_policy` chooses direct, proposal-only, or mint-only admission;
   guards enforce evidence, transitions, and co-writes at one chokepoint
   ([Concepts](https://github.com/cruxible-ai/cruxible/blob/main/docs/concepts.md))
-- Judgment calls land in [review groups](https://github.com/cruxible-ai/cruxible/blob/main/docs/state-resolution-and-maintenance.md)
-  carrying their matching evidence; review mints attributed state with the
-  rationale on record
 - Four cumulative permission tiers per credential; a guard can require the
   reviewing actor differs from the creating actor, anchored on receipts
   ([Auth And Agent Roles](https://github.com/cruxible-ai/cruxible/blob/main/docs/runtime-auth-and-agent-roles.md))
@@ -229,11 +226,8 @@ until state pins an approved review ([how](#the-rules-run)).
 - [MCP server, CLI, and Python client](https://github.com/cruxible-ai/cruxible/blob/main/docs/for-ai-agents.md) against the
   same daemon, credentials, and tiers; agent setup is one
   [MCP config block](https://github.com/cruxible-ai/cruxible/blob/main/docs/quickstart.md)
-- Snapshots, [backups](https://github.com/cruxible-ai/cruxible/blob/main/docs/local-state-and-backups.md), state
-  [publishing](https://github.com/cruxible-ai/cruxible/blob/main/docs/publishing-states.md), and an
-  [inspection UI](https://github.com/cruxible-ai/cruxible-app)
-  over a SQLite file, portable as one artifact
-  ([Isolated Deployment](https://github.com/cruxible-ai/cruxible/blob/main/docs/isolated-deployment.md))
+- Daemon-owned Playbill Git ledgers retain accepted state and its review history
+  while SQLite remains a rebuildable projection rather than authority
 </details>
 
 ## Get Started

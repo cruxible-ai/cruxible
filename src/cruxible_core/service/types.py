@@ -37,8 +37,10 @@ from cruxible_core.group.types import (
     QuerySourceEvidence,
     ResolutionAction,
     ReviewPriority,
-    SuppressedProposalMember,
     TrustStatus,
+)
+from cruxible_core.group.types import (
+    SuppressedProposalMember as SuppressedProposalMember,
 )
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
@@ -51,13 +53,6 @@ from cruxible_core.query.enums import (
 from cruxible_core.query.evaluate import EvaluationReport
 from cruxible_core.query.types import QueryRow
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.snapshot.types import (
-    InstanceBackupManifest,
-    PublishedStateManifest,
-    StateCompatibility,
-    StateSnapshot,
-    UpstreamMetadata,
-)
 from cruxible_core.source_artifacts.types import SourceEvidenceInput
 from cruxible_core.workflow.types import CompiledPlan
 from cruxible_core.workflow_execution_types import WorkflowResultMode
@@ -900,152 +895,6 @@ class ProposeWorkflowResult:
         return self.workflow_type == "canonical"
 
 
-@dataclass
-class SnapshotCreateResult:
-    snapshot: StateSnapshot
-    receipt_id: str | None = None
-
-
-@dataclass
-class SnapshotListResult:
-    items: list[StateSnapshot] = field(default_factory=list)
-    total: int = 0
-
-
-@dataclass
-class CloneSnapshotResult:
-    instance: InstanceProtocol
-    snapshot: StateSnapshot
-
-
-@dataclass
-class InstanceBackupResult:
-    instance_id: str
-    artifact_path: str
-    manifest: InstanceBackupManifest
-
-
-@dataclass
-class InstanceRestoreResult:
-    instance: InstanceProtocol
-    instance_id: str
-    root_dir: str
-    manifest: InstanceBackupManifest
-    registry_status: Literal["registered", "repaired", "unchanged"] = "registered"
-
-
-@dataclass
-class InstanceRelocateResult:
-    instance: InstanceProtocol
-    instance_id: str
-    from_dir: str
-    to_dir: str
-    manifest: InstanceBackupManifest
-    source_removed: bool = False
-    registry_status: Literal["registered", "repaired", "unchanged"] = "registered"
-
-
-@dataclass
-class StatePublishResult:
-    manifest: PublishedStateManifest
-
-
-@dataclass
-class StateOverlayResult:
-    instance: InstanceProtocol
-    manifest: PublishedStateManifest
-    # Verification warnings raised while pulling the release this overlay was
-    # created from -- today, that the bundle predates per-member digests and so
-    # could not be fully verified. Returned rather than logged only: the caller
-    # creating the overlay is the one who can decide to ask upstream for a
-    # re-publish, and `state pull preview` already reports the same warning.
-    warnings: list[str] = field(default_factory=list)
-
-
-@dataclass
-class StateStatusResult:
-    upstream: UpstreamMetadata | None
-
-
-@dataclass
-class StatePullPreviewResult:
-    current_release_id: str | None
-    target_release_id: str
-    compatibility: StateCompatibility
-    apply_digest: str
-    warnings: list[str] = field(default_factory=list)
-    conflicts: list[str] = field(default_factory=list)
-    lock_changed: bool = False
-    upstream_entity_delta: int = 0
-    upstream_edge_delta: int = 0
-
-
-@dataclass
-class StatePullApplyResult:
-    release_id: str
-    apply_digest: str
-    pre_pull_snapshot_id: str
-    receipt_id: str | None = None
-
-
-@dataclass
-class StateDiffArtifactRef:
-    """Where the complete canonical diff artifact was persisted."""
-
-    path: str
-    diff_digest: str
-    byte_count: int
-
-
-@dataclass
-class StateDiffResult:
-    """One state-diff read: the plan digest, plus the BOUNDED view of it.
-
-    ``sections`` is the ``returned_view`` -- bounded by per-bucket caps with
-    oversized values elided -- and ``view_digest`` covers exactly those bytes.
-    ``diff_digest`` covers the complete unelided logical body, always,
-    regardless of what the view returned; only an ``artifact_complete: true``
-    result may be treated as a reviewed plan.
-    """
-
-    diff_digest: str
-    view_digest: str
-    artifact_complete: bool
-    artifact_ref: StateDiffArtifactRef
-    diff_engine_version: str
-    artifact_schema_version: int
-    artifact_trust: str
-    normalizations: list[str]
-    liveness: str
-    selector: dict[str, Any]
-    from_coordinate: dict[str, Any]
-    to_coordinate: dict[str, Any]
-    omitted_sections: list[dict[str, Any]]
-    context: dict[str, Any]
-    sections: dict[str, Any]
-    summary: dict[str, int]
-    view: dict[str, Any]
-    default_basis: str | None = None
-    receipt_id: str | None = None
-
-
-@dataclass
-class StateDiffArtifactResult:
-    """A persisted diff artifact returned by content-addressed retrieval.
-
-    ``content_bytes`` is the file's EXACT UTF-8 text and is what a caller
-    re-digests: hashing it reproduces ``diff_digest`` with no serializer of the
-    caller's own involved. ``content`` is the same body parsed, for callers
-    that only want to read it -- re-serializing that dict reproduces the digest
-    only under Cruxible's exact canonical form, which is not a burden a
-    verifier should have to carry.
-    """
-
-    diff_digest: str
-    path: str
-    byte_count: int
-    content_bytes: str
-    content: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------

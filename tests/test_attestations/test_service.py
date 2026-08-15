@@ -702,7 +702,7 @@ class TestAttestingAdvancesReadRevision:
     silently spanned two different states.
 
     The protocol audit's row was a DISCLOSURE gap, not a behavior bug. These
-    tests pin the behavior; ``docs/state-resolution-and-maintenance.md``
+    tests pin the behavior; the retired legacy operations guide
     discloses it.
     """
 

@@ -82,7 +82,9 @@ FORBIDDEN_MODULE_PREFIXES = (
     "cruxible_core.service.mutations",
     "cruxible_core.service.execution",
     "cruxible_core.storage.sqlite",
+    "cruxible_core.snapshot",
     "cruxible_core.telemetry",
+    "cruxible_core.transport",
     "cruxible_core.working_set",
 )
 
@@ -269,7 +271,9 @@ def test_dp0c_deleted_products_are_absent() -> None:
         "decision",
         "feedback",
         "installs",
+        "snapshot",
         "telemetry",
+        "transport",
         "ui_static",
     ):
         package_root = CORE / package
@@ -284,6 +288,9 @@ def test_dp0c_deleted_products_are_absent() -> None:
         "decisions.py",
         "feedback.py",
         "installs.py",
+        "snapshots.py",
+        "state.py",
+        "state_diff.py",
         "telemetry.py",
         "views.py",
     ):
@@ -294,7 +301,9 @@ def test_dp0c_deleted_products_are_absent() -> None:
         "test_decision",
         "test_feedback",
         "test_installs",
+        "test_snapshot",
         "test_telemetry",
+        "test_transport",
         "test_ui_static",
     ):
         family_root = ROOT / "tests" / family
@@ -303,6 +312,9 @@ def test_dp0c_deleted_products_are_absent() -> None:
             for path in family_root.rglob("*")
         )
     assert not (ROOT / "docs" / "blueprints.md").exists()
+    assert not (ROOT / "docs" / "local-state-and-backups.md").exists()
+    assert not (ROOT / "docs" / "publishing-states.md").exists()
+    assert not (ROOT / "docs" / "state-resolution-and-maintenance.md").exists()
     assert not (CORE / "cli" / "formatting.py").exists()
     assert not (CORE / "server" / "telemetry.py").exists()
 

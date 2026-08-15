@@ -146,9 +146,7 @@ queue with component-level candidates, and once judged,
 `single_source_components_for_incident` names exposed components with no
 alternative supplier.
 
-To consume a published reference state instead of a seeded demo (the KEV
-vulnerability brain), see the [KEV Guide](kev-guide.md). To publish states
-of your own, see [Publishing And Subscribing To States](publishing-states.md).
+For the retained KEV donor workflow, see the [KEV Guide](kev-guide.md).
 
 ## Point An Agent At Cruxible
 
@@ -217,10 +215,8 @@ manifest and distribution rules, see [Kit Authoring And Distribution](kit-author
 
 - [Concepts](concepts.md) - Architecture and vocabulary
 - [KEV Guide](kev-guide.md) - Subscribe to the vulnerability reference and work the triage queue
-- [Publishing And Subscribing To States](publishing-states.md) - Build, publish, and track reference states
 - [Guide For AI Agents](for-ai-agents.md) - Agent operating recipes
 - [Kit Walkthroughs](kit-walkthroughs.md) - Build and customize kits
-- [Local State And Backups](local-state-and-backups.md) - SQLite and droplet operations
 - [Config Reference](config-reference.md) - YAML schema
 - [MCP Tools Reference](mcp-tools.md) - MCP surface
 - [CLI Reference](cli-reference.md) - Terminal commands

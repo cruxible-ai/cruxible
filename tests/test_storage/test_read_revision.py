@@ -22,16 +22,13 @@ from cruxible_core.service import (
     service_add_entities,
     service_add_relationships,
     service_apply_workflow,
-    service_backup_instance,
     service_batch_direct_write,
-    service_create_snapshot,
     service_inspect_entity,
     service_list,
     service_lock,
     service_propose_group_inputs,
     service_query_surface,
     service_resolve_group,
-    service_restore_instance,
     service_run,
     service_sample,
     service_stats,
@@ -155,17 +152,17 @@ class TestRevisionIncrementsOncePerMutationCommit:
         service_resolve_group(instance, proposal.group_id, "approve", expected_pending_version=1)
         assert instance.get_read_revision() == before + 2
 
-    def test_snapshot_create(self, instance: CruxibleInstance) -> None:
+    def test_internal_snapshot_commit(self, instance: CruxibleInstance) -> None:
         _seed_entities(instance)
         before = instance.get_read_revision()
-        service_create_snapshot(instance)
+        instance.create_snapshot()
         assert instance.get_read_revision() == before + 1
 
     def test_snapshot_restore_bumps_and_never_resets(
         self, instance: CruxibleInstance, tmp_path: Path
     ) -> None:
         _seed_entities(instance)
-        snapshot = service_create_snapshot(instance).snapshot
+        snapshot = instance.create_snapshot()
         # More mutations after the snapshot: restoring the older snapshot into
         # a clone must still move ITS revision forward, never backwards.
         service_add_relationships(instance, [_fits_edge()], "direct", "add_relationship")
@@ -192,23 +189,6 @@ class TestRevisionIncrementsOncePerMutationCommit:
             ],
         )
         assert clone.get_read_revision() == before + 1
-
-    def test_backup_restore_preserves_monotonic_revision(
-        self, instance: CruxibleInstance, tmp_path: Path
-    ) -> None:
-        _seed_entities(instance)
-        original = instance.get_read_revision()
-        service_backup_instance(
-            instance, instance_id="inst-rev", artifact_path=tmp_path / "backup.zip"
-        )
-        restored = service_restore_instance(
-            artifact_path=tmp_path / "backup.zip",
-            root_dir=tmp_path / "restored",
-            instance_mode="dev",
-        )
-        # The restored state DB carries its history forward — never a reset.
-        assert restored.instance.get_read_revision() >= original
-
 
 # ---------------------------------------------------------------------------
 # (a) never on reads — even reads that persist audit records
@@ -259,8 +239,8 @@ def test_pre_revision_state_db_initializes_from_snapshot_count(
     instance: CruxibleInstance,
 ) -> None:
     _seed_entities(instance)
-    service_create_snapshot(instance)
-    service_create_snapshot(instance)
+    instance.create_snapshot()
+    instance.create_snapshot()
     db_path = instance.get_instance_dir() / "state.db"
 
     # Simulate a pre-revision state DB: drop the counter and its migration row.

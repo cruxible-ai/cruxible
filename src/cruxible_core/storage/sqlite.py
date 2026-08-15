@@ -281,9 +281,8 @@ what ordinary reads RETURN:
   nothing to detect it;
 * working-set freshness keys off the same counter and would go stale.
 
-Attesting advancing the revision is CORRECT. What the protocol audit actually
-found was a DISCLOSURE gap -- the behavior was never documented -- and that is
-fixed in ``docs/state-resolution-and-maintenance.md``, not here.
+Attesting advancing the revision is CORRECT and remains pinned by the donor
+storage tests until this backend retires.
 
 ``procedure_runs`` was here and is NOT any more, for the same reason. It was a
 defensible classification only while the run ledger was write-only history read
