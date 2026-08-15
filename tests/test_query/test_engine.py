@@ -17,8 +17,6 @@ from cruxible_core.config.schema import (
     TraversalStep,
 )
 from cruxible_core.errors import EntityNotFoundError, QueryExecutionError, QueryNotFoundError
-from cruxible_core.feedback.applier import apply_feedback
-from cruxible_core.feedback.types import FeedbackRecord
 from cruxible_core.graph.assertion_state import (
     RelationshipAssertion,
     RelationshipLifecycleState,
@@ -6050,102 +6048,6 @@ class TestRelationshipState:
                 ],
             }
         ]
-
-    def test_pending_relationship_query_can_be_approved_into_live_state(self, config, graph):
-        rel = graph.get_relationship("Part", "BP-5678", "Vehicle", "V-CIVIC", "fits")
-        assert rel is not None
-        graph.update_relationship_state(
-            "Part",
-            "BP-5678",
-            "Vehicle",
-            "V-CIVIC",
-            "fits",
-            metadata=_metadata(review_status="pending"),
-            edge_key=rel.edge_key,
-        )
-        config.named_queries["pending_fit_edges"] = NamedQuerySchema(
-            mode="traversal",
-            entry_point="Vehicle",
-            traversal=[TraversalStep(relationship="fits", direction="incoming")],
-            returns="fits",
-            result_shape="relationship",
-            relationship_state="pending",
-        )
-        config.named_queries["accepted_fit_edges"] = NamedQuerySchema(
-            mode="traversal",
-            entry_point="Vehicle",
-            traversal=[TraversalStep(relationship="fits", direction="incoming")],
-            returns="fits",
-            result_shape="relationship",
-            relationship_state="accepted",
-        )
-        config.named_queries["live_fit_edges"] = NamedQuerySchema(
-            mode="traversal",
-            entry_point="Vehicle",
-            traversal=[TraversalStep(relationship="fits", direction="incoming")],
-            returns="fits",
-            result_shape="relationship",
-        )
-
-        pending = execute_query(
-            config,
-            graph,
-            "pending_fit_edges",
-            {"vehicle_id": "V-CIVIC"},
-        )
-
-        assert len(pending.results) == 1
-        row = pending.results[0]
-        assert isinstance(row, QueryRelationshipRow)
-        assert row.edge_key is not None
-        assert row.metadata.assertion.review.status == "pending"
-        assert row.from_entity is not None
-        assert row.to_entity is not None
-
-        applied = apply_feedback(
-            graph,
-            FeedbackRecord(
-                receipt_id=pending.receipt.receipt_id,
-                action="approve",
-                target=row,
-            ),
-        )
-        assert applied is True
-
-        approved_rel = graph.get_relationship(
-            "Part",
-            "BP-5678",
-            "Vehicle",
-            "V-CIVIC",
-            "fits",
-            edge_key=row.edge_key,
-        )
-        assert approved_rel is not None
-        assert approved_rel.metadata.assertion.review.status == "approved"
-
-        accepted = execute_query(
-            config,
-            graph,
-            "accepted_fit_edges",
-            {"vehicle_id": "V-CIVIC"},
-        )
-        live = execute_query(
-            config,
-            graph,
-            "live_fit_edges",
-            {"vehicle_id": "V-CIVIC"},
-        )
-        pending_after = execute_query(
-            config,
-            graph,
-            "pending_fit_edges",
-            {"vehicle_id": "V-CIVIC"},
-        )
-
-        assert [row.edge_key for row in accepted.results] == [approved_rel.edge_key]
-        assert approved_rel.edge_key in [row.edge_key for row in live.results]
-        assert pending_after.results == []
-
 
 class TestRelationshipResults:
     def test_outgoing_relationship_rows_include_metadata_and_endpoint_payloads(

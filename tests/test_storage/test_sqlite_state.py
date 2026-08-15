@@ -14,10 +14,6 @@ import pytest
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.decision.store import DecisionStore
-from cruxible_core.decision.types import DecisionRecord
-from cruxible_core.feedback.store import FeedbackStore
-from cruxible_core.feedback.types import OutcomeRecord
 from cruxible_core.graph.assertion_state import (
     RelationshipAssertion,
     RelationshipLifecycleState,
@@ -33,11 +29,7 @@ from cruxible_core.graph.types import (
     mint_claim_id,
 )
 from cruxible_core.group.store import GroupStore
-from cruxible_core.instance_protocol import (
-    DecisionStoreProtocol,
-    FeedbackStoreProtocol,
-    GroupStoreProtocol,
-)
+from cruxible_core.instance_protocol import GroupStoreProtocol
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.storage.sqlite import (
@@ -66,14 +58,11 @@ DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
         # because every store imports it and storage/__init__ imports the stores.
         Path("src/cruxible_core/sqlite_ddl.py"),
         Path("src/cruxible_core/receipt/store.py"),
-        Path("src/cruxible_core/feedback/store.py"),
         Path("src/cruxible_core/group/store.py"),
         Path("src/cruxible_core/procedure/store.py"),
         Path("src/cruxible_core/procedure/reading_store.py"),
         Path("src/cruxible_core/attestation/store.py"),
-        Path("src/cruxible_core/installs/store.py"),
         Path("src/cruxible_core/resolution_contracts/store.py"),
-        Path("src/cruxible_core/decision/store.py"),
         # Boundary telemetry deliberately does NOT join the UnitOfWork, so it
         # cannot borrow the shared transaction's connection: fail-open telemetry
         # must never join or block the request transaction. It opens its own
@@ -83,9 +72,12 @@ DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
         # exemption is spelled out in
         # ``tests/test_guardrails/test_store_registration.py``.
         Path("src/cruxible_core/telemetry/store.py"),
-        Path("src/cruxible_core/bindings/store.py"),
         Path("src/cruxible_core/server/registry.py"),
         Path("src/cruxible_core/server/credentials.py"),
+        # FastAPI exception registration needs the concrete sqlite exception
+        # classes so raw constraint/schema details are redacted at the network
+        # boundary. This is error classification, not state access.
+        Path("src/cruxible_core/server/app.py"),
     }
 )
 
@@ -641,35 +633,6 @@ def test_receipt_then_graph_failure_rolls_back_both(
     assert initialized_instance.load_graph().get_entity("Part", "BP-1") is None
 
 
-def test_decision_then_outcome_failure_rolls_back_compound_write(
-    initialized_instance: CruxibleInstance,
-) -> None:
-    decision = DecisionRecord(question="Approve this change?")
-    outcome = OutcomeRecord(
-        receipt_id="RCP-1",
-        anchor_type="receipt",
-        anchor_id="RCP-1",
-        outcome="correct",
-    )
-
-    def fail_save_outcome(self: FeedbackStore, record: OutcomeRecord) -> str:
-        raise RuntimeError("outcome write failed")
-
-    with (
-        patch.object(FeedbackStore, "save_outcome", fail_save_outcome),
-        pytest.raises(RuntimeError, match="outcome write failed"),
-    ):
-        with initialized_instance.write_transaction() as uow:
-            uow.decisions.save_record(decision)
-            uow.feedback.save_outcome(outcome)
-
-    store = initialized_instance.get_decision_store()
-    try:
-        assert store.get_record(decision.decision_record_id) is None
-    finally:
-        store.close()
-
-
 def test_snapshot_exports_run_only_after_write_transaction_commit(
     initialized_instance: CruxibleInstance,
 ) -> None:
@@ -689,10 +652,10 @@ def test_snapshot_exports_run_only_after_write_transaction_commit(
 
 def test_store_repositories_do_not_expose_transaction_ownership() -> None:
     removed_commit_flag = "auto" + "_commit"
-    for protocol in (DecisionStoreProtocol, FeedbackStoreProtocol, GroupStoreProtocol):
+    for protocol in (GroupStoreProtocol,):
         assert not hasattr(protocol, "transaction")
 
-    for store_type in (SQLiteReceiptStore, FeedbackStore, GroupStore, DecisionStore):
+    for store_type in (SQLiteReceiptStore, GroupStore):
         assert not hasattr(store_type, "transaction")
         assert removed_commit_flag not in inspect.signature(store_type).parameters
 
@@ -700,22 +663,15 @@ def test_store_repositories_do_not_expose_transaction_ownership() -> None:
 def test_instance_store_getters_are_not_used_for_direct_writes() -> None:
     getter_names = {
         "get_receipt_store",
-        "get_feedback_store",
         "get_group_store",
-        "get_decision_store",
     }
     write_methods = {
-        "append_event",
         "confirm_resolution",
         "delete_group",
         "replace_members",
-        "save_feedback",
-        "save_feedback_batch",
         "save_group",
         "save_members",
-        "save_outcome",
         "save_receipt",
-        "save_record",
         "save_resolution",
         "save_trace",
         "update_group",

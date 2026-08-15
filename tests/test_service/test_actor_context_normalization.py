@@ -29,7 +29,6 @@ from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     service_add_relationships,
-    service_feedback,
     service_propose_group,
     service_resolve_group,
 )
@@ -316,72 +315,6 @@ class TestDirectWriteActorContext:
         assert receipt.actor_context is not None
         assert receipt.actor_context.actor_id == expected_id
         assert receipt.actor_context.actor_type == expected_type
-
-
-# ---------------------------------------------------------------------------
-# AREA 1 + AREA 3 + AREA 4: feedback review stamps review state, provenance,
-# and the feedback receipt.
-# ---------------------------------------------------------------------------
-
-
-class TestFeedbackActorContext:
-    @ACTORS
-    def test_feedback_preserves_actor_on_review_provenance_and_receipt(
-        self,
-        instance: CruxibleInstance,
-        make_actor,
-        expected_id: str,
-        expected_type: str,
-    ) -> None:
-        # Seed a live edge to give feedback on.
-        service_add_relationships(
-            instance,
-            [
-                RelationshipInstance(
-                    relationship_type="fits",
-                    from_type="Part",
-                    from_id="BP-1",
-                    to_type="Vehicle",
-                    to_id="V-1",
-                    properties={"verified": False},
-                )
-            ],
-            source="cli",
-            source_ref="add_relationship",
-        )
-        actor = make_actor()
-        result = service_feedback(
-            instance,
-            None,
-            "accept",
-            RelationshipInstance(
-                relationship_type="fits",
-                from_type="Part",
-                from_id="BP-1",
-                to_type="Vehicle",
-                to_id="V-1",
-                properties={},
-            ),
-            reason="looks right",
-            actor_context=actor,
-        )
-        rel = instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
-        assert rel is not None
-        # AREA 1: feedback review stamp carries actor.
-        review = rel.metadata.assertion.review
-        assert review.status == "approved"
-        assert review.actor_context is not None
-        assert review.actor_context.actor_id == expected_id
-        # AREA 4: feedback-touched provenance carries actor.
-        assert rel.metadata.provenance is not None
-        assert rel.metadata.provenance.last_modified_actor_context is not None
-        assert rel.metadata.provenance.last_modified_actor_context.actor_id == expected_id
-        # AREA 3: feedback receipt carries actor.
-        assert result.receipt_id is not None
-        receipt = _get_receipt(instance, result.receipt_id)
-        assert receipt is not None
-        assert receipt.actor_context is not None
-        assert receipt.actor_context.actor_id == expected_id
 
 
 # ---------------------------------------------------------------------------

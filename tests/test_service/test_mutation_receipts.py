@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError, DataValidationError, MutationError
+from cruxible_core.errors import DataValidationError, MutationError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.receipt.store import SQLiteReceiptStore
@@ -18,9 +18,7 @@ from cruxible_core.service import (
     service_add_entities,
     service_add_relationship_inputs,
     service_add_relationships,
-    service_feedback,
     service_propose_group,
-    service_query,
     service_resolve_group,
 )
 
@@ -246,123 +244,6 @@ class TestAddRelationshipReceipts:
             store.close()
         assert receipt is not None
         assert receipt.committed is False
-
-
-# ---------------------------------------------------------------------------
-# feedback receipts
-# ---------------------------------------------------------------------------
-
-
-def _edge_target() -> RelationshipInstance:
-    return RelationshipInstance(
-        from_type="Part",
-        from_id="BP-1001",
-        relationship_type="fits",
-        to_type="Vehicle",
-        to_id="V-2024-CIVIC-EX",
-    )
-
-
-class TestFeedbackReceipts:
-    def _run_query(self, instance: CruxibleInstance) -> str:
-        """Run a query and return the receipt_id for feedback."""
-        result = service_query(
-            instance,
-            "parts_for_vehicle",
-            {"vehicle_id": "V-2024-CIVIC-EX"},
-        )
-        assert result.receipt_id is not None
-        return result.receipt_id
-
-    def test_feedback_produces_receipt(self, populated_instance: CruxibleInstance):
-        receipt_id = self._run_query(populated_instance)
-        result = service_feedback(
-            populated_instance,
-            receipt_id=receipt_id,
-            action="accept",
-            target=_edge_target(),
-            reason="Confirmed fitment",
-        )
-        assert result.receipt_id is not None
-
-        store = populated_instance.get_receipt_store()
-        try:
-            receipt = store.get_receipt(result.receipt_id)
-        finally:
-            store.close()
-        assert receipt is not None
-        assert receipt.operation_type == "feedback"
-        assert receipt.committed is True
-
-        node_types = {n.node_type for n in receipt.nodes}
-        assert "feedback_applied" in node_types
-
-    def test_feedback_receipt_includes_applied_status(self, populated_instance: CruxibleInstance):
-        receipt_id = self._run_query(populated_instance)
-        result = service_feedback(
-            populated_instance,
-            receipt_id=receipt_id,
-            action="accept",
-            target=_edge_target(),
-        )
-        store = populated_instance.get_receipt_store()
-        try:
-            receipt = store.get_receipt(result.receipt_id)
-        finally:
-            store.close()
-        # Find the feedback_applied node and check detail
-        fb_nodes = [n for n in receipt.nodes if n.node_type == "feedback_applied"]
-        assert len(fb_nodes) == 1
-        assert "applied" in fb_nodes[0].detail
-
-    def test_feedback_input_error_no_receipt(self, populated_instance: CruxibleInstance):
-        """Bad action string raises ConfigError before builder created — no receipt."""
-        with pytest.raises(ConfigError):
-            service_feedback(
-                populated_instance,
-                receipt_id="RCP-doesnotmatter",
-                action="invalid_action",  # type: ignore[arg-type]
-                target=_edge_target(),
-            )
-
-    def test_feedback_apply_failure_rolls_back_feedback_row(
-        self,
-        populated_instance: CruxibleInstance,
-    ):
-        receipt_id = self._run_query(populated_instance)
-
-        with (
-            patch(
-                "cruxible_core.service.feedback.apply_feedback",
-                side_effect=RuntimeError("feedback graph update failed"),
-            ),
-            pytest.raises(
-                MutationError,
-                match="Unexpected failure: feedback graph update failed",
-            ),
-        ):
-            service_feedback(
-                populated_instance,
-                receipt_id=receipt_id,
-                action="reject",
-                target=_edge_target(),
-                reason="not a fit",
-            )
-
-        feedback_store = populated_instance.get_feedback_store()
-        try:
-            assert feedback_store.list_feedback(receipt_id=receipt_id) == []
-        finally:
-            feedback_store.close()
-        rel = populated_instance.load_graph().get_relationship(
-            "Part",
-            "BP-1001",
-            "Vehicle",
-            "V-2024-CIVIC-EX",
-            "fits",
-        )
-        assert rel is not None
-        assert rel.metadata.assertion.review.status == "unreviewed"
 
 
 # ---------------------------------------------------------------------------

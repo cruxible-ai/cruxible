@@ -1,10 +1,10 @@
 """Monotonic read_revision: bumped once per mutation commit, never on reads.
 
 The revision advances inside the SAME SQLite transaction as every
-state-mutating commit (graph, snapshots, groups, feedback, decisions, source
-artifacts) and NEVER for audit-only writes (query receipts, traces, decision
-events) — so read paths that persist proof records keep the revision
-unchanged. Receipts prove computation, never freshness.
+state-mutating commit (graph, snapshots, groups, source artifacts) and NEVER
+for audit-only writes (query receipts and traces) — so read paths that persist
+proof records keep the revision unchanged. Receipts prove computation, never
+freshness.
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ from cruxible_core.service import (
     service_backup_instance,
     service_batch_direct_write,
     service_create_snapshot,
-    service_feedback_input,
     service_inspect_entity,
     service_list,
     service_lock,
@@ -40,9 +39,7 @@ from cruxible_core.service import (
 from cruxible_core.service.types import (
     BatchDirectWriteInput,
     EntityWriteInput,
-    FeedbackItemInput,
     GroupMemberInput,
-    RelationshipTargetInput,
 )
 from cruxible_core.storage.sqlite import (
     READ_REVISION_MIGRATION,
@@ -82,16 +79,6 @@ def _fits_edge() -> RelationshipInstance:
         to_type="Vehicle",
         to_id="V-1",
         properties={"verified": True},
-    )
-
-
-def _fits_target() -> RelationshipTargetInput:
-    return RelationshipTargetInput(
-        from_type="Part",
-        from_id="BP-1",
-        relationship_type="fits",
-        to_type="Vehicle",
-        to_id="V-1",
     )
 
 
@@ -167,16 +154,6 @@ class TestRevisionIncrementsOncePerMutationCommit:
         assert instance.get_read_revision() == before + 1
         service_resolve_group(instance, proposal.group_id, "approve", expected_pending_version=1)
         assert instance.get_read_revision() == before + 2
-
-    def test_feedback(self, instance: CruxibleInstance) -> None:
-        _seed_entities(instance)
-        service_add_relationships(instance, [_fits_edge()], "direct", "add_relationship")
-        before = instance.get_read_revision()
-        service_feedback_input(
-            instance,
-            FeedbackItemInput(action="accept", target=_fits_target()),
-        )
-        assert instance.get_read_revision() == before + 1
 
     def test_snapshot_create(self, instance: CruxibleInstance) -> None:
         _seed_entities(instance)

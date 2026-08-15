@@ -24,10 +24,6 @@ class CrossSectionLimits:
     relationships_per_type: int = 50
     groups: int = 25
     group_members: int = 50
-    feedback: int = 25
-    outcomes: int = 25
-    decisions: int = 25
-    decision_events: int = 25
     receipts: int = 25
     traces: int = 25
     snapshots: int = 25
@@ -51,9 +47,6 @@ class StateCrossSectionSpec:
     relationship_types: tuple[str, ...] = ()
     queries: tuple[QueryCrossSectionSpec, ...] = ()
     include_groups: bool = False
-    include_feedback: bool = False
-    include_outcomes: bool = False
-    include_decisions: bool = False
     include_receipts: bool = False
     include_traces: bool = False
     include_snapshots: bool = False
@@ -86,10 +79,6 @@ _TOKEN_ID_KEYS: dict[str, str] = {
     "group_id": "GROUP",
     "pending_group_id": "GROUP",
     "resolution_id": "RESOLUTION",
-    "feedback_id": "FEEDBACK",
-    "outcome_id": "OUTCOME",
-    "decision_record_id": "DECISION_RECORD",
-    "decision_event_id": "DECISION_EVENT",
     "snapshot_id": "SNAPSHOT",
     "head_snapshot_id": "SNAPSHOT",
     "origin_snapshot_id": "SNAPSHOT",
@@ -143,10 +132,6 @@ _GENERATED_PREFIX_KIND = {
     "TRC": "TRACE",
     "GRP": "GROUP",
     "RES": "RESOLUTION",
-    "FB": "FEEDBACK",
-    "OUT": "OUTCOME",
-    "DR": "DECISION_RECORD",
-    "DE": "DECISION_EVENT",
     "CLM": "CLAIM",
 }
 _SEMANTIC_VALUE_KEYS = {
@@ -167,11 +152,9 @@ _SEMANTIC_VALUE_KEYS = {
     "relationship_type",
     "from_type",
     "to_type",
-    "decision_class",
     "question",
     "reason",
     "reason_code",
-    "outcome_code",
     "status",
     "action",
 }
@@ -199,16 +182,6 @@ def build_state_cross_section(
             spec.limits.groups,
             spec.limits.group_members,
         )
-    if spec.include_feedback:
-        raw["feedback"] = _build_feedback_section(instance, spec.limits.feedback)
-    if spec.include_outcomes:
-        raw["outcomes"] = _build_outcomes_section(instance, spec.limits.outcomes)
-    if spec.include_decisions:
-        raw["decisions"] = _build_decisions_section(
-            instance,
-            spec.limits.decisions,
-            spec.limits.decision_events,
-        )
     if spec.queries:
         raw["queries"] = _build_queries_section(instance, spec.queries)
     if spec.include_receipts:
@@ -235,9 +208,6 @@ def diff_state(before: Mapping[str, Any], after: Mapping[str, Any]) -> JsonObjec
         summary["relationships_changed"] = len(relationships.get("changed", []))
     for section, id_key in (
         ("groups", "group_id"),
-        ("feedback", "feedback_id"),
-        ("outcomes", "outcome_id"),
-        ("decisions", "decision_record_id"),
         ("receipts", "receipt_id"),
         ("traces", "trace_id"),
         ("snapshots", "snapshot_id"),
@@ -395,49 +365,6 @@ def _build_groups_section(
                     report["resolution"] = _model_dump(resolution)
             reports.append(report)
         return sorted(reports, key=_group_sort_key)
-    finally:
-        store.close()
-
-
-def _build_feedback_section(instance: InstanceProtocol, limit: int) -> list[JsonObject]:
-    store = instance.get_feedback_store()
-    try:
-        return sorted(
-            [_model_dump(record) for record in store.list_feedback(limit=limit)],
-            key=_feedback_sort_key,
-        )
-    finally:
-        store.close()
-
-
-def _build_outcomes_section(instance: InstanceProtocol, limit: int) -> list[JsonObject]:
-    store = instance.get_feedback_store()
-    try:
-        return sorted(
-            [_model_dump(record) for record in store.list_outcomes(limit=limit)],
-            key=_outcome_sort_key,
-        )
-    finally:
-        store.close()
-
-
-def _build_decisions_section(
-    instance: InstanceProtocol,
-    record_limit: int,
-    event_limit: int,
-) -> list[JsonObject]:
-    store = instance.get_decision_store()
-    try:
-        records = store.list_records(limit=record_limit)
-        reports: list[JsonObject] = []
-        for record in records:
-            report = _model_dump(record)
-            report["events"] = [
-                _model_dump(event)
-                for event in store.list_events(record.decision_record_id, limit=event_limit)
-            ]
-            reports.append(report)
-        return sorted(reports, key=_decision_sort_key)
     finally:
         store.close()
 
@@ -814,41 +741,6 @@ def _group_stable_sort_key(group: Mapping[str, Any]) -> tuple[str, str, str, str
         str(group.get("signature")),
         str(group.get("group_kind")),
         str(group.get("status")),
-    )
-
-
-def _feedback_sort_key(record: Mapping[str, Any]) -> tuple[str, str, str, str, str, str, str]:
-    target = record.get("target")
-    target = target if isinstance(target, Mapping) else {}
-    return (
-        str(target.get("relationship_type")),
-        str(target.get("from_type")),
-        str(target.get("from_id")),
-        str(target.get("to_type")),
-        str(target.get("to_id")),
-        str(record.get("action")),
-        str(record.get("feedback_id")),
-    )
-
-
-def _outcome_sort_key(record: Mapping[str, Any]) -> tuple[str, str, str, str, str, str]:
-    return (
-        str(record.get("anchor_type")),
-        str(record.get("anchor_id")),
-        str(record.get("relationship_type")),
-        str(record.get("outcome_code")),
-        str(record.get("outcome")),
-        str(record.get("outcome_id")),
-    )
-
-
-def _decision_sort_key(record: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
-    return (
-        str(record.get("decision_class")),
-        str(record.get("subject_type")),
-        str(record.get("subject_id")),
-        str(record.get("question")),
-        str(record.get("decision_record_id")),
     )
 
 

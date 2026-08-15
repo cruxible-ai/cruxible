@@ -12,10 +12,7 @@ from cruxible_core.graph.assertion_state import (
 )
 from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
 from cruxible_core.service import (
-    OperationContext,
-    service_create_decision_record,
     service_list,
-    service_list_decision_events,
     service_query_inline_surface,
     service_sample,
 )
@@ -227,34 +224,6 @@ def test_inline_relationship_state_override_uses_existing_policy(
 
     assert result.relationship_state == "accepted"
     assert [(row.from_id, row.to_id) for row in result.items] == [("BP-1001", "V-2024-CIVIC-EX")]
-
-
-def test_inline_query_records_decision_event(
-    populated_instance: CruxibleInstance,
-) -> None:
-    record = service_create_decision_record(
-        populated_instance,
-        question="Which brake parts should we inspect?",
-    ).record
-
-    result = service_query_inline_surface(
-        populated_instance,
-        _inline_collection_definition("decision_brake_parts"),
-        {},
-        context=OperationContext(
-            decision_record_id=record.decision_record_id,
-            surface="cli",
-        ),
-    )
-
-    events = service_list_decision_events(
-        populated_instance,
-        decision_record_id=record.decision_record_id,
-    ).items
-    assert len(events) == 1
-    assert events[0].command == "query_inline:decision_brake_parts"
-    assert events[0].receipt_id == result.receipt_id
-    assert events[0].surface == "cli"
 
 
 @pytest.mark.parametrize(

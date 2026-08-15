@@ -11,27 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.errors import ConfigError
-from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.runtime.instance import CruxibleInstance
-from cruxible_core.service import (
-    service_add_entities,
-    service_add_relationships,
-    service_feedback,
-)
+from cruxible_core.service import service_add_entities, service_add_relationships
 from cruxible_core.working_set import normalize_edge_record, record_identity, validate_record
 from tests.test_cli.conftest import CAR_PARTS_YAML
-
-# Uncoded feedback (a reason with no reason_code) requires a resolved HUMAN
-# actor; agent-kind actors must supply a code.
-_HUMAN_REVIEWER = GovernedActorContext(
-    actor_type="human_user",
-    actor_id="usr_reviewer",
-    org_id="org_1",
-    operation_id="op_claim_identity_feedback",
-    timestamp="2026-06-05T12:00:00Z",
-)
 
 
 @pytest.fixture
@@ -124,57 +108,6 @@ def test_dry_run_results_exclude_claim_id(instance: CruxibleInstance) -> None:
     # And the preview really did not write.
     instance.invalidate_graph_cache()
     assert instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits") is None
-
-
-def test_feedback_stamps_the_resolved_claim_id(instance: CruxibleInstance) -> None:
-    service_add_relationships(instance, [_edge()], source="test", source_ref="t")
-    stored = _stored(instance)
-
-    result = service_feedback(
-        instance,
-        receipt_id=None,
-        action="accept",
-        target=RelationshipInstance(
-            from_type="Part",
-            from_id="BP-1",
-            relationship_type="fits",
-            to_type="Vehicle",
-            to_id="V-1",
-        ),
-        reason="looks right",
-        actor_context=_HUMAN_REVIEWER,
-    )
-    store = instance.get_feedback_store()
-    try:
-        record = store.get_feedback(result.feedback_id)
-    finally:
-        store.close()
-    assert record is not None
-    assert record.target.claim_id == stored.claim_id
-
-
-def test_feedback_refuses_disagreeing_target_disambiguators(instance: CruxibleInstance) -> None:
-    service_add_relationships(instance, [_edge()], source="test", source_ref="t")
-    stored = _stored(instance)
-    assert stored.edge_key is not None
-
-    with pytest.raises(ConfigError, match="disagree"):
-        service_feedback(
-            instance,
-            receipt_id=None,
-            action="accept",
-            target=RelationshipInstance(
-                from_type="Part",
-                from_id="BP-1",
-                relationship_type="fits",
-                to_type="Vehicle",
-                to_id="V-1",
-                edge_key=stored.edge_key + 500,
-                claim_id=stored.claim_id,
-            ),
-            reason="ambiguous",
-            actor_context=_HUMAN_REVIEWER,
-        )
 
 
 # ------------------------------------------------------------- working set

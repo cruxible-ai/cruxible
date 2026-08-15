@@ -21,7 +21,6 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_core import __version__
 from cruxible_core.attestation.store import AttestationStore
-from cruxible_core.bindings.store import BindingStore
 from cruxible_core.config.loader import load_config, save_config
 from cruxible_core.config.provenance import (
     ConfigProvenanceMetadata,
@@ -31,15 +30,12 @@ from cruxible_core.config.provenance import (
     record_materialized_provenance,
 )
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.decision.store import DecisionStore
 from cruxible_core.errors import ConfigError, InstanceNotFoundError
-from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.legacy_identity import backfill_legacy_graph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
-from cruxible_core.installs.store import InstallLedgerStore
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
 from cruxible_core.primitives import new_id
 from cruxible_core.procedure.digest import compute_node_digests
@@ -798,20 +794,6 @@ class CruxibleInstance(InstanceProtocol):
         self._ensure_state_initialized()
         return SQLiteReceiptStore(self._state_db_path())
 
-    def get_decision_store(self) -> DecisionStore:
-        """Get or create the decision record SQLite store."""
-        if self._active_uow is not None:
-            return self._active_uow.decisions
-        self._ensure_state_initialized()
-        return DecisionStore(self._state_db_path())
-
-    def get_feedback_store(self) -> FeedbackStore:
-        """Get or create the feedback SQLite store."""
-        if self._active_uow is not None:
-            return self._active_uow.feedback
-        self._ensure_state_initialized()
-        return FeedbackStore(self._state_db_path())
-
     def get_group_store(self) -> GroupStore:
         """Get or create the group SQLite store."""
         if self._active_uow is not None:
@@ -852,33 +834,6 @@ class CruxibleInstance(InstanceProtocol):
             return self._active_uow.resolution_contracts
         self._ensure_state_initialized()
         return ResolutionContractStore(self._state_db_path())
-
-    def get_install_ledger_store(self) -> InstallLedgerStore:
-        """Get or create the install ledger SQLite store.
-
-        Ownership claims MUST come from the active unit of work when one is
-        open: the collision check and the ownership insert that follows it have
-        to be atomic, or two installs racing for one contract name can both
-        pass the check before either writes.
-        """
-        if self._active_uow is not None:
-            return self._active_uow.installs
-        self._ensure_state_initialized()
-        return InstallLedgerStore(self._state_db_path())
-
-    def get_bindings_store(self) -> BindingStore:
-        """Get or create the compute-slot binding ledger store.
-
-        Run-start slot resolution and every binding write must see the ACTIVE
-        unit of work when there is one: a bind's uniqueness check and the row it
-        writes have to be one transaction, or two callers can both observe an
-        unbound slot and both write it. Outside a unit of work this opens its
-        own connection for reads, and the caller closes it.
-        """
-        if self._active_uow is not None:
-            return self._active_uow.bindings
-        self._ensure_state_initialized()
-        return BindingStore(self._state_db_path())
 
     def get_source_artifact_store(self) -> SQLiteSourceArtifactStore:
         """Get or create the source artifact SQLite store."""

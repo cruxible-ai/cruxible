@@ -14,10 +14,6 @@ from cruxible_core.group.types import CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import canonical_json, ordered_unique
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.service.decisions import (
-    ensure_decision_record_open,
-    record_decision_event_for_context,
-)
 from cruxible_core.service.groups import (
     build_workflow_proposal_signature_facts,
     service_propose_group,
@@ -34,7 +30,6 @@ from cruxible_core.service.types import (
     TestServiceResult,
     WorkflowTestCaseServiceResult,
 )
-from cruxible_core.temporal import utc_now
 from cruxible_core.workflow import (
     build_lock,
     compile_workflow,
@@ -312,9 +307,10 @@ def _enforce_decision_support_context(
 ) -> None:
     if workflow.type != "decision_support":
         return
-    if context is None or context.decision_record_id is None:
-        raise ConfigError("decision_support workflows require decision_record_id")
-    ensure_decision_record_open(instance, context.decision_record_id)
+    raise ConfigError(
+        "decision_support workflows were removed with the mutable decision-record "
+        "product; express governed decisions as Playbill Claims or Procedures"
+    )
 
 
 def service_lock(instance: InstanceProtocol, *, force: bool = False) -> LockServiceResult:
@@ -357,8 +353,6 @@ def service_run(
     context: OperationContext | None = None,
 ) -> RunServiceResult:
     """Execute a workflow and return output plus receipt/trace identifiers."""
-    started_at = utc_now()
-    input_event = {"workflow_name": workflow_name, "input": input_payload, "mode": "run"}
     try:
         config = instance.load_config()
         workflow = config.workflows.get(workflow_name)
@@ -367,7 +361,6 @@ def service_run(
         execution_action: Literal["run", "preview"] = (
             "preview" if workflow.type == "canonical" else "run"
         )
-        input_event["mode"] = execution_action
         _enforce_decision_support_context(instance, workflow, context)
         if workflow.type == "proposal":
             raise QueryExecutionError(
@@ -386,35 +379,7 @@ def service_run(
         service_result = _build_workflow_execution_result(result, RunServiceResult)
     except Exception as exc:
         _persist_deferred_failed_workflow_receipt(instance, exc)
-        record_decision_event_for_context(
-            instance,
-            context,
-            command=f"workflow_run:{workflow_name}",
-            status="error",
-            input_payload=input_event,
-            error=exc,
-            started_at=started_at,
-        )
         raise
-
-    record_decision_event_for_context(
-        instance,
-        context,
-        command=f"workflow_run:{workflow_name}",
-        status="success",
-        input_payload=input_event,
-        output_payload={
-            "output": service_result.output,
-            "mode": service_result.mode,
-            "workflow_type": service_result.workflow_type,
-            "apply_digest": service_result.apply_digest,
-            "committed_snapshot_id": service_result.committed_snapshot_id,
-        },
-        receipt_id=service_result.receipt_id,
-        trace_ids=service_result.trace_ids,
-        head_snapshot_id=service_result.head_snapshot_id,
-        started_at=started_at,
-    )
     return service_result
 
 
@@ -442,14 +407,6 @@ def service_apply_workflow(
     context: OperationContext | None = None,
 ) -> ApplyWorkflowResult:
     """Apply a canonical workflow after verifying preview identity."""
-    started_at = utc_now()
-    input_event = {
-        "workflow_name": workflow_name,
-        "input": input_payload,
-        "mode": "apply",
-        "expected_apply_digest": expected_apply_digest,
-        "expected_head_snapshot_id": expected_head_snapshot_id,
-    }
     try:
         config = instance.load_config()
         workflow = config.workflows.get(workflow_name)
@@ -505,34 +462,7 @@ def service_apply_workflow(
         service_result = _build_workflow_execution_result(result, ApplyWorkflowResult)
     except Exception as exc:
         _persist_deferred_failed_workflow_receipt(instance, exc)
-        record_decision_event_for_context(
-            instance,
-            context,
-            command=f"workflow_apply:{workflow_name}",
-            status="error",
-            input_payload=input_event,
-            error=exc,
-            started_at=started_at,
-        )
         raise
-
-    record_decision_event_for_context(
-        instance,
-        context,
-        command=f"workflow_apply:{workflow_name}",
-        status="success",
-        input_payload=input_event,
-        output_payload={
-            "output": service_result.output,
-            "mode": service_result.mode,
-            "workflow_type": service_result.workflow_type,
-            "committed_snapshot_id": service_result.committed_snapshot_id,
-        },
-        receipt_id=service_result.receipt_id,
-        trace_ids=service_result.trace_ids,
-        head_snapshot_id=service_result.head_snapshot_id,
-        started_at=started_at,
-    )
     return service_result
 
 
@@ -544,12 +474,6 @@ def service_propose_workflow(
     context: OperationContext | None = None,
 ) -> ProposeWorkflowResult:
     """Execute a workflow and bridge its returned proposal artifact into a candidate group."""
-    started_at = utc_now()
-    input_event = {
-        "workflow_name": workflow_name,
-        "input": input_payload,
-        "mode": "proposal",
-    }
     try:
         config = instance.load_config()
         workflow = config.workflows.get(workflow_name)
@@ -641,26 +565,6 @@ def service_propose_workflow(
                 receipt=proposal_receipt,
                 traces=result.traces,
             )
-            record_decision_event_for_context(
-                instance,
-                context,
-                command=f"workflow_propose:{workflow_name}",
-                status="success",
-                input_payload=input_event,
-                output_payload={
-                    "output": service_result.output,
-                    "mode": service_result.mode,
-                    "workflow_type": service_result.workflow_type,
-                    "group_id": service_result.group_id,
-                    "group_status": service_result.group_status,
-                },
-                receipt_id=service_result.receipt_id,
-                trace_ids=service_result.trace_ids,
-                head_snapshot_id=(
-                    service_result.receipt.head_snapshot_id if service_result.receipt else None
-                ),
-                started_at=started_at,
-            )
             return service_result
         members = [
             CandidateMember(
@@ -727,38 +631,8 @@ def service_propose_workflow(
             receipt=proposal_receipt,
             traces=result.traces,
         )
-    except Exception as exc:
-        record_decision_event_for_context(
-            instance,
-            context,
-            command=f"workflow_propose:{workflow_name}",
-            status="error",
-            input_payload=input_event,
-            error=exc,
-            started_at=started_at,
-        )
+    except Exception:
         raise
-
-    record_decision_event_for_context(
-        instance,
-        context,
-        command=f"workflow_propose:{workflow_name}",
-        status="success",
-        input_payload=input_event,
-        output_payload={
-            "output": service_result.output,
-            "mode": service_result.mode,
-            "workflow_type": service_result.workflow_type,
-            "group_id": service_result.group_id,
-            "group_status": service_result.group_status,
-        },
-        receipt_id=service_result.receipt_id,
-        trace_ids=service_result.trace_ids,
-        head_snapshot_id=(
-            service_result.receipt.head_snapshot_id if service_result.receipt else None
-        ),
-        started_at=started_at,
-    )
     return service_result
 
 

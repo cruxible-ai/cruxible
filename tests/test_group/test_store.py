@@ -8,7 +8,6 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.group.store import GroupStore
 from cruxible_core.group.types import (
     CandidateGroup,
@@ -553,20 +552,6 @@ class TestAdditiveColumnMigration:
             assert stamped.receipt_id == "RCP-new"
         finally:
             second.close()
-
-
-class TestCoexistence:
-    def test_shares_db_with_feedback_store(self, tmp_path) -> None:
-        """GroupStore and FeedbackStore can coexist in the same DB file."""
-        db = tmp_path / "state.db"
-        fs = FeedbackStore(db)
-        gs = GroupStore(db)
-        gs.save_group(_group("GRP-1"))
-        assert gs.get_group("GRP-1") is not None
-        # FeedbackStore tables still work
-        assert fs.count_feedback() == 0
-        gs.close()
-        fs.close()
 
 
 class TestLegacyAutoResolvedRows:

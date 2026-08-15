@@ -22,23 +22,12 @@ if TYPE_CHECKING:
         ClaimKey,
         CorroborationSummary,
     )
-    from cruxible_core.bindings.store import BindingStoreProtocol
     from cruxible_core.config.provenance import ConfigProvenanceMetadata
     from cruxible_core.config.schema import CoreConfig
-    from cruxible_core.decision.types import DecisionEvent, DecisionRecord
-    from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
     from cruxible_core.governance.actors import GovernedActorContext
     from cruxible_core.graph.entity_graph import EntityGraph
     from cruxible_core.graph.types import EntityInstance, RelationshipInstance
     from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
-    from cruxible_core.installs.types import (
-        InstallPhase,
-        InstallPhaseEvent,
-        InstallRecord,
-        OwnedObject,
-        OwnedObjectKind,
-        OwnershipCollision,
-    )
     from cruxible_core.procedure.types import (
         LinkedOutcomeSummary,
         ProcedureBudgetSpent,
@@ -117,153 +106,6 @@ class ReceiptStoreProtocol(ABC):
     ) -> int: ...
     @abstractmethod
     def get_receipts_for_entity(self, entity_type: str, entity_id: str) -> list[str]: ...
-    @abstractmethod
-    def close(self) -> None: ...
-
-
-class DecisionStoreProtocol(ABC):
-    """Interface for decision record and event storage."""
-
-    @abstractmethod
-    def save_record(self, record: DecisionRecord) -> str: ...
-    @abstractmethod
-    def get_record(self, decision_record_id: str) -> DecisionRecord | None: ...
-    @abstractmethod
-    def list_records(
-        self,
-        *,
-        status: str | None = None,
-        subject_type: str | None = None,
-        subject_id: str | None = None,
-        decision_class: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[DecisionRecord]: ...
-    @abstractmethod
-    def count_records(
-        self,
-        *,
-        status: str | None = None,
-        subject_type: str | None = None,
-        subject_id: str | None = None,
-        decision_class: str | None = None,
-    ) -> int: ...
-    @abstractmethod
-    def append_event(self, event: DecisionEvent) -> str: ...
-    @abstractmethod
-    def list_events(
-        self,
-        decision_record_id: str,
-        *,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[DecisionEvent]: ...
-    @abstractmethod
-    def find_events(
-        self,
-        *,
-        receipt_id: str | None = None,
-        trace_id: str | None = None,
-        status: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[DecisionEvent]: ...
-    @abstractmethod
-    def count_events(
-        self,
-        *,
-        decision_record_id: str | None = None,
-        receipt_id: str | None = None,
-        trace_id: str | None = None,
-        status: str | None = None,
-    ) -> int: ...
-    @abstractmethod
-    def finalize_record(
-        self,
-        decision_record_id: str,
-        *,
-        final_decision: str,
-        decision_class: str,
-        rationale: str = "",
-        actor_context: GovernedActorContext | None = None,
-    ) -> DecisionRecord: ...
-    @abstractmethod
-    def abandon_record(
-        self,
-        decision_record_id: str,
-        *,
-        reason: str = "",
-        actor_context: GovernedActorContext | None = None,
-    ) -> DecisionRecord: ...
-    @abstractmethod
-    def close(self) -> None: ...
-
-
-class FeedbackStoreProtocol(ABC):
-    """Interface for feedback and outcome storage."""
-
-    @abstractmethod
-    def save_feedback(self, record: FeedbackRecord) -> str: ...
-    @abstractmethod
-    def save_feedback_batch(self, records: list[FeedbackRecord]) -> list[str]: ...
-    @abstractmethod
-    def get_feedback(self, feedback_id: str) -> FeedbackRecord | None: ...
-    @abstractmethod
-    def list_feedback(
-        self,
-        *,
-        receipt_id: str | None = None,
-        relationship_type: str | None = None,
-        action: str | None = None,
-        decision_surface_type: str | None = None,
-        decision_surface_name: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[FeedbackRecord]: ...
-    @abstractmethod
-    def list_feedback_by_entity_ids(
-        self,
-        entity_ids: list[str],
-        limit: int = 100,
-    ) -> list[FeedbackRecord]: ...
-    @abstractmethod
-    def count_feedback(
-        self,
-        *,
-        receipt_id: str | None = None,
-        relationship_type: str | None = None,
-        action: str | None = None,
-        decision_surface_type: str | None = None,
-        decision_surface_name: str | None = None,
-    ) -> int: ...
-    @abstractmethod
-    def save_outcome(self, record: OutcomeRecord) -> str: ...
-    @abstractmethod
-    def get_outcome(self, outcome_id: str) -> OutcomeRecord | None: ...
-    @abstractmethod
-    def list_outcomes(
-        self,
-        *,
-        receipt_id: str | None = None,
-        anchor_type: str | None = None,
-        anchor_id: str | None = None,
-        relationship_type: str | None = None,
-        decision_surface_type: str | None = None,
-        decision_surface_name: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[OutcomeRecord]: ...
-    @abstractmethod
-    def count_outcomes(
-        self,
-        *,
-        receipt_id: str | None = None,
-        anchor_type: str | None = None,
-        anchor_id: str | None = None,
-        relationship_type: str | None = None,
-        decision_surface_type: str | None = None,
-        decision_surface_name: str | None = None,
-    ) -> int: ...
     @abstractmethod
     def close(self) -> None: ...
 
@@ -698,84 +540,6 @@ class ResolutionContractStoreProtocol(ABC):
     def close(self) -> None: ...
 
 
-class InstallLedgerStoreProtocol(ABC):
-    """Interface for install records, phase history, and owned-object claims."""
-
-    @abstractmethod
-    def save_install(self, install: InstallRecord) -> str: ...
-    @abstractmethod
-    def get_install(self, install_id: str) -> InstallRecord | None: ...
-    @abstractmethod
-    def set_install_phase(
-        self,
-        install_id: str,
-        *,
-        phase: InstallPhase,
-        updated_at: str,
-        failure_reason: str | None,
-        receipt_id: str | None,
-    ) -> None: ...
-    @abstractmethod
-    def list_installs(
-        self,
-        *,
-        phase: InstallPhase | None = None,
-        artifact_id: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[InstallRecord]: ...
-    @abstractmethod
-    def count_installs(
-        self,
-        *,
-        phase: InstallPhase | None = None,
-        artifact_id: str | None = None,
-    ) -> int: ...
-    @abstractmethod
-    def append_phase_event(self, event: InstallPhaseEvent) -> str: ...
-    @abstractmethod
-    def next_phase_sequence(self, install_id: str) -> int: ...
-    @abstractmethod
-    def list_phase_events(self, install_id: str) -> list[InstallPhaseEvent]: ...
-    @abstractmethod
-    def save_owned_object(self, owned: OwnedObject, *, ownership_held: bool = True) -> None: ...
-    @abstractmethod
-    def set_owned_object_customization(
-        self,
-        install_id: str,
-        *,
-        object_kind: OwnedObjectKind,
-        object_name: str,
-        customized: bool,
-        current_digest: str,
-    ) -> None: ...
-    @abstractmethod
-    def get_owned_object(
-        self,
-        install_id: str,
-        *,
-        object_kind: OwnedObjectKind,
-        object_name: str,
-    ) -> OwnedObject | None: ...
-    @abstractmethod
-    def list_owned_objects(self, install_id: str) -> list[OwnedObject]: ...
-    @abstractmethod
-    def find_live_owner(
-        self,
-        *,
-        object_kind: OwnedObjectKind,
-        object_name: str,
-    ) -> OwnershipCollision | None: ...
-    @abstractmethod
-    def list_referencing_objects(
-        self,
-        *,
-        exclude_install_id: str,
-    ) -> list[tuple[OwnedObject, InstallPhase]]: ...
-    @abstractmethod
-    def close(self) -> None: ...
-
-
 class InstanceProtocol(ABC):
     """Interface for a cruxible instance."""
 
@@ -932,10 +696,6 @@ class InstanceProtocol(ABC):
     @abstractmethod
     def get_receipt_store(self) -> ReceiptStoreProtocol: ...
     @abstractmethod
-    def get_decision_store(self) -> DecisionStoreProtocol: ...
-    @abstractmethod
-    def get_feedback_store(self) -> FeedbackStoreProtocol: ...
-    @abstractmethod
     def get_group_store(self) -> GroupStoreProtocol: ...
     @abstractmethod
     def get_procedure_store(self) -> ProcedureStoreProtocol: ...
@@ -945,9 +705,5 @@ class InstanceProtocol(ABC):
     def get_attestation_store(self) -> AttestationStoreProtocol: ...
     @abstractmethod
     def get_resolution_contract_store(self) -> ResolutionContractStoreProtocol: ...
-    @abstractmethod
-    def get_install_ledger_store(self) -> InstallLedgerStoreProtocol: ...
-    @abstractmethod
-    def get_bindings_store(self) -> BindingStoreProtocol: ...
     @abstractmethod
     def get_source_artifact_store(self) -> SourceArtifactStoreProtocol: ...

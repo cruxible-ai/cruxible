@@ -32,13 +32,15 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import PendingEdgeWriteRefusedError
-from cruxible_core.graph.assertion_state import RelationshipLifecycleState
+from cruxible_core.graph.assertion_state import (
+    RelationshipLifecycleState,
+    RelationshipReviewState,
+)
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.server.errors import error_to_response
 from cruxible_core.service.execution import service_lock, service_run
-from cruxible_core.service.feedback import service_feedback
 from cruxible_core.service.mutations import (
     service_add_relationship_inputs,
     service_batch_direct_write,
@@ -172,6 +174,29 @@ def _edge(instance: CruxibleInstance) -> RelationshipInstance:
 
 def _review_status(instance: CruxibleInstance) -> str:
     return _edge(instance).metadata.assertion.review.status
+
+
+def _resolve_pending_edge(instance: CruxibleInstance, status: str) -> None:
+    """Set up an adjudicated edge without depending on the deleted feedback product."""
+    edge = _edge(instance)
+    graph = instance.load_graph()
+    metadata = edge.metadata.model_copy(
+        update={
+            "assertion": edge.metadata.assertion.model_copy(
+                update={"review": RelationshipReviewState(status=status)}
+            )
+        }
+    )
+    graph.update_relationship_state(
+        edge.from_type,
+        edge.from_id,
+        edge.to_type,
+        edge.to_id,
+        edge.relationship_type,
+        metadata=metadata,
+        edge_key=edge.edge_key,
+    )
+    instance.save_graph(graph)
 
 
 def _assert_proposal_intact(instance: CruxibleInstance) -> None:
@@ -356,19 +381,7 @@ def test_write_after_acceptance_still_works(
     pending_edge_instance: CruxibleInstance,
 ) -> None:
     """Approve the proposal, then update it: post-acceptance writes are normal."""
-    service_feedback(
-        pending_edge_instance,
-        receipt_id=None,
-        action="accept",
-        target=RelationshipInstance(
-            relationship_type="fits",
-            from_type="Part",
-            from_id="BP-1",
-            to_type="Vehicle",
-            to_id="V-1",
-        ),
-        reason="reviewed",
-    )
+    _resolve_pending_edge(pending_edge_instance, "approved")
     assert _review_status(pending_edge_instance) == "approved"
 
     result = service_add_relationship_inputs(
@@ -389,19 +402,7 @@ def test_write_onto_a_rejected_edge_is_not_refused(
 ) -> None:
     """Only ``pending`` blocks. A resolved (rejected) edge is adjudicated, so
     there is no in-flight proposal left to protect."""
-    service_feedback(
-        pending_edge_instance,
-        receipt_id=None,
-        action="reject",
-        target=RelationshipInstance(
-            relationship_type="fits",
-            from_type="Part",
-            from_id="BP-1",
-            to_type="Vehicle",
-            to_id="V-1",
-        ),
-        reason="reviewed",
-    )
+    _resolve_pending_edge(pending_edge_instance, "rejected")
     assert _review_status(pending_edge_instance) == "rejected"
 
     result = service_add_relationship_inputs(

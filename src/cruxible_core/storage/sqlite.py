@@ -13,16 +13,12 @@ from types import TracebackType
 from typing import Any, Literal
 
 from cruxible_core.attestation.store import AttestationStore
-from cruxible_core.bindings.store import BindingStore
-from cruxible_core.decision.store import DecisionStore
 from cruxible_core.errors import MutationError
-from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.governance.actors import dump_actor_context, load_actor_context
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.legacy_identity import dump_legacy_identity_map
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.store import GroupStore
-from cruxible_core.installs.store import InstallLedgerStore
 from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.reading_store import ProcedureReadingStore
 from cruxible_core.procedure.store import ProcedureStore
@@ -207,24 +203,8 @@ READ_REVISION_MIGRATION = "0003_read_revision"
 CLAIM_IDENTITY_MIGRATION = "0004_claim_identity"
 PROCEDURE_REFUSAL_REASON_MIGRATION = "0005_procedure_refusal_reason"
 BOUNDARY_TELEMETRY_MIGRATION = "0006_boundary_telemetry"
-INSTALL_LEDGER_MIGRATION = "0007_install_ledger"
-BINDING_LEDGER_MIGRATION = "0008_binding_ledger"
 PROCEDURE_GRAPH_MIGRATION = "0009_procedure_graph"
 PROCEDURE_READINGS_MIGRATION = "0010_procedure_readings"
-"""Compute-slot binding ledger tables (``slot_bindings`` + revisions).
-
-Migration ids are stamped rows rather than a dense sequence -- nothing reads the
-number, ``_ALL_STORAGE_MIGRATIONS`` reads the SET. Two different migrations
-sharing one id is the failure that matters: the first to land silently satisfies
-the other's steady-state check. This one was authored against 0006 while the
-telemetry and install-ledger migrations were on unmerged parallel branches, and
-took 0008 on merge -- safe only because none of the three had shipped in a
-release yet. Once an id can exist in a user's database it is never renumbered.
-
-The DDL itself lives in ``bindings/store.py`` (``CREATE TABLE IF NOT EXISTS``),
-so this id records that a database has been through the upgrade path; the tables
-are created by the store construction below, as every other store does.
-"""
 
 # Every migration ``_initialize_connection`` knows how to apply. The steady-state
 # pre-check compares against this set to decide whether it needs the write lock
@@ -238,8 +218,6 @@ _ALL_STORAGE_MIGRATIONS = frozenset(
         CLAIM_IDENTITY_MIGRATION,
         PROCEDURE_REFUSAL_REASON_MIGRATION,
         BOUNDARY_TELEMETRY_MIGRATION,
-        INSTALL_LEDGER_MIGRATION,
-        BINDING_LEDGER_MIGRATION,
         PROCEDURE_GRAPH_MIGRATION,
         PROCEDURE_READINGS_MIGRATION,
     }
@@ -262,7 +240,7 @@ LEGACY_CLAIM_IDENTITY_MAP_STATE_KEY = "legacy_claim_identity_map"
 READ_REVISION_STATE_KEY = "read_revision"
 
 # Tables whose writes are audit/proof records rather than state mutations.
-# Read paths persist query receipts and decision-record audit events, so writes
+# Read paths persist query receipts, so writes
 # to these tables must NOT advance read_revision (reads never bump it). The
 # membership test is "can writing this row change what an ordinary read
 # returns?", not "does this row look like history?" -- see the docstring below.
@@ -278,7 +256,6 @@ _AUDIT_ONLY_TABLES = frozenset(
         # whole commit; if fired nodes ever gain an independent write path,
         # this audit-only classification must be revisited.
         "procedure_run_fired_nodes",
-        "decision_events",
         "boundary_telemetry",
         "boundary_telemetry_drops",
         "instance_state",
@@ -1134,11 +1111,6 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
             connection=self._conn,
             initialize_schema=False,
         )
-        self.feedback = FeedbackStore(
-            self.db_path,
-            connection=self._conn,
-            initialize_schema=False,
-        )
         self.groups = GroupStore(
             self.db_path,
             connection=self._conn,
@@ -1164,22 +1136,7 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
             connection=self._conn,
             initialize_schema=False,
         )
-        self.decisions = DecisionStore(
-            self.db_path,
-            connection=self._conn,
-            initialize_schema=False,
-        )
         self.source_artifacts = SQLiteSourceArtifactStore(
-            self.db_path,
-            connection=self._conn,
-            initialize_schema=False,
-        )
-        self.installs = InstallLedgerStore(
-            self.db_path,
-            connection=self._conn,
-            initialize_schema=False,
-        )
-        self.bindings = BindingStore(
             self.db_path,
             connection=self._conn,
             initialize_schema=False,
@@ -1192,8 +1149,8 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
         # authorizer observes every INSERT/UPDATE/DELETE prepared on this
         # connection; touching any non-audit table marks the unit of work as a
         # state mutation, and commit() then advances read_revision inside the
-        # same transaction. Audit-only writes (receipts, traces, decision
-        # events) never bump it, so read paths that persist proof records keep
+        # same transaction. Audit-only writes (receipts and traces) never bump
+        # it, so read paths that persist proof records keep
         # the revision unchanged.
         self._state_mutated = False
         self._conn.set_authorizer(self._authorize)
@@ -1444,17 +1401,13 @@ class SQLiteStorageBackend:
         execute_schema_script(conn, _GRAPH_SCHEMA)
         execute_schema_script(conn, _SNAPSHOT_SCHEMA)
         SQLiteReceiptStore(self.db_path, connection=conn)
-        FeedbackStore(self.db_path, connection=conn)
         GroupStore(self.db_path, connection=conn)
         ProcedureStore(self.db_path, connection=conn)
         ProcedureReadingStore(self.db_path, connection=conn)
         AttestationStore(self.db_path, connection=conn)
         ResolutionContractStore(self.db_path, connection=conn)
-        DecisionStore(self.db_path, connection=conn)
         SQLiteSourceArtifactStore(self.db_path, connection=conn)
         execute_schema_script(conn, BOUNDARY_TELEMETRY_SCHEMA)
-        InstallLedgerStore(self.db_path, connection=conn)
-        BindingStore(self.db_path, connection=conn)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):
             row = conn.execute(
                 "SELECT migration_id FROM storage_migrations WHERE migration_id = ?",
@@ -1481,19 +1434,6 @@ class SQLiteStorageBackend:
             self.mark_migration_on_connection(conn, PROCEDURE_REFUSAL_REASON_MIGRATION)
         if not self.has_migration_on_connection(conn, BOUNDARY_TELEMETRY_MIGRATION):
             self.mark_migration_on_connection(conn, BOUNDARY_TELEMETRY_MIGRATION)
-        if not self.has_migration_on_connection(conn, INSTALL_LEDGER_MIGRATION):
-            # Purely additive: the three install-ledger tables are created by
-            # the store constructor above (CREATE TABLE IF NOT EXISTS), so an
-            # existing database needs no data rewrite -- only the stamp that
-            # records the schema is now present.
-            self.mark_migration_on_connection(conn, INSTALL_LEDGER_MIGRATION)
-        # Additive: the binding tables are created by the store construction
-        # above on every path, so the stamp is all this migration owes. It is
-        # still required -- ``_schema_is_current`` gates the whole upgrade on the
-        # stamped SET, so an unstamped database would take the write lock on
-        # every single connect.
-        if not self.has_migration_on_connection(conn, BINDING_LEDGER_MIGRATION):
-            self.mark_migration_on_connection(conn, BINDING_LEDGER_MIGRATION)
         if not self.has_migration_on_connection(conn, PROCEDURE_GRAPH_MIGRATION):
             self._migrate_procedure_graph(conn)
             self.mark_migration_on_connection(conn, PROCEDURE_GRAPH_MIGRATION)

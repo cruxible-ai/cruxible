@@ -18,7 +18,6 @@ from cruxible_core.config.schema import (
     SurfaceType,
     WorkflowType,
 )
-from cruxible_core.decision.types import DecisionEvent, DecisionRecord
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.assertion_state import RelationshipLifecycleState
 from cruxible_core.graph.entity_identity import EntityIdentityWarning
@@ -58,59 +57,12 @@ from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 
 @dataclass(frozen=True)
-class DecisionEventAppendOutcome:
-    """Whether a requested decision-event append actually reached the store."""
-
-    requested: bool
-    appended: bool
-    decision_record_id: str | None = None
-    decision_event_id: str | None = None
-    error: str | None = None
-
-
-@dataclass(frozen=True)
 class OperationContext:
-    """Optional audit context for recording an operation against a decision.
+    """Request attribution propagated into retained donor operations."""
 
-    Supplying ``decision_record_id`` opts the operation into decision recording
-    mode. Read operations may still append decision-event audit metadata; this
-    does not imply graph or state mutation.
-    """
-
-    decision_record_id: str | None = None
     request_id: str | None = None
     surface: Literal["cli", "mcp", "http", "local"] | None = None
     actor_context: GovernedActorContext | None = None
-    decision_event_failures: list[DecisionEventAppendOutcome] = field(
-        default_factory=list,
-        compare=False,
-    )
-    """Audit rows that were requested but did not land.
-
-    Appending decision-event metadata is deliberately best-effort: it must never
-    fail the work it observes. But a dropped row is evidence loss, so it is
-    accumulated on the context the caller already holds instead of vanishing
-    into a log line. Excluded from equality so the context stays comparable.
-    """
-
-
-@dataclass
-class DecisionRecordServiceResult:
-    record: DecisionRecord
-    events: list[DecisionEvent] = field(default_factory=list)
-    receipt_id: str | None = None
-
-
-@dataclass
-class DecisionRecordListResult:
-    items: list[DecisionRecord]
-    total: int = 0
-
-
-@dataclass
-class DecisionEventListResult:
-    items: list[DecisionEvent]
-    total: int = 0
 
 
 NeighborDirection = Literal["incoming", "outgoing"]
@@ -199,17 +151,6 @@ class RelationshipTargetInput:
     edge_key: int | None = None
     claim_id: str | None = None
     """Optional stable-identity disambiguator; takes precedence over edge_key."""
-
-
-@dataclass
-class FeedbackItemInput:
-    action: Literal["accept", "reject", "correct"]
-    target: RelationshipTargetInput
-    receipt_id: str | None = None
-    reason: str = ""
-    reason_code: str | None = None
-    scope_hints: dict[str, Any] | None = None
-    corrections: dict[str, Any] | None = None
 
 
 @dataclass

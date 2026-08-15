@@ -69,9 +69,8 @@ from cruxible_core.query.read_surface import (
     sample_entities as read_sample_entities,
 )
 from cruxible_core.query.relationship_state import relationship_matches_query_state
-from cruxible_core.query.types import QueryPathSegment, dump_query_row
+from cruxible_core.query.types import QueryPathSegment
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.service.decisions import record_decision_event_for_context
 from cruxible_core.service.types import (
     EntityChangeHistoryItem,
     EntityChangeHistoryResult,
@@ -92,7 +91,6 @@ from cruxible_core.service.types import (
     TraceListResult,
     list_truncated,
 )
-from cruxible_core.temporal import utc_now
 
 logger = structlog.get_logger("cruxible.service.reads")
 
@@ -127,49 +125,16 @@ def service_query(
 
     Returns results, receipt, and execution metadata.
     """
-    started_at = utc_now()
-    input_event = {
-        "query_name": query_name,
-        "params": params,
-        "relationship_state": relationship_state,
-        "lifecycle_status": lifecycle_status,
-    }
-    try:
-        result = _evaluate_query_result(
-            instance,
-            query_name,
-            params,
-            relationship_state=relationship_state,
-            lifecycle_status=lifecycle_status,
-        )
-
-        if result.receipt:
-            with instance.write_transaction() as uow:
-                uow.receipts.save_receipt(result.receipt)
-    except Exception as exc:
-        record_decision_event_for_context(
-            instance,
-            context,
-            command=f"query:{query_name}",
-            status="error",
-            input_payload=input_event,
-            error=exc,
-            started_at=started_at,
-        )
-        raise
-
-    receipt_head_snapshot_id = result.receipt.head_snapshot_id if result.receipt else None
-    record_decision_event_for_context(
+    result = _evaluate_query_result(
         instance,
-        context,
-        command=f"query:{query_name}",
-        status="success",
-        input_payload=input_event,
-        output_payload=_query_output_payload(result),
-        receipt_id=result.receipt_id,
-        head_snapshot_id=receipt_head_snapshot_id,
-        started_at=started_at,
+        query_name,
+        params,
+        relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
     )
+    if result.receipt:
+        with instance.write_transaction() as uow:
+            uow.receipts.save_receipt(result.receipt)
     return result
 
 
@@ -242,51 +207,17 @@ def service_query_inline_surface(
 
     inline_name, query_schema = _inline_query_schema(definition)
     query_name = f"{_INLINE_QUERY_PREFIX}{inline_name}"
-    started_at = utc_now()
-    input_event = {
-        "query_name": query_name,
-        "definition": _inline_query_definition_payload(inline_name, query_schema),
-        "params": params,
-        "relationship_state": relationship_state,
-        "lifecycle_status": lifecycle_status,
-    }
-    try:
-        result = _evaluate_inline_query_result(
-            instance,
-            query_name,
-            query_schema,
-            params,
-            relationship_state=relationship_state,
-            lifecycle_status=lifecycle_status,
-        )
-
-        if result.receipt:
-            with instance.write_transaction() as uow:
-                uow.receipts.save_receipt(result.receipt)
-    except Exception as exc:
-        record_decision_event_for_context(
-            instance,
-            context,
-            command=f"query_inline:{inline_name}",
-            status="error",
-            input_payload=input_event,
-            error=exc,
-            started_at=started_at,
-        )
-        raise
-
-    receipt_head_snapshot_id = result.receipt.head_snapshot_id if result.receipt else None
-    record_decision_event_for_context(
+    result = _evaluate_inline_query_result(
         instance,
-        context,
-        command=f"query_inline:{inline_name}",
-        status="success",
-        input_payload=input_event,
-        output_payload=_query_output_payload(result),
-        receipt_id=result.receipt_id,
-        head_snapshot_id=receipt_head_snapshot_id,
-        started_at=started_at,
+        query_name,
+        query_schema,
+        params,
+        relationship_state=relationship_state,
+        lifecycle_status=lifecycle_status,
     )
+    if result.receipt:
+        with instance.write_transaction() as uow:
+            uow.receipts.save_receipt(result.receipt)
     return _query_result_with_response_limit(
         result,
         surface_limit=surface_limit,
@@ -489,37 +420,6 @@ def _validate_inline_query_bound(
         return
     if value > maximum:
         raise ConfigError(f"inline query {field_name} must be <= {maximum}")
-
-
-def _inline_query_definition_payload(
-    inline_name: str,
-    query_schema: NamedQuerySchema,
-) -> dict[str, Any]:
-    return {
-        "name": inline_name,
-        **query_schema.model_dump(mode="json", by_alias=True, exclude_none=True),
-    }
-
-
-def _query_output_payload(result: QueryServiceResult) -> dict[str, Any]:
-    return {
-        "items": [dump_query_row(row, mode="json") for row in result.items],
-        "total": result.total,
-        "limit": result.limit,
-        "truncated": result.truncated,
-        "limit_truncated": result.limit_truncated,
-        "path_truncated": result.path_truncated,
-        "truncation_reasons": list(result.truncation_reasons),
-        "max_paths": result.max_paths,
-        "max_paths_per_result": result.max_paths_per_result,
-        "total_path_count": result.total_path_count,
-        "retained_path_count": result.retained_path_count,
-        "steps_executed": result.steps_executed,
-        "result_shape": result.result_shape,
-        "dedupe": result.dedupe,
-        "relationship_state": result.relationship_state,
-        "lifecycle_status": result.lifecycle_status,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1118,7 +1018,7 @@ def service_list_traces(
 
 def service_list(
     instance: InstanceProtocol,
-    resource: Literal["entities", "edges", "receipts", "feedback", "outcomes"],
+    resource: Literal["entities", "edges", "receipts"],
     *,
     entity_type: str | None = None,
     relationship_type: str | None = None,
@@ -1134,7 +1034,7 @@ def service_list(
     offset: int = 0,
     receipt_before: tuple[str, str] | None = None,
 ) -> ListResult:
-    """List entities, edges, receipts, feedback, or outcomes.
+    """List entities, edges, or receipts.
 
     ``receipt_before`` (receipts only) is the keyset continuation cursor: a
     ``(created_at, receipt_id)`` high-water mark; the page holds only receipts
@@ -1161,7 +1061,7 @@ def service_list(
     it replaces the implicit live-only default so ``retired`` and ``superseded``
     remain directly inspectable; an explicit selector still composes normally.
     """
-    _VALID_RESOURCES = ("entities", "edges", "receipts", "feedback", "outcomes")
+    _VALID_RESOURCES = ("entities", "edges", "receipts")
     if resource not in _VALID_RESOURCES:
         raise ConfigError(f"Unknown resource '{resource}'. Use: {', '.join(_VALID_RESOURCES)}")
 
@@ -1233,31 +1133,6 @@ def service_list(
         finally:
             store.close()
         result = ListResult(items=summaries, total=total)
-    elif resource == "feedback":
-        feedback_store = instance.get_feedback_store()
-        try:
-            feedback_records = feedback_store.list_feedback(
-                receipt_id=receipt_id,
-                limit=limit,
-                offset=offset,
-            )
-            total = feedback_store.count_feedback(receipt_id=receipt_id)
-        finally:
-            feedback_store.close()
-        result = ListResult(items=feedback_records, total=total)
-    else:  # outcomes
-        feedback_store = instance.get_feedback_store()
-        try:
-            outcome_records = feedback_store.list_outcomes(
-                receipt_id=receipt_id,
-                limit=limit,
-                offset=offset,
-            )
-            total = feedback_store.count_outcomes(receipt_id=receipt_id)
-        finally:
-            feedback_store.close()
-        result = ListResult(items=outcome_records, total=total)
-
     _warn_on_dropped_read(
         resource=f"list:{resource}",
         total=result.total,
