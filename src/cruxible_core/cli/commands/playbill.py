@@ -23,6 +23,10 @@ from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
+from cruxible_core.playbill.service.review import (
+    PlaybillProposalReview,
+    render_playbill_proposal_review,
+)
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from cruxible_core.playbill.source_catalog import (
     SourceCatalog,
@@ -31,10 +35,6 @@ from cruxible_core.playbill.source_catalog import (
     merge_source_catalogs,
 )
 from cruxible_core.playbill.types import PrincipalRecord
-from cruxible_core.service.playbill_review import (
-    PlaybillProposalReview,
-    render_playbill_proposal_review,
-)
 
 ResultT = TypeVar("ResultT")
 

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from cruxible_core.config.auth_managed import LOCAL_OPERATOR_ACTOR_ID
+from cruxible_core.actor_vocabulary import LOCAL_OPERATOR_ACTOR_ID
 from cruxible_core.errors import (
     AuthenticationError,
     ConfigError,

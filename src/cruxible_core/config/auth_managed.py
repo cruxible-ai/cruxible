@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Final
-
-LOCAL_OPERATOR_ACTOR_ID: Final = "operator"
-LOCAL_OPERATOR_ACTOR_TYPE: Final = "human_user"
-LOCAL_OPERATOR_KIND: Final = "human"
-LOCAL_OPERATOR_ORG_ID: Final = "local"
-LOCAL_OPERATOR_STATUS: Final = "active"
+from cruxible_core.actor_vocabulary import (
+    LOCAL_OPERATOR_ACTOR_ID as LOCAL_OPERATOR_ACTOR_ID,
+)
+from cruxible_core.actor_vocabulary import (
+    LOCAL_OPERATOR_ACTOR_TYPE as LOCAL_OPERATOR_ACTOR_TYPE,
+)
+from cruxible_core.actor_vocabulary import (
+    LOCAL_OPERATOR_KIND as LOCAL_OPERATOR_KIND,
+)
+from cruxible_core.actor_vocabulary import (
+    LOCAL_OPERATOR_ORG_ID as LOCAL_OPERATOR_ORG_ID,
+)
+from cruxible_core.actor_vocabulary import (
+    LOCAL_OPERATOR_STATUS as LOCAL_OPERATOR_STATUS,
+)
 
 AUTH_MANAGED_CREDENTIAL_PROPERTY_NAMES = frozenset(
     {

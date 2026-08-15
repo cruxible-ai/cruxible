@@ -1,0 +1,26 @@
+{
+  "format": "playbill-served-surface-dp0a-v1",
+  "facade_operations": [
+    "playbill_activate",
+    "playbill_check_source_bundle",
+    "playbill_dereference_document",
+    "playbill_document_history",
+    "playbill_explain",
+    "playbill_get_document",
+    "playbill_init",
+    "playbill_inspect_proposal",
+    "playbill_inspect_refusal",
+    "playbill_list_documents",
+    "playbill_list_principals",
+    "playbill_prepare_approval",
+    "playbill_propose_document",
+    "playbill_propose_principal_change",
+    "playbill_propose_source_bundle",
+    "playbill_review_proposal",
+    "playbill_source_context",
+    "playbill_store_body",
+    "playbill_submit_approval"
+  ],
+  "http_delegate_count": 19,
+  "mcp_delegate_count": 18
+}

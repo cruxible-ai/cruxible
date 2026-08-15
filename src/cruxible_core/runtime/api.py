@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import logging
@@ -36,14 +35,6 @@ from cruxible_core.graph.provenance import (
 from cruxible_core.installs.types import INSTALL_PHASES
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kit_defaults import get_default_base_kit
-from cruxible_core.playbill.attestations import ApprovalAttestation
-from cruxible_core.playbill.candidates import canonical_candidate_timestamp
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.documents import DocumentShell
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.source_catalog import SourceCompilationBundle
-from cruxible_core.playbill.types import OperatingProfile, PrincipalRecord
 from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.procedure.types import (
     ProcedureDefinition,
@@ -83,7 +74,6 @@ from cruxible_core.runtime.permissions import (
     require_unscoped_operator,
     validate_root_dir,
 )
-from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.service import (
     AnalyzeFeedbackResult,
@@ -94,7 +84,6 @@ from cruxible_core.service import (
     resolve_contained_source_path,
     service_abandon_decision_record,
     service_accept_procedure,
-    service_activate_playbill_proposal,
     service_add_constraint,
     service_add_decision_policy,
     service_add_entity_inputs,
@@ -106,20 +95,17 @@ from cruxible_core.service import (
     service_attestation_queue,
     service_backup_instance,
     service_batch_direct_write,
-    service_check_playbill_source_bundle,
     service_clone_snapshot,
     service_config_compatibility_warnings,
     service_config_status,
     service_create_decision_record,
     service_create_snapshot,
     service_create_state_overlay,
-    service_dereference_playbill_document,
     service_dereference_source_evidence,
     service_describe_query,
     service_dispose_resolution,
     service_evaluate,
     service_evaluate_gate,
-    service_explain_playbill_subject,
     service_explain_receipt,
     service_feedback_batch_inputs,
     service_feedback_from_query_result,
@@ -132,7 +118,6 @@ from cruxible_core.service import (
     service_get_group,
     service_get_install,
     service_get_outcome_profile,
-    service_get_playbill_document,
     service_get_procedure_details,
     service_get_receipt,
     service_get_relationship,
@@ -143,8 +128,6 @@ from cruxible_core.service import (
     service_init,
     service_init_governed_upload,
     service_inspect_entity,
-    service_inspect_playbill_proposal,
-    service_inspect_playbill_refusal,
     service_inspect_view,
     service_lint,
     service_list,
@@ -153,8 +136,6 @@ from cruxible_core.service import (
     service_list_decision_records,
     service_list_groups,
     service_list_installs,
-    service_list_playbill_documents,
-    service_list_playbill_principals,
     service_list_procedure_runs,
     service_list_procedures,
     service_list_queries,
@@ -169,13 +150,7 @@ from cruxible_core.service import (
     service_outcome,
     service_outcome_queue,
     service_plan,
-    service_playbill_document_history,
-    service_playbill_source_context,
-    service_prepare_playbill_approval,
     service_propose_group_inputs,
-    service_propose_playbill_document,
-    service_propose_playbill_principal_change,
-    service_propose_playbill_source_bundle,
     service_propose_procedure,
     service_propose_workflow,
     service_publish_state,
@@ -195,7 +170,6 @@ from cruxible_core.service import (
     service_retire_entity,
     service_retire_procedure,
     service_retract_claim,
-    service_review_playbill_proposal,
     service_run,
     service_run_procedure,
     service_sample,
@@ -207,8 +181,6 @@ from cruxible_core.service import (
     service_state_health,
     service_state_status,
     service_stats,
-    service_store_playbill_body,
-    service_submit_playbill_approval,
     service_supersede_claim,
     service_supersede_entity,
     service_telemetry_summary,
@@ -362,7 +334,7 @@ def _runtime_credential_actor_context() -> GovernedActorContext | None:
 
 
 def _local_operator_actor_context(value: Any) -> GovernedActorContext:
-    from cruxible_core.server.auth_managed_entities import local_operator_actor_context
+    from cruxible_core.server.actor_identity import local_operator_actor_context
 
     request_id = None
     if value is not None:
@@ -518,23 +490,6 @@ def _hosted_actor_context(value: Any) -> GovernedActorContext | None:
     actor = require_hosted_actor_context(value)
     _record_actor_operation(actor)
     return actor
-
-
-def _playbill_actor_id() -> str:
-    """Use credential-derived request identity at every Playbill write boundary."""
-
-    actor = _hosted_actor_context(None)
-    if actor is None:
-        raise AuthenticationError("Playbill writes require an authenticated actor identity")
-    return actor.actor_id
-
-
-def _playbill_access(instance_id: str, *, include_body: bool) -> BodyAccessContext:
-    actor = _hosted_actor_context(None)
-    principal_id = "anonymous" if actor is None else actor.actor_id
-    if include_body:
-        check_permission("cruxible_playbill_body_read", instance_id=instance_id)
-    return BodyAccessContext(principal_id=principal_id, can_read_body=include_body)
 
 
 def _reconcile_credential_actor_context(
@@ -5206,294 +5161,27 @@ def state_diff_artifact(
     )
 
 
-# ---------------------------------------------------------------------------
-# Playbill Family-1 public facade
-# ---------------------------------------------------------------------------
-
-
-def playbill_init(
-    instance_id: str,
-    *,
-    principals: tuple[PrincipalRecord, ...],
-    operating_profile: OperatingProfile = "local",
-) -> contracts.PlaybillInitResult:
-    check_permission("cruxible_playbill_init", instance_id=instance_id)
-    actor_id = _playbill_actor_id()
-    owners = {
-        item.principal_id
-        for item in principals
-        if item.status == "active" and "owner" in item.authority_roles
-    }
-    if actor_id not in owners:
-        raise AuthenticationError(
-            "Playbill bootstrap requires an owner principal matching authenticated identity"
-        )
-    instance = get_playbill_manager().initialize(
-        instance_id,
-        client_principals=principals,
-        operating_profile=operating_profile,
-    )
-    return contracts.PlaybillInitResult(
-        instance_id=instance_id,
-        coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
-            AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
-        ),
-        trust_root=instance.trust_root.model_dump(mode="json"),
-        recovery_posture=instance.descriptor.recovery_posture,
-    )
-
-
-def playbill_store_body(
-    instance_id: str, *, content_base64: str
-) -> contracts.PlaybillCasObjectResult:
-    check_permission("cruxible_playbill_store_body", instance_id=instance_id)
-    try:
-        content = base64.b64decode(content_base64, validate=True)
-    except ValueError as exc:
-        raise DataValidationError("Playbill body is not canonical base64") from exc
-    result = service_store_playbill_body(get_playbill_manager().get(instance_id), content=content)
-    return contracts.PlaybillCasObjectResult.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_propose_document(
-    instance_id: str,
-    *,
-    shell: DocumentShell,
-    proposal_name: str,
-    source_compilation_digest: str | None = None,
-    base: AcceptedCoordinate | None = None,
-) -> contracts.PlaybillProposalInspection:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = service_propose_playbill_document(
-        get_playbill_manager().get(instance_id),
-        shell=shell,
-        actor_id=_playbill_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
-        source_compilation_digest=source_compilation_digest,
-        base=base,
-    )
-    return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_propose_principal_change(
-    instance_id: str,
-    *,
-    principal: PrincipalRecord,
-    proposal_name: str,
-    base: AcceptedCoordinate | None = None,
-) -> contracts.PlaybillProposalInspection:
-    check_permission("cruxible_playbill_principal_change", instance_id=instance_id)
-    result = service_propose_playbill_principal_change(
-        get_playbill_manager().get(instance_id),
-        principal=principal,
-        actor_id=_playbill_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
-        base=base,
-    )
-    return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_inspect_proposal(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.PlaybillProposalInspection:
-    check_permission("cruxible_playbill_inspect", instance_id=instance_id)
-    result = service_inspect_playbill_proposal(
-        get_playbill_manager().get(instance_id), proposal_id=proposal_id
-    )
-    return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_inspect_refusal(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.PlaybillRefusalInspection:
-    check_permission("cruxible_playbill_inspect", instance_id=instance_id)
-    result = service_inspect_playbill_refusal(
-        get_playbill_manager().get(instance_id), proposal_id=proposal_id
-    )
-    return contracts.PlaybillRefusalInspection.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_review_proposal(
-    instance_id: str,
-    proposal_id: str,
-    *,
-    include_body: bool = False,
-) -> contracts.PlaybillProposalReview:
-    check_permission("cruxible_playbill_review", instance_id=instance_id)
-    result = service_review_playbill_proposal(
-        get_playbill_manager().get(instance_id),
-        proposal_id=proposal_id,
-        access=_playbill_access(instance_id, include_body=include_body),
-    )
-    return contracts.PlaybillProposalReview.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_prepare_approval(
-    instance_id: str,
-    proposal_id: str,
-    *,
-    signer_id: str,
-    include_body: bool = False,
-) -> contracts.PlaybillApprovalChallenge:
-    check_permission("cruxible_playbill_review", instance_id=instance_id)
-    result = service_prepare_playbill_approval(
-        get_playbill_manager().get(instance_id),
-        proposal_id=proposal_id,
-        signer_id=signer_id,
-        access=_playbill_access(instance_id, include_body=include_body),
-    )
-    return contracts.PlaybillApprovalChallenge.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_submit_approval(
-    instance_id: str,
-    proposal_id: str,
-    *,
-    attestation: ApprovalAttestation,
-) -> contracts.PlaybillApprovalReceipt:
-    check_permission("cruxible_playbill_submit_approval", instance_id=instance_id)
-    result = service_submit_playbill_approval(
-        get_playbill_manager().get(instance_id),
-        proposal_id=proposal_id,
-        attestation=attestation,
-        authenticated_submitter=_playbill_actor_id(),
-    )
-    return contracts.PlaybillApprovalReceipt.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_activate(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.PlaybillActivationReceipt:
-    check_permission("cruxible_playbill_activate", instance_id=instance_id)
-    _playbill_actor_id()
-    result = service_activate_playbill_proposal(
-        get_playbill_manager().get(instance_id), proposal_id=proposal_id
-    )
-    return contracts.PlaybillActivationReceipt.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_get_document(
-    instance_id: str,
-    identity: str,
-    *,
-    at: AcceptedCoordinate | None = None,
-) -> contracts.PlaybillDocumentView:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
-    result = service_get_playbill_document(
-        get_playbill_manager().get(instance_id),
-        identity=identity,
-        access=_playbill_access(instance_id, include_body=False),
-        at=at,
-    )
-    return contracts.PlaybillDocumentView.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_list_documents(
-    instance_id: str,
-    *,
-    at: AcceptedCoordinate | None = None,
-) -> contracts.PlaybillDocumentList:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
-    result = service_list_playbill_documents(
-        get_playbill_manager().get(instance_id),
-        access=_playbill_access(instance_id, include_body=False),
-        at=at,
-    )
-    return contracts.PlaybillDocumentList.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_list_principals(instance_id: str) -> contracts.PlaybillPrincipalList:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
-    result = service_list_playbill_principals(get_playbill_manager().get(instance_id))
-    return contracts.PlaybillPrincipalList.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_dereference_document(
-    instance_id: str,
-    identity: str,
-    *,
-    at: AcceptedCoordinate | None = None,
-) -> contracts.PlaybillBodyRead:
-    check_permission("cruxible_playbill_body_read", instance_id=instance_id)
-    result = service_dereference_playbill_document(
-        get_playbill_manager().get(instance_id),
-        identity=identity,
-        access=_playbill_access(instance_id, include_body=True),
-        at=at,
-    )
-    return contracts.PlaybillBodyRead.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_document_history(
-    instance_id: str,
-    identity: str,
-) -> contracts.PlaybillDocumentHistory:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
-    result = service_playbill_document_history(
-        get_playbill_manager().get(instance_id), identity=identity
-    )
-    return contracts.PlaybillDocumentHistory.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_explain(
-    instance_id: str,
-    *,
-    subject: SemanticAddress,
-    at: AcceptedCoordinate,
-    detail: Literal["summary", "evidence", "proof"] = "summary",
-    include_body: bool = False,
-) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
-    check_permission("cruxible_playbill_explain", instance_id=instance_id)
-    result = service_explain_playbill_subject(
-        get_playbill_manager().get(instance_id),
-        subject=subject,
-        at=at,
-        detail=detail,
-        access=_playbill_access(instance_id, include_body=include_body),
-    )
-    payload = result.model_dump(mode="json")
-    if result.tag == "playbill-explain-v1":
-        return contracts.PlaybillExplainResult.model_validate(payload)
-    return contracts.PlaybillExplainUnsupportedDetail.model_validate(payload)
-
-
-def playbill_source_context(instance_id: str) -> contracts.PlaybillSourceContext:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
-    result = service_playbill_source_context(get_playbill_manager().get(instance_id))
-    return contracts.PlaybillSourceContext.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_check_source_bundle(
-    instance_id: str,
-    *,
-    bundle: SourceCompilationBundle,
-) -> contracts.PlaybillSourceCheckResult:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
-    result = service_check_playbill_source_bundle(
-        get_playbill_manager().get(instance_id), bundle=bundle
-    )
-    return contracts.PlaybillSourceCheckResult.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_propose_source_bundle(
-    instance_id: str,
-    *,
-    bundle: SourceCompilationBundle,
-    source_name: str,
-    proposal_name: str,
-) -> contracts.PlaybillProposalInspection:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = service_propose_playbill_source_bundle(
-        get_playbill_manager().get(instance_id),
-        bundle=bundle,
-        source_name=source_name,
-        actor_id=_playbill_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
-    )
-    return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
+# Compatibility aliases for legacy runtime importers. Served Playbill surfaces
+# import ``runtime.playbill_api`` directly, so this mixed facade is not on the
+# Playbill dependency path.
+from cruxible_core.runtime.playbill_api import (  # noqa: E402, F401
+    playbill_activate,
+    playbill_check_source_bundle,
+    playbill_dereference_document,
+    playbill_document_history,
+    playbill_explain,
+    playbill_get_document,
+    playbill_init,
+    playbill_inspect_proposal,
+    playbill_inspect_refusal,
+    playbill_list_documents,
+    playbill_list_principals,
+    playbill_prepare_approval,
+    playbill_propose_document,
+    playbill_propose_principal_change,
+    playbill_propose_source_bundle,
+    playbill_review_proposal,
+    playbill_source_context,
+    playbill_store_body,
+    playbill_submit_approval,
+)

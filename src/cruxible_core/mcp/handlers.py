@@ -28,7 +28,7 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_catalog import SourceCompilationBundle
 from cruxible_core.playbill.types import PrincipalRecord
-from cruxible_core.runtime import api
+from cruxible_core.runtime import api, playbill_api
 from cruxible_core.runtime.instance_manager import (
     InstanceManager,
 )
@@ -2830,7 +2830,7 @@ def handle_playbill_init(
             principals=[item.model_dump(mode="json") for item in records],
             operating_profile=cast(Any, operating_profile),
         ),
-        lambda: api.playbill_init(
+        lambda: playbill_api.playbill_init(
             instance_id,
             principals=records,
             operating_profile=cast(Any, operating_profile),
@@ -2849,7 +2849,7 @@ def handle_playbill_store_body(
         raise DataValidationError("Playbill body is not canonical base64") from exc
     return _dispatch_remote_or_local(
         lambda client: client.store_playbill_body(instance_id, content),
-        lambda: api.playbill_store_body(instance_id, content_base64=content_base64),
+        lambda: playbill_api.playbill_store_body(instance_id, content_base64=content_base64),
         operation_name="cruxible_playbill_store_body",
     )
 
@@ -2868,7 +2868,7 @@ def handle_playbill_propose_document(
             proposal_name=proposal_name,
             source_compilation_digest=source_compilation_digest,
         ),
-        lambda: api.playbill_propose_document(
+        lambda: playbill_api.playbill_propose_document(
             instance_id,
             shell=document,
             proposal_name=proposal_name,
@@ -2883,7 +2883,7 @@ def handle_playbill_inspect_proposal(
 ) -> contracts.PlaybillProposalInspection:
     return _dispatch_remote_or_local(
         lambda client: client.inspect_playbill_proposal(instance_id, proposal_id),
-        lambda: api.playbill_inspect_proposal(instance_id, proposal_id),
+        lambda: playbill_api.playbill_inspect_proposal(instance_id, proposal_id),
     )
 
 
@@ -2897,7 +2897,9 @@ def handle_playbill_review(
         lambda client: client.review_playbill_proposal(
             instance_id, proposal_id, include_body=include_body
         ),
-        lambda: api.playbill_review_proposal(instance_id, proposal_id, include_body=include_body),
+        lambda: playbill_api.playbill_review_proposal(
+            instance_id, proposal_id, include_body=include_body
+        ),
     )
 
 
@@ -2915,7 +2917,7 @@ def handle_playbill_prepare_approval(
             signer_id=signer_id,
             include_body=include_body,
         ),
-        lambda: api.playbill_prepare_approval(
+        lambda: playbill_api.playbill_prepare_approval(
             instance_id,
             proposal_id,
             signer_id=signer_id,
@@ -2936,7 +2938,7 @@ def handle_playbill_submit_approval(
             proposal_id,
             attestation=public_attestation.model_dump(mode="json"),
         ),
-        lambda: api.playbill_submit_approval(
+        lambda: playbill_api.playbill_submit_approval(
             instance_id,
             proposal_id,
             attestation=public_attestation,
@@ -2950,7 +2952,7 @@ def handle_playbill_activate(
 ) -> contracts.PlaybillActivationReceipt:
     return _dispatch_remote_or_local(
         lambda client: client.activate_playbill_proposal(instance_id, proposal_id),
-        lambda: api.playbill_activate(instance_id, proposal_id),
+        lambda: playbill_api.playbill_activate(instance_id, proposal_id),
         operation_name="cruxible_playbill_activate",
     )
 
@@ -2958,28 +2960,28 @@ def handle_playbill_activate(
 def handle_playbill_list_documents(instance_id: str) -> contracts.PlaybillDocumentList:
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_documents(instance_id),
-        lambda: api.playbill_list_documents(instance_id),
+        lambda: playbill_api.playbill_list_documents(instance_id),
     )
 
 
 def handle_playbill_get_document(instance_id: str, identity: str) -> contracts.PlaybillDocumentView:
     return _dispatch_remote_or_local(
         lambda client: client.get_playbill_document(instance_id, identity),
-        lambda: api.playbill_get_document(instance_id, identity),
+        lambda: playbill_api.playbill_get_document(instance_id, identity),
     )
 
 
 def handle_playbill_dereference(instance_id: str, identity: str) -> contracts.PlaybillBodyRead:
     return _dispatch_remote_or_local(
         lambda client: client.dereference_playbill_document(instance_id, identity),
-        lambda: api.playbill_dereference_document(instance_id, identity),
+        lambda: playbill_api.playbill_dereference_document(instance_id, identity),
     )
 
 
 def handle_playbill_history(instance_id: str, identity: str) -> contracts.PlaybillDocumentHistory:
     return _dispatch_remote_or_local(
         lambda client: client.playbill_document_history(instance_id, identity),
-        lambda: api.playbill_document_history(instance_id, identity),
+        lambda: playbill_api.playbill_document_history(instance_id, identity),
     )
 
 
@@ -3001,7 +3003,7 @@ def handle_playbill_explain(
             detail=cast(Any, detail),
             include_body=include_body,
         ),
-        lambda: api.playbill_explain(
+        lambda: playbill_api.playbill_explain(
             instance_id,
             subject=semantic_subject,
             at=coordinate,
@@ -3014,7 +3016,7 @@ def handle_playbill_explain(
 def handle_playbill_source_context(instance_id: str) -> contracts.PlaybillSourceContext:
     return _dispatch_remote_or_local(
         lambda client: client.playbill_source_context(instance_id),
-        lambda: api.playbill_source_context(instance_id),
+        lambda: playbill_api.playbill_source_context(instance_id),
     )
 
 
@@ -3026,7 +3028,7 @@ def handle_playbill_check_source_bundle(
         lambda client: client.check_playbill_source_bundle(
             instance_id, bundle=frozen.model_dump(mode="json")
         ),
-        lambda: api.playbill_check_source_bundle(instance_id, bundle=frozen),
+        lambda: playbill_api.playbill_check_source_bundle(instance_id, bundle=frozen),
     )
 
 
@@ -3045,7 +3047,7 @@ def handle_playbill_propose_source_bundle(
             source_name=source_name,
             proposal_name=proposal_name,
         ),
-        lambda: api.playbill_propose_source_bundle(
+        lambda: playbill_api.playbill_propose_source_bundle(
             instance_id,
             bundle=frozen,
             source_name=source_name,
@@ -3058,7 +3060,7 @@ def handle_playbill_propose_source_bundle(
 def handle_playbill_list_principals(instance_id: str) -> contracts.PlaybillPrincipalList:
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_principals(instance_id),
-        lambda: api.playbill_list_principals(instance_id),
+        lambda: playbill_api.playbill_list_principals(instance_id),
     )
 
 
@@ -3074,7 +3076,7 @@ def handle_playbill_propose_principal_change(
             principal=record.model_dump(mode="json"),
             proposal_name=proposal_name,
         ),
-        lambda: api.playbill_propose_principal_change(
+        lambda: playbill_api.playbill_propose_principal_change(
             instance_id,
             principal=record,
             proposal_name=proposal_name,

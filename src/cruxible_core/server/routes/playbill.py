@@ -7,8 +7,8 @@ from fastapi import APIRouter
 from cruxible_client import contracts
 from cruxible_core.playbill.errors import PlaybillFormatError
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.runtime import api
-from cruxible_core.server.request_models import (
+from cruxible_core.runtime import playbill_api
+from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalChallengeRequest,
     PlaybillApprovalRequest,
     PlaybillExplainRequest,
@@ -53,7 +53,7 @@ async def playbill_init(
     instance_id: str,
     req: PlaybillInitRequest,
 ) -> contracts.PlaybillInitResult:
-    return api.playbill_init(
+    return playbill_api.playbill_init(
         resolve_server_instance_id(instance_id),
         principals=req.principals,
         operating_profile=req.operating_profile,
@@ -68,7 +68,7 @@ async def store_body(
     instance_id: str,
     req: PlaybillStoreBodyRequest,
 ) -> contracts.PlaybillCasObjectResult:
-    return api.playbill_store_body(
+    return playbill_api.playbill_store_body(
         resolve_server_instance_id(instance_id), content_base64=req.content_base64
     )
 
@@ -81,7 +81,7 @@ async def propose_document(
     instance_id: str,
     req: PlaybillProposeDocumentRequest,
 ) -> contracts.PlaybillProposalInspection:
-    return api.playbill_propose_document(
+    return playbill_api.playbill_propose_document(
         resolve_server_instance_id(instance_id),
         shell=req.shell,
         proposal_name=req.proposal_name,
@@ -98,7 +98,7 @@ async def propose_principal(
     instance_id: str,
     req: PlaybillProposePrincipalRequest,
 ) -> contracts.PlaybillProposalInspection:
-    return api.playbill_propose_principal_change(
+    return playbill_api.playbill_propose_principal_change(
         resolve_server_instance_id(instance_id),
         principal=req.principal,
         proposal_name=req.proposal_name,
@@ -111,7 +111,7 @@ async def propose_principal(
     response_model=contracts.PlaybillPrincipalList,
 )
 async def list_principals(instance_id: str) -> contracts.PlaybillPrincipalList:
-    return api.playbill_list_principals(resolve_server_instance_id(instance_id))
+    return playbill_api.playbill_list_principals(resolve_server_instance_id(instance_id))
 
 
 @router.get(
@@ -122,7 +122,9 @@ async def inspect_proposal(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.PlaybillProposalInspection:
-    return api.playbill_inspect_proposal(resolve_server_instance_id(instance_id), proposal_id)
+    return playbill_api.playbill_inspect_proposal(
+        resolve_server_instance_id(instance_id), proposal_id
+    )
 
 
 @router.get(
@@ -133,7 +135,9 @@ async def inspect_refusal(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.PlaybillRefusalInspection:
-    return api.playbill_inspect_refusal(resolve_server_instance_id(instance_id), proposal_id)
+    return playbill_api.playbill_inspect_refusal(
+        resolve_server_instance_id(instance_id), proposal_id
+    )
 
 
 @router.post(
@@ -145,7 +149,7 @@ async def review_proposal(
     proposal_id: str,
     req: PlaybillReviewRequest,
 ) -> contracts.PlaybillProposalReview:
-    return api.playbill_review_proposal(
+    return playbill_api.playbill_review_proposal(
         resolve_server_instance_id(instance_id),
         proposal_id,
         include_body=req.include_body,
@@ -161,7 +165,7 @@ async def prepare_approval(
     proposal_id: str,
     req: PlaybillApprovalChallengeRequest,
 ) -> contracts.PlaybillApprovalChallenge:
-    return api.playbill_prepare_approval(
+    return playbill_api.playbill_prepare_approval(
         resolve_server_instance_id(instance_id),
         proposal_id,
         signer_id=req.signer_id,
@@ -178,7 +182,7 @@ async def submit_approval(
     proposal_id: str,
     req: PlaybillApprovalRequest,
 ) -> contracts.PlaybillApprovalReceipt:
-    return api.playbill_submit_approval(
+    return playbill_api.playbill_submit_approval(
         resolve_server_instance_id(instance_id),
         proposal_id,
         attestation=req.attestation,
@@ -193,7 +197,7 @@ async def activate_proposal(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.PlaybillActivationReceipt:
-    return api.playbill_activate(resolve_server_instance_id(instance_id), proposal_id)
+    return playbill_api.playbill_activate(resolve_server_instance_id(instance_id), proposal_id)
 
 
 @router.get(
@@ -207,7 +211,7 @@ async def list_documents(
     generation_root: str | None = None,
     compiler_digest: str | None = None,
 ) -> contracts.PlaybillDocumentList:
-    return api.playbill_list_documents(
+    return playbill_api.playbill_list_documents(
         resolve_server_instance_id(instance_id),
         at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
     )
@@ -225,7 +229,7 @@ async def get_document(
     generation_root: str | None = None,
     compiler_digest: str | None = None,
 ) -> contracts.PlaybillDocumentView:
-    return api.playbill_get_document(
+    return playbill_api.playbill_get_document(
         resolve_server_instance_id(instance_id),
         identity,
         at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
@@ -244,7 +248,7 @@ async def dereference_document(
     generation_root: str | None = None,
     compiler_digest: str | None = None,
 ) -> contracts.PlaybillBodyRead:
-    return api.playbill_dereference_document(
+    return playbill_api.playbill_dereference_document(
         resolve_server_instance_id(instance_id),
         identity,
         at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
@@ -259,7 +263,7 @@ async def document_history(
     instance_id: str,
     identity: str,
 ) -> contracts.PlaybillDocumentHistory:
-    return api.playbill_document_history(resolve_server_instance_id(instance_id), identity)
+    return playbill_api.playbill_document_history(resolve_server_instance_id(instance_id), identity)
 
 
 @router.post(
@@ -270,7 +274,7 @@ async def explain(
     instance_id: str,
     req: PlaybillExplainRequest,
 ) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
-    return api.playbill_explain(
+    return playbill_api.playbill_explain(
         resolve_server_instance_id(instance_id),
         subject=req.subject,
         at=req.at,
@@ -284,7 +288,7 @@ async def explain(
     response_model=contracts.PlaybillSourceContext,
 )
 async def source_context(instance_id: str) -> contracts.PlaybillSourceContext:
-    return api.playbill_source_context(resolve_server_instance_id(instance_id))
+    return playbill_api.playbill_source_context(resolve_server_instance_id(instance_id))
 
 
 @router.post(
@@ -295,7 +299,7 @@ async def check_sources(
     instance_id: str,
     req: PlaybillSourceBundleRequest,
 ) -> contracts.PlaybillSourceCheckResult:
-    return api.playbill_check_source_bundle(
+    return playbill_api.playbill_check_source_bundle(
         resolve_server_instance_id(instance_id), bundle=req.bundle
     )
 
@@ -308,7 +312,7 @@ async def propose_sources(
     instance_id: str,
     req: PlaybillSourceProposeRequest,
 ) -> contracts.PlaybillProposalInspection:
-    return api.playbill_propose_source_bundle(
+    return playbill_api.playbill_propose_source_bundle(
         resolve_server_instance_id(instance_id),
         bundle=req.bundle,
         source_name=req.source_name,

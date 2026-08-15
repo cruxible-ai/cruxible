@@ -19,6 +19,7 @@ from cruxible_core.graph.operations import apply_entity, validate_entity
 from cruxible_core.graph.types import EntityInstance, EntityMetadata
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import new_id
+from cruxible_core.server.actor_identity import local_operator_actor_context
 from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.credentials import RuntimeCredentialRecord
 from cruxible_core.service.direct_write_policy import TOKEN_MINT_SOURCE
@@ -139,17 +140,6 @@ def materialize_local_operator_auth_managed_entities(
     if written_entities:
         instance.save_graph_delta(graph, entities=written_entities)
     return materialized
-
-
-def local_operator_actor_context(*, request_id: str | None = None) -> GovernedActorContext:
-    return GovernedActorContext(
-        actor_type=_LOCAL_OPERATOR_ACTOR_TYPE,
-        actor_id=LOCAL_OPERATOR_ACTOR_ID,
-        org_id=LOCAL_OPERATOR_ORG_ID,
-        operation_id=new_id("op", length=16, separator="_"),
-        timestamp=utc_now(),
-        request_id=request_id,
-    )
 
 
 def _credential_actor_context(credential: RuntimeCredentialRecord) -> GovernedActorContext:
