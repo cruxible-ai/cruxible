@@ -1,6 +1,6 @@
 # cruxible-client
 
-Typed HTTP client and public API contracts for talking to a governed Cruxible
+Typed HTTP client and public API contracts for talking to a Cruxible Playbill
 daemon.
 
 Install `cruxible-client` in agent environments that should only talk to a
@@ -12,11 +12,10 @@ This package intentionally contains:
 - shared public API request/response models
 - client-side error decoding
 
-It does not ship the daemon/runtime, graph/storage internals, workflow
-executor, or MCP server implementation. Those stay in `cruxible-core`.
+It does not ship the daemon/runtime, Git ledger, CAS, projection internals, or
+MCP server implementation. Those stay in `cruxible`.
 
-If you need to run the daemon, CLI, or MCP server, install `cruxible-core`
-instead.
+If you need to run the daemon, CLI, or MCP server, install `cruxible` instead.
 
 ## Public contract snapshot
 

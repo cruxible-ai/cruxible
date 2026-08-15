@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 __all__ = ["CruxibleClient"]
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"
 
 
 def __getattr__(name: str) -> Any:
