@@ -1,13 +1,11 @@
-"""Contract-freeze tests for the public cruxible-client surface."""
+"""Contract-freeze tests for the reduced Playbill client surface."""
 
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 from typing import Any, get_args
 
 import pytest
-from pydantic import BaseModel
 
 from cruxible_client import contracts
 from tests.support.client_contracts import (
@@ -18,7 +16,6 @@ from tests.support.client_contracts import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_PATH = REPO_ROOT / "tests/goldens/cruxible_client/contracts_snapshot.json"
-CLIENT_PATH = REPO_ROOT / "packages/cruxible-client/src/cruxible_client/http_client.py"
 
 
 def test_client_contract_snapshot_is_current() -> None:
@@ -39,166 +36,52 @@ def test_client_contract_snapshot_is_current() -> None:
     )
 
 
-def test_inspect_neighborhood_state_defaults_to_all() -> None:
-    """The public model default matches the runtime/service/docs default.
-
-    The expanded inspect contract defaults to state="all" (every stored edge
-    with its review/lifecycle markers); the client model must agree so an
-    absent `state` in a wire payload never misreports the read's visibility.
-    """
-    assert contracts.InspectNeighborhoodResult.model_fields["state"].default == "all"
-    schema = contracts.InspectNeighborhoodResult.model_json_schema()
-    assert schema["properties"]["state"]["default"] == "all"
-
-
-def test_group_status_contract_is_persisted_lifecycle_only() -> None:
-    """``withdrawn`` replaces the hard delete; ``auto_resolved`` is read-only legacy.
-
-    ``auto_resolved`` was a dead-end status no path transitioned out of, and it
-    escaped both ``find_pending_group`` and the pending unique index — so a
-    re-propose of the same signature minted a duplicate row. Auto-resolution is
-    now a real approve and survives as ``resolution_source``. The status literal
-    is still ADMISSIBLE because shipped 0.2.x instances persisted rows carrying
-    it; dropping it made every group read on those instances raise.
-    """
-    assert set(get_args(contracts.GroupStatus)) == {
-        "pending_review",
-        "applying",
-        "resolved",
-        "withdrawn",
-        "auto_resolved",
+def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
+    current = generate_contract_manifest()
+    assert set(current["models"]) == {
+        "PlaybillAcceptedCoordinate",
+        "PlaybillActivationReceipt",
+        "PlaybillApprovalChallenge",
+        "PlaybillApprovalReceipt",
+        "PlaybillBodyRead",
+        "PlaybillCasObjectResult",
+        "PlaybillDocumentHistory",
+        "PlaybillDocumentList",
+        "PlaybillDocumentView",
+        "PlaybillExplainResult",
+        "PlaybillExplainUnsupportedDetail",
+        "PlaybillHostResult",
+        "PlaybillInitResult",
+        "PlaybillPrincipalList",
+        "PlaybillProposalInspection",
+        "PlaybillProposalReview",
+        "PlaybillRefusalInspection",
+        "PlaybillSourceCheckResult",
+        "PlaybillSourceContext",
+        "RuntimeCredentialBootstrapResult",
+        "RuntimeCredentialListResult",
+        "RuntimeCredentialMetadata",
+        "RuntimeCredentialResult",
+        "ServerInfoResult",
+        "ServerRestartResult",
+    }
+    assert set(current["literal_aliases"]) == {
+        "PlaybillHostStatus",
+        "RuntimeCredentialPermissionMode",
     }
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"source_artifact_id": "SRC-1"},
-        {"source_artifact_id": "SRC-1", "chunk_id": ""},
-        {"source_artifact_id": "SRC-1", "heading_path": ["Evidence"]},
-        {
-            "source_artifact_id": "SRC-1",
-            "heading_path": [],
-            "block_selector": "paragraph:1",
-        },
-        {
-            "source_artifact_id": "SRC-1",
-            "heading_path": ["Evidence"],
-            "block_selector": "",
-        },
-        {"source_artifact_id": "", "chunk_id": "chunk-1"},
-    ],
-)
-def test_source_evidence_contract_rejects_incomplete_locators(
-    payload: dict[str, Any],
-) -> None:
-    with pytest.raises(ValueError):
-        contracts.SourceEvidenceInput.model_validate(payload)
-
-
-def test_source_evidence_contract_accepts_supported_locator_forms() -> None:
-    by_chunk = contracts.SourceEvidenceInput(
-        source_artifact_id="SRC-1",
-        chunk_id="chunk-1",
-    )
-    by_heading = contracts.SourceEvidenceInput(
-        source_artifact_id="SRC-1",
-        heading_path=["Evidence"],
-        block_selector="paragraph:1",
-    )
-
-    assert by_chunk.chunk_id == "chunk-1"
-    assert by_heading.heading_path == ["Evidence"]
-    assert by_heading.block_selector == "paragraph:1"
-
-
-def test_citation_handles_are_additive_on_every_source_evidence_write_contract() -> None:
-    relationship = contracts.RelationshipInput(
-        from_type="Part",
-        from_id="P-1",
-        relationship_type="fits",
-        to_type="Vehicle",
-        to_id="V-1",
-        citation_handles=["cite1_chunk"],
-    )
-    shared = contracts.SharedEvidenceInput(citation_handles=["src1_revision"])
-    signal = contracts.SignalInput(
-        signal_source="catalog",
-        signal="support",
-        citation_handles=["cite1_signal"],
-    )
-    member = contracts.MemberInput(
-        from_type="Part",
-        from_id="P-1",
-        relationship_type="fits",
-        to_type="Vehicle",
-        to_id="V-1",
-        citation_handles=["cite1_member"],
-    )
-
-    assert relationship.citation_handles == ["cite1_chunk"]
-    assert shared.citation_handles == ["src1_revision"]
-    assert signal.citation_handles == ["cite1_signal"]
-    assert member.citation_handles == ["cite1_member"]
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"source": "doc"},
-        {"source": "", "source_record_id": "section-1"},
-        {"source": "doc", "source_record_id": ""},
-        {"source": "doc", "source_record_id": "section-1", "metadata": "bad"},
-    ],
-)
-def test_evidence_ref_contract_rejects_malformed_refs(
-    payload: dict[str, Any],
-) -> None:
-    with pytest.raises(ValueError):
-        contracts.EvidenceRef.model_validate(payload)
-
-
-def test_evidence_ref_contract_preserves_extra_metadata() -> None:
-    ref = contracts.EvidenceRef.model_validate(
-        {
-            "source": "doc",
-            "source_record_id": "section-1",
-            "confidence": 0.9,
-            "metadata": {"kind": "roadmap"},
-        }
-    )
-
-    assert ref.source == "doc"
-    assert ref.source_record_id == "section-1"
-    assert ref.metadata == {"kind": "roadmap", "confidence": 0.9}
-
-
-def test_client_methods_parse_contract_return_models() -> None:
-    tree = ast.parse(CLIENT_PATH.read_text(encoding="utf-8"))
-    client_class = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "CruxibleClient"
-    )
-    violations: list[str] = []
-
-    for method in client_class.body:
-        if not isinstance(method, ast.FunctionDef):
-            continue
-        contract_name = _contract_return_name(method)
-        if contract_name is None:
-            continue
-        returns = [node for node in ast.walk(method) if isinstance(node, ast.Return)]
-        if not returns:
-            violations.append(f"{method.name}: missing return")
-            continue
-        for return_node in returns:
-            if not _returns_parse_model(return_node, contract_name):
-                violations.append(
-                    f"{method.name}: must return _parse_model(..., contracts.{contract_name})"
-                )
-
-    assert violations == []
+def test_host_and_coordinate_contracts_are_strict() -> None:
+    assert set(get_args(contracts.PlaybillHostStatus)) == {"created", "already_exists"}
+    assert contracts.PlaybillHostResult.model_config["extra"] == "forbid"
+    assert contracts.PlaybillAcceptedCoordinate.model_config["extra"] == "forbid"
+    assert set(contracts.PlaybillAcceptedCoordinate.model_fields) == {
+        "tag",
+        "git_oid",
+        "semantic_root",
+        "generation_root",
+        "compiler_digest",
+    }
 
 
 def _manifest(
@@ -326,34 +209,3 @@ def test_contract_compatibility_allows_additive_changes() -> None:
     assert "Added optional field Result.detail" in report.compatible
     assert any("Added Literal value(s) to Mode" in item for item in report.compatible)
     assert any("Added enum value(s) to Result.mode" in item for item in report.compatible)
-
-
-def _contract_return_name(method: ast.FunctionDef) -> str | None:
-    annotation = method.returns
-    if not isinstance(annotation, ast.Attribute):
-        return None
-    if not isinstance(annotation.value, ast.Name) or annotation.value.id != "contracts":
-        return None
-    value = getattr(contracts, annotation.attr)
-    if not isinstance(value, type) or not issubclass(value, BaseModel):
-        return None
-    return annotation.attr
-
-
-def _returns_parse_model(return_node: ast.Return, contract_name: str) -> bool:
-    value = return_node.value
-    if not isinstance(value, ast.Call):
-        return False
-    if not isinstance(value.func, ast.Attribute) or value.func.attr != "_parse_model":
-        return False
-    if not isinstance(value.func.value, ast.Name) or value.func.value.id != "self":
-        return False
-    if len(value.args) < 2:
-        return False
-    model_arg = value.args[1]
-    return (
-        isinstance(model_arg, ast.Attribute)
-        and isinstance(model_arg.value, ast.Name)
-        and model_arg.value.id == "contracts"
-        and model_arg.attr == contract_name
-    )

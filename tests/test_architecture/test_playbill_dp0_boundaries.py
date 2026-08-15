@@ -1,4 +1,4 @@
-"""DP-0A guardrails for the Playbill-only served dependency path."""
+"""DP-0B guardrails for the Playbill-only public and dependency surfaces."""
 
 from __future__ import annotations
 
@@ -46,11 +46,26 @@ RATIFIED_DONOR_REMOVAL_BATCHES = {
 }
 
 SERVED_ROOTS = (
+    "cruxible_core.cli.main",
+    "cruxible_core.cli.commands._common",
+    "cruxible_core.cli.commands.context",
+    "cruxible_core.cli.commands.credentials",
+    "cruxible_core.cli.commands.playbill",
+    "cruxible_core.cli.commands.server",
+    "cruxible_core.mcp.handlers",
+    "cruxible_core.mcp.server",
+    "cruxible_core.mcp.tools",
+    "cruxible_core.runtime.host_api",
     "cruxible_core.runtime.playbill_api",
     "cruxible_core.runtime.playbill_manager",
+    "cruxible_core.server.app",
+    "cruxible_core.server.auth",
     "cruxible_core.server.actor_identity",
     "cruxible_core.server.playbill_request_models",
+    "cruxible_core.server.routes.hosted_instances",
+    "cruxible_core.server.routes.instances",
     "cruxible_core.server.routes.playbill",
+    "cruxible_core.server.routes.runtime_credentials",
     "cruxible_core.playbill.service.documents",
     "cruxible_core.playbill.service.explain",
     "cruxible_core.playbill.service.review",
@@ -66,6 +81,9 @@ FORBIDDEN_MODULE_PREFIXES = (
     "cruxible_core.config.schema",
     "cruxible_core.service.mutations",
     "cruxible_core.service.execution",
+    "cruxible_core.storage.sqlite",
+    "cruxible_core.telemetry",
+    "cruxible_core.working_set",
 )
 
 
@@ -183,7 +201,7 @@ def test_importing_playbill_http_surface_does_not_initialize_legacy_core() -> No
 
 
 def test_http_and_mcp_playbill_calls_delegate_to_the_dedicated_facade() -> None:
-    expected = json.loads((GOLDENS / "served-surface-dp0a-v1.json").read_text(encoding="utf-8"))
+    expected = json.loads((GOLDENS / "served-surface-dp0b-v1.json").read_text(encoding="utf-8"))
     facade = _facade_operations()
     http = _playbill_facade_calls(HTTP_ROUTES)
     mcp = _playbill_facade_calls(MCP_HANDLERS)
@@ -194,6 +212,126 @@ def test_http_and_mcp_playbill_calls_delegate_to_the_dedicated_facade() -> None:
     assert set(mcp) <= set(facade)
     assert len(mcp) == expected["mcp_delegate_count"]
     assert "from cruxible_core.runtime import api\n" not in HTTP_ROUTES.read_text(encoding="utf-8")
+
+
+def test_legacy_public_modules_and_mixed_runtime_facade_are_absent() -> None:
+    deleted_cli = {
+        "attestations.py",
+        "config_views.py",
+        "decision_records.py",
+        "feedback.py",
+        "gates.py",
+        "groups.py",
+        "instances.py",
+        "kits.py",
+        "lifecycle_verbs.py",
+        "lists.py",
+        "mutations.py",
+        "outcome_contracts.py",
+        "procedures.py",
+        "read_stats.py",
+        "reads.py",
+        "source_artifacts.py",
+        "state.py",
+        "telemetry.py",
+        "workflows.py",
+        "working_set.py",
+    }
+    deleted_routes = {
+        "attestations.py",
+        "bindings.py",
+        "decision_records.py",
+        "feedback.py",
+        "gates.py",
+        "groups.py",
+        "installs.py",
+        "mutations.py",
+        "outcome_contracts.py",
+        "procedures.py",
+        "queries.py",
+        "snapshots.py",
+        "source_artifacts.py",
+        "state.py",
+        "telemetry.py",
+        "workflows.py",
+    }
+    assert not (CORE / "runtime" / "api.py").exists()
+    assert all(not (CORE / "cli" / "commands" / name).exists() for name in deleted_cli)
+    assert all(not (CORE / "server" / "routes" / name).exists() for name in deleted_routes)
+
+
+def test_public_registration_catalogs_are_playbill_only() -> None:
+    from mcp.server.fastmcp import FastMCP
+
+    from cruxible_client import CruxibleClient
+    from cruxible_core.cli.main import CLI_COMMANDS
+    from cruxible_core.mcp.tools import register_tools
+    from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
+
+    assert set(CLI_COMMANDS) == {"context", "credential", "playbill", "server"}
+    registered_tools = set(register_tools(FastMCP("dp0b-registration-inventory")))
+    assert registered_tools == set(TOOL_PERMISSIONS)
+    assert set(TOOL_PERMISSIONS) == {
+        "cruxible_version",
+        "cruxible_server_info",
+        "cruxible_playbill_host_create",
+        "cruxible_playbill_init",
+        "cruxible_playbill_store_body",
+        "cruxible_playbill_propose_document",
+        "cruxible_playbill_inspect_proposal",
+        "cruxible_playbill_inspect_refusal",
+        "cruxible_playbill_review",
+        "cruxible_playbill_prepare_approval",
+        "cruxible_playbill_submit_approval",
+        "cruxible_playbill_activate",
+        "cruxible_playbill_list_documents",
+        "cruxible_playbill_get_document",
+        "cruxible_playbill_dereference",
+        "cruxible_playbill_history",
+        "cruxible_playbill_explain",
+        "cruxible_playbill_source_context",
+        "cruxible_playbill_check_source_bundle",
+        "cruxible_playbill_propose_source_bundle",
+        "cruxible_playbill_list_principals",
+        "cruxible_playbill_propose_principal_change",
+    }
+    public_client_methods = {
+        name
+        for name, value in vars(CruxibleClient).items()
+        if callable(value) and not name.startswith("_")
+    }
+    assert public_client_methods == {
+        "close",
+        "version",
+        "server_info",
+        "server_restart",
+        "create_playbill_host",
+        "claim_runtime_bootstrap",
+        "create_runtime_credential",
+        "list_runtime_credentials",
+        "revoke_runtime_credential",
+        "rotate_runtime_credential",
+        "init_playbill",
+        "store_playbill_body",
+        "propose_playbill_document",
+        "propose_playbill_principal_change",
+        "list_playbill_principals",
+        "inspect_playbill_proposal",
+        "inspect_playbill_refusal",
+        "review_playbill_proposal",
+        "prepare_playbill_approval",
+        "submit_playbill_approval",
+        "approve_playbill_proposal",
+        "activate_playbill_proposal",
+        "list_playbill_documents",
+        "get_playbill_document",
+        "dereference_playbill_document",
+        "playbill_document_history",
+        "explain_playbill_subject",
+        "playbill_source_context",
+        "check_playbill_source_bundle",
+        "propose_playbill_source_bundle",
+    }
 
 
 def test_playbill_legacy_imports_are_adapter_only_and_manifested() -> None:

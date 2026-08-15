@@ -11,6 +11,7 @@ import yaml
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.commands._common import (
+    _activate_server_instance,
     _dispatch_cli,
     _emit_json,
     _require_instance_id,
@@ -121,9 +122,35 @@ def playbill_group() -> None:
     """Govern Documents through Playbill's proposal and acceptance ledger."""
 
 
+@playbill_group.group("host")
+def host_group() -> None:
+    """Allocate daemon-owned hosts without adopting config or semantic state."""
+
+
+@host_group.command("create")
+@click.option("--instance-id", default=None, help="Optional caller-selected opaque ID.")
+@json_option
+@handle_errors
+def create_host(instance_id: str | None, output_json: bool) -> None:
+    """Allocate an empty host and remember it as the active instance."""
+
+    result = _dispatch_cli(
+        lambda client: client.create_playbill_host(instance_id=instance_id),
+        lambda: None,
+        allow_local=False,
+        command_name="playbill host create",
+    )
+    assert isinstance(result, contracts.PlaybillHostResult)
+    _activate_server_instance(result.instance_id)
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Playbill host: {result.instance_id} ({result.status})")
+
+
 @playbill_group.command("init")
 @click.option("--key-dir", required=True, help="Client custody directory outside the workspace.")
-@click.option("--principal-id", default="operator", show_default=True)
+@click.option("--principal-id", default="bootstrap-admin", show_default=True)
 @click.option("--recovery-key-dir", default=None, help="Optional offline recovery custody dir.")
 @click.option("--recovery-principal-id", default="recovery", show_default=True)
 @click.option("--profile", type=click.Choice(["local", "cloud"]), default="local")

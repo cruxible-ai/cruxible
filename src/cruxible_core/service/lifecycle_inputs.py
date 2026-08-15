@@ -25,11 +25,12 @@ the same :class:`TerminalLifecycleWriteRefusedError`.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
-from cruxible_client import contracts
 from cruxible_core.errors import TerminalLifecycleWriteRefusedError
 from cruxible_core.graph.assertion_state import (
+    EntityLifecycleStatus,
+    RelationshipLifecycleStatus,
     TERMINAL_ENTITY_LIFECYCLE_STATUSES,
     TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES,
     WRITABLE_ENTITY_LIFECYCLE_STATUSES,
@@ -40,6 +41,16 @@ from cruxible_core.graph.assertion_state import (
     EntityLifecycleState as _EntityLifecycleState,
 )
 from cruxible_core.graph.types import EntityMetadata
+
+
+class EntityLifecycleInput(Protocol):
+    status: EntityLifecycleStatus
+    reason: str | None
+
+
+class RelationshipLifecycleInput(Protocol):
+    status: RelationshipLifecycleStatus
+    reason: str | None
 
 
 def _refuse_terminal_lifecycle(status: str, *, kind: str, writable: str) -> None:
@@ -54,7 +65,7 @@ def _refuse_terminal_lifecycle(status: str, *, kind: str, writable: str) -> None
 
 def entity_metadata_with_lifecycle(
     metadata: dict[str, Any] | None,
-    lifecycle: contracts.EntityLifecycleInput | None,
+    lifecycle: EntityLifecycleInput | None,
 ) -> dict[str, Any]:
     """Build the typed entity-metadata envelope for a direct write.
 
@@ -83,7 +94,7 @@ def entity_metadata_with_lifecycle(
 
 
 def relationship_lifecycle_state(
-    lifecycle: contracts.RelationshipLifecycleInput | None,
+    lifecycle: RelationshipLifecycleInput | None,
 ) -> RelationshipLifecycleState | None:
     """Map a typed relationship lifecycle input to the core lifecycle state.
 

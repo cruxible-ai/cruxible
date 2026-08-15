@@ -6,42 +6,17 @@ import functools
 import importlib
 import os
 import sys
-from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TextIO
+from typing import TYPE_CHECKING, Any
 
 import click
 
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
-from cruxible_core.telemetry.instrumentation import (
-    collect_cli_boundaries,
-    finish_cli_boundaries,
-)
 
 if TYPE_CHECKING:
     import httpx
-
-
-class _CountingTextIO:
-    """Transparent text-stream proxy that counts the bytes Click already emits."""
-
-    def __init__(self, wrapped: TextIO) -> None:
-        self._wrapped = wrapped
-        self.byte_count = 0
-
-    def write(self, value: str) -> int:
-        encoding = self._wrapped.encoding or "utf-8"
-        errors = self._wrapped.errors or "strict"
-        self.byte_count += len(value.encode(encoding, errors=errors))
-        return self._wrapped.write(value)
-
-    def flush(self) -> None:
-        self._wrapped.flush()
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._wrapped, name)
 
 
 # Authoritative CLI inventory for commands that write authoritative state or
@@ -57,60 +32,7 @@ class _CountingTextIO:
 # - manual: the command resolves its target from command-specific inputs and
 #   emits the notice itself immediately before the write.
 MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
-    ("init",): "create",
-    ("lock",): "lock",
-    ("kit", "repin"): "kit",
-    ("run",): "active",
-    ("apply",): "active",
-    ("propose",): "active",
-    ("snapshot", "create"): "active",
-    ("clone",): "active",
-    ("source", "register"): "active",
-    ("state", "publish"): "active",
-    ("state", "create-overlay"): "create",
-    ("state", "pull-apply"): "active",
-    ("instance", "backup"): "active",
-    ("instance", "restore"): "create",
-    ("instance", "relocate"): "active",
-    ("credential", "claim-bootstrap"): "active",
-    ("credential", "mint"): "active",
-    ("credential", "recover-admin"): "manual",
-    ("credential", "revoke"): "active",
-    ("credential", "rotate"): "active",
-    ("decision-record", "create"): "active",
-    ("decision-record", "finalize"): "active",
-    ("decision-record", "abandon"): "active",
-    ("config", "reload"): "active",
-    ("config", "add-constraint"): "active",
-    ("config", "add-decision-policy"): "active",
-    ("feedback", "record"): "active",
-    ("feedback", "from-query"): "active",
-    ("feedback", "batch"): "active",
-    ("outcome", "record"): "active",
-    ("outcome", "open"): "active",
-    ("outcome", "resolve"): "active",
-    ("outcome", "dispose"): "active",
-    ("entity", "add"): "active",
-    ("entity", "update"): "active",
-    ("entity", "supersede"): "active",
-    ("entity", "retire"): "active",
-    ("relationship", "add"): "active",
-    ("relationship", "update"): "active",
-    ("relationship", "supersede"): "active",
-    ("relationship", "retract"): "active",
-    ("batch-direct-write",): "active",
-    ("group", "propose"): "active",
-    ("group", "resolve"): "active",
-    ("group", "trust"): "active",
-    ("procedure", "propose"): "active",
-    ("procedure", "record-reading"): "active",
-    ("procedure", "resolve"): "active",
-    ("procedure", "retire"): "active",
-    ("procedure", "run"): "active",
-    ("procedure", "withdraw"): "active",
-    ("attest", "record"): "active",
-    ("attest", "resolve"): "active",
-    ("migrate",): "active",
+    ("playbill", "host", "create"): "create",
     ("playbill", "init"): "active",
     ("playbill", "body", "store"): "active",
     ("playbill", "document", "propose"): "active",
@@ -120,6 +42,11 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "principal", "rotate"): "active",
     ("playbill", "principal", "recover"): "active",
     ("playbill", "principal", "revoke"): "active",
+    ("credential", "claim-bootstrap"): "active",
+    ("credential", "mint"): "active",
+    ("credential", "recover-admin"): "manual",
+    ("credential", "revoke"): "active",
+    ("credential", "rotate"): "active",
 }
 
 
@@ -196,23 +123,7 @@ LONG_RUNNING_MARKER = "_cruxible_long_running"
 
 
 def long_running_command(f: Any) -> Any:
-    """Mark a command whose callback owns the process for its whole lifetime.
-
-    ``handle_errors`` normally collects boundary events and proxies
-    stdout/stderr for the duration of the callback, both of which assume the
-    callback returns promptly. For a callback that returns only as the process
-    shuts down — ``cruxible server start`` hosts uvicorn in-process — those
-    assumptions invert into bugs: every served request would append to an event
-    list nobody drains, shutdown would replay the whole list as a write storm
-    carrying the daemon's entire wall time as each duration, each request would
-    be counted twice (the HTTP middleware already counted it), and structlog
-    would bind the counting stream proxy for the process lifetime. Marked
-    commands opt out of collection AND of the stream proxies entirely; their
-    traffic is counted at the surface that actually serves it.
-
-    Apply this BELOW ``@handle_errors`` so the marker is set on the callback
-    before ``handle_errors`` wraps it.
-    """
+    """Document that a callback owns the process for its lifetime."""
     setattr(f, LONG_RUNNING_MARKER, True)
     return f
 
@@ -223,7 +134,6 @@ def handle_errors(f: Any) -> Any:
     Core errors subclass the client base, so the client hierarchy is the
     single catch surface for local and remote failures.
     """
-    long_running = bool(getattr(f, LONG_RUNNING_MARKER, False))
 
     def run_with_error_handling(*args: Any, **kwargs: Any) -> Any:
         try:
@@ -270,28 +180,7 @@ def handle_errors(f: Any) -> Any:
 
     @functools.wraps(f)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        if long_running:
-            return run_with_error_handling(*args, **kwargs)
-
-        ctx = click.get_current_context(silent=True)
-        command_path = _command_path(ctx) if ctx is not None else ()
-        stdout = _CountingTextIO(sys.stdout)
-        stderr = _CountingTextIO(sys.stderr)
-        command_failed = False
-        with collect_cli_boundaries() as collector:
-            try:
-                with redirect_stdout(stdout), redirect_stderr(stderr):
-                    return run_with_error_handling(*args, **kwargs)
-            except BaseException:
-                command_failed = True
-                raise
-            finally:
-                finish_cli_boundaries(
-                    collector,
-                    command_path=command_path,
-                    response_bytes=stdout.byte_count + stderr.byte_count,
-                    command_failed=command_failed,
-                )
+        return run_with_error_handling(*args, **kwargs)
 
     return wrapper
 
@@ -422,25 +311,20 @@ def _group(
 # names and first-paragraph help live here so top-level help and completion can
 # enumerate the full surface without importing any domain command module.
 CLI_COMMANDS: dict[str, LazyCommandSpec] = {
-    "init": _command(
-        "workflows",
-        "init",
-        "Initialize a new instance or governed server-backed workspace.",
-    ),
-    "validate": _command(
-        "workflows",
-        "validate",
-        "Validate a config YAML file without creating an instance.",
-    ),
-    "migrate": _command(
-        "procedures",
-        "migrate_cmd",
-        "Converge live v1 procedures through supervised v2 re-acceptance.",
-    ),
     "playbill": _group(
-        "Govern Documents through Playbill's proposal and acceptance ledger.",
+        "Govern state through Playbill's proposal and acceptance ledger.",
         {
-            "init": _command("playbill", "init_playbill", "Bootstrap opt-in Playbill state."),
+            "host": _group(
+                "Allocate daemon-owned Playbill hosts.",
+                {
+                    "create": _command(
+                        "playbill", "create_host", "Allocate an empty host for Playbill."
+                    )
+                },
+                module="playbill",
+                attr="host_group",
+            ),
+            "init": _command("playbill", "init_playbill", "Bootstrap Playbill state."),
             "body": _group(
                 "Store inert Document body bytes.",
                 {
@@ -534,661 +418,43 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         attr="playbill_group",
     ),
     "context": _group(
-        "Manage remembered governed server and instance context.",
+        "Manage remembered daemon and instance context.",
         {
-            "show": _command("context", "context_show", "Show the remembered CLI context."),
-            "connect": _command(
-                "context",
-                "context_connect",
-                "Persist the current governed transport and optional instance.",
-            ),
-            "use": _command("context", "context_use", "Set the active governed instance ID."),
-            "clear": _command("context", "context_clear", "Clear remembered governed CLI context."),
+            "show": _command("context", "context_show", "Show remembered CLI context."),
+            "connect": _command("context", "context_connect", "Persist daemon context."),
+            "use": _command("context", "context_use", "Set the active instance ID."),
+            "clear": _command("context", "context_clear", "Clear remembered context."),
         },
         module="context",
         attr="connect_group",
     ),
-    "decision-record": _group(
-        "Manage decision records and their logged receipts.",
-        {
-            "create": _command("decision_records", "create_cmd", "Create an open decision record."),
-            "get": _command("decision_records", "get_cmd", "Fetch one decision record."),
-            "list": _command("decision_records", "list_cmd", "List decision records."),
-            "events": _command("decision_records", "events_cmd", "List decision-record events."),
-            "finalize": _command(
-                "decision_records", "finalize_cmd", "Finalize an open decision record."
-            ),
-            "abandon": _command(
-                "decision_records", "abandon_cmd", "Abandon an open decision record."
-            ),
-        },
-        module="decision_records",
-        attr="decision_records_cmd",
-    ),
     "credential": _group(
-        "Manage runtime bearer credentials for a governed server instance.",
+        "Manage daemon transport credentials.",
         {
             "claim-bootstrap": _command(
-                "credentials",
-                "claim_bootstrap_cmd",
-                "Exchange the one-time bootstrap secret for the first ADMIN runtime token.",
+                "credentials", "claim_bootstrap_cmd", "Claim the initial ADMIN token."
             ),
-            "mint": _command("credentials", "mint_cmd", "Mint a new runtime bearer credential."),
-            "list": _command(
-                "credentials",
-                "list_cmd",
-                "List runtime bearer credentials for the active instance.",
-            ),
+            "mint": _command("credentials", "mint_cmd", "Mint a runtime credential."),
+            "list": _command("credentials", "list_cmd", "List runtime credentials."),
             "recover-admin": _command(
-                "credentials",
-                "recover_admin_cmd",
-                "Recover an ADMIN token by local filesystem ownership of server state.",
+                "credentials", "recover_admin_cmd", "Recover ADMIN from local custody."
             ),
-            "revoke": _command("credentials", "revoke_cmd", "Revoke a runtime bearer credential."),
-            "rotate": _command(
-                "credentials",
-                "rotate_cmd",
-                "Rotate a runtime bearer credential and print the replacement token once.",
-            ),
+            "revoke": _command("credentials", "revoke_cmd", "Revoke a runtime credential."),
+            "rotate": _command("credentials", "rotate_cmd", "Rotate a runtime credential."),
         },
         module="credentials",
         attr="credential_group",
     ),
-    "lock": _command(
-        "workflows",
-        "lock_cmd",
-        "Generate a workflow lock file for the current instance config.",
-    ),
-    "kit": _group(
-        "Manage local materialized kits.",
-        {
-            "repin": _command(
-                "kits",
-                "kit_repin_cmd",
-                "Accept intentional runtime-file edits in a materialized kit.",
-            ),
-        },
-        module="kits",
-        attr="kit_group",
-    ),
-    "state": _group(
-        "Compare, publish, and track state across coordinates.",
-        {
-            "diff": _command(
-                "state",
-                "state_diff_cmd",
-                "Diff state between two coordinates (snapshot, current, upstream, origin).",
-            ),
-            "publish": _command(
-                "state",
-                "state_publish_cmd",
-                "Publish the current root state instance as an immutable release bundle.",
-            ),
-            "create-overlay": _command(
-                "state",
-                "create_state_overlay_cmd",
-                "Create a new local overlay instance from a published state release.",
-            ),
-            "status": _command(
-                "state",
-                "state_status_cmd",
-                "Show upstream tracking metadata for the current instance.",
-            ),
-            "health": _command(
-                "state",
-                "state_health_cmd",
-                "Show read-only deterministic state-health maintenance signals.",
-            ),
-            "pull-preview": _command(
-                "state",
-                "state_pull_preview_cmd",
-                "Preview pulling a newer upstream release into the current overlay.",
-            ),
-            "pull-apply": _command(
-                "state",
-                "state_pull_apply_cmd",
-                "Apply a previewed upstream release into the current overlay.",
-            ),
-        },
-        module="state",
-        attr="state_group",
-    ),
-    "instance": _group(
-        "Back up and restore exact Cruxible instances.",
-        {
-            "backup": _command(
-                "instances",
-                "instance_backup_cmd",
-                "Write a portable same-identity backup artifact for the current instance.",
-            ),
-            "restore": _command(
-                "instances", "instance_restore_cmd", "Restore a same-identity backup artifact."
-            ),
-            "relocate": _command(
-                "instances",
-                "instance_relocate_cmd",
-                "Move the current healthy instance to a new directory, preserving identity.",
-            ),
-        },
-        module="instances",
-        attr="instance_group",
-    ),
-    "plan": _command("workflows", "plan_cmd", "Compile a workflow plan for the current instance."),
-    "run": _command("workflows", "run_cmd", "Execute a workflow for the current instance."),
-    "apply": _command(
-        "workflows",
-        "apply_cmd",
-        "Apply a canonical workflow after verifying preview identity.",
-    ),
-    "test": _command(
-        "workflows",
-        "test_cmd",
-        "Execute config-defined workflow tests for the current instance.",
-    ),
-    "propose": _command(
-        "workflows",
-        "propose_cmd",
-        "Execute a workflow and bridge its output into a candidate group.",
-    ),
-    "snapshot": _group(
-        "Manage immutable state snapshots.",
-        {
-            "create": _command(
-                "workflows",
-                "snapshot_create_cmd",
-                "Create an immutable full snapshot for the current instance.",
-            ),
-            "list": _command(
-                "workflows", "snapshot_list_cmd", "List snapshots for the current instance."
-            ),
-        },
-        module="workflows",
-        attr="snapshot_group",
-    ),
-    "source": _group(
-        "Register and dereference source-backed evidence.",
-        {
-            "list": _command(
-                "source_artifacts", "list_source_artifacts", "List registered source artifacts."
-            ),
-            "get": _command(
-                "source_artifacts",
-                "get_source_artifact",
-                "Read source artifact metadata and chunk summaries.",
-            ),
-            "register": _command(
-                "source_artifacts",
-                "register_source_artifact",
-                "Register a source artifact for proposal evidence.",
-            ),
-            "dereference": _command(
-                "source_artifacts",
-                "dereference_source_evidence",
-                "Return source text for a registered source-evidence locator.",
-            ),
-        },
-        module="source_artifacts",
-        attr="source_group",
-    ),
-    "clone": _command(
-        "workflows", "clone_cmd", "Create a new local instance from a chosen snapshot."
-    ),
-    "query": _group(
-        "Run, inspect, and discover named queries on this instance.",
-        {
-            "run": _command(
-                "reads", "query_run", "Execute a named query and display results plus the receipt."
-            ),
-            "inline": _command(
-                "reads",
-                "query_inline_cmd",
-                "Execute a bounded inline query without persisting it to config.",
-            ),
-            "list": _command("reads", "query_list_cmd", "List named queries as bounded summaries."),
-            "describe": _command(
-                "reads",
-                "query_describe_cmd",
-                "Describe one named query with required params and example IDs.",
-            ),
-        },
-        module="reads",
-        attr="query",
-    ),
     "server": _group(
         "Launch and inspect the Cruxible daemon.",
         {
-            "start": _command(
-                "server", "server_start_cmd", "Launch the Cruxible daemon in the foreground."
-            ),
-            "status": _command(
-                "server",
-                "server_status_cmd",
-                "Report a running daemon's version, state dir, transport, and instances.",
-            ),
-            "info": _command(
-                "server",
-                "server_info_cmd",
-                "Show live daemon metadata such as transport policy and state dir.",
-            ),
-            "restart": _command(
-                "server",
-                "server_restart_cmd",
-                "Re-exec the live daemon in place, preserving its port, state dir, and env.",
-            ),
+            "start": _command("server", "server_start_cmd", "Launch the daemon in the foreground."),
+            "status": _command("server", "server_status_cmd", "Report daemon status."),
+            "info": _command("server", "server_info_cmd", "Show daemon metadata."),
+            "restart": _command("server", "server_restart_cmd", "Re-exec the daemon in place."),
         },
         module="server",
         attr="server_group",
-    ),
-    "explain": _command("reads", "explain", "Explain a query result using its receipt."),
-    "list": _group(
-        "List entities, receipts, or feedback.",
-        {
-            "entities": _command("lists", "list_entities", "List entities of a given type."),
-            "receipts": _command("lists", "list_receipts", "List receipt summaries."),
-            "traces": _command("lists", "list_traces", "List provider execution trace summaries."),
-            "feedback": _command("lists", "list_feedback", "List feedback records."),
-            "outcomes": _command("lists", "list_outcomes", "List outcome records."),
-            "edges": _command("lists", "list_edges", "List edges in the graph."),
-        },
-        module="lists",
-        attr="list_group",
-    ),
-    "schema": _command("reads", "schema", "Display the config schema for this instance."),
-    "stats": _command(
-        "read_stats", "stats_cmd", "Display entity and relationship counts for this instance."
-    ),
-    "telemetry": _group(
-        "Inspect aggregate traffic crossing core-owned surfaces.",
-        {
-            "summary": _command(
-                "telemetry",
-                "telemetry_summary_cmd",
-                "Show per-surface call, error, payload-byte, and duration counters.",
-            ),
-        },
-        module="telemetry",
-        attr="telemetry_group",
-    ),
-    "sample": _command("reads", "sample", "Show a sample of entities of a given type."),
-    "evaluate": _command(
-        "reads",
-        "evaluate",
-        "Assess graph quality: orphans, gaps, violations, unreviewed co-members.",
-    ),
-    "lint": _command("reads", "lint_cmd", "Run the aggregate read-only corpus lint pass."),
-    "inspect": _group(
-        "Inspect entities plus canonical read-only system views.",
-        {
-            "ontology": _command(
-                "reads",
-                "inspect_ontology_cmd",
-                "Show compact topology and authoring contracts for the active ontology.",
-            ),
-            "workflows": _command(
-                "reads",
-                "inspect_workflows_cmd",
-                "Show the canonical workflow view for the current instance config.",
-            ),
-            "queries": _command(
-                "reads",
-                "inspect_queries_cmd",
-                "Show the canonical query view for the current instance config.",
-            ),
-            "governance": _command(
-                "reads",
-                "inspect_governance_cmd",
-                "Show the canonical governance view for the current instance.",
-            ),
-            "overview": _command(
-                "reads",
-                "inspect_overview_cmd",
-                "Show the generated config overview built from canonical views.",
-            ),
-            "trace": _command(
-                "reads", "inspect_trace_cmd", "Inspect a provider execution trace by ID."
-            ),
-        },
-        module="reads",
-        attr="inspect_group",
-    ),
-    "gate": _group(
-        "Evaluate declared repo gates against state.",
-        {
-            "list": _command("gates", "gate_list", "Show the active instance's declared gates."),
-            "check": _command(
-                "gates",
-                "gate_check",
-                "Evaluate gate NAME: is every candidate value pinned by satisfying state?",
-            ),
-        },
-        module="gates",
-        attr="gate_group",
-    ),
-    "ws": _group(
-        "Agent-local working set: opt-in, NON-AUTHORITATIVE read cache.",
-        {
-            "path": _command(
-                "working_set",
-                "ws_path_cmd",
-                "Print the records file path for the current context (for rg/jq).",
-            ),
-            "status": _command(
-                "working_set",
-                "ws_status_cmd",
-                "Show record counts, file size, and cached-vs-current revision spread.",
-            ),
-            "enable": _command(
-                "working_set",
-                "ws_enable_cmd",
-                "Persistently enable working-set capture.",
-            ),
-            "disable": _command(
-                "working_set",
-                "ws_disable_cmd",
-                "Persistently disable working-set capture.",
-            ),
-            "catalog": _command(
-                "working_set",
-                "ws_catalog_cmd",
-                "Regenerate the control-plane catalog from the active config.",
-            ),
-            "verify": _command(
-                "working_set",
-                "ws_verify_cmd",
-                "Verify cached records against the current instance read revision.",
-            ),
-            "refresh": _command(
-                "working_set",
-                "ws_refresh_cmd",
-                "Regenerate the catalog and refresh stale/unknown records.",
-            ),
-            "clear": _command(
-                "working_set",
-                "ws_clear_cmd",
-                "Delete the current context's records and catalog files.",
-            ),
-        },
-        module="working_set",
-        attr="ws_group",
-    ),
-    "config": _group(
-        "Edit, validate, and render the active config.",
-        {
-            "reload": _command(
-                "mutations",
-                "reload_config_cmd",
-                "Validate the active config or repoint the instance to a new config file.",
-            ),
-            "status": _command(
-                "mutations",
-                "config_status_cmd",
-                "Report source drift and active materialized-config integrity.",
-            ),
-            "views": _command(
-                "config_views",
-                "config_views_cmd",
-                "Render canonical Mermaid/Markdown views for a Cruxible config.",
-            ),
-            "expand": _command(
-                "config_views",
-                "config_expand_cmd",
-                "Expand a compact authoring config to the explicit engine config.",
-            ),
-            "add-constraint": _command(
-                "mutations", "add_constraint_cmd", "Add a constraint rule to the config."
-            ),
-            "add-decision-policy": _command(
-                "mutations",
-                "add_decision_policy_cmd",
-                "Add a decision policy to the config.",
-            ),
-        },
-    ),
-    "feedback": _group(
-        "Record, batch, analyze, and inspect edge feedback.",
-        {
-            "record": _command(
-                "feedback",
-                "feedback_cmd",
-                "Submit feedback on a specific edge by explicit relationship coordinates.",
-            ),
-            "from-query": _command(
-                "feedback",
-                "feedback_from_query_cmd",
-                "Submit edge feedback by selecting relationship evidence from a query receipt.",
-            ),
-            "batch": _command(
-                "feedback",
-                "feedback_batch_cmd",
-                "Submit a batch of edge feedback with one top-level receipt.",
-            ),
-            "profile": _command(
-                "feedback",
-                "feedback_profile_cmd",
-                "Display the configured feedback profile for one relationship type.",
-            ),
-            "analyze": _command(
-                "reads",
-                "analyze_feedback_cmd",
-                "Analyze structured feedback and print remediation suggestions.",
-            ),
-        },
-        module="feedback",
-        attr="feedback_group",
-    ),
-    "outcome": _group(
-        "Record, analyze, and inspect decision outcomes.",
-        {
-            "record": _command("feedback", "outcome_cmd", "Record the outcome of a decision."),
-            "profile": _command(
-                "feedback",
-                "outcome_profile_cmd",
-                "Display the configured outcome profile for one anchor context.",
-            ),
-            "analyze": _command(
-                "reads",
-                "analyze_outcomes_cmd",
-                "Analyze structured outcomes and print trust/debugging suggestions.",
-            ),
-            "open": _command(
-                "outcome_contracts",
-                "outcome_open",
-                "Open a resolution contract on a subject before it is accepted.",
-            ),
-            "resolve": _command(
-                "outcome_contracts",
-                "outcome_resolve",
-                "Record what reality said about one activated resolution contract.",
-            ),
-            "dispose": _command(
-                "outcome_contracts",
-                "outcome_dispose",
-                "Uphold or overturn a recorded outcome.",
-            ),
-            "list": _command(
-                "outcome_contracts",
-                "outcome_list",
-                "List resolution contracts with status, activation, and standing answer.",
-            ),
-            "due": _command(
-                "outcome_contracts",
-                "outcome_due",
-                "List outcomes due for checking, overdue, or contradicted and undisposed.",
-            ),
-        },
-        module="feedback",
-        attr="outcome_group",
-    ),
-    "entity": _group(
-        "Entity reads and writes.",
-        {
-            "add": _command(
-                "mutations",
-                "add_entity_cmd",
-                "Create one entity using JSON properties or FIELD=VALUE assignments.",
-            ),
-            "update": _command(
-                "mutations",
-                "update_entity_cmd",
-                "Update one existing entity's properties and/or lifecycle state.",
-            ),
-            "supersede": _command(
-                "lifecycle_verbs",
-                "entity_supersede_cmd",
-                "Supersede an entity with an existing live same-type successor.",
-            ),
-            "retire": _command(
-                "lifecycle_verbs",
-                "entity_retire_cmd",
-                "Retire an entity without cascading attached edges.",
-            ),
-            "get": _command("reads", "get_entity_cmd", "Look up a specific entity by type and ID."),
-            "inspect": _command(
-                "reads", "inspect_entity_cmd", "Inspect an entity and its bounded neighborhood."
-            ),
-            "history": _command(
-                "reads",
-                "inspect_entity_history_cmd",
-                "Inspect receipt-derived entity change history for one entity type or entity.",
-            ),
-        },
-    ),
-    "relationship": _group(
-        "Relationship reads and writes.",
-        {
-            "add": _command(
-                "mutations",
-                "add_relationship_cmd",
-                "Add one relationship using FIELD=VALUE property assignments.",
-            ),
-            "update": _command(
-                "mutations",
-                "update_relationship_cmd",
-                "Update one existing relationship's properties, evidence, or lifecycle.",
-            ),
-            "supersede": _command(
-                "lifecycle_verbs",
-                "relationship_supersede_cmd",
-                "Supersede a claim with an existing live same-type successor.",
-            ),
-            "retract": _command(
-                "lifecycle_verbs",
-                "relationship_retract_cmd",
-                "Retract a claim without a successor.",
-            ),
-            "get": _command(
-                "reads",
-                "get_relationship_cmd",
-                "Look up a specific relationship by its endpoints and type.",
-            ),
-            "lineage": _command(
-                "reads",
-                "inspect_relationship_lineage_cmd",
-                "Inspect a relationship's stored provenance lineage.",
-            ),
-        },
-    ),
-    "batch-direct-write": _command(
-        "mutations",
-        "batch_direct_write_cmd",
-        "Validate or apply a direct batch graph write payload.",
-    ),
-    "export": _group(
-        "Export graph data to files.",
-        {"edges": _command("lists", "export_edges", "Export all edges to CSV.")},
-        module="lists",
-        attr="export_group",
-    ),
-    "group": _group(
-        "Manage candidate groups for batch edge review.",
-        {
-            "propose": _command(
-                "groups", "group_propose", "Propose a candidate group of edges for batch review."
-            ),
-            "resolve": _command(
-                "groups", "group_resolve", "Resolve a candidate group (approve or reject)."
-            ),
-            "trust": _command("groups", "group_trust", "Update trust status on a resolution."),
-            "get": _command("groups", "group_get", "Get details of a candidate group."),
-            "list": _command("groups", "group_list", "List candidate groups."),
-            "resolutions": _command("groups", "group_resolutions", "List group resolutions."),
-            "status": _command(
-                "groups", "group_status", "Show lifecycle status for a signature bucket."
-            ),
-        },
-        module="groups",
-        attr="group_group",
-    ),
-    "attest": _group(
-        "Record and review observations against relationship claims.",
-        {
-            "record": _command(
-                "attestations",
-                "attest_record",
-                "Record one observation against a relationship claim.",
-            ),
-            "list": _command(
-                "attestations",
-                "attest_list",
-                "List immutable attestation history.",
-            ),
-            "queue": _command(
-                "attestations",
-                "attest_queue",
-                "List live claims with open current-content contradictions.",
-            ),
-            "resolve": _command(
-                "attestations",
-                "attest_resolve",
-                "Append a reviewer disposition to one attestation.",
-            ),
-        },
-        module="attestations",
-        attr="attest_group",
-    ),
-    "procedure": _group(
-        "Manage governed executable procedures. Workflows are designed; procedures are learned.",
-        {
-            "propose": _command(
-                "procedures",
-                "procedure_propose",
-                "Propose a procedure definition from a JSON or YAML file.",
-            ),
-            "list": _command("procedures", "procedure_list", "List governed procedures."),
-            "show": _command(
-                "procedures",
-                "procedure_show",
-                "Show one procedure definition and lifecycle record.",
-            ),
-            "resolve": _command(
-                "procedures",
-                "procedure_resolve",
-                "Accept or reject one pending procedure.",
-            ),
-            "withdraw": _command(
-                "procedures",
-                "procedure_withdraw",
-                "Withdraw your own pending proposal, freeing its name to re-propose.",
-            ),
-            "retire": _command("procedures", "procedure_retire", "Retire one live procedure."),
-            "run": _command(
-                "procedures",
-                "procedure_run",
-                "Run one live procedure through the generic procedure executor.",
-            ),
-            "runs": _command(
-                "procedures",
-                "procedure_runs",
-                "List runs, including started records with null verdicts.",
-            ),
-            "record-reading": _command(
-                "procedures",
-                "procedure_record_reading",
-                "Record one outcome reading without changing its requested evidence grade.",
-            ),
-        },
-        module="procedures",
-        attr="procedure_group",
     ),
 }
 
@@ -1245,7 +511,6 @@ def cli(
             "instance_id": resolved_instance_id,
             "require_server": settings.require_server,
             "json_compact": json_compact,
-            "working_set": stored.working_set,
             "target_transport_source": _target_source(
                 explicit=server_url is not None or server_socket is not None,
                 environment=env_server_url is not None or env_server_socket is not None,

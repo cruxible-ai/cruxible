@@ -15,7 +15,6 @@ import cruxible_core.cli.commands.credentials as credential_commands
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
-from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import (
@@ -23,7 +22,6 @@ from cruxible_core.server.credentials import (
     reset_runtime_credential_store,
 )
 from cruxible_core.server.registry import get_registry, reset_registry
-from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
 @pytest.fixture
@@ -39,13 +37,11 @@ def isolated_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     reset_registry()
     reset_runtime_credential_store()
     reset_client_cache()
-    get_manager().clear()
     yield
     reset_permissions()
     reset_registry()
     reset_runtime_credential_store()
     reset_client_cache()
-    get_manager().clear()
 
 
 def _seed_admin_state(
@@ -331,14 +327,13 @@ def test_recovered_admin_token_authenticates_against_server(
     reset_registry()
     reset_runtime_credential_store()
     reset_client_cache()
-    get_manager().clear()
     client = TestClient(create_app())
 
-    response = client.post(
-        "/api/v1/validate",
-        json={"config_yaml": CAR_PARTS_YAML},
+    instance_id = json.loads(result.stdout)["credential"]["instance_id"]
+    response = client.get(
+        f"/api/v1/{instance_id}/runtime/credentials",
         headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 200
-    assert response.json()["valid"] is True
+    assert any(item["created_by"] == "local_recovery" for item in response.json()["credentials"])

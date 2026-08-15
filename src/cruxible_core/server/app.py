@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -11,12 +12,10 @@ from typing import Any
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
 from cruxible_core import __version__
 from cruxible_core.errors import CoreError
-from cruxible_core.runtime.instance import CruxibleInstance, enforce_config_integrity
 from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.config import (
@@ -30,45 +29,20 @@ from cruxible_core.server.errors import (
     ErrorResponse,
     error_to_response,
 )
-from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
+from cruxible_core.server.registry import get_registry
 from cruxible_core.server.request_logging import configure_request_logging
-from cruxible_core.server.routes.attestations import router as attestations_router
-from cruxible_core.server.routes.bindings import router as bindings_router
-from cruxible_core.server.routes.decision_records import router as decision_records_router
-from cruxible_core.server.routes.feedback import router as feedback_router
-from cruxible_core.server.routes.gates import router as gates_router
-from cruxible_core.server.routes.groups import router as groups_router
 from cruxible_core.server.routes.hosted_instances import router as hosted_instances_router
-from cruxible_core.server.routes.installs import router as installs_router
 from cruxible_core.server.routes.instances import router as instances_router
-from cruxible_core.server.routes.mutations import router as mutations_router
-from cruxible_core.server.routes.outcome_contracts import (
-    router as outcome_contracts_router,
-)
 from cruxible_core.server.routes.playbill import router as playbill_router
-from cruxible_core.server.routes.procedures import router as procedures_router
-from cruxible_core.server.routes.queries import router as queries_router
 from cruxible_core.server.routes.runtime_credentials import (
     router as runtime_credentials_router,
 )
-from cruxible_core.server.routes.snapshots import router as snapshots_router
-from cruxible_core.server.routes.source_artifacts import router as source_artifacts_router
-from cruxible_core.server.routes.state import router as state_router
-from cruxible_core.server.routes.telemetry import router as telemetry_router
-from cruxible_core.server.routes.workflows import router as workflows_router
-from cruxible_core.server.telemetry import (
-    boundary_telemetry_middleware,
-    mark_boundary_scope_refusal,
-)
-from cruxible_core.storage import StorageDatabaseError, StorageIntegrityError
 from cruxible_core.temporal import ISO_8601_FORMAT_HINT
-
-UI_STATIC_DIR = Path(__file__).resolve().parents[1] / "ui_static"
 
 _log = structlog.get_logger("cruxible.server.app")
 
 # Generic, schema-free client message for any database error. The real sqlite
-# detail (e.g. "UNIQUE constraint failed: graph_entities.entity_id") names live
+# detail (e.g. "UNIQUE constraint failed: internal_table.internal_column") names live
 # tables and columns and must never reach the client; it is logged server-side
 # instead. See wi-daemon-network-security-hardening (#5).
 _DB_CONSTRAINT_MESSAGE = "database constraint violation"
@@ -96,12 +70,10 @@ def create_app() -> FastAPI:
     get_registry()
     app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES)
     app.middleware("http")(token_auth_middleware)
-    app.middleware("http")(boundary_telemetry_middleware)
 
     @app.exception_handler(CoreError)
     async def core_error_handler(request: Request, exc: CoreError) -> JSONResponse:
         request.state.error_type = exc.__class__.__name__
-        mark_boundary_scope_refusal(request, exc)
         status_code, body = error_to_response(exc)
         return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
 
@@ -117,8 +89,10 @@ def create_app() -> FastAPI:
         )
         return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
 
-    @app.exception_handler(StorageIntegrityError)
-    async def integrity_error_handler(request: Request, exc: StorageIntegrityError) -> JSONResponse:
+    @app.exception_handler(sqlite3.IntegrityError)
+    async def integrity_error_handler(
+        request: Request, exc: sqlite3.IntegrityError
+    ) -> JSONResponse:
         # An unhandled sqlite IntegrityError (UNIQUE/FOREIGN KEY/CHECK/NOT NULL)
         # otherwise surfaces through the catch-all handler below, echoing the raw
         # message (e.g. "UNIQUE constraint failed: <table.col>") and leaking the
@@ -137,8 +111,8 @@ def create_app() -> FastAPI:
         )
         return JSONResponse(status_code=409, content=body.model_dump(mode="json"))
 
-    @app.exception_handler(StorageDatabaseError)
-    async def database_error_handler(request: Request, exc: StorageDatabaseError) -> JSONResponse:
+    @app.exception_handler(sqlite3.DatabaseError)
+    async def database_error_handler(request: Request, exc: sqlite3.DatabaseError) -> JSONResponse:
         # Any other low-level sqlite error (OperationalError, etc.) may also carry
         # SQL fragments / schema names. Keep the client message generic and log
         # the detail server-side.
@@ -194,31 +168,10 @@ def create_app() -> FastAPI:
     async def version() -> dict[str, str]:
         return {"version": __version__}
 
-    @app.get("/ui", include_in_schema=False)
-    async def ui_index() -> FileResponse:
-        return FileResponse(UI_STATIC_DIR / "index.html")
-
     app.include_router(instances_router)
     app.include_router(hosted_instances_router)
-    app.include_router(state_router)
-    app.include_router(telemetry_router)
-    app.include_router(queries_router)
     app.include_router(runtime_credentials_router)
-    app.include_router(decision_records_router)
-    app.include_router(attestations_router)
-    app.include_router(outcome_contracts_router)
     app.include_router(playbill_router)
-    app.include_router(mutations_router)
-    app.include_router(feedback_router)
-    app.include_router(gates_router)
-    app.include_router(groups_router)
-    app.include_router(procedures_router)
-    app.include_router(workflows_router)
-    app.include_router(snapshots_router)
-    app.include_router(source_artifacts_router)
-    app.include_router(installs_router)
-    app.include_router(bindings_router)
-    app.mount("/ui", StaticFiles(directory=UI_STATIC_DIR, html=True), name="ui")
     return app
 
 
@@ -268,14 +221,6 @@ def run_server(
     )
     if is_server_auth_enabled():
         credential_store.mark_auth_required("server_startup_auth_enabled")
-    for record in registry.list_instances():
-        if record.backend != GOVERNED_DAEMON_BACKEND:
-            continue
-        instance_root = Path(record.location)
-        if not (instance_root / CruxibleInstance.INSTANCE_DIR / "instance.json").exists():
-            continue
-        instance = CruxibleInstance.load(instance_root)
-        enforce_config_integrity(instance, context=f"daemon startup for {record.instance_id}")
     for warning in volatile_state_path_warnings(
         instance_locations=[
             (record.instance_id, record.location) for record in registry.list_instances()

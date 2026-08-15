@@ -1,32 +1,21 @@
-"""Hosted runtime instance initialization routes."""
+"""Generic daemon host allocation required before Playbill bootstrap."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
 from cruxible_client import contracts
-from cruxible_core.runtime import api
-from cruxible_core.server.request_models import HostedInstanceInitRequest
-from cruxible_core.server.route_paths import HOSTED_INSTANCE_INIT_PATH
+from cruxible_core.runtime import host_api
+from cruxible_core.server.request_models import PlaybillHostCreateRequest
+from cruxible_core.server.route_paths import PLAYBILL_HOST_CREATE_PATH
 
-router = APIRouter(prefix="/api/v1", tags=["hosted-instances"])
+router = APIRouter(prefix="/api/v1", tags=["playbill-hosts"])
 
 
 @router.post(
-    HOSTED_INSTANCE_INIT_PATH,
-    response_model=contracts.HostedInstanceInitResult,
+    PLAYBILL_HOST_CREATE_PATH,
+    response_model=contracts.PlaybillHostResult,
 )
-async def init_hosted_instance(
-    req: HostedInstanceInitRequest,
-) -> contracts.HostedInstanceInitResult:
-    """Initialize a fresh hosted instance from a kit or reference model source."""
-    return api.init_hosted_instance(
-        instance_id=req.instance_id,
-        source_type=req.source_type,
-        kit_refs=req.kit_refs,
-        transport_ref=req.transport_ref,
-        state_ref=req.state_ref,
-        overlay_kit_ref=req.overlay_kit_ref,
-        no_overlay_kit=req.no_overlay_kit,
-        bare=req.bare,
-    )
+async def create_playbill_host(req: PlaybillHostCreateRequest) -> contracts.PlaybillHostResult:
+    """Allocate an empty daemon-owned host; no config or state is adopted."""
+    return host_api.create_playbill_host(instance_id=req.instance_id)

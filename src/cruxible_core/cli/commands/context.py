@@ -28,12 +28,7 @@ def context_show(output_json: bool) -> None:
     if output_json:
         _emit_json(state.as_json())
         return
-    if (
-        not state.server_url
-        and not state.server_socket
-        and not state.instance_id
-        and state.working_set is None
-    ):
+    if not state.server_url and not state.server_socket and not state.instance_id:
         click.echo("No remembered CLI context.")
         return
     if state.server_url:
@@ -42,8 +37,6 @@ def context_show(output_json: bool) -> None:
         click.echo(f"Server socket: {state.server_socket}")
     if state.instance_id:
         click.echo(f"Instance ID: {state.instance_id}")
-    if state.working_set is not None:
-        click.echo(f"Working-set capture: {'enabled' if state.working_set else 'disabled'}")
 
 
 @connect_group.command("connect")

@@ -1,7 +1,7 @@
 """CLI transport-failure handling.
 
-When the daemon is unreachable (connection refused, timeout, DNS), read
-commands like ``stats`` must emit a friendly single-line error and exit
+When the daemon is unreachable (connection refused, timeout, DNS), Playbill
+reads and server metadata commands must emit a friendly single-line error and exit
 non-zero -- never a raw httpx traceback (agent/UX-hostile).
 """
 
@@ -28,7 +28,7 @@ def cli_context_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
 
 
-def test_stats_against_dead_port_emits_friendly_error(
+def test_playbill_read_against_dead_port_emits_friendly_error(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
 ) -> None:
@@ -37,7 +37,10 @@ def test_stats_against_dead_port_emits_friendly_error(
     dead_url = "http://127.0.0.1:1"
     monkeypatch.setenv("CRUXIBLE_SERVER_URL", dead_url)
 
-    result = runner.invoke(cli, ["--instance-id", "inst_x", "stats"])
+    result = runner.invoke(
+        cli,
+        ["--instance-id", "inst_x", "playbill", "document", "list"],
+    )
 
     assert result.exit_code == 1
     assert f"Error: could not reach Cruxible server at {dead_url}:" in result.output
@@ -47,16 +50,14 @@ def test_stats_against_dead_port_emits_friendly_error(
     assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
-def test_list_against_dead_port_emits_friendly_error(
+def test_server_info_against_dead_port_emits_friendly_error(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
 ) -> None:
     dead_url = "http://127.0.0.1:1"
     monkeypatch.setenv("CRUXIBLE_SERVER_URL", dead_url)
 
-    result = runner.invoke(
-        cli, ["--instance-id", "inst_x", "list", "entities", "--type", "Vehicle"]
-    )
+    result = runner.invoke(cli, ["server", "info"])
 
     assert result.exit_code == 1
     assert f"Error: could not reach Cruxible server at {dead_url}:" in result.output
@@ -76,7 +77,7 @@ def test_client_wraps_transport_error_as_server_unreachable(
     monkeypatch.setattr(client._client._client, "get", _boom)
 
     with pytest.raises(ServerUnreachableError) as excinfo:
-        client.stats("inst_x")
+        client.server_info()
 
     err = excinfo.value
     assert err.target == "http://server.invalid"
@@ -95,6 +96,6 @@ def test_socket_target_is_labelled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(client._client._client, "get", _boom)
 
     with pytest.raises(ServerUnreachableError) as excinfo:
-        client.stats("inst_x")
+        client.server_info()
 
     assert excinfo.value.target == "unix:/tmp/missing.sock"

@@ -1,5 +1,5 @@
 {
-  "format": "playbill-served-surface-dp0a-v1",
+  "format": "playbill-served-surface-dp0b-v1",
   "facade_operations": [
     "playbill_activate",
     "playbill_check_source_bundle",
@@ -22,5 +22,5 @@
     "playbill_submit_approval"
   ],
   "http_delegate_count": 19,
-  "mcp_delegate_count": 18
+  "mcp_delegate_count": 19
 }

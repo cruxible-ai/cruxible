@@ -28,14 +28,12 @@ from cruxible_core.server.errors import ErrorResponse
 from cruxible_core.server.request_logging import log_runtime_request
 from cruxible_core.server.route_paths import (
     HEALTH_PATH,
-    HOSTED_INSTANCE_INIT_PATH,
-    INSTANCE_RESTORE_PATH,
+    PLAYBILL_HOST_CREATE_PATH,
     RUNTIME_BOOTSTRAP_CLAIM_PATH,
     SERVER_INFO_PATH,
     SERVER_RESTART_PATH,
     VERSION_PATH,
     api_v1_path,
-    is_ui_static_path,
     route_template_matches,
 )
 
@@ -181,13 +179,12 @@ def _forbidden_origin_response(request: Request) -> JSONResponse:
 
 
 _RUNTIME_BOOTSTRAP_CLAIM_ROUTE = api_v1_path(RUNTIME_BOOTSTRAP_CLAIM_PATH)
-_HOSTED_INSTANCE_INIT_ROUTE = api_v1_path(HOSTED_INSTANCE_INIT_PATH)
+_PLAYBILL_HOST_CREATE_ROUTE = api_v1_path(PLAYBILL_HOST_CREATE_PATH)
 # (method, route) pairs for the daemon-wide server-operation endpoints that the
 # unscoped runtime bootstrap operator may drive directly with the bootstrap secret.
 _SERVER_OPERATION_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", api_v1_path(SERVER_INFO_PATH)),
     ("POST", api_v1_path(SERVER_RESTART_PATH)),
-    ("POST", api_v1_path(INSTANCE_RESTORE_PATH)),
 )
 
 
@@ -198,10 +195,10 @@ def _is_bootstrap_claim_request(request: Request) -> bool:
     )
 
 
-def _is_hosted_instance_init_request(request: Request) -> bool:
+def _is_playbill_host_create_request(request: Request) -> bool:
     return request.method == "POST" and route_template_matches(
         request.url.path,
-        _HOSTED_INSTANCE_INIT_ROUTE,
+        _PLAYBILL_HOST_CREATE_ROUTE,
     )
 
 
@@ -277,11 +274,11 @@ async def token_auth_middleware(
         and _request_media_type(request) != _JSON_MEDIA_TYPE
     ):
         return _forbidden_origin_response(request)
-    # Credential-free surfaces: liveness, version, and the bundled UI assets.
+    # Credential-free surfaces: liveness and version.
     # They skip auth resolution but NOT the Origin allowlist above — a hostile
     # page must not be able to fingerprint the loopback daemon by probing
     # /health or /version from the browser.
-    if request.url.path in {HEALTH_PATH, VERSION_PATH} or is_ui_static_path(request.url.path):
+    if request.url.path in {HEALTH_PATH, VERSION_PATH}:
         return await call_next(request)
     if _is_bootstrap_claim_request(request):
         return await _call_next_with_request_log(request, call_next, auth_context=None)
@@ -303,16 +300,16 @@ async def token_auth_middleware(
     if bearer_token is not None:
         if (
             auth_enabled
-            and _is_hosted_instance_init_request(request)
+            and _is_playbill_host_create_request(request)
             and bootstrap_secret
             and hmac.compare_digest(bearer_token, bootstrap_secret)
             and not get_runtime_credential_store().bootstrap_secret_claimed(bootstrap_secret)
         ):
             resolved_context = _runtime_bootstrap_operator_context()
         elif (
-            # Daemon-wide server operations (global metadata, in-place re-exec,
-            # restore) are authorized for the unscoped runtime bootstrap operator,
-            # never for an instance-scoped runtime credential. Unlike hosted init,
+            # Daemon-wide server operations (global metadata and in-place re-exec)
+            # are authorized for the unscoped runtime bootstrap operator,
+            # never for an instance-scoped runtime credential. Unlike host creation,
             # these are repeatable operator actions, so they are NOT gated on the
             # one-time bootstrap claim. An instance-scoped credential that presents
             # its own token still resolves below and is rejected by the runtime's

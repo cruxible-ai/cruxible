@@ -15,6 +15,39 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
 )
 
 
+def test_cli_allocates_and_remembers_a_playbill_host(monkeypatch, tmp_path) -> None:
+    class StubClient:
+        def create_playbill_host(
+            self, *, instance_id: str | None = None
+        ) -> contracts.PlaybillHostResult:
+            assert instance_id == "inst_cli_host"
+            return contracts.PlaybillHostResult(instance_id=instance_id, status="created")
+
+    context_path = tmp_path / "context.json"
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(context_path))
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: StubClient(),
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "playbill",
+            "host",
+            "create",
+            "--instance-id",
+            "inst_cli_host",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"instance_id": "inst_cli_host"' in result.stdout
+    assert '"instance_id": "inst_cli_host"' in context_path.read_text()
+
+
 def test_cli_lists_documents_with_their_canonical_coordinate(monkeypatch) -> None:
     class StubClient:
         def list_playbill_documents(self, instance_id: str) -> contracts.PlaybillDocumentList:
