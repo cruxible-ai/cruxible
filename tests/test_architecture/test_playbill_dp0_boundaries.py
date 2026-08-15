@@ -271,6 +271,7 @@ def test_dp0c_deleted_products_are_absent() -> None:
         "decision",
         "feedback",
         "installs",
+        "kit_distribution",
         "snapshot",
         "telemetry",
         "transport",
@@ -321,6 +322,19 @@ def test_dp0c_deleted_products_are_absent() -> None:
     assert not (CORE / "mcp" / "kit_surface.py").exists()
     assert not (CORE / "server" / "telemetry.py").exists()
     assert not (ROOT / "tests" / "test_working_set_capture.py").exists()
+    assert not any(
+        path.is_file() and "__pycache__" not in path.parts
+        for path in (ROOT / "kits").rglob("*")
+    )
+    for script in (
+        "build_kit_bundles.py",
+        "check_kit_lockfiles.py",
+        "check_kit_release_assets.py",
+        "generate_kit_docs.py",
+    ):
+        assert not (ROOT / "scripts" / script).exists()
+    assert (ROOT / "tests" / "data" / "config_donors" / "agent-operation" / "config.yaml").is_file()
+    assert (ROOT / "tests" / "data" / "procedure_digest_corpus").is_dir()
 
 
 def test_public_registration_catalogs_are_playbill_only() -> None:

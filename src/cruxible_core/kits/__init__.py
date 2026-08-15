@@ -36,12 +36,9 @@ OCI_REPIN_ENV = "CRUXIBLE_OCI_REPIN"
 _IGNORED_DIRS = {"__pycache__", ".cruxible", ".ruff_cache", ".pytest_cache"}
 _IGNORED_FILES = {".DS_Store"}
 _IGNORED_SUFFIXES = {".pyc"}
-# Shipped alias -> transport ref overrides. Empty: first-party kit aliases
-# resolve from the local source checkout (development) or from the packaged
-# kit distribution manifest (installed distributions). The former `oci://`
-# entries named ghcr packages that were never published, so they only ever
-# produced a misleading "oras binary not found" error; explicit user-typed
-# `oci://` refs still resolve through `_pull_oci_kit`.
+# Shipped alias -> transport ref overrides. Empty: the retained donor accepts
+# explicit file/OCI references and test-local aliases only. The first-party kit
+# product and its packaged distribution manifest were deleted in DP-0C.
 _SHIPPED_KIT_CATALOG: dict[str, str] = {}
 
 
@@ -187,16 +184,8 @@ def resolve_kit_ref(kit: str) -> KitBundle:
         catalog = get_kit_catalog()
         resolved = catalog.get(normalized)
         if resolved is None or not resolved.startswith("file://"):
-            # No local source checkout provides this alias; installed
-            # distributions resolve it from digest-pinned release bundles.
-            from cruxible_core.kit_distribution import published_kit_ids, resolve_published_kit
-
-            if normalized in published_kit_ids():
-                return _enforce_min_core_version(
-                    _install_kit_cache(resolve_published_kit(normalized))
-                )
             if resolved is None:
-                known = ", ".join(sorted(set(catalog) | published_kit_ids()))
+                known = ", ".join(sorted(catalog))
                 raise ConfigError(f"Unknown kit '{kit}'. Known kits: {known or '(none)'}")
         normalized = resolved
 
@@ -557,9 +546,8 @@ def _install_kit_cache(source: Path) -> KitBundle:
         if target.exists():
             _verify_cached_kit_dir(target, expected=digest)
         else:
-            # Stage, hash, then install atomically -- the kit_distribution
-            # pattern. Hashing the staged copy catches a truncated or altered
-            # write before it is ever visible under the digest key.
+            # Stage, hash, then install atomically. Hashing the staged copy
+            # catches a truncated or altered write before it is visible.
             temp_target = Path(tempfile.mkdtemp(prefix=f"{digest_key}.", dir=cache_dir))
             try:
                 _copy_bundle_files(source, temp_target)

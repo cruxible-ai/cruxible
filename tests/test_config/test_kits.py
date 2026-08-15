@@ -6,14 +6,11 @@ import json
 from pathlib import Path
 
 import pytest
-from packaging.version import Version
 from pydantic import ValidationError
 
-from cruxible_core import __version__
 from cruxible_core.config.schema import ProviderSchema
 from cruxible_core.errors import ConfigError
 from cruxible_core.kit_defaults import DEFAULT_BASE_KIT, get_default_base_kit
-from cruxible_core.kit_distribution import published_kit_ids
 from cruxible_core.kits import (
     _SHIPPED_KIT_CATALOG,
     KitManifest,
@@ -150,25 +147,6 @@ def test_kit_catalog_comes_from_local_discovery(monkeypatch: pytest.MonkeyPatch)
     assert get_kit_catalog()["kev-reference"] == "file:///tmp/local-kev-reference"
 
 
-def test_every_featured_kit_is_resolvable_without_a_source_checkout(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Every kit advertised in the public READMEs must resolve for an installed
-    # distribution, i.e. from the packaged kit distribution manifest (local
-    # discovery disabled). Guards against advertising a kit that only exists in
-    # the dev tree.
-    monkeypatch.setattr("cruxible_core.kits._discover_local_kit_catalog", lambda: {})
-    available = set(get_kit_catalog()) | published_kit_ids()
-    for kit in (
-        "agent-operation",
-        "kev-reference",
-        "kev-triage",
-        "supply-chain-blast-radius",
-        "case-law-monitoring",
-    ):
-        assert kit in available, f"{kit} is featured in the README but is not resolvable"
-
-
 def test_unknown_kit_message_enumerates_available_kits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -182,8 +160,6 @@ def test_unknown_kit_message_enumerates_available_kits(
     message = str(excinfo.value)
     assert "Unknown kit 'no-such-kit'" in message
     assert "kev-reference" in message
-    for kit_id in published_kit_ids():
-        assert kit_id in message
 
 
 def test_oci_alias_refs_are_gone_from_the_shipped_catalog() -> None:
@@ -273,28 +249,6 @@ def test_min_core_version_floor_refuses_via_local_alias(
         resolve_kit_ref("demo")
 
 
-def test_min_core_version_floor_refuses_via_published_alias(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = tmp_path / "source"
-    source.mkdir()
-    _write_minimal_kit(source, role="standalone", min_core_version="9.9.0")
-    monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "cache"))
-    monkeypatch.setattr("cruxible_core.kits._discover_local_kit_catalog", lambda: {})
-    monkeypatch.setattr(
-        "cruxible_core.kit_distribution.published_kit_ids",
-        lambda: frozenset({"demo"}),
-    )
-    monkeypatch.setattr(
-        "cruxible_core.kit_distribution.resolve_published_kit",
-        lambda kit_id: source,
-    )
-
-    with pytest.raises(ConfigError, match="Kit 'demo' requires cruxible core >= 9.9.0"):
-        resolve_kit_ref("demo")
-
-
 def test_min_core_version_floor_refuses_via_explicit_oci_ref(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -372,19 +326,6 @@ def test_pep440_normalized_floor_is_accepted(tmp_path: Path) -> None:
     assert manifest.min_core_version == "v9.9.0"
     with pytest.raises(ConfigError, match="requires cruxible core >= v9.9.0"):
         enforce_min_core_version(manifest)
-
-
-def test_every_bundled_kit_declares_a_satisfiable_core_floor() -> None:
-    # First-party kits ship on the core's release train, so their floor must be
-    # set and must never exceed the core they ship with -- otherwise this branch
-    # cannot resolve its own kits.
-    repo_kits = Path(__file__).resolve().parents[2] / "kits"
-    manifests = sorted(repo_kits.glob("*/cruxible-kit.yaml"))
-    assert manifests
-    for manifest_path in manifests:
-        floor = load_kit_manifest(manifest_path.parent).min_core_version
-        assert floor is not None, manifest_path
-        assert Version(floor) <= Version(__version__), manifest_path
 
 
 def test_runtime_digest_ignores_unrelated_files_and_tracks_kit_files(tmp_path: Path) -> None:

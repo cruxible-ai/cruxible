@@ -1,7 +1,7 @@
 """Deterministic compact-config expander.
 
-It reads a COMPACT authoring YAML (e.g. ``kits/agent-operation/config.yaml``; a fuller
-commented reference lives at ``docs/dev/agent-operation.compact.draft.yaml``) and expands
+It reads a COMPACT authoring YAML (the frozen donor fixture is under
+``tests/data/config_donors``) and expands
 it 1:1 into the explicit ``CoreConfig``-shaped dict. The compact source is the single
 source of truth: the loader (``config/loader.py``) detects it via :func:`looks_compact`
 and expands it on load, so the explicit form exists only transiently in memory -- there

@@ -65,22 +65,22 @@ def collect_tau3(procedures_dir: Path) -> list[tuple[str, dict[str, Any]]]:
     return collected
 
 
-def collect_kit_definitions() -> list[tuple[str, dict[str, Any]]]:
-    """Proposable definitions shipped inside ``kits/``.
+def collect_config_donor_definitions() -> list[tuple[str, dict[str, Any]]]:
+    """Proposable definitions preserved in frozen config-donor fixtures.
 
     Empty on this line: kits ship configured workflows, not procedure
-    definitions. Kept as a live scan rather than a comment so the corpus grows
-    automatically the first time a kit ships one.
+    definitions. Kept as a live scan rather than a comment so additions to a
+    retained compiler fixture can be captured explicitly.
     """
     collected: list[tuple[str, dict[str, Any]]] = []
-    for path in sorted((REPO_ROOT / "kits").rglob("*.yaml")):
+    for path in sorted((REPO_ROOT / "tests" / "data" / "config_donors").rglob("*.yaml")):
         try:
             payload = yaml.safe_load(path.read_text())
         except yaml.YAMLError:
             continue
         if not isinstance(payload, dict) or not _DEFINITION_KEYS.issubset(payload):
             continue
-        collected.append((f"kit-{path.parent.name}-{path.stem}", payload))
+        collected.append((f"config-donor-{path.parent.name}-{path.stem}", payload))
     return collected
 
 
@@ -479,7 +479,7 @@ def main() -> int:
 
     CORPUS_DIR.mkdir(parents=True, exist_ok=True)
     sources: list[tuple[str, dict[str, Any]]] = []
-    sources.extend(collect_kit_definitions())
+    sources.extend(collect_config_donor_definitions())
     sources.extend(collect_tau3(args.tau3_procedures))
     sources.extend(collect_test_definitions())
     sources.extend(matrix_definitions())

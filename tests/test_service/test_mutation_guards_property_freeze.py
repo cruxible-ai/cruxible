@@ -791,7 +791,13 @@ class TestFrozenGuardFailClosed:
         assert "fail-closed" in errors[0]
 
 
-KIT_CONFIG = Path(__file__).resolve().parents[2] / "kits" / "agent-operation" / "config.yaml"
+KIT_CONFIG = (
+    Path(__file__).resolve().parents[1]
+    / "data"
+    / "config_donors"
+    / "agent-operation"
+    / "config.yaml"
+)
 
 
 def _kit_instance(tmp_path: Path) -> CruxibleInstance:

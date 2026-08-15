@@ -13,10 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The tag names the GitHub release that the packaged kit manifest points
-      # at, so tag, package version, client version, the core dependency pin on
-      # the client, the manifest version and the manifest base_url must all
-      # agree before anything publishes. The check lives in a script (stdlib
+      # Tag, package version, client version, and the core dependency pin on
+      # the client must agree before anything publishes. The check lives in a script (stdlib
       # only, so it runs on this bare checkout) rather than inline here, because
       # scripts/ci_parity.sh runs the same script pre-push: 0.3.1 tagged with
       # the client still at 0.3.0 and only this gate caught it.
@@ -45,12 +43,9 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
-  # The core wheel ships the kit manifest whose URLs point at this tag's
-  # release assets, so it must not publish unless the bundles are attached
-  # and verified.
   publish-cruxible:
     runs-on: ubuntu-latest
-    needs: [publish-client, publish-kit-bundles]
+    needs: publish-client
     permissions:
       contents: read
       id-token: write
@@ -65,83 +60,3 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-
-  # Kit bundles are fetched at `cruxible init --kit` from the GitHub release
-  # named by the packaged manifest's base_url, so a release without bundle
-  # assets breaks kit init for that whole version. Bundles are byte-reproducible:
-  # build_kit_bundles.py pins mtimes/ownership/order. CI first proves the
-  # COMMITTED lock/manifest are
-  # current, rebuilds into a separate generated manifest, refuses unless that
-  # manifest (including every tarball digest) exactly matches the committed
-  # manifest, attaches the assets, and re-downloads each through the manifest's
-  # own URLs to confirm the release serves the pinned bytes. Combined with
-  # verify-versions (tag == package == manifest == base_url) and
-  # publish-cruxible's dependency on this job, a wheel cannot publish whose
-  # bundled kit URLs do not resolve and verify.
-  publish-kit-bundles:
-    runs-on: ubuntu-latest
-    needs: verify-versions
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v4
-
-      - name: Verify committed lockfiles and manifest are current
-        run: uv run python scripts/check_kit_lockfiles.py
-
-      - name: Build kit bundles from tagged source
-        run: |
-          uv run python scripts/build_kit_bundles.py \
-            --manifest-path "$RUNNER_TEMP/generated-kit-manifest.json"
-
-      - name: Verify regenerated bundle digests match the committed manifest
-        run: |
-          diff --unified \
-            src/cruxible_core/kit_distribution/manifest.json \
-            "$RUNNER_TEMP/generated-kit-manifest.json"
-
-      - name: Attach bundles to the GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Reusing existing GitHub release $GITHUB_REF_NAME"
-          else
-            gh release create "$GITHUB_REF_NAME" --verify-tag \
-              --title "${GITHUB_REF_NAME#v}" \
-              --notes "See CHANGELOG.md for this release's notes."
-          fi
-          # Deliberately replace same-named assets so a rerun repairs a
-          # partial or manually-created release without duplicating assets.
-          gh release upload "$GITHUB_REF_NAME" dist/kits/*.tar.gz --clobber
-
-      - name: Verify every manifest asset URL serves the pinned bytes
-        run: |
-          uv run python - <<'PY'
-          import hashlib, json, time, urllib.error, urllib.request
-          from pathlib import Path
-
-          manifest = json.loads(
-              Path("src/cruxible_core/kit_distribution/manifest.json").read_text()
-          )
-          base = manifest["base_url"]
-          for kit_id, entry in manifest["kits"].items():
-              url = base + entry["asset"]
-              # Assets can lag briefly behind `gh release upload`.
-              for attempt in range(5):
-                  try:
-                      data = urllib.request.urlopen(url, timeout=60).read()
-                      actual = hashlib.sha256(data).hexdigest()
-                      if actual == entry["tarball_sha256"]:
-                          print(f"ok {kit_id} <- {url}")
-                          break
-                      last = f"digest mismatch ({actual})"
-                  except urllib.error.URLError as exc:
-                      last = str(exc)
-                  time.sleep(10 * (attempt + 1))
-              else:
-                  raise SystemExit(f"{kit_id}: {last} at {url}")
-          PY

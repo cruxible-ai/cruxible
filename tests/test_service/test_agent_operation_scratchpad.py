@@ -40,7 +40,13 @@ from cruxible_core.service import (
 )
 from cruxible_core.temporal import utc_now
 
-KIT_CONFIG = Path(__file__).resolve().parents[2] / "kits" / "agent-operation" / "config.yaml"
+KIT_CONFIG = (
+    Path(__file__).resolve().parents[1]
+    / "data"
+    / "config_donors"
+    / "agent-operation"
+    / "config.yaml"
+)
 
 AUTHORIZED_REVIEWER = "authorized-reviewer"
 

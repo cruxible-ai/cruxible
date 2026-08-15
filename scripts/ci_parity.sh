@@ -14,8 +14,6 @@ echo "== mypy"
 uv run mypy src packages/cruxible-client/src
 echo "== pytest (non-golden)"
 uv run pytest tests/ --ignore=tests/test_golden --ignore=tests/goldens -q
-echo "== kit lockfiles"
-uv run python scripts/check_kit_lockfiles.py
 # Release-workflow parity: publish.yml's verify-versions job runs this same
 # script with --tag. Without it the first thing that can see a version-lockstep
 # break is a pushed tag (0.3.1 tagged with cruxible-client still at 0.3.0).

@@ -44,7 +44,13 @@ from cruxible_core.workflow.executor import (
     execute_workflow,
 )
 
-KIT_CONFIG = Path(__file__).resolve().parents[2] / "kits" / "agent-operation" / "config.yaml"
+KIT_CONFIG = (
+    Path(__file__).resolve().parents[1]
+    / "data"
+    / "config_donors"
+    / "agent-operation"
+    / "config.yaml"
+)
 
 # A canonical close-work-item workflow appended to the agent-operation kit config.
 # make_entities builds the WorkItem upsert (status from input); apply_entities

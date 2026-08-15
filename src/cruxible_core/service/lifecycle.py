@@ -31,7 +31,6 @@ from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol, verify_tracked_upstream
 from cruxible_core.kit_defaults import DEFAULT_BASE_KIT_ENV
-from cruxible_core.kit_distribution import published_kit_ids
 from cruxible_core.kits import (
     KIT_MANIFEST_FILE,
     KitBundle,
@@ -377,9 +376,10 @@ def _with_default_base_kit(
     # shipped kit with this release's implicit base. Kits outside the shipped
     # set are user-authored and version on their own line — demanding they
     # match our release train would block every `init --kit ./my-kit`. The
-    # packaged manifest covers installed envs, where catalog discovery is empty.
+    # Installed first-party bundle aliases were removed with the legacy kit
+    # distribution product in DP-0C.
     trigger = bundles[0].manifest
-    shipped = trigger.kit_id in get_kit_catalog() or trigger.kit_id in published_kit_ids()
+    shipped = trigger.kit_id in get_kit_catalog()
     if shipped and base.manifest.version != trigger.version:
         raise ConfigError(
             f"Default base kit '{base.manifest.kit_id}' is version {base.manifest.version}, "
