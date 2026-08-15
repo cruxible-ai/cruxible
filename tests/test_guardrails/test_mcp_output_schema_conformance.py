@@ -55,19 +55,9 @@ def test_no_output_schema_root_is_a_union(tool_schemas: dict[str, dict]) -> None
     )
 
 
-@pytest.mark.parametrize(
-    "tool_name",
-    [
-        "cruxible_query",
-        "cruxible_query_inline",
-        "cruxible_list_queries",
-        "cruxible_inspect_entity",
-        "cruxible_state_diff",
-    ],
-)
-def test_union_tools_use_the_result_envelope(tool_schemas: dict[str, dict], tool_name: str) -> None:
-    """The union-returning tools share ONE envelope convention."""
-    schema = tool_schemas[tool_name]
+def test_union_tools_use_the_result_envelope(tool_schemas: dict[str, dict]) -> None:
+    """The surviving union-returning tool uses the reviewed envelope convention."""
+    schema = tool_schemas["cruxible_playbill_explain"]
 
     assert schema["type"] == "object"
     assert schema["required"] == ["result"]

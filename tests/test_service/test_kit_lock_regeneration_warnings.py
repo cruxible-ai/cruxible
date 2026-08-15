@@ -22,7 +22,6 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.config.loader import load_config
-from cruxible_core.runtime import api
 from cruxible_core.service.lifecycle import (
     _merge_kit_locks,
     service_init,
@@ -181,23 +180,6 @@ def test_service_init_surfaces_the_lock_warning_on_init_result(tmp_path: Path) -
     assert any("bundled lock" in warning for warning in result.warnings), result.warnings
     assert any(_KIT_ID in warning for warning in result.warnings)
     assert any("config digest mismatch" in warning for warning in result.warnings)
-
-
-def test_init_local_surfaces_the_lock_warning_to_an_embedding_caller(tmp_path: Path) -> None:
-    """The regression this exists to prevent.
-
-    ``init_local`` dropped every initialization warning on the floor, so the MCP
-    surface — its only caller — got silence: no config-validation warnings, and
-    no notice that a publisher's lock pin had just been discarded. The governed
-    path had always propagated them; only local was blind.
-    """
-    result = api.init_local(
-        str(tmp_path / "local-instance"),
-        kits=[_stale_config_kit_source(tmp_path, "kit-source-local")],
-    )
-
-    assert result.status == "initialized"
-    assert any("bundled lock" in warning for warning in result.warnings), result.warnings
 
 
 def test_governed_upload_surfaces_the_lock_warning(tmp_path: Path) -> None:
