@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
+
+from packaging.requirements import Requirement
 
 from cruxible_core.playbill.donors.manifest import DONOR_MANIFEST, donor_for
 
@@ -14,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 CORE = SRC / "cruxible_core"
 GOLDENS = ROOT / "tests" / "goldens" / "playbill"
+REVIEW_GUIDE = ROOT / "docs" / "dp0-review-guide.md"
 
 FACADE = CORE / "runtime" / "playbill_api.py"
 HTTP_ROUTES = CORE / "server" / "routes" / "playbill.py"
@@ -144,6 +149,12 @@ def _playbill_facade_calls(path: Path) -> tuple[str, ...]:
         and node.func.attr.startswith("playbill_")
     }
     return tuple(sorted(calls))
+
+
+def _fenced_inventory(document: str, heading: str) -> set[str]:
+    section = document.split(f"## {heading}\n", maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+    block = section.split("```text\n", maxsplit=1)[1].split("\n```", maxsplit=1)[0]
+    return {line.strip() for line in block.splitlines() if line.strip()}
 
 
 def _facade_operations() -> tuple[str, ...]:
@@ -478,3 +489,57 @@ def test_destructive_pass_oracles_are_exact_and_immutable() -> None:
         assert len(commit) == 40
         assert commit == commit.lower()
         assert all(character in "0123456789abcdef" for character in commit)
+
+
+def test_dp0_review_guide_matches_surviving_inventories() -> None:
+    from cruxible_core.cli.main import cli
+    from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
+    from cruxible_core.server.app import create_app
+
+    document = REVIEW_GUIDE.read_text(encoding="utf-8")
+
+    cli_leaves: set[str] = set()
+
+    def collect_leaves(command: object, path: tuple[str, ...]) -> None:
+        children = getattr(command, "commands", None)
+        if children:
+            for name, child in children.items():
+                collect_leaves(child, (*path, name))
+            return
+        cli_leaves.add(" ".join(path))
+
+    collect_leaves(cli, ())
+    assert _fenced_inventory(document, "Surviving public command inventory") == cli_leaves
+    assert _fenced_inventory(document, "Surviving public MCP tool inventory") == set(
+        TOOL_PERMISSIONS
+    )
+
+    documented_routes = {
+        tuple(line.split(maxsplit=1))
+        for line in _fenced_inventory(document, "Surviving public route inventory")
+    }
+    served_routes = {
+        (method, route.path)
+        for route in create_app().routes
+        if getattr(route, "include_in_schema", False)
+        for method in route.methods
+    }
+    assert documented_routes == served_routes
+
+    tracked_goldens = {
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "tests" / "goldens").rglob("*")
+        if path.is_file()
+    }
+    assert _fenced_inventory(document, "Exact frozen goldens retained") == tracked_goldens
+
+    for entry in DONOR_MANIFEST:
+        assert f"| `{entry.module_prefix}` | {entry.removal_batch} |" in document
+
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    retained_requirements = list(project["dependencies"])
+    for extra in ("mcp", "pdf"):
+        retained_requirements.extend(project["optional-dependencies"][extra])
+    for requirement in retained_requirements:
+        name = Requirement(requirement).name
+        assert re.search(rf"\| `{re.escape(name)}`(?: \([^|]+\))? \|", document, re.IGNORECASE)

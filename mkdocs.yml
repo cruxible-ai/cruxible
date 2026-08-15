@@ -71,6 +71,7 @@ nav:
   - Reference:
       - CLI reference: cli-reference.md
       - MCP tools: mcp-tools.md
+      - DP-0 review guide: dp0-review-guide.md
   - Operations:
       - Auth and agent roles: runtime-auth-and-agent-roles.md
       - Isolated deployment: isolated-deployment.md
