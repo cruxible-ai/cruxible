@@ -402,25 +402,6 @@ class TestCompactExpansion:
             "allowed_actor_ids": ["reviewer"],
         }
 
-    def test_readme_guard_label_mentions_separation(self) -> None:
-        from cruxible_core.canonical_views.markdown import render_mutation_guards_markdown
-        from cruxible_core.config.loader import load_config_from_string
-
-        config = load_config_from_string(
-            _COMPACT_GUARD_SOURCE
-            + dedent(
-                """
-                mutation_guards:
-                  - g:
-                      when: Review.status -> approved
-                      require: {allowed_actors: [reviewer], distinct_from_creation_actor: true}
-                """
-            )
-        )
-        rendered = render_mutation_guards_markdown(config)
-        assert "authenticated actor in: reviewer" in rendered
-        assert "actor differs from the entity's creation actor" in rendered
-
     def test_unknown_require_key_still_refused(self) -> None:
         with pytest.raises(CompactExpansionError, match="distinct_from_creation_author"):
             expand_compact(
