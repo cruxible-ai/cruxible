@@ -183,6 +183,20 @@ class ContentAddressedBodyStore:
             redacted=not access.can_read_body,
         )
 
+    def erase(self, digest: str) -> bool:
+        """Delete one exact verified body; semantic envelopes must be preserved elsewhere."""
+
+        path = self._path(digest)
+        if not path.exists() and not path.is_symlink():
+            return False
+        self._verified_bytes(path, digest)
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise PlaybillCasError("CAS body could not be erased") from exc
+        _fsync_directory(path.parent)
+        return True
+
 
 __all__ = [
     "BodyAccessContext",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol, runtime_checkable
 
@@ -36,6 +37,7 @@ from cruxible_core.playbill.source_references import (
     CasSourceReferenceV1,
     EvidenceCommitmentV1,
     ExternalSourceReferenceV1,
+    LedgerSourceReferenceV1,
     SourceReferenceV1,
     validate_source_commitment,
 )
@@ -389,7 +391,7 @@ def evaluate_capture_contract_law(
     actor_roles: tuple[str, ...],
     predecessor: AcceptedCaptureContract | None,
 ) -> CaptureContractLawResult:
-    """Activate only the frozen direct-authoring seed until PC-C generalizes authoring."""
+    """Evaluate the complete v1 contract without granting source or Claim authority."""
 
     try:
         validate_capture_contract_path(contract, path)
@@ -400,35 +402,99 @@ def evaluate_capture_contract_law(
                 _diagnostic("playbill.capture_contract.path_mismatch", str(exc), path=path),
             ),
         )
-    if contract != DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT:
+    if predecessor is None and contract.lifecycle.predecessor_digest is not None:
         return CaptureContractLawResult(
             verdict="refused",
             diagnostics=(
                 _diagnostic(
-                    "playbill.capture_contract.general_authoring_deferred",
-                    "PC-B accepts only the byte-exact direct self-asserted seed contract.",
+                    "playbill.capture_contract.predecessor_missing",
+                    "A new CaptureContract cannot name a predecessor.",
                     path=path,
                 ),
             ),
         )
     if predecessor is not None:
+        if contract.identity != predecessor.contract.identity:
+            return CaptureContractLawResult(
+                verdict="refused",
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.capture_contract.identity_changed",
+                        "A CaptureContract successor must preserve stable identity.",
+                        path=path,
+                    ),
+                ),
+            )
+        if contract.lifecycle.predecessor_digest != predecessor.artifact_digest:
+            return CaptureContractLawResult(
+                verdict="refused",
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.capture_contract.predecessor_mismatch",
+                        "A CaptureContract successor must pin the exact predecessor digest.",
+                        path=path,
+                    ),
+                ),
+            )
+        if not set(actor_roles).intersection(predecessor.contract.authority.propose_roles):
+            return CaptureContractLawResult(
+                verdict="refused",
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.capture_contract.predecessor_authority_missing",
+                        "The actor lacks authority over the predecessor CaptureContract.",
+                        path=path,
+                    ),
+                ),
+            )
+    registry_roles = {
+        (pin.role, pin.artifact_digest)
+        for pin in (
+            *contract.coordinate_schema_pins,
+            *contract.selector_schema_pins,
+            contract.commitment_canonicalizer,
+            *contract.pins,
+        )
+    }
+    required_registry_entries = {
+        ("replay-policy", contract.replay_policy_digest),
+        ("provenance-rule", contract.provenance_rule_digest),
+        ("source-subject-mapping", contract.source_subject_mapping_digest),
+    }
+    if not required_registry_entries.issubset(registry_roles) and (
+        contract != DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+    ):
         return CaptureContractLawResult(
             verdict="refused",
             diagnostics=(
                 _diagnostic(
-                    "playbill.capture_contract.seed_successor_unsupported",
-                    "The PC-B direct seed contract is immutable; general succession is PC-C.",
+                    "playbill.capture_contract.rule_registry_unresolved",
+                    "Replay, provenance, and source-subject rules require exact governed pins.",
                     path=path,
                 ),
             ),
         )
-    if contract.lifecycle != ArtifactLifecycle():
+    if "external" in contract.allowed_source_kinds and (
+        not contract.coordinate_schema_pins or not contract.selector_schema_pins
+    ):
         return CaptureContractLawResult(
             verdict="refused",
             diagnostics=(
                 _diagnostic(
-                    "playbill.capture_contract.unexpected_predecessor",
-                    "The direct seed must begin live without a predecessor.",
+                    "playbill.capture_contract.external_schema_missing",
+                    "External CaptureContracts require coordinate and selector schema pins.",
+                    path=path,
+                ),
+            ),
+        )
+    erasure_digest = contract.retention_erasure_policy.erasure_rule_digest
+    if erasure_digest is not None and ("erasure-rule", erasure_digest) not in registry_roles:
+        return CaptureContractLawResult(
+            verdict="refused",
+            diagnostics=(
+                _diagnostic(
+                    "playbill.capture_contract.erasure_rule_unresolved",
+                    "Authorized erasure requires an exact governed erasure-rule pin.",
                     path=path,
                 ),
             ),
@@ -439,7 +505,7 @@ def evaluate_capture_contract_law(
             diagnostics=(
                 _diagnostic(
                     "playbill.capture_contract.actor_unauthorized",
-                    "The request actor lacks authority to install the direct seed contract.",
+                    "The request actor lacks authority to propose this CaptureContract.",
                     path=path,
                 ),
             ),
@@ -561,6 +627,50 @@ def capture_digest(envelope: CaptureEnvelopeV1) -> CasDigest:
     return CasDigest(hashlib.sha256(render_capture_envelope(envelope)).hexdigest())
 
 
+class InputReceiptSetManifestV1(_StrictCaptureModel):
+    """Content-addressed exact inputs required by a derived Capture."""
+
+    tag: Literal["playbill-input-receipt-set-manifest-v1"] = (
+        "playbill-input-receipt-set-manifest-v1"
+    )
+    input_receipt_digests: tuple[str, ...] = ()
+    input_capture_digests: tuple[str, ...] = ()
+    input_claim_artifact_digests: tuple[str, ...] = ()
+
+    @field_validator(
+        "input_receipt_digests",
+        "input_capture_digests",
+        "input_claim_artifact_digests",
+    )
+    @classmethod
+    def _digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("input receipt-set digests must be sorted and unique")
+        for item in value:
+            Sha256Value.from_tagged(item)
+        return value
+
+    @model_validator(mode="after")
+    def _nonempty(self) -> "InputReceiptSetManifestV1":
+        if not any(
+            (
+                self.input_receipt_digests,
+                self.input_capture_digests,
+                self.input_claim_artifact_digests,
+            )
+        ):
+            raise ValueError("input receipt-set manifest must name at least one exact input")
+        return self
+
+
+def render_input_receipt_set_manifest(manifest: InputReceiptSetManifestV1) -> bytes:
+    return canonical_bytes(manifest.model_dump(mode="json"))
+
+
+def input_receipt_set_manifest_digest(manifest: InputReceiptSetManifestV1) -> CasDigest:
+    return CasDigest(hashlib.sha256(render_input_receipt_set_manifest(manifest)).hexdigest())
+
+
 class DirectClaimSourceV1(_StrictCaptureModel):
     tag: Literal["playbill-direct-claim-source-v1"] = "playbill-direct-claim-source-v1"
     authored_by: str
@@ -653,12 +763,25 @@ class CaptureObjectStoreProtocol(Protocol):
     def read(self, digest: str, *, access: BodyAccessContext) -> bytes: ...
 
 
+@runtime_checkable
+class LedgerMaterialResolverProtocol(Protocol):
+    def read_ledger_source(self, source: LedgerSourceReferenceV1) -> bytes: ...
+
+
 class DirectCaptureBuildResult(_StrictCaptureModel):
     contract: CaptureContractV1
     contract_digest: str
     envelope: CaptureEnvelopeV1
     capture_digest: str
     source_body_digest: str
+    source_body_materialized: bool
+
+
+class CaptureBuildResult(_StrictCaptureModel):
+    contract_digest: str
+    envelope: CaptureEnvelopeV1
+    capture_digest: str
+    commitment_digest: str
     source_body_materialized: bool
 
 
@@ -895,13 +1018,179 @@ def build_direct_claim_selection_capture(
     )
 
 
+def _store_general_capture(
+    *,
+    store: CaptureObjectStoreProtocol,
+    contract: CaptureContractV1,
+    envelope: CaptureEnvelopeV1,
+    source_body_materialized: bool,
+) -> CaptureBuildResult:
+    metadata = store.store(render_capture_envelope(envelope))
+    expected = capture_digest(envelope).tagged
+    if metadata.digest != expected:
+        raise PlaybillCasError("Capture envelope CAS digest did not reproduce")
+    return CaptureBuildResult(
+        contract_digest=capture_contract_digest(contract).tagged,
+        envelope=envelope,
+        capture_digest=expected,
+        commitment_digest=envelope.commitment.digest,
+        source_body_materialized=source_body_materialized,
+    )
+
+
+def build_cas_capture(
+    *,
+    store: CaptureObjectStoreProtocol,
+    contract: CaptureContractV1,
+    source_body: bytes,
+    run_coordinate: CaptureRunCoordinateV1,
+    run_receipt_digest: str,
+    producer: ArtifactIdentity,
+    producer_binding_digest: str,
+    observed_at: datetime,
+    source_effective_time: SourceEffectiveTimeV1 | None = None,
+) -> CaptureBuildResult:
+    """Create an exact bounded CAS observation under one accepted contract."""
+
+    if "cas" not in contract.allowed_source_kinds or "cas" not in (
+        contract.allowed_materialization_modes
+    ):
+        raise CaptureFormatError("CaptureContract does not permit CAS observations")
+    if len(source_body) > contract.selection_budget.max_bytes:
+        raise CaptureFormatError("CAS observation exceeds its CaptureContract byte budget")
+    body = store.store(source_body)
+    envelope = CaptureEnvelopeV1(
+        capture_contract_digest=capture_contract_digest(contract).tagged,
+        source=CasSourceReferenceV1(content_digest=body.digest),
+        commitment=EvidenceCommitmentV1(
+            digest_kind="exact_bytes",
+            digest=body.digest,
+            byte_length=len(source_body),
+            materialization="cas",
+        ),
+        run_coordinate=run_coordinate,
+        run_receipt_digest=run_receipt_digest,
+        producer=producer,
+        producer_binding_digest=producer_binding_digest,
+        observed_at=observed_at,
+        source_effective_time=source_effective_time,
+    )
+    return _store_general_capture(
+        store=store,
+        contract=contract,
+        envelope=envelope,
+        source_body_materialized=True,
+    )
+
+
+def build_ledger_capture(
+    *,
+    store: CaptureObjectStoreProtocol,
+    contract: CaptureContractV1,
+    source: LedgerSourceReferenceV1,
+    source_body: bytes,
+    run_coordinate: CaptureRunCoordinateV1,
+    run_receipt_digest: str,
+    producer: ArtifactIdentity,
+    producer_binding_digest: str,
+    observed_at: datetime,
+    source_effective_time: SourceEffectiveTimeV1 | None = None,
+) -> CaptureBuildResult:
+    """Bind exact accepted ledger bytes without copying them into the body CAS."""
+
+    if "ledger" not in contract.allowed_source_kinds or "ledger" not in (
+        contract.allowed_materialization_modes
+    ):
+        raise CaptureFormatError("CaptureContract does not permit ledger observations")
+    if len(source_body) > contract.selection_budget.max_bytes:
+        raise CaptureFormatError("ledger observation exceeds its CaptureContract byte budget")
+    body_digest = CasDigest(hashlib.sha256(source_body).hexdigest()).tagged
+    envelope = CaptureEnvelopeV1(
+        capture_contract_digest=capture_contract_digest(contract).tagged,
+        source=source,
+        commitment=EvidenceCommitmentV1(
+            digest_kind="exact_bytes",
+            digest=body_digest,
+            byte_length=len(source_body),
+            materialization="ledger",
+        ),
+        run_coordinate=run_coordinate,
+        run_receipt_digest=run_receipt_digest,
+        producer=producer,
+        producer_binding_digest=producer_binding_digest,
+        observed_at=observed_at,
+        source_effective_time=source_effective_time,
+    )
+    return _store_general_capture(
+        store=store,
+        contract=contract,
+        envelope=envelope,
+        source_body_materialized=False,
+    )
+
+
+def build_derived_cas_capture(
+    *,
+    store: CaptureObjectStoreProtocol,
+    contract: CaptureContractV1,
+    output_body: bytes,
+    manifest: InputReceiptSetManifestV1,
+    reducer_digest: str,
+    run_coordinate: CaptureRunCoordinateV1,
+    run_receipt_digest: str,
+    producer: ArtifactIdentity,
+    producer_binding_digest: str,
+    observed_at: datetime,
+    source_effective_time: SourceEffectiveTimeV1 | None = None,
+) -> CaptureBuildResult:
+    """Create a derived Capture with an exact content-addressed input receipt set."""
+
+    if contract.epistemic_grade != "derived":
+        raise CaptureFormatError("only a derived CaptureContract may build a derived Capture")
+    ArtifactDigest.from_tagged(reducer_digest)
+    if len(output_body) > contract.selection_budget.max_bytes:
+        raise CaptureFormatError("derived output exceeds its CaptureContract byte budget")
+    manifest_bytes = render_input_receipt_set_manifest(manifest)
+    stored_manifest = store.store(manifest_bytes)
+    expected_manifest = input_receipt_set_manifest_digest(manifest).tagged
+    if stored_manifest.digest != expected_manifest:
+        raise PlaybillCasError("input receipt-set manifest CAS digest did not reproduce")
+    output = store.store(output_body)
+    envelope = CaptureEnvelopeV1(
+        capture_contract_digest=capture_contract_digest(contract).tagged,
+        source=CasSourceReferenceV1(content_digest=output.digest),
+        commitment=EvidenceCommitmentV1(
+            digest_kind="exact_bytes",
+            digest=output.digest,
+            byte_length=len(output_body),
+            materialization="cas",
+        ),
+        run_coordinate=run_coordinate,
+        run_receipt_digest=run_receipt_digest,
+        producer=producer,
+        producer_binding_digest=producer_binding_digest,
+        observed_at=observed_at,
+        source_effective_time=source_effective_time,
+        reducer_digest=reducer_digest,
+        input_receipt_set_manifest_digest=expected_manifest,
+    )
+    return _store_general_capture(
+        store=store,
+        contract=contract,
+        envelope=envelope,
+        source_body_materialized=True,
+    )
+
+
 def verify_capture(
     digest: str,
     *,
     store: CaptureObjectStoreProtocol,
     contract: CaptureContractV1,
+    ledger_resolver: LedgerMaterialResolverProtocol | None = None,
+    producer_artifact_digests: Mapping[str, str] | None = None,
 ) -> CaptureEnvelopeV1:
-    """Replay one envelope and the proof obligations available in PC-B."""
+    """Replay one envelope and every proof available for its source kind."""
 
     CasDigest.from_tagged(digest)
     content = store.read(
@@ -914,10 +1203,22 @@ def verify_capture(
     expected_contract = capture_contract_digest(contract).tagged
     if envelope.capture_contract_digest != expected_contract:
         raise CaptureFormatError("Capture envelope names a different contract digest")
-    if envelope.run_coordinate.executable_identity != contract.identity or (
-        envelope.run_coordinate.executable_digest != expected_contract
-    ):
-        raise CaptureFormatError("Capture run coordinate differs from its contract")
+    executable = envelope.run_coordinate.executable_identity
+    if executable == contract.identity:
+        if envelope.run_coordinate.executable_digest != expected_contract:
+            raise CaptureFormatError("Capture run coordinate differs from its contract")
+    elif executable == envelope.producer:
+        if (
+            executable.kind != "Provider"
+            or producer_artifact_digests is None
+            or (
+                producer_artifact_digests.get(executable.qualified)
+                != envelope.run_coordinate.executable_digest
+            )
+        ):
+            raise CaptureFormatError("Capture producer does not resolve at its exact digest")
+    else:
+        raise CaptureFormatError("Capture executable is neither its contract nor producer")
     if envelope.source.kind not in contract.allowed_source_kinds:
         raise CaptureFormatError("Capture source kind is not permitted by its contract")
     if envelope.commitment.materialization not in contract.allowed_materialization_modes:
@@ -949,6 +1250,24 @@ def verify_capture(
                 claim_id = selector.get("claim_id")
                 if not isinstance(claim_id, str) or not claim_id.startswith("CLM-"):
                     raise CaptureFormatError("direct external selection has no Claim identity")
+        elif envelope.source.coordinate_type not in {
+            pin.target.name for pin in contract.coordinate_schema_pins
+        } or envelope.source.selector_type not in {
+            pin.target.name for pin in contract.selector_schema_pins
+        }:
+            raise CaptureFormatError("external Capture source schemas are not exactly pinned")
+        if envelope.commitment.materialization == "cas":
+            if not store.verify(envelope.commitment.digest):
+                raise CaptureFormatError("bounded external Capture material is unavailable")
+            material = store.read(
+                envelope.commitment.digest,
+                access=BodyAccessContext(
+                    principal_id="playbill-compiler",
+                    can_read_body=True,
+                ),
+            )
+            if len(material) > contract.selection_budget.max_bytes:
+                raise CaptureFormatError("external Capture material exceeds its contract")
     if isinstance(envelope.source, CasSourceReferenceV1):
         if envelope.source.content_digest != envelope.commitment.digest:
             raise CaptureFormatError("Capture CAS source differs from its commitment")
@@ -960,11 +1279,41 @@ def verify_capture(
         )
         if len(source_bytes) != envelope.commitment.byte_length:
             raise CaptureFormatError("Capture source byte length does not reproduce")
+        if len(source_bytes) > contract.selection_budget.max_bytes:
+            raise CaptureFormatError("Capture source exceeds its contract byte budget")
+    if isinstance(envelope.source, LedgerSourceReferenceV1):
+        if ledger_resolver is None:
+            raise CaptureFormatError("ledger Capture verification requires exact ledger bytes")
+        source_bytes = ledger_resolver.read_ledger_source(envelope.source)
+        if CasDigest(hashlib.sha256(source_bytes).hexdigest()).tagged != (
+            envelope.commitment.digest
+        ):
+            raise CaptureFormatError("ledger Capture bytes differ from their commitment")
+        if len(source_bytes) != envelope.commitment.byte_length:
+            raise CaptureFormatError("ledger Capture byte length does not reproduce")
     if contract.epistemic_grade != "derived" and (
         envelope.reducer_digest is not None
         or envelope.input_receipt_set_manifest_digest is not None
     ):
         raise CaptureFormatError("non-derived Capture cannot carry derivation receipts")
+    if contract.epistemic_grade == "derived":
+        manifest_digest = envelope.input_receipt_set_manifest_digest
+        if envelope.reducer_digest is None or manifest_digest is None:
+            raise CaptureFormatError("derived Capture is missing reducer receipt-set proof")
+        if not store.verify(manifest_digest):
+            raise CaptureFormatError("derived Capture input receipt-set is unavailable")
+        manifest_bytes = store.read(
+            manifest_digest,
+            access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True),
+        )
+        try:
+            manifest = InputReceiptSetManifestV1.model_validate_json(manifest_bytes)
+        except ValidationError as exc:
+            raise CaptureFormatError("derived Capture receipt-set manifest is invalid") from exc
+        if render_input_receipt_set_manifest(manifest) != manifest_bytes or (
+            input_receipt_set_manifest_digest(manifest).tagged != manifest_digest
+        ):
+            raise CaptureFormatError("derived Capture receipt-set manifest does not reproduce")
     return envelope
 
 
@@ -973,6 +1322,7 @@ __all__ = [
     "CanonicalDurationV1",
     "CaptureContractLawResult",
     "CaptureContractV1",
+    "CaptureBuildResult",
     "CaptureEnvelopeV1",
     "CaptureFormatError",
     "CaptureObjectStoreProtocol",
@@ -988,15 +1338,22 @@ __all__ = [
     "DirectClaimSelectionV1",
     "DirectClaimSourceV1",
     "DirectExternalSelectionV1",
+    "InputReceiptSetManifestV1",
+    "LedgerMaterialResolverProtocol",
     "SourceEffectiveTimeV1",
     "build_direct_claim_capture",
     "build_direct_claim_selection_capture",
+    "build_cas_capture",
+    "build_derived_cas_capture",
+    "build_ledger_capture",
     "capture_contract_digest",
     "capture_contract_path",
     "capture_digest",
     "evaluate_capture_contract_law",
     "parse_capture_contract",
     "parse_capture_envelope",
+    "input_receipt_set_manifest_digest",
+    "render_input_receipt_set_manifest",
     "render_capture_contract",
     "render_capture_envelope",
     "validate_capture_contract_path",
