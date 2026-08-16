@@ -5,7 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_core.playbill.attestations import (
     ApprovalSubmission,
@@ -15,7 +23,11 @@ from cruxible_core.playbill.attestations import (
 from cruxible_core.playbill.bootstrap import generation_root
 from cruxible_core.playbill.candidates import (
     CandidateMemberEvidence,
+    CandidateMemberLawEvidenceV2,
     CandidateRecord,
+    CandidateRecordV2,
+    ClosureProofV2,
+    MemberLawEvaluationV2,
     SemanticCandidate,
     candidate_digest,
 )
@@ -51,7 +63,10 @@ from cruxible_core.playbill.projection import (
     AcceptedProjectionCoordinate,
     CandidateGenerationProjectionCoordinate,
 )
-from cruxible_core.playbill.proposals import evaluate_proposal_tree
+from cruxible_core.playbill.proposals import (
+    claim_type_expansions_from_candidate,
+    evaluate_proposal_tree,
+)
 from cruxible_core.playbill.types import GenerationDescriptor
 
 
@@ -185,21 +200,123 @@ class ChangeSetRecord(_StrictSettlementModel):
         return self
 
 
-def change_set_digest(record: ChangeSetRecord) -> ChangeSetDigest:
+class ChangeSetRecordV2(_StrictSettlementModel):
+    """Dependency-closed multi-member receipt; C_s and approvals remain v1."""
+
+    tag: Literal["playbill-changeset-v2"] = "playbill-changeset-v2"
+    sequence: int = Field(ge=1)
+    members: tuple[CandidateMemberLawEvidenceV2, ...]
+    closure_proof: ClosureProofV2
+    law_evidence: tuple[MemberLawEvaluationV2, ...]
+    required_tier: PermissionTier
+    approval_requirements: tuple[ApprovalRequirement, ...]
+    activation_policy: ActivationPolicy
+    candidate: SemanticCandidate
+    candidate_digest: str
+    law_digests: dict[str, str]
+    compiler_digest: str
+    approvals: tuple[ApprovalSubmission, ...]
+    actor_binding: ChangeActorBinding
+    mandate_digest: str | None = None
+    changeset_digest: str
+
+    @field_validator("candidate_digest")
+    @classmethod
+    def _candidate_digest(cls, value: str) -> str:
+        CandidateDigest.from_tagged(value)
+        return value
+
+    @field_validator("compiler_digest", "mandate_digest")
+    @classmethod
+    def _generic_digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("law_digests")
+    @classmethod
+    def _law_digests(cls, value: dict[str, str]) -> dict[str, str]:
+        if not value or list(value) != sorted(value, key=lambda item: item.encode("utf-8")):
+            raise ValueError("v2 change-set acceptance-law mapping must be nonempty and sorted")
+        for identifier, digest in value.items():
+            governance_identifier(identifier, label="v2 change-set acceptance-law identifier")
+            Sha256Value.from_tagged(digest)
+        return value
+
+    @field_validator("changeset_digest")
+    @classmethod
+    def _changeset_digest(cls, value: str) -> str:
+        ChangeSetDigest.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _complete_correspondence(self) -> "ChangeSetRecordV2":
+        CandidateRecordV2(
+            candidate=self.candidate,
+            candidate_digest=self.candidate_digest,
+            required_tier=self.required_tier,
+            approval_requirements=self.approval_requirements,
+            activation_policy=self.activation_policy,
+            closure_proof=self.closure_proof,
+            members=self.members,
+            law_evidence=self.law_evidence,
+            law_digests=self.law_digests,
+            compiler_digest=self.compiler_digest,
+        )
+        if candidate_digest(self.candidate).tagged != self.candidate_digest:
+            raise ValueError("v2 change-set candidate digest does not reproduce")
+        paths = tuple(member.path for member in self.members)
+        if paths != self.candidate.scope or self.closure_proof.paths != self.candidate.scope:
+            raise ValueError("v2 change-set member/closure paths differ from C_s.scope")
+        if tuple(item.path for item in self.law_evidence) != paths:
+            raise ValueError("v2 change-set law evidence differs from members")
+        if {item.law_identifier for item in self.members} != set(self.law_digests):
+            raise ValueError("v2 change-set members and acceptance-law mapping differ")
+        if change_set_digest(self).tagged != self.changeset_digest:
+            raise ValueError("v2 change-set self digest does not reproduce")
+        return self
+
+
+def change_set_digest(record: ChangeSetRecord | ChangeSetRecordV2) -> ChangeSetDigest:
     payload = record.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("changeset_digest")
-    return typed_digest(ChangeSetDigest, "playbill-changeset-v1", payload)
+    return typed_digest(ChangeSetDigest, record.tag, payload)
 
 
 def build_change_set_record(
-    candidate: CandidateRecord,
+    candidate: CandidateRecord | CandidateRecordV2,
     *,
     sequence: int,
     approvals: tuple[ApprovalSubmission, ...],
     actor_binding: ChangeActorBinding,
     mandate_digest: str | None = None,
-) -> ChangeSetRecord:
+) -> ChangeSetRecord | ChangeSetRecordV2:
+    if isinstance(candidate, CandidateRecordV2):
+        v2_values = {
+            "sequence": sequence,
+            "members": candidate.members,
+            "closure_proof": candidate.closure_proof,
+            "law_evidence": candidate.law_evidence,
+            "required_tier": candidate.required_tier,
+            "approval_requirements": candidate.approval_requirements,
+            "activation_policy": candidate.activation_policy,
+            "candidate": candidate.candidate,
+            "candidate_digest": candidate.candidate_digest,
+            "law_digests": candidate.law_digests,
+            "compiler_digest": candidate.compiler_digest,
+            "approvals": approvals,
+            "actor_binding": actor_binding,
+            "mandate_digest": mandate_digest,
+        }
+        digest = typed_digest(
+            ChangeSetDigest,
+            "playbill-changeset-v2",
+            _json_values(v2_values),
+        )
+        return ChangeSetRecordV2.model_validate(
+            {**v2_values, "changeset_digest": digest.tagged}
+        )
     values = {
         "sequence": sequence,
         "members": candidate.members,
@@ -234,12 +351,27 @@ def _json_values(values: dict[str, object]) -> dict[str, object]:
     return normalized
 
 
-def change_set_path(record: ChangeSetRecord) -> str:
+def change_set_path(record: ChangeSetRecord | ChangeSetRecordV2) -> str:
     return f"changesets/cs-{record.sequence:020d}.json"
 
 
-def render_change_set(record: ChangeSetRecord) -> bytes:
+def render_change_set(record: ChangeSetRecord | ChangeSetRecordV2) -> bytes:
     return canonical_bytes(record.model_dump(mode="json")) + b"\n"
+
+
+def parse_change_set_record(content: bytes, *, path: str) -> ChangeSetRecord | ChangeSetRecordV2:
+    """Parse either installed change-set version and verify exact canonical bytes."""
+
+    adapter: TypeAdapter[ChangeSetRecord | ChangeSetRecordV2] = TypeAdapter(
+        ChangeSetRecord | ChangeSetRecordV2
+    )
+    try:
+        record = adapter.validate_json(content)
+    except (ValueError, ValidationError) as exc:
+        raise SettlementIntegrityError(f"generation change-set record is invalid: {path}") from exc
+    if render_change_set(record) != content:
+        raise SettlementIntegrityError(f"generation change-set record is not canonical: {path}")
+    return record
 
 
 def render_generation_descriptor(descriptor: GenerationDescriptor) -> bytes:
@@ -274,7 +406,7 @@ def compute_semantic_root(
 @dataclass(frozen=True)
 class VerifiedGenerationBundle:
     settlement: SettlementBinding
-    record: ChangeSetRecord
+    record: ChangeSetRecord | ChangeSetRecordV2
     record_path: str
     tree: dict[str, bytes]
     oid: str
@@ -308,7 +440,7 @@ def prepare_generation(
     *,
     base: AcceptedProjectionCoordinate,
     candidate_tree: dict[str, bytes],
-    candidate: CandidateRecord,
+    candidate: CandidateRecord | CandidateRecordV2,
     approval_submissions: tuple[ApprovalSubmission, ...],
     bodies: BodyVerifierProtocol,
     actor_binding: ChangeActorBinding,
@@ -333,6 +465,7 @@ def prepare_generation(
         timestamp=candidate.candidate.timestamp,
         rebased=False,
         actor_id=actor_binding.actor_id,
+        claim_type_expansions=claim_type_expansions_from_candidate(candidate),
     )
     if reevaluated.candidate is None or reevaluated.diagnostics:
         raise SettlementIntegrityError("candidate no longer passes its accepted laws")
@@ -432,6 +565,7 @@ def prepare_generation(
 __all__ = [
     "ChangeActorBinding",
     "ChangeSetRecord",
+    "ChangeSetRecordV2",
     "ClosureProof",
     "GENERATION_CONSTRUCTION",
     "SettlementBinding",
@@ -442,6 +576,7 @@ __all__ = [
     "change_set_path",
     "compute_semantic_root",
     "prepare_generation",
+    "parse_change_set_record",
     "render_change_set",
     "render_generation_descriptor",
 ]

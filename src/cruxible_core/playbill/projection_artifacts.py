@@ -19,11 +19,17 @@ from cruxible_core.playbill.artifacts import (
 from cruxible_core.playbill.bootstrap import render_principal
 from cruxible_core.playbill.canonical import ArtifactDigest, canonical_bytes, file_digest
 from cruxible_core.playbill.cas import BodyAccessContext, BodyProjectionProtocol
+from cruxible_core.playbill.claim_types import (
+    ClaimTypeFormatError,
+    claim_type_digest,
+    parse_claim_type,
+)
 from cruxible_core.playbill.documents import document_digest, parse_document
 from cruxible_core.playbill.errors import (
     DocumentFormatError,
     PlaybillCasError,
     ProjectionFormatError,
+    SettlementIntegrityError,
     SubjectFormatError,
 )
 from cruxible_core.playbill.explanation import (
@@ -40,7 +46,7 @@ from cruxible_core.playbill.subjects import parse_subject, subject_digest
 from cruxible_core.playbill.types import PrincipalRecord
 
 if TYPE_CHECKING:
-    from cruxible_core.playbill.settlement import ChangeSetRecord
+    from cruxible_core.playbill.settlement import ChangeSetRecord, ChangeSetRecordV2
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
@@ -255,10 +261,11 @@ def registered_path_kind(path: str) -> RegisteredPathKind:
 
 
 def _projected_revision(
-    records: tuple[tuple[str, ChangeSetRecord], ...],
+    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
     *,
     path: str,
     input_digest: str,
+    artifact_digest: str,
 ) -> int:
     history = tuple(
         member
@@ -266,7 +273,14 @@ def _projected_revision(
         for member in record.members
         if member.path == path
     )
-    if any(member.artifact_digest == input_digest for member in history):
+    if any(
+        (
+            getattr(member, "candidate_artifact_digest", None) == artifact_digest
+            if getattr(member, "candidate_artifact_digest", None) is not None
+            else getattr(member, "artifact_digest", None) == input_digest
+        )
+        for member in history
+    ):
         return len(history)
     return len(history) + 1
 
@@ -309,7 +323,9 @@ def parse_projection_tree(
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream."""
 
-    from cruxible_core.playbill.settlement import ChangeSetRecord, render_change_set
+    from cruxible_core.playbill.settlement import (
+        parse_change_set_record,
+    )
 
     envelopes: list[ArtifactEnvelopeRow] = []
     pins: list[PinRow] = []
@@ -317,7 +333,7 @@ def parse_projection_tree(
     semantic_facts: list[ProjectionFact] = []
     presentation_facts: list[ProjectionFact] = []
     identities: dict[str, str] = {}
-    change_sets: list[tuple[str, ChangeSetRecord]] = []
+    change_sets: list[tuple[str, ChangeSetRecord | ChangeSetRecordV2]] = []
 
     for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
         if registered_path_kind(path) != "changeset":
@@ -325,13 +341,11 @@ def parse_projection_tree(
         content = blobs[path]
         payload = _load_object(content, path=path)
         try:
-            record = ChangeSetRecord.model_validate(payload)
-        except ValidationError as exc:
+            record = parse_change_set_record(content, path=path)
+        except SettlementIntegrityError as exc:
             raise ProjectionFormatError(
                 f"change-set record failed strict validation: {path}"
             ) from exc
-        if render_change_set(record) != content:
-            raise ProjectionFormatError(f"change-set record is not canonical: {path}")
         expected_path = f"changesets/cs-{record.sequence:020d}.json"
         if path != expected_path:
             raise ProjectionFormatError("change-set sequence differs from its canonical path")
@@ -502,6 +516,7 @@ def parse_projection_tree(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
+                            artifact_digest=artifact_digest,
                         ),
                     )
                 )
@@ -567,6 +582,113 @@ def parse_projection_tree(
                             input_digest=input_digest,
                             artifact_digest=artifact_digest,
                             predecessor_digest=subject_shell.lifecycle.predecessor_digest,
+                            records=accepted_change_sets,
+                            coordinate=coordinate,
+                        )
+                    )
+                continue
+            if kind == "claim-type":
+                try:
+                    claim_type = parse_claim_type(content, path=path)
+                except ClaimTypeFormatError as exc:
+                    raise ProjectionFormatError(
+                        f"registered ClaimType failed strict validation: {path}"
+                    ) from exc
+                identity = claim_type.identity.qualified
+                previous = identities.get(identity)
+                if previous is not None:
+                    raise ProjectionFormatError(
+                        f"duplicate semantic identity {identity!r}: {previous} and {path}"
+                    )
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = claim_type_digest(claim_type).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="claim-type",
+                        format_tag=claim_type.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=claim_type.lifecycle.predecessor_digest,
+                        revision=_projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                if claim_type.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in claim_type.pins
+                )
+                semantic_facts.extend(
+                    (
+                        ProjectionFact(
+                            schema_id="playbill.claim_type.identity",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="predicate_contract",
+                            value={
+                                "address": SemanticAddress.whole_artifact(path).model_dump(
+                                    mode="json"
+                                ),
+                                "artifact_digest": {"$digest": artifact_digest},
+                                "identity": claim_type.identity.model_dump(mode="json"),
+                                "input_digest": {"$digest": input_digest},
+                                "structure": claim_type.structure.model_dump(mode="json"),
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.claim_type.policies",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="complete_policy",
+                            value={
+                                "admission": claim_type.admission_policy.model_dump(mode="json"),
+                                "evidence_admission": (
+                                    claim_type.evidence_admission_policy.model_dump(mode="json")
+                                ),
+                                "resolution": claim_type.resolution_policy.model_dump(
+                                    mode="json"
+                                ),
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.claim_type.references",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="declared",
+                            value={
+                                "authority": claim_type.authority.model_dump(mode="json"),
+                                "lifecycle": claim_type.lifecycle.model_dump(mode="json"),
+                                "pins": [
+                                    pin.model_dump(mode="json") for pin in claim_type.pins
+                                ],
+                            },
+                        ),
+                    )
+                )
+                if coordinate is not None and registry.supports(
+                    "playbill.claim_type.attestation_coverage",
+                    1,
+                    classification="semantic",
+                ):
+                    semantic_facts.extend(
+                        accepted_artifact_explanation_facts(
+                            artifact_family="claim_type",
+                            subject_identity=identity,
+                            artifact_path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                            predecessor_digest=claim_type.lifecycle.predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
                         )

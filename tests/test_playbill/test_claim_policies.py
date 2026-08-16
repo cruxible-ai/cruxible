@@ -126,6 +126,15 @@ def test_review_request_policy_uses_parent_query_then_two_phase_signer_law() -> 
     assert creator_signing.verdict == "refused"
     assert creator_signing.refusal_codes == ("playbill.claim_policy.signer_constraint_unsatisfied",)
 
+    substituted_lineage = evaluate_claim_admission_settlement(
+        candidate,
+        (VerifiedPolicySignerV1(signer_id="owner", roles=("reviewer",)),),
+        lineage_creation_actor_id="someone-else",
+    )
+    assert substituted_lineage.refusal_codes == (
+        "playbill.claim_policy.lineage_creation_actor_mismatch",
+    )
+
 
 def test_admission_refuses_truncated_query_freeze_bypass_and_unknown_predicate() -> None:
     truncated = evaluate_claim_admission_candidate(
@@ -246,3 +255,22 @@ def test_unknown_policy_requirement_tag_refuses_fail_closed() -> None:
     payload["actor_requirements"][0]["tag"] = "playbill-actor-requirement-v2"
     with pytest.raises(ValidationError):
         ClaimAdmissionPolicyV1.model_validate(payload)
+
+
+def test_requirement_ids_cannot_alias_across_policy_kinds() -> None:
+    with pytest.raises(ValidationError, match="unique across"):
+        ClaimAdmissionPolicyV1(
+            actor_requirements=(
+                ActorRequirementV1(
+                    requirement_id="same-id",
+                    signer_roles=("reviewer",),
+                ),
+            ),
+            evidence_requirements=(
+                EvidenceRequirementV1(
+                    requirement_id="same-id",
+                    query_definition_digest=DIGEST_A,
+                    min_count=1,
+                ),
+            ),
+        )

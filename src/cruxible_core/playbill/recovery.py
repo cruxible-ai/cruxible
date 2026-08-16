@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from cruxible_core.playbill.assembler import ProjectionAssembler
 from cruxible_core.playbill.attestations import verify_candidate_approvals
 from cruxible_core.playbill.bootstrap import VerifiedGenesis, generation_root
-from cruxible_core.playbill.candidates import CandidateRecord
+from cruxible_core.playbill.candidates import CandidateRecord, CandidateRecordV2
 from cruxible_core.playbill.canonical import (
     GenerationRoot,
     SemanticRoot,
@@ -41,7 +41,10 @@ from cruxible_core.playbill.projection import (
     projection_manifest_name,
     projection_piece_name,
 )
-from cruxible_core.playbill.proposals import evaluate_proposal_tree
+from cruxible_core.playbill.proposals import (
+    claim_type_expansions_from_candidate,
+    evaluate_proposal_tree,
+)
 from cruxible_core.playbill.serving import (
     SERVING_MANIFEST_FILE,
     bind_current_projection,
@@ -51,8 +54,9 @@ from cruxible_core.playbill.serving import (
 )
 from cruxible_core.playbill.settlement import (
     ChangeSetRecord,
+    ChangeSetRecordV2,
     compute_semantic_root,
-    render_change_set,
+    parse_change_set_record,
     render_generation_descriptor,
 )
 from cruxible_core.playbill.types import CompilerCoordinate, GenerationDescriptor, GitObjectFormat
@@ -73,7 +77,7 @@ class RecoveredGeneration:
     descriptor: GenerationDescriptor
     generation_root: GenerationRoot
     principals: PrincipalRegistrySnapshot
-    record: ChangeSetRecord | None
+    record: ChangeSetRecord | ChangeSetRecordV2 | None
 
 
 @dataclass(frozen=True)
@@ -83,16 +87,6 @@ class RecoveredInstanceState:
     history: tuple[RecoveredGeneration, ...]
     coordinate: AcceptedProjectionCoordinate
     projection: AssemblerResult | None
-
-
-def _parse_change_set(content: bytes, *, path: str) -> ChangeSetRecord:
-    try:
-        record = ChangeSetRecord.model_validate_json(content)
-    except (ValueError, ValidationError) as exc:
-        raise SettlementIntegrityError(f"generation change-set record is invalid: {path}") from exc
-    if render_change_set(record) != content:
-        raise SettlementIntegrityError(f"generation change-set record is not canonical: {path}")
-    return record
 
 
 def _parse_note(content: bytes, *, oid: str) -> GenerationDescriptor:
@@ -105,7 +99,22 @@ def _parse_note(content: bytes, *, oid: str) -> GenerationDescriptor:
     return descriptor
 
 
-def _candidate_from_record(record: ChangeSetRecord) -> CandidateRecord:
+def _candidate_from_record(
+    record: ChangeSetRecord | ChangeSetRecordV2,
+) -> CandidateRecord | CandidateRecordV2:
+    if isinstance(record, ChangeSetRecordV2):
+        return CandidateRecordV2(
+            candidate=record.candidate,
+            candidate_digest=record.candidate_digest,
+            required_tier=record.required_tier,
+            approval_requirements=record.approval_requirements,
+            activation_policy=record.activation_policy,
+            closure_proof=record.closure_proof,
+            members=record.members,
+            law_evidence=record.law_evidence,
+            law_digests=record.law_digests,
+            compiler_digest=record.compiler_digest,
+        )
     return CandidateRecord(
         candidate=record.candidate,
         candidate_digest=record.candidate_digest,
@@ -155,7 +164,7 @@ def _verify_successor(
     if len(added) != 1:
         raise SettlementIntegrityError("generation must add exactly one change-set record")
     record_path = added[0]
-    record = _parse_change_set(current_change_sets[record_path], path=record_path)
+    record = parse_change_set_record(current_change_sets[record_path], path=record_path)
     if record.sequence != parent.sequence + 1:
         raise SettlementIntegrityError("change-set sequence is not contiguous")
     expected_path = f"changesets/cs-{record.sequence:020d}.json"
@@ -181,6 +190,7 @@ def _verify_successor(
         timestamp=record.candidate.timestamp,
         rebased=False,
         actor_id=record.actor_binding.actor_id,
+        claim_type_expansions=claim_type_expansions_from_candidate(candidate),
     )
     if reevaluated.candidate != candidate or reevaluated.diagnostics:
         raise SettlementIntegrityError("generation candidate law/closure evidence diverged")

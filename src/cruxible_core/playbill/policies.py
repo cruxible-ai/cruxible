@@ -255,6 +255,9 @@ class ClaimAdmissionPolicyV1(_StrictPolicyModel):
         for ids in groups:
             if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
                 raise ValueError("policy requirements must be sorted and unique by requirement_id")
+        all_ids = tuple(item for group in groups for item in group)
+        if len(all_ids) != len(set(all_ids)):
+            raise ValueError("policy requirement IDs must be unique across requirement kinds")
         actionable = {item.requirement_id for item in self.actor_requirements} | {
             item.requirement_id for item in self.evidence_requirements
         }
@@ -468,7 +471,15 @@ class ClaimAdmissionCandidateResultV1(_StrictPolicyModel):
     triggered_transitions: tuple[str, ...] = ()
     required_signers: tuple[RequiredSignerConstraintV1, ...] = ()
     evidence_results: tuple[QueryEvidenceResultV1, ...] = ()
+    lineage_creation_actor_id: str | None
     refusal_codes: tuple[str, ...] = ()
+
+    @field_validator("lineage_creation_actor_id")
+    @classmethod
+    def _lineage_actor(cls, value: str | None) -> str | None:
+        if value is not None:
+            governance_identifier(value, label="candidate lineage creation actor")
+        return value
 
 
 class VerifiedPolicySignerV1(_StrictPolicyModel):
@@ -598,6 +609,7 @@ def evaluate_claim_admission_candidate(
         evidence_results=tuple(
             sorted(used_evidence, key=lambda item: item.requirement_id.encode("utf-8"))
         ),
+        lineage_creation_actor_id=context.lineage_creation_actor_id,
         refusal_codes=codes,
     )
 
@@ -614,6 +626,11 @@ def evaluate_claim_admission_settlement(
         return ClaimAdmissionSettlementResultV1(
             verdict="refused",
             refusal_codes=("playbill.claim_policy.candidate_phase_refused",),
+        )
+    if lineage_creation_actor_id != candidate_result.lineage_creation_actor_id:
+        return ClaimAdmissionSettlementResultV1(
+            verdict="refused",
+            refusal_codes=("playbill.claim_policy.lineage_creation_actor_mismatch",),
         )
     ordered = tuple(sorted(signers, key=lambda item: item.signer_id.encode("utf-8")))
     if signers != ordered or len({item.signer_id for item in signers}) != len(signers):

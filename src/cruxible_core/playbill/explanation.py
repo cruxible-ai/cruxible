@@ -17,7 +17,7 @@ from cruxible_core.playbill.governance import governance_identifier
 from cruxible_core.playbill.projection_extensions import ProjectionFact
 
 if TYPE_CHECKING:
-    from cruxible_core.playbill.settlement import ChangeSetRecord
+    from cruxible_core.playbill.settlement import ChangeSetRecord, ChangeSetRecordV2
 
 AttestationCoverage = Literal[
     "exact_subject",
@@ -190,20 +190,29 @@ class CoverageBinding(_StrictExplanationModel):
 
 
 def _record_for_current_artifact(
-    records: tuple[tuple[str, ChangeSetRecord], ...],
+    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
     *,
     path: str,
     input_digest: str,
-) -> tuple[str, ChangeSetRecord] | None:
-    matches = [
+    artifact_digest: str,
+) -> tuple[str, ChangeSetRecord | ChangeSetRecordV2] | None:
+    def member_matches(member: object) -> bool:
+        candidate_digest = getattr(member, "candidate_artifact_digest", None)
+        if isinstance(candidate_digest, str):
+            return candidate_digest == artifact_digest
+        input_value = getattr(member, "artifact_digest", None)
+        return isinstance(input_value, str) and input_value == input_digest
+
+    matching_records = [
         (record_path, record)
         for record_path, record in records
-        if any(
-            member.path == path and member.artifact_digest == input_digest
-            for member in record.members
-        )
+        if any(member.path == path and member_matches(member) for member in record.members)
     ]
-    return max(matches, key=lambda item: item[1].sequence) if matches else None
+    return (
+        max(matching_records, key=lambda item: item[1].sequence)
+        if matching_records
+        else None
+    )
 
 
 def accepted_artifact_explanation_facts(
@@ -214,7 +223,7 @@ def accepted_artifact_explanation_facts(
     input_digest: str,
     artifact_digest: str,
     predecessor_digest: str | None,
-    records: tuple[tuple[str, ChangeSetRecord], ...],
+    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
     coordinate: ProjectionCoordinateContext,
 ) -> tuple[ProjectionFact, ...]:
     """Compile explanation facts only when a stored change set binds exact bytes."""
@@ -223,6 +232,7 @@ def accepted_artifact_explanation_facts(
         records,
         path=artifact_path,
         input_digest=input_digest,
+        artifact_digest=artifact_digest,
     )
     if current is None:
         return ()
@@ -355,7 +365,7 @@ def accepted_document_explanation_facts(
     input_digest: str,
     artifact_digest: str,
     predecessor_digest: str | None,
-    records: tuple[tuple[str, ChangeSetRecord], ...],
+    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
     coordinate: ProjectionCoordinateContext,
 ) -> tuple[ProjectionFact, ...]:
     """Retain the frozen Family-1 Document projection shape through an adapter."""

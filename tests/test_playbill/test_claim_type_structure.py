@@ -9,7 +9,6 @@ from cruxible_core.playbill.claim_type_structure import (
     ClaimTypeStructure,
     check_claim_type_structure,
 )
-from cruxible_core.playbill.errors import ProposalIntegrityError
 from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS
 
 
@@ -79,6 +78,7 @@ def test_claim_type_structural_diagnostics_are_explicitly_local_only() -> None:
     assert all(item.subject is None for item in invalid.diagnostics)
 
 
-def test_claim_type_artifact_format_remains_unregistered_until_pc_a2() -> None:
-    with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
-        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v1")
+def test_claim_type_artifact_format_activates_only_with_pc_a2_policy_wire() -> None:
+    law = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v1")
+    assert law.artifact_kind == "claim-type"
+    assert law.coordinate.identifier == "playbill.claim-type.v1"

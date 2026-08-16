@@ -10,6 +10,9 @@ from cruxible_core.playbill.service.review import (
     PlaybillReviewedDocument as PlaybillReviewedDocument,
 )
 from cruxible_core.playbill.service.review import (
+    PlaybillReviewedMember as PlaybillReviewedMember,
+)
+from cruxible_core.playbill.service.review import (
     render_playbill_proposal_review as render_playbill_proposal_review,
 )
 from cruxible_core.playbill.service.review import (

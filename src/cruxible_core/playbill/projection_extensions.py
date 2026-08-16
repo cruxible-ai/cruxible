@@ -409,6 +409,32 @@ def playbill_subject_extension_registry() -> ProjectionExtensionRegistry:
     )
 
 
+def playbill_claim_type_extension_registry() -> ProjectionExtensionRegistry:
+    """Return PC-A2's additive ClaimType and explanation schemas."""
+
+    prior = playbill_subject_extension_registry()
+    claim_type = tuple(
+        ProjectionFactDeclaration(
+            schema_id=schema_id,
+            schema_version=1,
+            classification="semantic",
+            constraints=("unique(subject_identity,fact_key)",),
+        )
+        for schema_id in (
+            "playbill.claim_type.attestation_coverage",
+            "playbill.claim_type.governance",
+            "playbill.claim_type.history",
+            "playbill.claim_type.identity",
+            "playbill.claim_type.policies",
+            "playbill.claim_type.provenance",
+            "playbill.claim_type.references",
+        )
+    )
+    return ProjectionExtensionRegistry(
+        (*prior.declarations("semantic"), *claim_type, *prior.declarations("presentation"))
+    )
+
+
 __all__ = [
     "ProjectionExtensionRegistry",
     "ProjectionFact",
@@ -416,6 +442,7 @@ __all__ = [
     "ProjectionFactDeclaration",
     "fixture_extension_registry",
     "normalize_projection_value",
+    "playbill_claim_type_extension_registry",
     "playbill_extension_registry",
     "playbill_governance_extension_registry",
     "playbill_subject_extension_registry",

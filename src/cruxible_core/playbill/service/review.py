@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import difflib
+import json
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_core.playbill.attestations import ApprovalStatement, approval_digest
-from cruxible_core.playbill.candidates import CandidateMemberEvidence, CandidateRecord
+from cruxible_core.playbill.candidates import (
+    CandidateMemberEvidence,
+    CandidateMemberLawEvidenceV2,
+    CandidateRecord,
+    CandidateRecordV2,
+)
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.documents import parse_document
 from cruxible_core.playbill.errors import ApprovalIntegrityError, ProposalIntegrityError
@@ -42,16 +48,34 @@ class PlaybillReviewedDocument(_StrictReviewModel):
     diff_unavailable_reason: str | None
 
 
+class PlaybillReviewedMember(_StrictReviewModel):
+    """One member in the atomic review; generated/invalidated members cannot disappear."""
+
+    path: str
+    artifact_kind: str
+    disposition: str
+    closure_role: Literal["authored", "generated_successor", "invalidation"]
+    predecessor_artifact_digest: str | None
+    candidate_artifact_digest: str | None
+    base_semantic_artifact: dict[str, object] | None
+    candidate_semantic_artifact: dict[str, object] | None
+    law_identifier: str
+    law_digest: str
+    law_evidence: dict[str, object]
+    dependency_proof_refs: tuple[dict[str, object], ...]
+
+
 class PlaybillProposalReview(_StrictReviewModel):
     tag: Literal["playbill-proposal-review-v1"] = "playbill-proposal-review-v1"
     coordinate_kind: Literal["provisional"] = "provisional"
     proposal_id: str
-    candidate: CandidateRecord
+    candidate: CandidateRecord | CandidateRecordV2
     candidate_digest: str
     parent_semantic_root: str
     settlement_base: AcceptedCoordinate
     base_oid: str
-    complete_members: tuple[CandidateMemberEvidence, ...]
+    complete_members: tuple[CandidateMemberEvidence | CandidateMemberLawEvidenceV2, ...]
+    members: tuple[PlaybillReviewedMember, ...]
     governance: dict[str, object]
     provenance: dict[str, object]
     attestation_coverage: dict[str, object]
@@ -109,7 +133,7 @@ def _readable_diff(
 def _review_document(
     instance: PlaybillInstance,
     *,
-    member: CandidateMemberEvidence,
+    member: CandidateMemberEvidence | CandidateMemberLawEvidenceV2,
     base_tree: dict[str, bytes],
     candidate_tree: dict[str, bytes],
     access: BodyAccessContext,
@@ -162,6 +186,67 @@ def _review_document(
     )
 
 
+def _review_members(
+    candidate: CandidateRecord | CandidateRecordV2,
+    *,
+    base_tree: dict[str, bytes],
+    candidate_tree: dict[str, bytes],
+) -> tuple[PlaybillReviewedMember, ...]:
+    def semantic_artifact(content: bytes | None) -> dict[str, object] | None:
+        if content is None:
+            return None
+        try:
+            value = json.loads(content)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ProposalIntegrityError("review member is not canonical structured data") from exc
+        if not isinstance(value, dict):
+            raise ProposalIntegrityError("review member must be a canonical object")
+        return value
+
+    if isinstance(candidate, CandidateRecordV2):
+        evidence_by_path = {item.path: item for item in candidate.law_evidence}
+        return tuple(
+            PlaybillReviewedMember(
+                path=member.path,
+                artifact_kind=member.artifact_kind,
+                disposition=member.disposition,
+                closure_role=member.closure_role,
+                predecessor_artifact_digest=member.predecessor_artifact_digest,
+                candidate_artifact_digest=member.candidate_artifact_digest,
+                base_semantic_artifact=semantic_artifact(base_tree.get(member.path)),
+                candidate_semantic_artifact=semantic_artifact(candidate_tree.get(member.path)),
+                law_identifier=member.law_identifier,
+                law_digest=member.law_digest,
+                law_evidence=evidence_by_path[member.path].model_dump(mode="json"),
+                dependency_proof_refs=tuple(
+                    item.model_dump(mode="json") for item in member.dependency_proof_refs
+                ),
+            )
+            for member in candidate.members
+        )
+    return tuple(
+        PlaybillReviewedMember(
+            path=member.path,
+            artifact_kind=member.artifact_kind,
+            disposition=member.disposition,
+            closure_role="authored",
+            predecessor_artifact_digest=None,
+            candidate_artifact_digest=member.artifact_digest,
+            base_semantic_artifact=semantic_artifact(base_tree.get(member.path)),
+            candidate_semantic_artifact=semantic_artifact(candidate_tree.get(member.path)),
+            law_identifier=member.law_identifier,
+            law_digest=candidate.law_digests[member.law_identifier],
+            law_evidence={
+                "artifact_digest": member.artifact_digest,
+                "governance_operation": member.governance_operation,
+                "tag": "playbill-singleton-law-evidence-v1",
+            },
+            dependency_proof_refs=(),
+        )
+        for member in candidate.members
+    )
+
+
 def service_review_playbill_proposal(
     instance: PlaybillInstance,
     *,
@@ -211,6 +296,11 @@ def service_review_playbill_proposal(
         settlement_base=base_public,
         base_oid=base.git_oid,
         complete_members=candidate.members,
+        members=_review_members(
+            candidate,
+            base_tree=base_tree,
+            candidate_tree=candidate_tree,
+        ),
         governance={
             "activation_policy": candidate.activation_policy,
             "approval_requirements": [
@@ -299,6 +389,21 @@ def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
             lines.extend(("", document.readable_diff.rstrip("\n")))
         elif document.diff_unavailable_reason is not None:
             lines.append(f"Diff unavailable: {document.diff_unavailable_reason}")
+    non_documents = tuple(
+        member for member in review.members if member.artifact_kind != "document"
+    )
+    for member in non_documents:
+        lines.extend(
+            (
+                "",
+                f"{member.path} ({member.artifact_kind})",
+                f"Closure role: {member.closure_role}",
+                "Artifact: "
+                f"{member.predecessor_artifact_digest or '<new>'} -> "
+                f"{member.candidate_artifact_digest or '<deleted>'}",
+                f"Law: {member.law_identifier} ({member.law_digest})",
+            )
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -306,6 +411,7 @@ __all__ = [
     "PlaybillApprovalChallenge",
     "PlaybillProposalReview",
     "PlaybillReviewedDocument",
+    "PlaybillReviewedMember",
     "render_playbill_proposal_review",
     "service_prepare_playbill_approval",
     "service_review_playbill_proposal",

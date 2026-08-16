@@ -14,7 +14,7 @@ from cruxible_core.playbill.attestations import (
     verify_approval,
 )
 from cruxible_core.playbill.bootstrap import render_principal
-from cruxible_core.playbill.candidates import CandidateRecord
+from cruxible_core.playbill.candidates import CandidateRecord, CandidateRecordV2
 from cruxible_core.playbill.cas import BodyAccessContext, CasObjectMetadata
 from cruxible_core.playbill.diagnostics import CompilerDiagnostic
 from cruxible_core.playbill.documents import (
@@ -268,7 +268,7 @@ def service_inspect_playbill_refusal(
 def _candidate_for_proposal(
     instance: PlaybillInstance,
     proposal_id: str,
-) -> tuple[ProposalResult, CandidateRecord]:
+) -> tuple[ProposalResult, CandidateRecord | CandidateRecordV2]:
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
     candidate = inspection.proposal.candidate
     if candidate is None:
@@ -310,7 +310,7 @@ def service_submit_playbill_approval(
 
 def _approval_receipt(
     proposal_id: str,
-    candidate: CandidateRecord,
+    candidate: CandidateRecord | CandidateRecordV2,
     verified: VerifiedApproval,
 ) -> PlaybillApprovalReceipt:
     return PlaybillApprovalReceipt(

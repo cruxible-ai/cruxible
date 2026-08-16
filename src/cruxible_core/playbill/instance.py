@@ -16,7 +16,7 @@ from cruxible_core.playbill.activation import ActivationPublisher
 from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
 from cruxible_core.playbill.attestations import ApprovalSubmission
 from cruxible_core.playbill.bootstrap import VerifiedGenesis, prepare_genesis, verify_genesis
-from cruxible_core.playbill.candidates import CandidateRecord
+from cruxible_core.playbill.candidates import CandidateRecord, CandidateRecordV2
 from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.cas import CasObjectMetadata, ContentAddressedBodyStore
 from cruxible_core.playbill.compiler import (
@@ -594,7 +594,7 @@ class PlaybillInstance:
         *,
         base: AcceptedProjectionCoordinate,
         candidate_tree: dict[str, bytes],
-        candidate: CandidateRecord,
+        candidate: CandidateRecord | CandidateRecordV2,
         approvals: tuple[ApprovalSubmission, ...],
         actor_binding: ChangeActorBinding,
         sequence: int,

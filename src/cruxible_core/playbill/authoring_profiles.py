@@ -19,7 +19,7 @@ from cruxible_core.playbill.canonical import (
     typed_digest,
 )
 from cruxible_core.playbill.claim_type_structure import ClaimTypeStructure
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest
+from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_core.playbill.errors import PlaybillFormatError
 from cruxible_core.playbill.policies import (
     ActorRequirementV1,
@@ -195,6 +195,7 @@ class ClaimTypeExpansionEvidenceV1(_StrictProfileModel):
     profile_digest: str
     authoring_source_digest: str
     compiler_digest: str
+    overrides: dict[str, object]
     overrides_digest: str
     expanded_output_digest: str
     expanded_artifact_digest: str
@@ -211,6 +212,25 @@ class ClaimTypeExpansionEvidenceV1(_StrictProfileModel):
     def _digest(cls, value: str) -> str:
         Sha256Value.from_tagged(value)
         return value
+
+    @field_validator("overrides")
+    @classmethod
+    def _overrides(cls, value: dict[str, object]) -> dict[str, object]:
+        normalized = normalize_canonical(value)
+        if not isinstance(normalized, dict):  # pragma: no cover - field type proves this
+            raise ValueError("profile overrides must be a canonical object")
+        return {str(key): item for key, item in normalized.items()}
+
+    @model_validator(mode="after")
+    def _override_binding(self) -> "ClaimTypeExpansionEvidenceV1":
+        expected = typed_digest(
+            Sha256Value,
+            "playbill-claim-type-profile-overrides-v1",
+            self.overrides,
+        ).tagged
+        if self.overrides_digest != expected:
+            raise ValueError("profile overrides digest does not reproduce")
+        return self
 
 
 class ClaimTypeExpansionResultV1(_StrictProfileModel):
@@ -387,6 +407,7 @@ def expand_claim_type_profile(request: ClaimTypeProfileInputV1) -> ClaimTypeExpa
             profile_digest=definition.profile_digest,
             authoring_source_digest=request.authoring_source_digest,
             compiler_digest=request.compiler_digest,
+            overrides=request.overrides,
             overrides_digest=typed_digest(
                 Sha256Value,
                 "playbill-claim-type-profile-overrides-v1",
@@ -402,6 +423,31 @@ def expand_claim_type_profile(request: ClaimTypeProfileInputV1) -> ClaimTypeExpa
     )
 
 
+def verify_claim_type_expansion_evidence(
+    evidence: ClaimTypeExpansionEvidenceV1,
+    *,
+    claim_type: ClaimType,
+    compiler_digest: str,
+) -> None:
+    """Verify profile identity and every digest against the exact expanded bytes."""
+
+    definition = _definitions().get(evidence.profile_id)
+    if definition is None or definition.profile_digest != evidence.profile_digest:
+        raise AuthoringProfileError("ClaimType expansion names an unknown or stale profile")
+    if evidence.compiler_digest != compiler_digest:
+        raise AuthoringProfileError("ClaimType expansion names a different compiler")
+    rendered = render_claim_type(claim_type)
+    expected_output = typed_digest(
+        Sha256Value,
+        "playbill-claim-type-profile-output-v1",
+        {"canonical_bytes_hex": rendered.hex()},
+    ).tagged
+    if evidence.expanded_output_digest != expected_output:
+        raise AuthoringProfileError("ClaimType expansion output digest does not reproduce")
+    if evidence.expanded_artifact_digest != claim_type_digest(claim_type).tagged:
+        raise AuthoringProfileError("ClaimType expansion artifact digest does not reproduce")
+
+
 __all__ = [
     "AuthorityProfileParametersV1",
     "AuthoringProfileError",
@@ -412,4 +458,5 @@ __all__ = [
     "ClaimTypeProfileDefinitionV1",
     "ClaimTypeProfileInputV1",
     "expand_claim_type_profile",
+    "verify_claim_type_expansion_evidence",
 ]

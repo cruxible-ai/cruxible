@@ -305,9 +305,7 @@ def evaluate_subject_law(
                     ),
                 ),
             )
-        if previous.lifecycle.state == "retired" or (
-            previous.lifecycle.state == "live" and shell.lifecycle.state not in {"live", "retired"}
-        ):
+        if previous.lifecycle.state == "retired":
             return SubjectLawResult(
                 verdict="refused",
                 diagnostics=(

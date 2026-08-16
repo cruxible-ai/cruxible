@@ -19,7 +19,9 @@ from cruxible_core.playbill.authoring_profiles import (
     AuthorityProfileParametersV1,
     ClaimTypeProfileInputV1,
     expand_claim_type_profile,
+    verify_claim_type_expansion_evidence,
 )
+from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_types import (
     ClaimType,
     ClaimTypeFormatError,
@@ -28,11 +30,15 @@ from cruxible_core.playbill.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
+from cruxible_core.playbill.compiler import current_compiler_coordinate
 from cruxible_core.playbill.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimResolutionPolicyV1,
 )
+from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.playbill.service.review import service_review_playbill_proposal
+from tests.test_playbill._support import initialize_local
 
 
 def literal_claim_type() -> ClaimType:
@@ -195,6 +201,44 @@ def test_profile_expansion_refuses_unknown_missing_authority_and_open_overrides(
         )
 
 
+def test_profile_evidence_refuses_forged_expansion_or_override_digest() -> None:
+    direct = literal_claim_type()
+    profile = next(
+        item
+        for item in CLAIM_TYPE_AUTHORING_PROFILES
+        if item.profile_id == "ordinary-project-fact-v1"
+    )
+    expansion = expand_claim_type_profile(
+        ClaimTypeProfileInputV1(
+            profile_id=profile.profile_id,
+            profile_digest=profile.profile_digest,
+            authoring_source_digest="sha256:" + "65" * 32,
+            compiler_digest="sha256:" + "66" * 32,
+            structure=direct.structure,
+            authority_parameters=AuthorityProfileParametersV1(
+                propose_roles=("owner",),
+                approve_roles=("owner",),
+            ),
+        )
+    )
+    forged_output = expansion.evidence.model_copy(
+        update={"expanded_output_digest": "sha256:" + "00" * 32}
+    )
+    with pytest.raises(AuthoringProfileError, match="output digest"):
+        verify_claim_type_expansion_evidence(
+            forged_output,
+            claim_type=direct,
+            compiler_digest=expansion.evidence.compiler_digest,
+        )
+    with pytest.raises(ValidationError, match="overrides digest"):
+        expansion.evidence.__class__.model_validate(
+            {
+                **expansion.evidence.model_dump(mode="json"),
+                "overrides": {"conflict_result": "refuse"},
+            }
+        )
+
+
 def test_profile_seed_list_is_exact_and_digest_pinned() -> None:
     assert tuple(item.profile_id for item in CLAIM_TYPE_AUTHORING_PROFILES) == (
         "append-only-source-observation-v1",
@@ -205,3 +249,52 @@ def test_profile_seed_list_is_exact_and_digest_pinned() -> None:
         "source-backed-scientific-result-v1",
     )
     assert all(item.profile_digest.startswith("sha256:") for item in CLAIM_TYPE_AUTHORING_PROFILES)
+
+
+def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    direct = literal_claim_type()
+    profile = next(
+        item
+        for item in CLAIM_TYPE_AUTHORING_PROFILES
+        if item.profile_id == "ordinary-project-fact-v1"
+    )
+    expansion = expand_claim_type_profile(
+        ClaimTypeProfileInputV1(
+            profile_id=profile.profile_id,
+            profile_digest=profile.profile_digest,
+            authoring_source_digest="sha256:" + "71" * 32,
+            compiler_digest=current_compiler_coordinate().rule_digest,
+            structure=direct.structure,
+            authority_parameters=AuthorityProfileParametersV1(
+                propose_roles=("owner",),
+                approve_roles=("owner",),
+            ),
+        )
+    )
+    base = instance.accepted_coordinate()
+    path = claim_type_path(direct.predicate)
+    proposal = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/profile-review",
+            proposed_base_oid=base.git_oid,
+            claim_type_expansions=(expansion.evidence,),
+        ),
+        candidate_tree={**instance.tree_at(base.git_oid), path: render_claim_type(direct)},
+        timestamp="2026-08-16T17:00:00.000000Z",
+    )
+    assert proposal.candidate is not None
+
+    review = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal.admission.proposal_id,
+        access=BodyAccessContext(principal_id="owner", can_read_body=False),
+    )
+    assert len(review.members) == 1
+    result = review.members[0].law_evidence["result"]
+    assert result["expanded_claim_type"] == direct.model_dump(mode="json")
+    assert result["authoring_expansion"] == expansion.evidence.model_dump(mode="json")
+    assert review.members[0].closure_role == "authored"

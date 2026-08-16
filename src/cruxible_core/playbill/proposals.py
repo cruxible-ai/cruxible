@@ -9,7 +9,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Protocol, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_core.playbill.actor_context import TransportCapability
 from cruxible_core.playbill.attestations import (
@@ -17,17 +25,29 @@ from cruxible_core.playbill.attestations import (
     approval_digest,
     approval_statement_bytes,
 )
+from cruxible_core.playbill.authoring_profiles import (
+    AuthoringProfileError,
+    ClaimTypeExpansionEvidenceV1,
+    verify_claim_type_expansion_evidence,
+)
 from cruxible_core.playbill.candidates import (
     CandidateMemberEvidence,
+    CandidateMemberLawEvidenceV2,
     CandidateRecord,
+    CandidateRecordV2,
+    ClosureProofV2,
+    LawEvaluationCoordinateV1,
+    MemberLawEvaluationV2,
     SemanticCandidate,
     candidate_digest,
+    member_law_evidence_digest,
     render_candidate_record,
     validate_candidate_timestamp,
 )
 from cruxible_core.playbill.canonical import (
     CandidateDigest,
     ProposalDigest,
+    SemanticDiffDigest,
     Sha256Value,
     canonical_bytes,
     canonical_digest,
@@ -36,8 +56,29 @@ from cruxible_core.playbill.canonical import (
     normalize_manifest_paths,
     semantic_diff,
     semantic_projection,
+    typed_digest,
+)
+from cruxible_core.playbill.claim_types import (
+    AcceptedClaimType,
+    ClaimType,
+    ClaimTypeFormatError,
+    claim_type_digest,
+    evaluate_claim_type_law,
+    parse_claim_type,
+)
+from cruxible_core.playbill.closure import (
+    dependency_artifacts,
+    evaluate_dependency_closure,
 )
 from cruxible_core.playbill.diagnostics import CompilerDiagnostic
+from cruxible_core.playbill.discovery import (
+    DiscoveryHintsV1,
+    ProposedSemanticInterfaceV1,
+    ReuseDispositionV1,
+    SemanticReuseInterfaceV1,
+    VocabularyReuseRequestV1,
+    evaluate_vocabulary_reuse,
+)
 from cruxible_core.playbill.documents import (
     AcceptedDocument,
     BodyVerifierProtocol,
@@ -51,11 +92,16 @@ from cruxible_core.playbill.errors import (
     ProposalIntegrityError,
     SubjectFormatError,
 )
-from cruxible_core.playbill.governance import ApprovalRequirement, MutationDisposition
+from cruxible_core.playbill.governance import (
+    ActivationPolicy,
+    ApprovalRequirement,
+    MutationDisposition,
+    PermissionTier,
+)
 from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.principals import principal_registry_from_tree
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_catalog import SourceCompilationManifest
 from cruxible_core.playbill.subjects import (
@@ -74,6 +120,10 @@ _PRINCIPAL_PATH_RE = re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$")
 _SUBJECT_PATH_RE = re.compile(
     r"^subjects/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
     r"[a-z][a-z0-9_.-]{0,255}\.yaml$"
+)
+_CLAIM_TYPE_PATH_RE = re.compile(
+    r"^claim-types/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
+    r"[a-z][a-z0-9_]{0,63}\.yaml$"
 )
 _LFS_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
@@ -119,6 +169,7 @@ class ProposalAdmissionRequest(_StrictProposalModel):
     target_ref: str
     proposed_base_oid: str
     source_compilation_digest: str | None = None
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...] = ()
 
     @field_validator("target_ref")
     @classmethod
@@ -141,6 +192,20 @@ class ProposalAdmissionRequest(_StrictProposalModel):
             Sha256Value.from_tagged(value)
         return value
 
+    @field_validator("claim_type_expansions")
+    @classmethod
+    def _claim_type_expansions(
+        cls,
+        value: tuple[ClaimTypeExpansionEvidenceV1, ...],
+    ) -> tuple[ClaimTypeExpansionEvidenceV1, ...]:
+        encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
+        if encoded != tuple(sorted(set(encoded))):
+            raise ValueError("ClaimType expansion evidence must be sorted and unique")
+        digests = tuple(item.expanded_artifact_digest for item in value)
+        if len(digests) != len(set(digests)):
+            raise ValueError("ClaimType expansion evidence must be unique by expanded artifact")
+        return value
+
 
 class ProposalAdmissionRecord(_StrictProposalModel):
     tag: Literal["playbill-proposal-admission-v1"] = "playbill-proposal-admission-v1"
@@ -151,6 +216,7 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     candidate_commit_oid: str
     candidate_tree_oid: str
     source_compilation_digest: str | None
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...] = ()
     limits: ProposalReceiveLimits
     admitted_at: str
 
@@ -262,7 +328,7 @@ class ProposalEvaluationRecord(_StrictProposalModel):
 class ProposalResult(_StrictProposalModel):
     admission: ProposalAdmissionRecord
     evaluation: ProposalEvaluationRecord
-    candidate: CandidateRecord | None = None
+    candidate: CandidateRecord | CandidateRecordV2 | None = None
 
     @model_validator(mode="after")
     def _result_shape(self) -> "ProposalResult":
@@ -354,7 +420,7 @@ class ProposalEvidenceStore:
         _exclusive_canonical_write(path, canonical_bytes(record.model_dump(mode="json")) + b"\n")
         return path
 
-    def write_candidate(self, record: CandidateRecord) -> Path:
+    def write_candidate(self, record: CandidateRecord | CandidateRecordV2) -> Path:
         path = self.candidates / f"{record.candidate_digest.removeprefix('sha256:')}.json"
         _exclusive_canonical_write(path, render_candidate_record(record))
         return path
@@ -410,12 +476,28 @@ class ProposalEvidenceStore:
             for path in sorted(self.evaluations.glob("*.json"), key=lambda item: item.name)
         )
 
-    def read_candidate(self, candidate_digest_value: str) -> CandidateRecord:
+    def read_candidate(
+        self, candidate_digest_value: str
+    ) -> CandidateRecord | CandidateRecordV2:
         """Read one canonical validated candidate by its frozen C_s digest."""
 
         CandidateDigest.from_tagged(candidate_digest_value)
         path = self.candidates / f"{candidate_digest_value.removeprefix('sha256:')}.json"
-        return self._read_model(path, CandidateRecord, label="validated candidate")
+        if path.is_symlink() or not path.is_file():
+            raise ProposalIntegrityError(
+                "validated candidate evidence is missing or not a regular file"
+            )
+        try:
+            raw = path.read_bytes()
+            adapter: TypeAdapter[CandidateRecord | CandidateRecordV2] = TypeAdapter(
+                CandidateRecord | CandidateRecordV2
+            )
+            value: CandidateRecord | CandidateRecordV2 = adapter.validate_json(raw)
+        except (OSError, ValidationError, ValueError) as exc:
+            raise ProposalIntegrityError("validated candidate evidence is malformed") from exc
+        if render_candidate_record(value) != raw:
+            raise ProposalIntegrityError("validated candidate evidence is not canonical")
+        return value
 
     def write_approval(
         self,
@@ -511,6 +593,7 @@ def validate_proposal_tree(
             _DOCUMENT_PATH_RE.fullmatch(path)
             or _PRINCIPAL_PATH_RE.fullmatch(path)
             or _SUBJECT_PATH_RE.fullmatch(path)
+            or _CLAIM_TYPE_PATH_RE.fullmatch(path)
         )
         if not authorable and base.get(path) != content:
             raise ProposalAdmissionError(
@@ -529,6 +612,7 @@ def validate_proposal_tree(
             _DOCUMENT_PATH_RE.fullmatch(path)
             or _PRINCIPAL_PATH_RE.fullmatch(path)
             or _SUBJECT_PATH_RE.fullmatch(path)
+            or _CLAIM_TYPE_PATH_RE.fullmatch(path)
         )
         if not authorable and path not in result:
             raise ProposalAdmissionError(
@@ -540,9 +624,35 @@ def validate_proposal_tree(
 @dataclass(frozen=True)
 class CandidateEvaluation:
     tree: dict[str, bytes]
-    candidate: CandidateRecord | None
+    candidate: CandidateRecord | CandidateRecordV2 | None
     diagnostics: tuple[CompilerDiagnostic, ...]
     rebased: bool
+
+
+def claim_type_expansions_from_candidate(
+    candidate: CandidateRecord | CandidateRecordV2,
+) -> tuple[ClaimTypeExpansionEvidenceV1, ...]:
+    """Recover and revalidate authoring-only evidence committed by v2 law output."""
+
+    if not isinstance(candidate, CandidateRecordV2):
+        return ()
+    expansions: list[ClaimTypeExpansionEvidenceV1] = []
+    for evidence in candidate.law_evidence:
+        raw = evidence.result.get("authoring_expansion")
+        if raw is None:
+            continue
+        try:
+            expansions.append(ClaimTypeExpansionEvidenceV1.model_validate(raw))
+        except ValidationError as exc:
+            raise ProposalIntegrityError(
+                "candidate contains invalid ClaimType authoring expansion evidence"
+            ) from exc
+    return tuple(
+        sorted(
+            expansions,
+            key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+        )
+    )
 
 
 def _diagnostic(code: str, message: str, path: str | None = None) -> CompilerDiagnostic:
@@ -583,6 +693,670 @@ def deterministic_rebase(
     return rebased, tuple(conflicts)
 
 
+class RebaseMemberConflictV2(_StrictProposalModel):
+    tag: Literal["playbill-rebase-member-conflict-v2"] = (
+        "playbill-rebase-member-conflict-v2"
+    )
+    code: Literal["playbill.rebase.member_conflict"] = "playbill.rebase.member_conflict"
+    path: str
+    old_parent_digest: str | None
+    proposed_digest: str | None
+    new_parent_digest: str | None
+
+    @field_validator("old_parent_digest", "proposed_digest", "new_parent_digest")
+    @classmethod
+    def _digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+
+class RebaseResultV2(_StrictProposalModel):
+    tag: Literal["playbill-rebase-result-v2"] = "playbill-rebase-result-v2"
+    tree: dict[str, bytes]
+    conflicts: tuple[RebaseMemberConflictV2, ...]
+    approvals_invalidated: Literal[True] = True
+
+
+def _optional_file_digest(content: bytes | None) -> str | None:
+    return None if content is None else file_digest(content).tagged
+
+
+def deterministic_rebase_v2(
+    *,
+    old_parent_tree: Mapping[str, bytes],
+    new_parent_tree: Mapping[str, bytes],
+    proposed_tree: Mapping[str, bytes],
+) -> RebaseResultV2:
+    """Three-way member rebase with exact, canonically ordered conflicts."""
+
+    paths = normalize_manifest_paths(
+        list({*old_parent_tree.keys(), *new_parent_tree.keys(), *proposed_tree.keys()})
+    )
+    rebased = dict(new_parent_tree)
+    conflicts: list[RebaseMemberConflictV2] = []
+    for path in paths:
+        old = old_parent_tree.get(path)
+        proposed = proposed_tree.get(path)
+        if old == proposed:
+            continue
+        new = new_parent_tree.get(path)
+        if new == proposed:
+            continue
+        if new != old:
+            conflicts.append(
+                RebaseMemberConflictV2(
+                    path=path,
+                    old_parent_digest=_optional_file_digest(old),
+                    proposed_digest=_optional_file_digest(proposed),
+                    new_parent_digest=_optional_file_digest(new),
+                )
+            )
+            continue
+        if proposed is None:
+            rebased.pop(path, None)
+        else:
+            rebased[path] = proposed
+    return RebaseResultV2(tree=rebased, conflicts=tuple(conflicts))
+
+
+def _canonical_model_digest(domain: str, model: BaseModel) -> str:
+    payload = model.model_dump(mode="json")
+    payload.pop("tag", None)
+    return typed_digest(Sha256Value, domain, payload).tagged
+
+
+def _reuse_interfaces(tree: Mapping[str, bytes]) -> tuple[SemanticReuseInterfaceV1, ...]:
+    interfaces: list[SemanticReuseInterfaceV1] = []
+    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        content = tree[path]
+        if _CLAIM_TYPE_PATH_RE.fullmatch(path):
+            claim_type = parse_claim_type(content, path=path)
+            signature = typed_digest(
+                Sha256Value,
+                "playbill-claim-type-structural-signature-v1",
+                claim_type.structure.model_dump(mode="json"),
+            ).tagged
+            tokens = tuple(
+                sorted(
+                    {
+                        claim_type.predicate,
+                        claim_type.predicate.rpartition(".")[2],
+                    },
+                    key=lambda item: item.encode("utf-8"),
+                )
+            )
+            interfaces.append(
+                SemanticReuseInterfaceV1(
+                    address=SemanticAddress.whole_artifact(path),
+                    identity=claim_type.identity,
+                    kind="claim-type",
+                    label=claim_type.predicate,
+                    canonical_tokens=tokens,
+                    structural_signature_digest=signature,
+                )
+            )
+        elif _SUBJECT_PATH_RE.fullmatch(path):
+            subject = parse_subject(content, path=path)
+            # Subject-kind similarity is not evidence that two instances are
+            # duplicates. Include the stable identity in the signature.
+            signature = typed_digest(
+                Sha256Value,
+                "playbill-subject-reuse-signature-v1",
+                {"identity": subject.identity.qualified},
+            ).tagged
+            interfaces.append(
+                SemanticReuseInterfaceV1(
+                    address=SemanticAddress.whole_artifact(path),
+                    identity=subject.identity,
+                    kind="subject",
+                    label=subject.identity.qualified,
+                    canonical_tokens=(subject.subject_id,),
+                    structural_signature_digest=signature,
+                )
+            )
+    return tuple(interfaces)
+
+
+def _claim_type_reuse_evidence(
+    *,
+    claim_type: ClaimType,
+    path: str,
+    lookup_tree: Mapping[str, bytes],
+    current: AcceptedProjectionCoordinate,
+) -> dict[str, object]:
+    structure = claim_type.structure
+    signature = typed_digest(
+        Sha256Value,
+        "playbill-claim-type-structural-signature-v1",
+        structure.model_dump(mode="json"),
+    ).tagged
+    predicate = claim_type.predicate
+    proposal = ProposedSemanticInterfaceV1(
+        address=SemanticAddress.whole_artifact(path),
+        identity=claim_type.identity,
+        kind="claim-type",
+        label=predicate,
+        canonical_tokens=tuple(
+            sorted(
+                {predicate, predicate.rpartition(".")[2]},
+                key=lambda item: item.encode("utf-8"),
+            )
+        ),
+        structural_signature_digest=signature,
+    )
+    evidence = evaluate_vocabulary_reuse(
+        VocabularyReuseRequestV1(
+            proposal=proposal,
+            hints=DiscoveryHintsV1(),
+            disposition=ReuseDispositionV1(kind="new_distinct"),
+        ),
+        accepted_interfaces=tuple(
+            item
+            for item in _reuse_interfaces(lookup_tree)
+            if item.address.artifact_path != path
+        ),
+        coordinate=AcceptedCoordinate.from_internal(current),
+        implementation_digest=current.compiler.rule_digest,
+    )
+    return evidence.model_dump(mode="json")
+
+
+def _member_disposition(
+    *,
+    predecessor_digest: str | None,
+    candidate_digest_value: str | None,
+    retired: bool,
+) -> Literal["create", "replace", "retire", "delete"]:
+    if predecessor_digest is None:
+        return "create"
+    if candidate_digest_value is None:
+        return "delete"
+    return "retire" if retired else "replace"
+
+
+def _aggregate_tier(values: list[PermissionTier]) -> PermissionTier:
+    order: dict[PermissionTier, int] = {
+        "governed_write": 0,
+        "graph_write": 1,
+        "admin": 2,
+    }
+    return max(values, key=order.__getitem__)
+
+
+def _aggregate_activation(values: list[ActivationPolicy]) -> ActivationPolicy:
+    order: dict[ActivationPolicy, int] = {
+        "snapshot": 0,
+        "drain": 1,
+        "epoch-check": 2,
+        "abort": 3,
+    }
+    return max(values, key=order.__getitem__)
+
+
+def _evaluate_v2_proposal_tree(
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: dict[str, bytes],
+    current: AcceptedProjectionCoordinate,
+    bodies: BodyVerifierProtocol,
+    timestamp: str,
+    scope: tuple[str, ...],
+    diff_digest: SemanticDiffDigest,
+    actor_id: str | None,
+    rebased: bool,
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...],
+) -> CandidateEvaluation:
+    for path in scope:
+        proposed_bytes = candidate_tree.get(path)
+        if proposed_bytes is None:
+            continue
+        try:
+            if any(
+                pattern.fullmatch(path)
+                for pattern in (_DOCUMENT_PATH_RE, _SUBJECT_PATH_RE, _CLAIM_TYPE_PATH_RE)
+            ):
+                dependency_artifacts({path: proposed_bytes})
+        except (DocumentFormatError, SubjectFormatError, ClaimTypeFormatError) as exc:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (
+                    _diagnostic(
+                        "playbill.proposal.member_format_invalid",
+                        str(exc),
+                        path,
+                    ),
+                ),
+                rebased,
+            )
+    closure = evaluate_dependency_closure(
+        parent_tree=current_tree,
+        candidate_tree=candidate_tree,
+        scope=scope,
+    )
+    if closure.verdict == "refused":
+        closure_diagnostics: list[CompilerDiagnostic] = []
+        if closure.missing_dependents:
+            message = canonical_bytes(
+                {
+                    "missing": [
+                        item.model_dump(mode="json") for item in closure.missing_dependents
+                    ]
+                }
+            ).decode("utf-8")
+            closure_diagnostics.append(
+                _diagnostic(
+                    "playbill.change_set.incomplete_closure",
+                    message,
+                )
+            )
+        if closure.unresolved_pins:
+            closure_diagnostics.append(
+                _diagnostic(
+                    "playbill.change_set.unresolved_pin",
+                    canonical_bytes(
+                        {
+                            "pins": [
+                                item.model_dump(mode="json")
+                                for item in closure.unresolved_pins
+                            ]
+                        }
+                    ).decode("utf-8"),
+                )
+            )
+        return CandidateEvaluation(
+            candidate_tree,
+            None,
+            tuple(closure_diagnostics),
+            rebased,
+        )
+
+    principals = principal_registry_from_tree(
+        current_tree,
+        semantic_root=current.semantic_root,
+    )
+    candidate_states = {item.path: item for item in dependency_artifacts(candidate_tree)}
+    parent_states = {item.path: item for item in dependency_artifacts(current_tree)}
+    candidate_identities = {
+        item.identity.qualified: (item.identity, item.artifact_digest)
+        for item in candidate_states.values()
+    }
+    member_inputs: list[
+        tuple[
+            str,
+            str,
+            str | None,
+            str,
+            PermissionTier,
+            tuple[str, ...],
+            ActivationPolicy,
+            str,
+            str,
+            dict[str, object],
+            tuple[str, ...],
+            bool,
+        ]
+    ] = []
+    diagnostics: list[CompilerDiagnostic] = []
+    used_expansions: set[str] = set()
+    for path in scope:
+        proposed_bytes = candidate_tree.get(path)
+        if proposed_bytes is None:
+            diagnostics.append(
+                _diagnostic(
+                    "playbill.change_set.delete_unsupported",
+                    "PC-A2 does not activate artifact deletion semantics.",
+                    path,
+                )
+            )
+            continue
+        parent_state = parent_states.get(path)
+        candidate_state = candidate_states.get(path)
+        if candidate_state is None:
+            diagnostics.append(
+                _diagnostic(
+                    "playbill.proposal.unregistered_semantic_kind",
+                    "No PC-A2 acceptance law is registered for this changed path.",
+                    path,
+                )
+            )
+            continue
+        if _CLAIM_TYPE_PATH_RE.fullmatch(path):
+            try:
+                claim_type = parse_claim_type(proposed_bytes, path=path)
+            except ClaimTypeFormatError as exc:
+                diagnostics.append(
+                    _diagnostic("playbill.claim_type.format_invalid", str(exc), path)
+                )
+                continue
+            predecessor: AcceptedClaimType | None = None
+            if parent_state is not None:
+                previous = parse_claim_type(current_tree[path], path=path)
+                predecessor = AcceptedClaimType(
+                    path=path,
+                    claim_type=previous,
+                    artifact_digest=claim_type_digest(previous).tagged,
+                )
+            law = evaluate_claim_type_law(
+                claim_type,
+                path=path,
+                principals=principals,
+                actor_id=actor_id,
+                predecessor=predecessor,
+                accepted_artifacts=candidate_identities,
+            )
+            if law.verdict == "refused":
+                diagnostics.extend(law.diagnostics)
+                continue
+            if law.artifact_digest is None or law.required_tier is None:
+                raise ProposalIntegrityError("accepted ClaimType law result is incomplete")
+            reuse: dict[str, object] | None = None
+            if predecessor is None:
+                reuse = _claim_type_reuse_evidence(
+                    claim_type=claim_type,
+                    path=path,
+                    lookup_tree=candidate_tree,
+                    current=current,
+                )
+                if reuse["verdict"] == "refused":
+                    diagnostics.append(
+                        _diagnostic(
+                            str(reuse["refusal_code"]),
+                            "ClaimType vocabulary reuse disposition was refused.",
+                            path,
+                        )
+                    )
+                    continue
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+                artifact_tag=claim_type.artifact_format
+            )
+            policy_digests = tuple(
+                sorted(
+                    (
+                        _canonical_model_digest(
+                            "playbill-claim-admission-policy-v1",
+                            claim_type.admission_policy,
+                        ),
+                        _canonical_model_digest(
+                            "playbill-claim-evidence-admission-policy-v1",
+                            claim_type.evidence_admission_policy,
+                        ),
+                        _canonical_model_digest(
+                            "playbill-claim-resolution-policy-v1",
+                            claim_type.resolution_policy,
+                        ),
+                    )
+                )
+            )
+            expansion = next(
+                (
+                    item
+                    for item in claim_type_expansions
+                    if item.expanded_artifact_digest == law.artifact_digest
+                ),
+                None,
+            )
+            if expansion is not None:
+                try:
+                    verify_claim_type_expansion_evidence(
+                        expansion,
+                        claim_type=claim_type,
+                        compiler_digest=current.compiler.rule_digest,
+                    )
+                except AuthoringProfileError as exc:
+                    diagnostics.append(
+                        _diagnostic(
+                            "playbill.claim_type.profile_evidence_invalid",
+                            str(exc),
+                            path,
+                        )
+                    )
+                    continue
+                used_expansions.add(expansion.expanded_artifact_digest)
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    None if predecessor is None else predecessor.artifact_digest,
+                    law.artifact_digest,
+                    law.required_tier,
+                    law.approval_scope,
+                    "snapshot",
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    {
+                        "artifact_digest": law.artifact_digest,
+                        "authoring_expansion": (
+                            None if expansion is None else expansion.model_dump(mode="json")
+                        ),
+                        "expanded_claim_type": claim_type.model_dump(mode="json"),
+                        "reuse": reuse,
+                        "verdict": "accepted",
+                    },
+                    policy_digests,
+                    claim_type.lifecycle.state == "retired",
+                )
+            )
+            continue
+        if _SUBJECT_PATH_RE.fullmatch(path):
+            subject = parse_subject(proposed_bytes, path=path)
+            predecessor_subject: AcceptedSubject | None = None
+            if parent_state is not None:
+                previous_subject = parse_subject(current_tree[path], path=path)
+                predecessor_subject = AcceptedSubject(
+                    path=path,
+                    shell=previous_subject,
+                    artifact_digest=subject_digest(previous_subject).tagged,
+                )
+            subject_law = evaluate_subject_law(
+                subject,
+                path=path,
+                principals=principals,
+                actor_id=actor_id,
+                predecessor=predecessor_subject,
+            )
+            if subject_law.verdict == "refused":
+                diagnostics.extend(subject_law.diagnostics)
+                continue
+            if subject_law.artifact_digest is None or subject_law.required_tier is None:
+                raise ProposalIntegrityError("accepted Subject law result is incomplete")
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+                artifact_tag=subject.artifact_format
+            )
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    None
+                    if predecessor_subject is None
+                    else predecessor_subject.artifact_digest,
+                    subject_law.artifact_digest,
+                    subject_law.required_tier,
+                    subject_law.approval_scope,
+                    "snapshot",
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    {
+                        "artifact_digest": subject_law.artifact_digest,
+                        "verdict": "accepted",
+                    },
+                    (),
+                    subject.lifecycle.state == "retired",
+                )
+            )
+            continue
+        if _DOCUMENT_PATH_RE.fullmatch(path):
+            document_shell = parse_document(proposed_bytes, path=path)
+            predecessor_document: AcceptedDocument | None = None
+            if parent_state is not None:
+                previous_document = parse_document(current_tree[path], path=path)
+                predecessor_document = AcceptedDocument(
+                    path=path,
+                    shell=previous_document,
+                    envelope_digest=document_digest(previous_document).tagged,
+                )
+            document_law = evaluate_document_law(
+                document_shell,
+                path=path,
+                bodies=bodies,
+                predecessor=predecessor_document,
+            )
+            if document_law.verdict == "refused":
+                diagnostics.extend(document_law.diagnostics)
+                continue
+            if (
+                document_law.envelope_digest is None
+                or document_law.required_tier is None
+                or document_law.activation_policy is None
+            ):
+                raise ProposalIntegrityError("accepted Document law result is incomplete")
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+                artifact_tag=document_shell.tag
+            )
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    None
+                    if predecessor_document is None
+                    else predecessor_document.envelope_digest,
+                    document_law.envelope_digest,
+                    document_law.required_tier,
+                    document_law.approval_scope,
+                    document_law.activation_policy,
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    {
+                        "artifact_digest": document_law.envelope_digest,
+                        "verdict": "accepted",
+                    },
+                    (),
+                    False,
+                )
+            )
+            continue
+        diagnostics.append(
+            _diagnostic(
+                "playbill.proposal.unregistered_semantic_kind",
+                "No PC-A2 acceptance law is registered for this changed path.",
+                path,
+            )
+        )
+    unused_expansions = tuple(
+        item
+        for item in claim_type_expansions
+        if item.expanded_artifact_digest not in used_expansions
+    )
+    if unused_expansions:
+        diagnostics.append(
+            _diagnostic(
+                "playbill.claim_type.profile_output_mismatch",
+                "ClaimType profile evidence does not bind any expanded candidate artifact.",
+            )
+        )
+    if diagnostics:
+        return CandidateEvaluation(candidate_tree, None, tuple(diagnostics), rebased)
+    if tuple(item[0] for item in member_inputs) != scope:
+        raise ProposalIntegrityError("v2 evaluator did not cover every scoped member")
+    semantic_tree = semantic_projection(candidate_tree)
+    semantic_candidate = SemanticCandidate(
+        parent_semantic_root=current.semantic_root,
+        candidate_manifest_root=manifest_root(semantic_tree).tagged,
+        semantic_diff_digest=diff_digest.tagged,
+        scope=scope,
+        timestamp=timestamp,
+    )
+    law_evidence: list[MemberLawEvaluationV2] = []
+    members: list[CandidateMemberLawEvidenceV2] = []
+    for (
+        path,
+        artifact_kind,
+        predecessor_digest,
+        proposed_digest,
+        _tier,
+        _roles,
+        _activation,
+        law_identifier,
+        law_digest,
+        result,
+        policy_digests,
+        retired,
+    ) in member_inputs:
+        proofs = closure.proofs_for(path)
+        evidence = MemberLawEvaluationV2(
+            path=path,
+            law_identifier=law_identifier,
+            law_digest=law_digest,
+            evaluation_time=timestamp,
+            evaluation_coordinate=LawEvaluationCoordinateV1(
+                git_oid=current.git_oid,
+                semantic_root=current.semantic_root,
+                generation_root=current.generation_root,
+                compiler_digest=current.compiler.rule_digest,
+            ),
+            dependency_proof_refs=proofs,
+            policy_digests=policy_digests,
+            result=result,
+        )
+        law_evidence.append(evidence)
+        disposition = _member_disposition(
+            predecessor_digest=predecessor_digest,
+            candidate_digest_value=proposed_digest,
+            retired=retired,
+        )
+        members.append(
+            CandidateMemberLawEvidenceV2(
+                path=path,
+                artifact_kind=artifact_kind,
+                disposition=disposition,
+                predecessor_artifact_digest=predecessor_digest,
+                candidate_artifact_digest=proposed_digest,
+                law_identifier=law_identifier,
+                law_digest=law_digest,
+                law_evidence_digest=member_law_evidence_digest(evidence),
+                closure_role="invalidation" if disposition == "retire" else "authored",
+                dependency_proof_refs=proofs,
+            )
+        )
+    member_evidence_digest = typed_digest(
+        Sha256Value,
+        "playbill-candidate-member-evidence-v2",
+        {"members": [item.model_dump(mode="json") for item in members]},
+    ).tagged
+    requirements = tuple(
+        ApprovalRequirement(role=role)
+        for role in sorted(
+            {role for item in member_inputs for role in item[5]},
+            key=lambda item: item.encode("utf-8"),
+        )
+    )
+    law_digests = {
+        identifier: digest
+        for identifier, digest in sorted(
+            {(item[7], item[8]) for item in member_inputs},
+            key=lambda item: item[0].encode("utf-8"),
+        )
+    }
+    record = CandidateRecordV2(
+        candidate=semantic_candidate,
+        candidate_digest=candidate_digest(semantic_candidate).tagged,
+        required_tier=_aggregate_tier([item[4] for item in member_inputs]),
+        approval_requirements=requirements,
+        activation_policy=_aggregate_activation([item[6] for item in member_inputs]),
+        closure_proof=ClosureProofV2(
+            paths=scope,
+            dependency_graph_digest=closure.dependency_graph_digest,
+            member_evidence_digest=member_evidence_digest,
+        ),
+        members=tuple(members),
+        law_evidence=tuple(law_evidence),
+        law_digests=law_digests,
+        compiler_digest=current.compiler.rule_digest,
+    )
+    return CandidateEvaluation(candidate_tree, record, (), rebased)
+
+
 def evaluate_proposal_tree(
     *,
     base_tree: Mapping[str, bytes],
@@ -593,26 +1367,62 @@ def evaluate_proposal_tree(
     timestamp: str,
     rebased: bool,
     actor_id: str | None = None,
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...] = (),
 ) -> CandidateEvaluation:
     candidate_tree = dict(proposed_tree)
     if rebased:
-        candidate_tree, conflicts = deterministic_rebase(
-            base_tree=base_tree,
-            current_tree=current_tree,
-            proposed_tree=proposed_tree,
+        _original_diff, original_scope = semantic_diff(base_tree, proposed_tree)
+        v2_rebase = len(original_scope) > 1 or any(
+            _CLAIM_TYPE_PATH_RE.fullmatch(path) for path in original_scope
         )
-        if conflicts:
-            diagnostics = tuple(
-                _diagnostic(
-                    "playbill.proposal.rebase_conflict",
-                    "The accepted artifact changed incompatibly after the proposed base.",
-                    path,
-                )
-                for path in conflicts
+        if v2_rebase:
+            rebased_result = deterministic_rebase_v2(
+                old_parent_tree=base_tree,
+                new_parent_tree=current_tree,
+                proposed_tree=proposed_tree,
             )
-            return CandidateEvaluation(candidate_tree, None, diagnostics, True)
+            candidate_tree = rebased_result.tree
+            if rebased_result.conflicts:
+                diagnostics = tuple(
+                    _diagnostic(
+                        conflict.code,
+                        canonical_bytes(conflict.model_dump(mode="json")).decode("utf-8"),
+                        conflict.path,
+                    )
+                    for conflict in rebased_result.conflicts
+                )
+                return CandidateEvaluation(candidate_tree, None, diagnostics, True)
+        else:
+            candidate_tree, conflicts = deterministic_rebase(
+                base_tree=base_tree,
+                current_tree=current_tree,
+                proposed_tree=proposed_tree,
+            )
+            if conflicts:
+                diagnostics = tuple(
+                    _diagnostic(
+                        "playbill.proposal.rebase_conflict",
+                        "The accepted artifact changed incompatibly after the proposed base.",
+                        path,
+                    )
+                    for path in conflicts
+                )
+                return CandidateEvaluation(candidate_tree, None, diagnostics, True)
 
     diff_digest, scope = semantic_diff(current_tree, candidate_tree)
+    if len(scope) > 1 or any(_CLAIM_TYPE_PATH_RE.fullmatch(path) for path in scope):
+        return _evaluate_v2_proposal_tree(
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            current=current,
+            bodies=bodies,
+            timestamp=timestamp,
+            scope=scope,
+            diff_digest=diff_digest,
+            actor_id=actor_id,
+            rebased=rebased,
+            claim_type_expansions=claim_type_expansions,
+        )
     if len(scope) != 1:
         return CandidateEvaluation(
             candidate_tree,
@@ -848,6 +1658,9 @@ def _proposal_id_payload(
                 "candidate_commit_oid": candidate_commit_oid,
                 "candidate_tree_oid": candidate_tree_oid,
                 "source_compilation_digest": request.source_compilation_digest,
+                "claim_type_expansions": [
+                    item.model_dump(mode="json") for item in request.claim_type_expansions
+                ],
                 "limits": limits.model_dump(mode="json"),
                 "admitted_at": admitted_at,
             },
@@ -937,6 +1750,7 @@ class ProposalService:
             candidate_commit_oid=commit_oid,
             candidate_tree_oid=tree_oid,
             source_compilation_digest=request.source_compilation_digest,
+            claim_type_expansions=request.claim_type_expansions,
             limits=self.receive_limits,
             admitted_at=timestamp,
         )
@@ -953,6 +1767,7 @@ class ProposalService:
             timestamp=timestamp,
             rebased=is_rebase,
             actor_id=actor.actor_id,
+            claim_type_expansions=request.claim_type_expansions,
         )
 
         evaluated_tree_oid: str | None = tree_oid
@@ -999,7 +1814,9 @@ __all__ = [
     "ProposalResult",
     "ProposalService",
     "ProposalTransportProtocol",
+    "claim_type_expansions_from_candidate",
     "deterministic_rebase",
+    "deterministic_rebase_v2",
     "evaluate_proposal_tree",
     "validate_proposal_tree",
 ]

@@ -10,7 +10,12 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_core.playbill.candidates import CandidateRecord, SemanticCandidate, candidate_digest
+from cruxible_core.playbill.candidates import (
+    CandidateRecord,
+    CandidateRecordV2,
+    SemanticCandidate,
+    candidate_digest,
+)
 from cruxible_core.playbill.canonical import (
     ApprovalDigest,
     CandidateDigest,
@@ -174,7 +179,7 @@ def verify_approval(
 
 
 def verify_candidate_approvals(
-    candidate: CandidateRecord,
+    candidate: CandidateRecord | CandidateRecordV2,
     submissions: tuple[ApprovalSubmission, ...],
     *,
     principals: PrincipalRegistrySnapshot,

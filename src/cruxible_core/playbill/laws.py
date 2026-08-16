@@ -9,6 +9,7 @@ from cruxible_core.playbill.errors import ProposalIntegrityError
 from cruxible_core.playbill.governance import AcceptanceLawCoordinate
 
 DOCUMENT_LAW_IDENTIFIER = "playbill.document.v1"
+CLAIM_TYPE_LAW_IDENTIFIER = "playbill.claim-type.v1"
 PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
 SUBJECT_LAW_IDENTIFIER = "playbill.subject.v1"
 
@@ -73,6 +74,24 @@ def _subject_law_coordinate() -> AcceptanceLawCoordinate:
 
 
 SUBJECT_LAW = _subject_law_coordinate()
+
+
+def _claim_type_law_coordinate() -> AcceptanceLawCoordinate:
+    return AcceptanceLawCoordinate(
+        identifier=CLAIM_TYPE_LAW_IDENTIFIER,
+        digest=typed_digest(
+            AcceptanceLawDigest,
+            "playbill-law-v1",
+            {
+                "identifier": CLAIM_TYPE_LAW_IDENTIFIER,
+                "artifact_tag": "playbill-claim-type-v1",
+                "semantic_revision": 1,
+            },
+        ).tagged,
+    )
+
+
+CLAIM_TYPE_LAW = _claim_type_law_coordinate()
 
 
 @dataclass(frozen=True)
@@ -140,8 +159,14 @@ SUBJECT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="subject",
     artifact_tag="playbill-subject-v1",
 )
+CLAIM_TYPE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_TYPE_LAW,
+    artifact_kind="claim-type",
+    artifact_tag="playbill-claim-type-v1",
+)
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
+        CLAIM_TYPE_ACCEPTANCE_LAW,
         DOCUMENT_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
         SUBJECT_ACCEPTANCE_LAW,
@@ -151,6 +176,9 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
 
 __all__ = [
     "AcceptanceLawRegistry",
+    "CLAIM_TYPE_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_LAW",
+    "CLAIM_TYPE_LAW_IDENTIFIER",
     "DOCUMENT_ACCEPTANCE_LAW",
     "DOCUMENT_LAW",
     "DOCUMENT_LAW_IDENTIFIER",
