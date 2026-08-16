@@ -143,6 +143,60 @@ class ArtifactPathKind:
     implemented: bool = True
 
 
+@dataclass(frozen=True)
+class ArtifactFormatTag:
+    """One globally reserved wire tag; reservation itself grants no authority."""
+
+    tag: str
+    implemented: bool = False
+
+
+class ArtifactFormatRegistry:
+    """Closed tag registry used to prevent future wire-format collisions."""
+
+    def __init__(self, entries: tuple[ArtifactFormatTag, ...]) -> None:
+        self._entries: dict[str, ArtifactFormatTag] = {}
+        for entry in entries:
+            if entry.tag in self._entries:
+                raise ValueError("duplicate artifact format-tag registration")
+            _nfc(entry.tag, label="artifact format tag")
+            if not _ROLE_RE.fullmatch(entry.tag):
+                raise ValueError("artifact format tag must be a canonical lowercase identifier")
+            self._entries[entry.tag] = entry
+
+    def activate(self, tag: str) -> "ArtifactFormatRegistry":
+        """Return a successor registry with one previously reserved tag implemented."""
+
+        try:
+            reserved = self._entries[tag]
+        except KeyError as exc:
+            raise ValueError(f"artifact format tag is not reserved: {tag}") from exc
+        if reserved.implemented:
+            raise ValueError(f"artifact format tag is already implemented: {tag}")
+        return ArtifactFormatRegistry(
+            tuple(
+                ArtifactFormatTag(item.tag, True) if item.tag == tag else item
+                for item in self._entries.values()
+            )
+        )
+
+    def implemented_tags(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                (entry.tag for entry in self._entries.values() if entry.implemented),
+                key=lambda value: value.encode("utf-8"),
+            )
+        )
+
+    def reserved_tags(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                (entry.tag for entry in self._entries.values() if not entry.implemented),
+                key=lambda value: value.encode("utf-8"),
+            )
+        )
+
+
 class ArtifactKindRegistry:
     """Closed path-kind registry with explicit reservation and activation support."""
 
@@ -218,6 +272,8 @@ class ArtifactKindRegistry:
 
 __all__ = [
     "ArtifactAuthority",
+    "ArtifactFormatRegistry",
+    "ArtifactFormatTag",
     "ArtifactIdentity",
     "ArtifactKindRegistry",
     "ArtifactLifecycle",

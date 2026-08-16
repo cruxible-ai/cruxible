@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_core.playbill.artifacts import (
+    ArtifactFormatRegistry,
+    ArtifactFormatTag,
     ArtifactKindRegistry,
     ArtifactPathKind,
 )
@@ -59,6 +61,23 @@ PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
             ),
         ),
         ArtifactPathKind(
+            "claim-type",
+            re.compile(
+                r"^claim-types/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
+                r"[a-z][a-z0-9_]{0,63}\.yaml$"
+            ),
+        ),
+        ArtifactPathKind(
+            "capture-contract",
+            re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
+            implemented=False,
+        ),
+        ArtifactPathKind(
+            "line",
+            re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
+            implemented=False,
+        ),
+        ArtifactPathKind(
             "fixture",
             re.compile(r"^artifacts/fixtures/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
         ),
@@ -73,10 +92,29 @@ PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
     )
 )
 
+PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
+    tuple(
+        ArtifactFormatTag(tag)
+        for tag in (
+            "playbill-accepted-state-run-input-v1",
+            "playbill-capture-contract-v1",
+            "playbill-capture-envelope-v1",
+            "playbill-exhaust-run-input-v1",
+            "playbill-landed-capture-run-input-v1",
+            "playbill-line-slot-binding-v1",
+            "playbill-line-v1",
+            "playbill-procedure-pin-slot-ref-v1",
+        )
+    )
+)
+
 RegisteredPathKind = Literal[
+    "capture-contract",
     "changeset",
+    "claim-type",
     "document",
     "fixture",
+    "line",
     "presentation",
     "principal",
     "subject",
@@ -614,6 +652,7 @@ __all__ = [
     "FixturePresentation",
     "ParsedProjectionTree",
     "PLAYBILL_ARTIFACT_KINDS",
+    "PLAYBILL_FORMAT_RESERVATIONS",
     "PinRow",
     "parse_projection_tree",
     "registered_path_kind",
