@@ -476,9 +476,7 @@ class ProposalEvidenceStore:
             for path in sorted(self.evaluations.glob("*.json"), key=lambda item: item.name)
         )
 
-    def read_candidate(
-        self, candidate_digest_value: str
-    ) -> CandidateRecord | CandidateRecordV2:
+    def read_candidate(self, candidate_digest_value: str) -> CandidateRecord | CandidateRecordV2:
         """Read one canonical validated candidate by its frozen C_s digest."""
 
         CandidateDigest.from_tagged(candidate_digest_value)
@@ -694,9 +692,7 @@ def deterministic_rebase(
 
 
 class RebaseMemberConflictV2(_StrictProposalModel):
-    tag: Literal["playbill-rebase-member-conflict-v2"] = (
-        "playbill-rebase-member-conflict-v2"
-    )
+    tag: Literal["playbill-rebase-member-conflict-v2"] = "playbill-rebase-member-conflict-v2"
     code: Literal["playbill.rebase.member_conflict"] = "playbill.rebase.member_conflict"
     path: str
     old_parent_digest: str | None
@@ -852,9 +848,7 @@ def _claim_type_reuse_evidence(
             disposition=ReuseDispositionV1(kind="new_distinct"),
         ),
         accepted_interfaces=tuple(
-            item
-            for item in _reuse_interfaces(lookup_tree)
-            if item.address.artifact_path != path
+            item for item in _reuse_interfaces(lookup_tree) if item.address.artifact_path != path
         ),
         coordinate=AcceptedCoordinate.from_internal(current),
         implementation_digest=current.compiler.rule_digest,
@@ -939,11 +933,7 @@ def _evaluate_v2_proposal_tree(
         closure_diagnostics: list[CompilerDiagnostic] = []
         if closure.missing_dependents:
             message = canonical_bytes(
-                {
-                    "missing": [
-                        item.model_dump(mode="json") for item in closure.missing_dependents
-                    ]
-                }
+                {"missing": [item.model_dump(mode="json") for item in closure.missing_dependents]}
             ).decode("utf-8")
             closure_diagnostics.append(
                 _diagnostic(
@@ -956,12 +946,7 @@ def _evaluate_v2_proposal_tree(
                 _diagnostic(
                     "playbill.change_set.unresolved_pin",
                     canonical_bytes(
-                        {
-                            "pins": [
-                                item.model_dump(mode="json")
-                                for item in closure.unresolved_pins
-                            ]
-                        }
+                        {"pins": [item.model_dump(mode="json") for item in closure.unresolved_pins]}
                     ).decode("utf-8"),
                 )
             )
@@ -1168,9 +1153,7 @@ def _evaluate_v2_proposal_tree(
                 (
                     path,
                     installed.artifact_kind,
-                    None
-                    if predecessor_subject is None
-                    else predecessor_subject.artifact_digest,
+                    None if predecessor_subject is None else predecessor_subject.artifact_digest,
                     subject_law.artifact_digest,
                     subject_law.required_tier,
                     subject_law.approval_scope,
@@ -1211,16 +1194,12 @@ def _evaluate_v2_proposal_tree(
                 or document_law.activation_policy is None
             ):
                 raise ProposalIntegrityError("accepted Document law result is incomplete")
-            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
-                artifact_tag=document_shell.tag
-            )
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag=document_shell.tag)
             member_inputs.append(
                 (
                     path,
                     installed.artifact_kind,
-                    None
-                    if predecessor_document is None
-                    else predecessor_document.envelope_digest,
+                    None if predecessor_document is None else predecessor_document.envelope_digest,
                     document_law.envelope_digest,
                     document_law.required_tier,
                     document_law.approval_scope,

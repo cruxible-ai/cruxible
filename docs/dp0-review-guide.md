@@ -226,14 +226,22 @@ tests/goldens/kev/reference_build_state.json
 tests/goldens/kev/relationship_state_visibility.json
 tests/goldens/playbill/attestation-v1.json
 tests/goldens/playbill/candidate-v1.json
+tests/goldens/playbill/claim-type-v1.json
 tests/goldens/playbill/oracles-v1.json
 tests/goldens/playbill/projection-v1.json
 tests/goldens/playbill/semantic-genesis-v1.json
 tests/goldens/playbill/served-surface-dp0b-v1.json
 tests/goldens/playbill/settlement-roots-v1.json
+tests/goldens/playbill/source-reference-v1.json
 tests/goldens/playbill/subject-v1.json
 tests/goldens/state_cross_section/car_parts_state_diff.json
 ```
+
+`tests/goldens/playbill/claim-type-v1.json` preserves the canonical policy-bearing
+ClaimType v1 wire and digest contract.
+
+`tests/goldens/playbill/source-reference-v1.json` preserves locator-free external
+source identity and remote-state refusal behavior.
 
 `tests/goldens/playbill/oracles-v1.json` pins the Family-1 oracle at
 `e3fe35b360d098f14a5d59bf770ffee401224f0c` and the Procedure graph-program

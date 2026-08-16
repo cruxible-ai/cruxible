@@ -314,9 +314,7 @@ def build_change_set_record(
             "playbill-changeset-v2",
             _json_values(v2_values),
         )
-        return ChangeSetRecordV2.model_validate(
-            {**v2_values, "changeset_digest": digest.tagged}
-        )
+        return ChangeSetRecordV2.model_validate({**v2_values, "changeset_digest": digest.tagged})
     values = {
         "sequence": sequence,
         "members": candidate.members,

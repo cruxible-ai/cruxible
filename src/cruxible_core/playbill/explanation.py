@@ -208,11 +208,7 @@ def _record_for_current_artifact(
         for record_path, record in records
         if any(member.path == path and member_matches(member) for member in record.members)
     ]
-    return (
-        max(matching_records, key=lambda item: item[1].sequence)
-        if matching_records
-        else None
-    )
+    return max(matching_records, key=lambda item: item[1].sequence) if matching_records else None
 
 
 def accepted_artifact_explanation_facts(

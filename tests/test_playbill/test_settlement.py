@@ -100,9 +100,10 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
     assert approval.attestation.payload_digest == candidate.candidate_digest
     assert bundle.record.closure_proof.paths == candidate.candidate.scope
     assert tuple(item.path for item in bundle.record.members) == candidate.candidate.scope
-    assert parse_change_set_record(
-        render_change_set(bundle.record), path=bundle.record_path
-    ) == bundle.record
+    assert (
+        parse_change_set_record(render_change_set(bundle.record), path=bundle.record_path)
+        == bundle.record
+    )
     tampered = bundle.record.model_dump(mode="json")
     tampered["law_evidence"][0]["law_digest"] = "sha256:" + "00" * 32
     with pytest.raises(ValidationError, match="structured law evidence"):
@@ -146,9 +147,7 @@ def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: P
     assert reopened.accepted_coordinate().git_oid == bundle.oid
     assert isinstance(reopened.accepted_history()[-1].record, ChangeSetRecordV2)
     publication = Path(reopened.inspect().storage_directories["projections"])
-    with bind_current_projection(
-        publication, expected=reopened.accepted_coordinate()
-    ) as handle:
+    with bind_current_projection(publication, expected=reopened.accepted_coordinate()) as handle:
         connection = sqlite3.connect(handle.index_path)
         try:
             envelope = connection.execute(

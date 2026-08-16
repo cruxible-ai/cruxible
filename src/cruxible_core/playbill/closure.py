@@ -200,9 +200,7 @@ def _edges(
                     pin_role=pin.role,
                 )
             )
-    return tuple(
-        sorted(edges, key=lambda item: canonical_bytes(item.model_dump(mode="json")))
-    )
+    return tuple(sorted(edges, key=lambda item: canonical_bytes(item.model_dump(mode="json"))))
 
 
 def _unresolved_pins(
@@ -217,9 +215,9 @@ def _unresolved_pins(
             continue
         for pin in source.pins:
             target = by_identity.get(pin.target.qualified)
-            reason: Literal[
-                "missing_or_digest_mismatch", "live_source_targets_retired"
-            ] | None = None
+            reason: Literal["missing_or_digest_mismatch", "live_source_targets_retired"] | None = (
+                None
+            )
             if target is None or target.artifact_digest != pin.artifact_digest:
                 reason = "missing_or_digest_mismatch"
             elif source.lifecycle.state == "live" and target.lifecycle.state == "retired":
@@ -235,9 +233,7 @@ def _unresolved_pins(
                         reason=reason,
                     )
                 )
-    return tuple(
-        sorted(missing, key=lambda item: canonical_bytes(item.model_dump(mode="json")))
-    )
+    return tuple(sorted(missing, key=lambda item: canonical_bytes(item.model_dump(mode="json"))))
 
 
 def evaluate_dependency_closure(

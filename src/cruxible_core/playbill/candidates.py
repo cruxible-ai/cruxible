@@ -218,9 +218,7 @@ class CandidateMemberEvidence(_StrictCandidateModel):
 class DependencyProofReferenceV1(_StrictCandidateModel):
     """Exact artifact dependency edge read while evaluating one member."""
 
-    tag: Literal["playbill-dependency-proof-ref-v1"] = (
-        "playbill-dependency-proof-ref-v1"
-    )
+    tag: Literal["playbill-dependency-proof-ref-v1"] = "playbill-dependency-proof-ref-v1"
     source_path: str
     source_artifact_digest: str
     target_path: str
@@ -250,9 +248,7 @@ class DependencyProofReferenceV1(_StrictCandidateModel):
 class LawEvaluationCoordinateV1(_StrictCandidateModel):
     """Path-free accepted coordinate at which a member law was evaluated."""
 
-    tag: Literal["playbill-law-evaluation-coordinate-v1"] = (
-        "playbill-law-evaluation-coordinate-v1"
-    )
+    tag: Literal["playbill-law-evaluation-coordinate-v1"] = "playbill-law-evaluation-coordinate-v1"
     git_oid: str
     semantic_root: str
     generation_root: str
@@ -288,9 +284,7 @@ class LawEvaluationCoordinateV1(_StrictCandidateModel):
 class MemberLawEvaluationV2(_StrictCandidateModel):
     """Structured output whose digest is recorded beside one changed member."""
 
-    tag: Literal["playbill-member-law-evaluation-v2"] = (
-        "playbill-member-law-evaluation-v2"
-    )
+    tag: Literal["playbill-member-law-evaluation-v2"] = "playbill-member-law-evaluation-v2"
     path: str
     law_identifier: str
     law_digest: str

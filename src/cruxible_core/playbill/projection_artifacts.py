@@ -656,9 +656,7 @@ def parse_projection_tree(
                                 "evidence_admission": (
                                     claim_type.evidence_admission_policy.model_dump(mode="json")
                                 ),
-                                "resolution": claim_type.resolution_policy.model_dump(
-                                    mode="json"
-                                ),
+                                "resolution": claim_type.resolution_policy.model_dump(mode="json"),
                             },
                         ),
                         ProjectionFact(
@@ -669,9 +667,7 @@ def parse_projection_tree(
                             value={
                                 "authority": claim_type.authority.model_dump(mode="json"),
                                 "lifecycle": claim_type.lifecycle.model_dump(mode="json"),
-                                "pins": [
-                                    pin.model_dump(mode="json") for pin in claim_type.pins
-                                ],
+                                "pins": [pin.model_dump(mode="json") for pin in claim_type.pins],
                             },
                         ),
                     )

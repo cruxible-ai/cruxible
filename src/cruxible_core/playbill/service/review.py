@@ -389,9 +389,7 @@ def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
             lines.extend(("", document.readable_diff.rstrip("\n")))
         elif document.diff_unavailable_reason is not None:
             lines.append(f"Diff unavailable: {document.diff_unavailable_reason}")
-    non_documents = tuple(
-        member for member in review.members if member.artifact_kind != "document"
-    )
+    non_documents = tuple(member for member in review.members if member.artifact_kind != "document")
     for member in non_documents:
         lines.extend(
             (

@@ -15,9 +15,7 @@ from cruxible_core.playbill.projection_artifacts import (
 
 def test_claim_type_path_is_activated_while_capture_and_line_paths_refuse() -> None:
     assert registered_path_kind("claim-types/project.work_item/status.yaml") == "claim-type"
-    assert {"capture-contract", "line"}.issubset(
-        PLAYBILL_ARTIFACT_KINDS.reserved_kinds()
-    )
+    assert {"capture-contract", "line"}.issubset(PLAYBILL_ARTIFACT_KINDS.reserved_kinds())
     with pytest.raises(ProjectionFormatError, match="reserved but unimplemented"):
         registered_path_kind("capture-contracts/erp-release.yaml")
     with pytest.raises(ProjectionFormatError, match="reserved but unimplemented"):

@@ -137,15 +137,11 @@ def test_multi_kind_candidate_scope_member_and_closure_paths_are_identical(
         claim_type_path,
         SUBJECT_PATH,
     )
-    assert evaluation.candidate.law_evidence[0].evaluation_coordinate.git_oid == (
-        current.git_oid
-    )
+    assert evaluation.candidate.law_evidence[0].evaluation_coordinate.git_oid == (current.git_oid)
     assert evaluation.candidate.law_evidence[0].evaluation_coordinate.generation_root == (
         current.generation_root
     )
-    assert evaluation.candidate.members[0].dependency_proof_refs[0].target_path == (
-        SUBJECT_PATH
-    )
+    assert evaluation.candidate.members[0].dependency_proof_refs[0].target_path == (SUBJECT_PATH)
 
 
 def test_changed_dependency_reports_exact_sorted_missing_dependents() -> None:
@@ -160,9 +156,7 @@ def test_changed_dependency_reports_exact_sorted_missing_dependents() -> None:
     parent = {
         SUBJECT_PATH: render_subject(original),
         status_path: render_claim_type(claim_type("project.work_item.status", pins=(pin,))),
-        priority_path: render_claim_type(
-            claim_type("project.work_item.priority", pins=(pin,))
-        ),
+        priority_path: render_claim_type(claim_type("project.work_item.priority", pins=(pin,))),
     }
     retired = subject(
         lifecycle=ArtifactLifecycle(
@@ -281,9 +275,11 @@ def test_claim_type_rebase_reports_exact_conflict_evidence_and_no_candidate(
     proposed = {**base_tree, path: render_claim_type(claim_type("project.work_item.status"))}
     concurrent = {
         **base_tree,
-        path: render_claim_type(claim_type("project.work_item.status").model_copy(
-            update={"permitted_roles": ("normative", "observation")}
-        )),
+        path: render_claim_type(
+            claim_type("project.work_item.status").model_copy(
+                update={"permitted_roles": ("normative", "observation")}
+            )
+        ),
     }
     moved = AcceptedProjectionCoordinate(
         **{
@@ -306,9 +302,7 @@ def test_claim_type_rebase_reports_exact_conflict_evidence_and_no_candidate(
     )
 
     assert evaluation.candidate is None
-    assert [item.code for item in evaluation.diagnostics] == [
-        "playbill.rebase.member_conflict"
-    ]
+    assert [item.code for item in evaluation.diagnostics] == ["playbill.rebase.member_conflict"]
     assert "old_parent_digest" in evaluation.diagnostics[0].message
     assert "new_parent_digest" in evaluation.diagnostics[0].message
     assert "proposed_digest" in evaluation.diagnostics[0].message
@@ -350,10 +344,13 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         attestation=initial_approval.attestation,
         authenticated_submitter="owner",
     )
-    assert service_activate_playbill_proposal(
-        instance,
-        proposal_id=initial.admission.proposal_id,
-    ).status == "accepted"
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=initial.admission.proposal_id,
+        ).status
+        == "accepted"
+    )
 
     current = instance.accepted_coordinate()
     retired_subject = subject(
