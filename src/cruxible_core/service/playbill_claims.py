@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -21,6 +21,7 @@ from cruxible_core.playbill.captures import (
     render_capture_contract,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.claim_attestations import VerifiedClaimAttestationV1
 from cruxible_core.playbill.claim_types import (
     ClaimType,
     claim_type_digest,
@@ -28,6 +29,7 @@ from cruxible_core.playbill.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
+from cruxible_core.playbill.claim_verdicts import ClaimVerdictResultV1
 from cruxible_core.playbill.claims import (
     ClaimArtifact,
     ClaimBacking,
@@ -211,6 +213,7 @@ class PlaybillClaimList(_StrictClaimServiceModel):
 class PlaybillClaimQueryResult(_StrictClaimServiceModel):
     tag: Literal["playbill-claim-query-v1"] = "playbill-claim-query-v1"
     coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: datetime
     subject: SemanticAddress
     predicate: str
     cardinality: Literal["one", "many"]
@@ -218,6 +221,7 @@ class PlaybillClaimQueryResult(_StrictClaimServiceModel):
     selected_claim_identities: tuple[str, ...]
     contender_claim_identities: tuple[str, ...]
     claims: tuple[PlaybillClaimView, ...]
+    verdicts: tuple[ClaimVerdictResultV1, ...]
 
 
 class PlaybillClaimHistoryEntry(_StrictClaimServiceModel):
@@ -241,8 +245,11 @@ class PlaybillClaimHistory(_StrictClaimServiceModel):
 class PlaybillClaimExplanationV1(_StrictClaimServiceModel):
     tag: Literal["playbill-claim-explanation-v1"] = "playbill-claim-explanation-v1"
     coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: datetime
     claim: PlaybillClaimView
     law_evidence: ClaimLawEvidenceV1
+    verdict: ClaimVerdictResultV1
+    exact_attestations: tuple[VerifiedClaimAttestationV1, ...]
     approval_coverage: Literal["containing_change_set"] = "containing_change_set"
     source_handles: tuple[SourceHandleV1, ...]
     coverage: CoverageDescriptorV1
@@ -727,8 +734,14 @@ def service_query_playbill_claims(
     subject: SemanticAddress,
     predicate: str,
     at: PlaybillAcceptedCoordinate | None = None,
+    evaluation_time: datetime | None = None,
 ) -> PlaybillClaimQueryResult:
+    from cruxible_core.service.playbill_evidence import (
+        service_evaluate_playbill_claim_verdict,
+    )
+
     coordinate = _resolve_coordinate(instance, at)
+    evaluated_at = evaluation_time or datetime.now(UTC)
     listed = service_list_playbill_claims(
         instance,
         at=PlaybillAcceptedCoordinate.from_internal(coordinate),
@@ -742,33 +755,28 @@ def service_query_playbill_claims(
         raise ClaimNotFoundError(f"ClaimType:{predicate}")
     claim_type = parse_claim_type(content, path=type_path)
     contenders: list[ResolutionContenderV1] = []
+    verdicts: list[ClaimVerdictResultV1] = []
     for view in listed.claims:
         claim = _claim_from_view(view)
-        law = _claim_law_evidence(
+        evaluated = service_evaluate_playbill_claim_verdict(
             instance,
-            path=claim_path(claim.identity.name),
-            at=coordinate,
+            claim_identity=claim.identity.qualified,
+            evaluation_time=evaluated_at,
+            at=PlaybillAcceptedCoordinate.from_internal(coordinate),
         )
+        verdicts.append(evaluated.verdict)
         value: object
         if claim.statement.object.kind == "literal":
             value = claim.statement.object.value
         else:
             value = claim.statement.object.model_dump(mode="json")
-        contender_verdict: ClaimVerdict
-        if law.initial_verdict == "supported":
-            contender_verdict = "supported"
-        elif law.initial_verdict == "contradicted":
-            contender_verdict = "contradicted"
-        elif law.initial_verdict == "stale":
-            contender_verdict = "stale"
-        else:
-            contender_verdict = "uncovered"
+        contender_verdict: ClaimVerdict = evaluated.verdict.verdict
         contenders.append(
             ResolutionContenderV1(
                 claim_identity=claim.identity.name,
                 object_value=value,
                 verdict=contender_verdict,
-                basis_kinds=law.evidence_basis,
+                basis_kinds=evaluated.verdict.basis_kinds,
             )
         )
     resolution = resolve_claim_contenders(
@@ -779,6 +787,7 @@ def service_query_playbill_claims(
     all_contenders = tuple(f"Claim:{item}" for item in resolution.contender_claim_identities)
     return PlaybillClaimQueryResult(
         coordinate=listed.coordinate,
+        evaluation_time=evaluated_at,
         subject=subject,
         predicate=predicate,
         cardinality=claim_type.cardinality,
@@ -786,6 +795,7 @@ def service_query_playbill_claims(
         selected_claim_identities=selected,
         contender_claim_identities=all_contenders,
         claims=listed.claims,
+        verdicts=tuple(verdicts),
     )
 
 
@@ -833,8 +843,14 @@ def service_explain_playbill_claim(
     *,
     identity: str,
     at: PlaybillAcceptedCoordinate | None = None,
+    evaluation_time: datetime | None = None,
 ) -> PlaybillClaimExplanationV1:
+    from cruxible_core.service.playbill_evidence import (
+        service_evaluate_playbill_claim_verdict,
+    )
+
     coordinate = _resolve_coordinate(instance, at)
+    evaluated_at = evaluation_time or datetime.now(UTC)
     view = service_get_playbill_claim(
         instance,
         identity=identity,
@@ -845,6 +861,12 @@ def service_explain_playbill_claim(
         instance,
         path=claim_path(claim.identity.name),
         at=coordinate,
+    )
+    verdict = service_evaluate_playbill_claim_verdict(
+        instance,
+        claim_identity=claim.identity.qualified,
+        evaluation_time=evaluated_at,
+        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
     )
     handles: list[SourceHandleV1] = []
     for digest in claim.backing.capture_digests:
@@ -875,8 +897,11 @@ def service_explain_playbill_claim(
         )
     return PlaybillClaimExplanationV1(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        evaluation_time=evaluated_at,
         claim=view,
         law_evidence=law,
+        verdict=verdict.verdict,
+        exact_attestations=law.verified_attestations,
         source_handles=tuple(handles),
         coverage=CoverageDescriptorV1(
             requested_facets=("governance", "provenance", "sources"),
@@ -986,6 +1011,10 @@ def service_expand_playbill_semantic(
     kind: str
 
     if path.startswith("claims/"):
+        from cruxible_core.service.playbill_evidence import (
+            service_evaluate_playbill_claim_verdict,
+        )
+
         if request.address.selector.scheme not in {"artifact-v1", "claim-statement-v1"}:
             raise ProposalIntegrityError("Claim expansion requires artifact or statement identity")
         claim = parse_claim(content, path=path)
@@ -1026,6 +1055,12 @@ def service_expand_playbill_semantic(
                 if item.envelope["identity"] != claim.identity.qualified
             ],
             "law_evidence": law.model_dump(mode="json"),
+            "verdict": service_evaluate_playbill_claim_verdict(
+                instance,
+                claim_identity=claim.identity.qualified,
+                evaluation_time=_observed_at(request.evaluation_time),
+                at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+            ).verdict.model_dump(mode="json"),
             "source_handles": [item.model_dump(mode="json") for item in source_handles],
         }
     elif path.startswith("subjects/"):

@@ -16,7 +16,10 @@ from cruxible_core.playbill.artifacts import (
     ArtifactPin,
 )
 from cruxible_core.playbill.canonical import ArtifactDigest, canonical_bytes, typed_digest
+from cruxible_core.playbill.diagnostics import CompilerDiagnostic
 from cruxible_core.playbill.errors import PlaybillFormatError
+from cruxible_core.playbill.governance import PermissionTier
+from cruxible_core.playbill.semantic import SemanticAddress
 
 _PROVIDER_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _KEY_ID_RE = re.compile(r"^[a-z][a-z0-9_.:-]{0,127}$")
@@ -180,10 +183,113 @@ def provider_digest(provider: ProviderV1) -> ArtifactDigest:
     )
 
 
+class AcceptedProviderV1(_StrictProviderModel):
+    path: str
+    provider: ProviderV1
+    artifact_digest: str
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> "AcceptedProviderV1":
+        if self.path != provider_path(self.provider.identity.name):
+            raise ValueError("accepted Provider path does not reproduce")
+        if self.artifact_digest != provider_digest(self.provider).tagged:
+            raise ValueError("accepted Provider digest does not reproduce")
+        return self
+
+
+class ProviderLawResultV1(_StrictProviderModel):
+    verdict: Literal["accepted", "refused"]
+    artifact_digest: str | None = None
+    required_tier: PermissionTier | None = None
+    approval_scope: tuple[str, ...] = ()
+    diagnostics: tuple[CompilerDiagnostic, ...] = ()
+
+
+def _law_refusal(code: str, message: str, *, path: str) -> ProviderLawResultV1:
+    return ProviderLawResultV1(
+        verdict="refused",
+        diagnostics=(
+            CompilerDiagnostic(
+                code=code,
+                severity="error",
+                message=message,
+                subject=SemanticAddress.whole_artifact(path),
+            ),
+        ),
+    )
+
+
+def evaluate_provider_law(
+    provider: ProviderV1,
+    *,
+    path: str,
+    actor_roles: tuple[str, ...],
+    predecessor: AcceptedProviderV1 | None,
+) -> ProviderLawResultV1:
+    if path != provider_path(provider.identity.name):
+        return _law_refusal(
+            "playbill.provider.path_mismatch",
+            "Provider identity/path disagreement.",
+            path=path,
+        )
+    if predecessor is None:
+        if provider.lifecycle.predecessor_digest is not None:
+            return _law_refusal(
+                "playbill.provider.predecessor_missing",
+                "A new Provider cannot name a predecessor.",
+                path=path,
+            )
+    else:
+        if provider.identity != predecessor.provider.identity or (
+            provider.control_domain != predecessor.provider.control_domain
+        ):
+            return _law_refusal(
+                "playbill.provider.stable_identity_changed",
+                "Provider identity and ultimate control domain are immutable in v1.",
+                path=path,
+            )
+        if provider.lifecycle.predecessor_digest != predecessor.artifact_digest:
+            return _law_refusal(
+                "playbill.provider.predecessor_mismatch",
+                "Provider successor does not pin the exact predecessor.",
+                path=path,
+            )
+        if not set(actor_roles).intersection(predecessor.provider.authority.propose_roles):
+            return _law_refusal(
+                "playbill.provider.predecessor_authority_missing",
+                "Actor lacks authority over the predecessor Provider.",
+                path=path,
+            )
+    pinned_contracts = {
+        pin.artifact_digest for pin in provider.pins if pin.role == "capture-contract"
+    }
+    if not set(provider.capture_contract_digests).issubset(pinned_contracts):
+        return _law_refusal(
+            "playbill.provider.capture_contract_pin_missing",
+            "Provider CaptureContract declarations require exact governed pins.",
+            path=path,
+        )
+    if not set(actor_roles).intersection(provider.authority.propose_roles):
+        return _law_refusal(
+            "playbill.provider.actor_unauthorized",
+            "Actor lacks authority to propose this Provider.",
+            path=path,
+        )
+    return ProviderLawResultV1(
+        verdict="accepted",
+        artifact_digest=provider_digest(provider).tagged,
+        required_tier="governed_write",
+        approval_scope=provider.authority.approve_roles,
+    )
+
+
 __all__ = [
+    "AcceptedProviderV1",
     "ProviderFormatError",
     "ProviderSigningKeyV1",
     "ProviderV1",
+    "ProviderLawResultV1",
+    "evaluate_provider_law",
     "parse_provider",
     "provider_digest",
     "provider_path",

@@ -12,6 +12,9 @@ DOCUMENT_LAW_IDENTIFIER = "playbill.document.v1"
 CLAIM_TYPE_LAW_IDENTIFIER = "playbill.claim-type.v1"
 CLAIM_LAW_IDENTIFIER = "playbill.claim.v1"
 CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
+PROVIDER_LAW_IDENTIFIER = "playbill.provider.v1"
+SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER = "playbill.source-acquisition-policy.v1"
+STANDING_MANDATE_LAW_IDENTIFIER = "playbill.standing-mandate.v1"
 PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
 SUBJECT_LAW_IDENTIFIER = "playbill.subject.v1"
 
@@ -132,6 +135,32 @@ def _claim_law_coordinate() -> AcceptanceLawCoordinate:
 CLAIM_LAW = _claim_law_coordinate()
 
 
+def _artifact_law_coordinate(identifier: str, artifact_tag: str) -> AcceptanceLawCoordinate:
+    return AcceptanceLawCoordinate(
+        identifier=identifier,
+        digest=typed_digest(
+            AcceptanceLawDigest,
+            "playbill-law-v1",
+            {
+                "identifier": identifier,
+                "artifact_tag": artifact_tag,
+                "semantic_revision": 1,
+            },
+        ).tagged,
+    )
+
+
+PROVIDER_LAW = _artifact_law_coordinate(PROVIDER_LAW_IDENTIFIER, "playbill-provider-v1")
+SOURCE_ACQUISITION_POLICY_LAW = _artifact_law_coordinate(
+    SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER,
+    "playbill-source-acquisition-policy-v1",
+)
+STANDING_MANDATE_LAW = _artifact_law_coordinate(
+    STANDING_MANDATE_LAW_IDENTIFIER,
+    "playbill-standing-mandate-v1",
+)
+
+
 @dataclass(frozen=True)
 class InstalledAcceptanceLaw:
     """One retained evaluator coordinate available for candidate/replay use."""
@@ -212,6 +241,21 @@ CLAIM_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="claim",
     artifact_tag="playbill-claim-v1",
 )
+PROVIDER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=PROVIDER_LAW,
+    artifact_kind="provider",
+    artifact_tag="playbill-provider-v1",
+)
+SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=SOURCE_ACQUISITION_POLICY_LAW,
+    artifact_kind="source-acquisition-policy",
+    artifact_tag="playbill-source-acquisition-policy-v1",
+)
+STANDING_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=STANDING_MANDATE_LAW,
+    artifact_kind="standing-mandate",
+    artifact_tag="playbill-standing-mandate-v1",
+)
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
@@ -219,6 +263,9 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CLAIM_TYPE_ACCEPTANCE_LAW,
         DOCUMENT_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
+        PROVIDER_ACCEPTANCE_LAW,
+        SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
+        STANDING_MANDATE_ACCEPTANCE_LAW,
         SUBJECT_ACCEPTANCE_LAW,
     )
 )
@@ -243,6 +290,15 @@ __all__ = [
     "PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW",
     "PRINCIPAL_LIFECYCLE_LAW",
     "PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER",
+    "PROVIDER_ACCEPTANCE_LAW",
+    "PROVIDER_LAW",
+    "PROVIDER_LAW_IDENTIFIER",
+    "SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW",
+    "SOURCE_ACQUISITION_POLICY_LAW",
+    "SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER",
+    "STANDING_MANDATE_ACCEPTANCE_LAW",
+    "STANDING_MANDATE_LAW",
+    "STANDING_MANDATE_LAW_IDENTIFIER",
     "SUBJECT_ACCEPTANCE_LAW",
     "SUBJECT_LAW",
     "SUBJECT_LAW_IDENTIFIER",

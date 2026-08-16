@@ -7,6 +7,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from cruxible_core.playbill.acquisition_policies import (
+    SourceAcquisitionPolicyError,
+    acquisition_policy_digest,
+    parse_acquisition_policy,
+)
 from cruxible_core.playbill.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -41,7 +46,13 @@ from cruxible_core.playbill.documents import (
     parse_document,
 )
 from cruxible_core.playbill.errors import DocumentFormatError, SubjectFormatError
+from cruxible_core.playbill.providers import ProviderFormatError, parse_provider, provider_digest
 from cruxible_core.playbill.semantic import SemanticAddress
+from cruxible_core.playbill.standing_mandates import (
+    StandingMandateError,
+    parse_standing_mandate,
+    standing_mandate_digest,
+)
 from cruxible_core.playbill.subjects import (
     parse_subject,
     subject_digest,
@@ -54,7 +65,16 @@ class _StrictClosureModel(BaseModel):
 
 class ArtifactDependencyStateV1(_StrictClosureModel):
     path: str
-    artifact_kind: Literal["document", "subject", "claim-type", "capture-contract", "claim"]
+    artifact_kind: Literal[
+        "document",
+        "subject",
+        "claim-type",
+        "capture-contract",
+        "provider",
+        "source-acquisition-policy",
+        "standing-mandate",
+        "claim",
+    ]
     artifact_tag: str
     identity: ArtifactIdentity
     artifact_digest: str
@@ -128,6 +148,39 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
                 pins=contract.pins,
                 lifecycle=contract.lifecycle,
             )
+        if path.startswith("providers/"):
+            provider = parse_provider(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="provider",
+                artifact_tag=provider.artifact_format,
+                identity=provider.identity,
+                artifact_digest=provider_digest(provider).tagged,
+                pins=provider.pins,
+                lifecycle=provider.lifecycle,
+            )
+        if path.startswith("source-acquisition-policies/"):
+            policy = parse_acquisition_policy(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="source-acquisition-policy",
+                artifact_tag=policy.artifact_format,
+                identity=policy.identity,
+                artifact_digest=acquisition_policy_digest(policy).tagged,
+                pins=policy.pins,
+                lifecycle=policy.lifecycle,
+            )
+        if path.startswith("standing-mandates/"):
+            mandate = parse_standing_mandate(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="standing-mandate",
+                artifact_tag=mandate.artifact_format,
+                identity=mandate.identity,
+                artifact_digest=standing_mandate_digest(mandate).tagged,
+                pins=mandate.pins,
+                lifecycle=mandate.lifecycle,
+            )
         if path.startswith("claims/"):
             claim = parse_claim(content, path=path)
             return ArtifactDependencyStateV1(
@@ -143,6 +196,9 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
         CaptureFormatError,
         ClaimFormatError,
         DocumentFormatError,
+        ProviderFormatError,
+        SourceAcquisitionPolicyError,
+        StandingMandateError,
         SubjectFormatError,
         ClaimTypeFormatError,
     ):
@@ -252,6 +308,10 @@ def _unresolved_pins(
         if source.path not in source_paths:
             continue
         for pin in source.pins:
+            # Non-artifact Capture components are verified against the exact
+            # compiler registry by their acceptance law.
+            if pin.target.kind == "Contract":
+                continue
             target = by_identity.get(pin.target.qualified)
             reason: Literal["missing_or_digest_mismatch", "live_source_targets_retired"] | None = (
                 None

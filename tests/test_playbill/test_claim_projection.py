@@ -52,4 +52,18 @@ def test_provisional_and_rebuilt_canonical_claim_facts_match(tmp_path: Path) -> 
         at=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
     )
     assert canonical.envelope["artifact_digest"] == provisional.envelope.artifact_digest
-    assert canonical.facts == tuple(fact.model_dump(mode="json") for fact in provisional.facts)
+    provisional_facts = {
+        (fact.schema_id, fact.fact_key): fact.model_dump(mode="json") for fact in provisional.facts
+    }
+    canonical_facts = {
+        (str(fact["schema_id"]), str(fact["fact_key"])): fact for fact in canonical.facts
+    }
+    assert {key: canonical_facts[key] for key in provisional_facts} == provisional_facts
+    assert {
+        "playbill.claim.attestation_coverage",
+        "playbill.claim.current_verdict",
+        "playbill.claim.evidence_basis",
+        "playbill.claim.governance",
+        "playbill.claim.history",
+        "playbill.claim.provenance",
+    }.issubset({key[0] for key in canonical_facts})

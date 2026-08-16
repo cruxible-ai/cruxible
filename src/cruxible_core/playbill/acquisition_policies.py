@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta
 from typing import Annotated, Literal
@@ -23,14 +24,24 @@ from cruxible_core.playbill.canonical import (
 )
 from cruxible_core.playbill.capture_journal import CaptureLandingEventV1
 from cruxible_core.playbill.captures import (
+    PLAYBILL_CAPTURE_COMPONENTS,
     CanonicalDurationV1,
     CaptureEnvelopeV1,
     CaptureSelectionBudgetV1,
     capture_digest,
 )
+from cruxible_core.playbill.diagnostics import CompilerDiagnostic
+from cruxible_core.playbill.errors import PlaybillFormatError
+from cruxible_core.playbill.governance import PermissionTier
+from cruxible_core.playbill.semantic import SemanticAddress
 
 AcquisitionFailureBehaviorV1 = Literal["refuse", "omit_optional", "declared_conservative_default"]
 _INPUT_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_POLICY_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
+
+
+class SourceAcquisitionPolicyError(PlaybillFormatError):
+    """A SourceAcquisitionPolicy artifact or acceptance transition is invalid."""
 
 
 class _StrictAcquisitionModel(BaseModel):
@@ -173,7 +184,9 @@ class SourceAcquisitionPolicyV1(_StrictAcquisitionModel):
 
     @model_validator(mode="after")
     def _identity(self) -> "SourceAcquisitionPolicyV1":
-        if self.identity.kind != "SourceAcquisitionPolicy":
+        if self.identity.kind != "SourceAcquisitionPolicy" or not _POLICY_NAME_RE.fullmatch(
+            self.identity.name
+        ):
             raise ValueError("acquisition policy identity kind is invalid")
         return self
 
@@ -183,6 +196,140 @@ def acquisition_policy_digest(policy: SourceAcquisitionPolicyV1) -> ArtifactDige
         ArtifactDigest,
         "playbill-envelope-v1",
         policy.model_dump(mode="json"),
+    )
+
+
+def acquisition_policy_path(name: str) -> str:
+    if not _POLICY_NAME_RE.fullmatch(name):
+        raise SourceAcquisitionPolicyError("SourceAcquisitionPolicy is not path-addressable")
+    return f"source-acquisition-policies/{name}.yaml"
+
+
+def render_acquisition_policy(policy: SourceAcquisitionPolicyV1) -> bytes:
+    return canonical_bytes(policy.model_dump(mode="json")) + b"\n"
+
+
+def parse_acquisition_policy(content: bytes, *, path: str) -> SourceAcquisitionPolicyV1:
+    try:
+        policy = SourceAcquisitionPolicyV1.model_validate(json.loads(content))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise SourceAcquisitionPolicyError(
+            "SourceAcquisitionPolicy failed strict v1 validation"
+        ) from exc
+    if path != acquisition_policy_path(policy.identity.name):
+        raise SourceAcquisitionPolicyError("SourceAcquisitionPolicy identity/path disagreement")
+    if render_acquisition_policy(policy) != content:
+        raise SourceAcquisitionPolicyError("SourceAcquisitionPolicy is not canonical")
+    return policy
+
+
+class AcceptedSourceAcquisitionPolicyV1(_StrictAcquisitionModel):
+    path: str
+    policy: SourceAcquisitionPolicyV1
+    artifact_digest: str
+
+    @model_validator(mode="after")
+    def _binding(self) -> "AcceptedSourceAcquisitionPolicyV1":
+        if self.path != acquisition_policy_path(self.policy.identity.name) or (
+            self.artifact_digest != acquisition_policy_digest(self.policy).tagged
+        ):
+            raise ValueError("accepted SourceAcquisitionPolicy does not reproduce")
+        return self
+
+
+class SourceAcquisitionPolicyLawResultV1(_StrictAcquisitionModel):
+    verdict: Literal["accepted", "refused"]
+    artifact_digest: str | None = None
+    required_tier: PermissionTier | None = None
+    approval_scope: tuple[str, ...] = ()
+    diagnostics: tuple[CompilerDiagnostic, ...] = ()
+
+
+def _law_refusal(
+    code: str,
+    message: str,
+    *,
+    path: str,
+) -> SourceAcquisitionPolicyLawResultV1:
+    return SourceAcquisitionPolicyLawResultV1(
+        verdict="refused",
+        diagnostics=(
+            CompilerDiagnostic(
+                code=code,
+                severity="error",
+                message=message,
+                subject=SemanticAddress.whole_artifact(path),
+            ),
+        ),
+    )
+
+
+def evaluate_acquisition_policy_law(
+    policy: SourceAcquisitionPolicyV1,
+    *,
+    path: str,
+    actor_roles: tuple[str, ...],
+    predecessor: AcceptedSourceAcquisitionPolicyV1 | None,
+) -> SourceAcquisitionPolicyLawResultV1:
+    if path != acquisition_policy_path(policy.identity.name):
+        return _law_refusal(
+            "playbill.acquisition_policy.path_mismatch",
+            "SourceAcquisitionPolicy identity/path disagreement.",
+            path=path,
+        )
+    if predecessor is None and policy.lifecycle.predecessor_digest is not None:
+        return _law_refusal(
+            "playbill.acquisition_policy.predecessor_missing",
+            "A new SourceAcquisitionPolicy cannot name a predecessor.",
+            path=path,
+        )
+    if predecessor is not None:
+        if policy.identity != predecessor.policy.identity or (
+            policy.lifecycle.predecessor_digest != predecessor.artifact_digest
+        ):
+            return _law_refusal(
+                "playbill.acquisition_policy.predecessor_mismatch",
+                "SourceAcquisitionPolicy successor identity or predecessor differs.",
+                path=path,
+            )
+        if not set(actor_roles).intersection(predecessor.policy.authority.propose_roles):
+            return _law_refusal(
+                "playbill.acquisition_policy.predecessor_authority_missing",
+                "Actor lacks authority over the predecessor policy.",
+                path=path,
+            )
+    if isinstance(policy.coherence, DeclaredSnapshotGroupCoherenceV1):
+        required = (
+            ("coordinate-grammar", policy.coherence.coordinate_grammar_digest),
+            ("proof-adapter", policy.coherence.proof_adapter_digest),
+        )
+        resolved = all(
+            any(
+                pin.role == role
+                and pin.artifact_digest == digest
+                and PLAYBILL_CAPTURE_COMPONENTS.resolves(pin)
+                for pin in policy.pins
+            )
+            for role, digest in required
+        )
+        if not resolved:
+            return _law_refusal(
+                "playbill.acquisition_policy.snapshot_registry_unresolved",
+                "Declared snapshot coherence requires registered exact grammar and "
+                "proof-adapter pins.",
+                path=path,
+            )
+    if not set(actor_roles).intersection(policy.authority.propose_roles):
+        return _law_refusal(
+            "playbill.acquisition_policy.actor_unauthorized",
+            "Actor lacks authority to propose this SourceAcquisitionPolicy.",
+            path=path,
+        )
+    return SourceAcquisitionPolicyLawResultV1(
+        verdict="accepted",
+        artifact_digest=acquisition_policy_digest(policy).tagged,
+        required_tier="governed_write",
+        approval_scope=policy.authority.approve_roles,
     )
 
 
@@ -473,6 +620,7 @@ def select_sources(
 
 
 __all__ = [
+    "AcceptedSourceAcquisitionPolicyV1",
     "AcquisitionCandidateV1",
     "AcquisitionFailureBehaviorV1",
     "AcquisitionInputDecisionV1",
@@ -481,7 +629,13 @@ __all__ = [
     "IndependentCoherenceV1",
     "InputAcquisitionRuleV1",
     "SourceAcquisitionPolicyV1",
+    "SourceAcquisitionPolicyError",
+    "SourceAcquisitionPolicyLawResultV1",
     "SourceSelectionReceiptV1",
     "acquisition_policy_digest",
+    "acquisition_policy_path",
+    "evaluate_acquisition_policy_law",
+    "parse_acquisition_policy",
+    "render_acquisition_policy",
     "select_sources",
 ]

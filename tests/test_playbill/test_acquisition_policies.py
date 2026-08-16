@@ -6,17 +6,24 @@ from pathlib import Path
 from cruxible_core.playbill.acquisition_policies import (
     AcquisitionCandidateV1,
     BoundedWindowCoherenceV1,
+    DeclaredSnapshotGroupCoherenceV1,
     IndependentCoherenceV1,
     InputAcquisitionRuleV1,
     SourceAcquisitionPolicyV1,
+    acquisition_policy_path,
+    evaluate_acquisition_policy_law,
     select_sources,
 )
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity
+from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
 from cruxible_core.playbill.capture_journal import (
     InMemoryCaptureLandingJournal,
     capture_landing_idempotency_key,
 )
-from cruxible_core.playbill.captures import CanonicalDurationV1, build_cas_capture
+from cruxible_core.playbill.captures import (
+    CanonicalDurationV1,
+    build_cas_capture,
+    capture_component_pin,
+)
 from tests.test_playbill._pc_c_support import (
     NOW,
     body_store,
@@ -170,4 +177,81 @@ def test_bounded_window_and_current_replay_are_reverified(tmp_path: Path) -> Non
     assert skew_refusal.verdict == "refused"
     assert "playbill.acquisition.cross_source_skew" in {
         reason for item in skew_refusal.decisions for reason in item.reason_codes
+    }
+
+
+def test_declared_snapshot_requires_registered_components_and_exact_group(tmp_path: Path) -> None:
+    grammar = capture_component_pin(
+        "coordinate-grammar", "playbill.database-snapshot-coordinate-v1"
+    )
+    proof = capture_component_pin("proof-adapter", "playbill.database-snapshot-proof-v1")
+    policy = SourceAcquisitionPolicyV1(
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="snapshot-release"),
+        inputs=(_rule("orders"), _rule("risk")),
+        coherence=DeclaredSnapshotGroupCoherenceV1(
+            coordinate_grammar_digest=grammar.artifact_digest,
+            proof_adapter_digest=proof.artifact_digest,
+        ),
+        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
+        pins=tuple(sorted((grammar, proof), key=lambda item: (item.role, item.target.qualified))),
+    )
+    accepted = evaluate_acquisition_policy_law(
+        policy,
+        path=acquisition_policy_path(policy.identity.name),
+        actor_roles=("owner",),
+        predecessor=None,
+    )
+    assert accepted.verdict == "accepted"
+
+    unregistered = policy.model_copy(
+        update={
+            "pins": tuple(
+                sorted(
+                    (
+                        grammar,
+                        ArtifactPin(
+                            role="proof-adapter",
+                            target=ArtifactIdentity(kind="Contract", name="unknown-proof-v1"),
+                            artifact_digest=proof.artifact_digest,
+                        ),
+                    ),
+                    key=lambda item: (item.role, item.target.qualified),
+                )
+            )
+        }
+    )
+    refused = evaluate_acquisition_policy_law(
+        unregistered,
+        path=acquisition_policy_path(unregistered.identity.name),
+        actor_roles=("owner",),
+        predecessor=None,
+    )
+    assert refused.diagnostics[0].code == (
+        "playbill.acquisition_policy.snapshot_registry_unresolved"
+    )
+
+    orders = _candidate(tmp_path, name="orders").model_copy(
+        update={"snapshot_group": "snapshot-42", "snapshot_proof_digest": digest("proof", "o")}
+    )
+    risk = _candidate(tmp_path, name="risk").model_copy(
+        update={"snapshot_group": "snapshot-42", "snapshot_proof_digest": digest("proof", "r")}
+    )
+    selected = select_sources(
+        policy,
+        (orders, risk),
+        anchor=orders.landing_event,
+        evaluation_time=NOW + timedelta(seconds=2),
+    )
+    assert selected.verdict == "selected"
+    assert selected.coherence_proof_digest is not None
+
+    mismatched = select_sources(
+        policy,
+        (orders, risk.model_copy(update={"snapshot_group": "snapshot-43"})),
+        anchor=orders.landing_event,
+        evaluation_time=NOW + timedelta(seconds=2),
+    )
+    assert mismatched.verdict == "refused"
+    assert "playbill.acquisition.snapshot_group_unproved" in {
+        reason for item in mismatched.decisions for reason in item.reason_codes
     }

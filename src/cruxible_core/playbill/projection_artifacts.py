@@ -78,6 +78,18 @@ PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
             re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
         ),
         ArtifactPathKind(
+            "provider",
+            re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
+        ),
+        ArtifactPathKind(
+            "source-acquisition-policy",
+            re.compile(r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
+        ),
+        ArtifactPathKind(
+            "standing-mandate",
+            re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
+        ),
+        ArtifactPathKind(
             "claim",
             re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$"),
         ),
@@ -110,6 +122,9 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-capture-contract-v1",
                 "playbill-capture-envelope-v1",
                 "playbill-claim-v1",
+                "playbill-provider-v1",
+                "playbill-source-acquisition-policy-v1",
+                "playbill-standing-mandate-v1",
             },
         )
         for tag in (
@@ -122,6 +137,9 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-line-slot-binding-v1",
             "playbill-line-v1",
             "playbill-procedure-pin-slot-ref-v1",
+            "playbill-provider-v1",
+            "playbill-source-acquisition-policy-v1",
+            "playbill-standing-mandate-v1",
         )
     )
 )
@@ -136,6 +154,9 @@ RegisteredPathKind = Literal[
     "line",
     "presentation",
     "principal",
+    "provider",
+    "source-acquisition-policy",
+    "standing-mandate",
     "subject",
 ]
 
@@ -298,6 +319,27 @@ def _projected_revision(
     return len(history) + 1
 
 
+def _current_member_law_result(
+    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
+    *,
+    path: str,
+    artifact_digest: str,
+) -> dict[str, object] | None:
+    """Return the exact accepted law result for one current artifact revision."""
+
+    for _record_path, record in reversed(records):
+        if not any(
+            member.path == path
+            and getattr(member, "candidate_artifact_digest", None) == artifact_digest
+            for member in record.members
+        ):
+            continue
+        for evidence in getattr(record, "law_evidence", ()):
+            if evidence.path == path:
+                return dict(evidence.result)
+    return None
+
+
 def _pairs_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     normalized: set[str] = set()
@@ -343,6 +385,7 @@ def parse_projection_tree(
     )
     from cruxible_core.playbill.claims import (
         ClaimFormatError,
+        ClaimLawEvidenceV1,
         claim_artifact_digest,
         claim_statement_address,
         claim_statement_digest,
@@ -715,6 +758,180 @@ def parse_projection_tree(
                         )
                     )
                 continue
+            if kind == "provider":
+                from cruxible_core.playbill.providers import parse_provider, provider_digest
+
+                provider = parse_provider(content, path=path)
+                identity = provider.identity.qualified
+                previous = identities.get(identity)
+                if previous is not None:
+                    raise ProjectionFormatError(
+                        f"duplicate semantic identity {identity!r}: {previous} and {path}"
+                    )
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = provider_digest(provider).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="provider",
+                        format_tag=provider.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=provider.lifecycle.predecessor_digest,
+                        revision=_projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in provider.pins
+                )
+                semantic_facts.extend(
+                    (
+                        ProjectionFact(
+                            schema_id="playbill.provider.identity",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="provider",
+                            value={
+                                "address": SemanticAddress.whole_artifact(path).model_dump(
+                                    mode="json"
+                                ),
+                                "artifact_digest": {"$digest": artifact_digest},
+                                "identity": provider.identity.model_dump(mode="json"),
+                                "lifecycle": provider.lifecycle.model_dump(mode="json"),
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.provider.keys",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="verification",
+                            value={
+                                "signing_keys": [
+                                    item.model_dump(mode="json") for item in provider.signing_keys
+                                ]
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.provider.provenance",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="control",
+                            value={
+                                "control_domain": provider.control_domain,
+                                "upstream_provenance": [
+                                    item.model_dump(mode="json")
+                                    for item in provider.upstream_provenance
+                                ],
+                            },
+                        ),
+                    )
+                )
+                continue
+            if kind == "source-acquisition-policy":
+                from cruxible_core.playbill.acquisition_policies import (
+                    acquisition_policy_digest,
+                    parse_acquisition_policy,
+                )
+
+                policy = parse_acquisition_policy(content, path=path)
+                identity = policy.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = acquisition_policy_digest(policy).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="source-acquisition-policy",
+                        format_tag=policy.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=policy.lifecycle.predecessor_digest,
+                        revision=_projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in policy.pins
+                )
+                semantic_facts.append(
+                    ProjectionFact(
+                        schema_id="playbill.source_acquisition_policy.policy",
+                        schema_version=1,
+                        subject_identity=identity,
+                        fact_key="complete_policy",
+                        value=policy.model_dump(mode="json"),
+                    )
+                )
+                continue
+            if kind == "standing-mandate":
+                from cruxible_core.playbill.standing_mandates import (
+                    parse_standing_mandate,
+                    standing_mandate_digest,
+                )
+
+                mandate = parse_standing_mandate(content, path=path)
+                identity = mandate.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = standing_mandate_digest(mandate).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="standing-mandate",
+                        format_tag=mandate.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=mandate.lifecycle.predecessor_digest,
+                        revision=_projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in mandate.pins
+                )
+                semantic_facts.append(
+                    ProjectionFact(
+                        schema_id="playbill.standing_mandate.authority",
+                        schema_version=1,
+                        subject_identity=identity,
+                        fact_key="finite_grant",
+                        value=mandate.model_dump(mode="json"),
+                    )
+                )
+                continue
             if kind == "capture-contract":
                 try:
                     capture_contract = parse_capture_contract(content, path=path)
@@ -882,6 +1099,89 @@ def parse_projection_tree(
                             subject_identity=identity,
                             fact_key=f"source_{index:04d}",
                             value=source_mapping.model_dump(mode="json"),
+                        )
+                    )
+                if coordinate is not None and registry.supports(
+                    "playbill.claim.current_verdict",
+                    1,
+                    classification="semantic",
+                ):
+                    explanation_facts = list(
+                        accepted_artifact_explanation_facts(
+                            artifact_family="claim",
+                            subject_identity=identity,
+                            artifact_path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                            predecessor_digest=claim.lifecycle.predecessor_digest,
+                            records=accepted_change_sets,
+                            coordinate=coordinate,
+                        )
+                    )
+                    raw_result = _current_member_law_result(
+                        accepted_change_sets,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                    )
+                    raw_claim_evidence = (
+                        None if raw_result is None else raw_result.get("claim_evidence")
+                    )
+                    if raw_claim_evidence is None:
+                        raise ProjectionFormatError(
+                            f"accepted Claim has no exact law evidence: {path}"
+                        )
+                    law_evidence = ClaimLawEvidenceV1.model_validate(raw_claim_evidence)
+                    for index, fact in enumerate(explanation_facts):
+                        if fact.schema_id != "playbill.claim.attestation_coverage":
+                            continue
+                        if not isinstance(fact.value, dict):
+                            raise ProjectionFormatError(
+                                "Claim attestation coverage projection is malformed"
+                            )
+                        value = dict(fact.value)
+                        value["claim_attestations"] = [
+                            item.model_dump(mode="json")
+                            for item in law_evidence.verified_attestations
+                        ]
+                        explanation_facts[index] = fact.model_copy(update={"value": value})
+                    semantic_facts.extend(explanation_facts)
+                    if law_evidence.verdict_result is None:
+                        raise ProjectionFormatError(
+                            f"accepted PC-C Claim has no verdict result: {path}"
+                        )
+                    semantic_facts.extend(
+                        (
+                            ProjectionFact(
+                                schema_id="playbill.claim.current_verdict",
+                                schema_version=1,
+                                subject_identity=identity,
+                                fact_key="accepted_evaluation",
+                                value=law_evidence.verdict_result.model_dump(mode="json"),
+                            ),
+                            ProjectionFact(
+                                schema_id="playbill.claim.evidence_basis",
+                                schema_version=1,
+                                subject_identity=identity,
+                                fact_key="accepted_evaluation",
+                                value={
+                                    "admissions": list(law_evidence.evidence_basis),
+                                    "attestations": [
+                                        item.model_dump(mode="json")
+                                        for item in law_evidence.verified_attestations
+                                    ],
+                                    "verdict_evidence": {
+                                        "contradicting": list(
+                                            law_evidence.verdict_result.contradicting_evidence_digests
+                                        ),
+                                        "supporting": list(
+                                            law_evidence.verdict_result.supporting_evidence_digests
+                                        ),
+                                        "unsure": list(
+                                            law_evidence.verdict_result.unsure_evidence_digests
+                                        ),
+                                    },
+                                },
+                            ),
                         )
                     )
                 continue

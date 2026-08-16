@@ -27,12 +27,27 @@ from cruxible_core.playbill.canonical import (
     typed_digest,
 )
 from cruxible_core.playbill.captures import (
+    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
+    CaptureContractV1,
     CaptureObjectStoreProtocol,
+    LedgerMaterialResolverProtocol,
     verify_capture,
+)
+from cruxible_core.playbill.claim_attestations import (
+    VerifiedClaimAttestationV1,
+    read_claim_attestation,
+    verify_claim_attestation,
 )
 from cruxible_core.playbill.claim_type_structure import ClaimRole
 from cruxible_core.playbill.claim_types import AcceptedClaimType, ClaimType
+from cruxible_core.playbill.claim_verdicts import (
+    CaptureVerdictEvidenceV1,
+    ClaimVerdictResultV1,
+    claim_adjudication_rule,
+    claim_adjudication_rule_digest,
+    evaluate_claim_verdict,
+)
 from cruxible_core.playbill.descriptor_claim_types import DescriptorPredicate
 from cruxible_core.playbill.diagnostics import CompilerDiagnostic
 from cruxible_core.playbill.discovery import (
@@ -43,11 +58,17 @@ from cruxible_core.playbill.errors import PlaybillFormatError
 from cruxible_core.playbill.governance import PermissionTier
 from cruxible_core.playbill.policies import (
     EvidenceAdmissionInputV1,
+    VerifiedAttestationGrade,
     evaluate_claim_evidence_admission,
 )
 from cruxible_core.playbill.principals import PrincipalRegistrySnapshot
+from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.providers import ProviderV1, provider_digest
 from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress, SourceMapping
-from cruxible_core.playbill.source_references import EvidenceCommitmentV1
+from cruxible_core.playbill.source_references import (
+    EvidenceCommitmentV1,
+    ExternalSourceReferenceV1,
+)
 from cruxible_core.playbill.subjects import AcceptedSubject
 
 _CLAIM_ID_RE = re.compile(r"^CLM-[0-9a-f]{32}$")
@@ -163,6 +184,31 @@ class ClaimReferentContext(_StrictClaimModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("Claim referent observed_at must be timezone-aware")
         return value
+
+
+def _verified_contract_subject_binding(
+    envelope_source: object,
+    *,
+    contract: CaptureContractV1,
+    subject: SemanticAddress,
+) -> bool:
+    mapping_pin = next(
+        (
+            pin
+            for pin in contract.pins
+            if pin.role == "source-subject-mapping"
+            and pin.artifact_digest == contract.source_subject_mapping_digest
+        ),
+        None,
+    )
+    if mapping_pin is None or mapping_pin.target.name != "playbill.external.record-subject-v1":
+        return False
+    if not isinstance(envelope_source, ExternalSourceReferenceV1) or not isinstance(
+        envelope_source.selector, dict
+    ):
+        return False
+    declared = envelope_source.selector.get("semantic_subject")
+    return canonical_bytes(declared) == canonical_bytes(subject.model_dump(mode="json"))
 
 
 class ClaimBacking(_StrictClaimModel):
@@ -350,6 +396,11 @@ class ClaimLawEvidenceV1(_StrictClaimModel):
     artifact_digest: str
     initial_verdict: Literal["supported", "uncovered", "stale", "contradicted", "unresolved"]
     evidence_basis: tuple[Literal["origin_only", "direct", "derivational"], ...]
+    evaluation_time: datetime | None = None
+    verdict_result: ClaimVerdictResultV1 | None = None
+    verified_attestation_digests: tuple[str, ...] = ()
+    verified_attestations: tuple[VerifiedClaimAttestationV1, ...] = ()
+    verdict_captures: tuple[CaptureVerdictEvidenceV1, ...] = ()
 
     @field_validator(
         "law_digest", "adjudication_rule_digest", "statement_digest", "artifact_digest"
@@ -357,6 +408,42 @@ class ClaimLawEvidenceV1(_StrictClaimModel):
     @classmethod
     def _digests(cls, value: str) -> str:
         Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("Claim law evaluation time must be timezone-aware")
+        return value
+
+    @field_validator("verified_attestation_digests")
+    @classmethod
+    def _attestation_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("verified ClaimAttestation digests must be sorted and unique")
+        for item in value:
+            CasDigest.from_tagged(item)
+        return value
+
+    @field_validator("verified_attestations")
+    @classmethod
+    def _verified_attestations(
+        cls, value: tuple[VerifiedClaimAttestationV1, ...]
+    ) -> tuple[VerifiedClaimAttestationV1, ...]:
+        digests = tuple(item.attestation_digest for item in value)
+        if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
+            raise ValueError("verified ClaimAttestations must be sorted and unique")
+        return value
+
+    @field_validator("verdict_captures")
+    @classmethod
+    def _verdict_captures(
+        cls, value: tuple[CaptureVerdictEvidenceV1, ...]
+    ) -> tuple[CaptureVerdictEvidenceV1, ...]:
+        digests = tuple(item.capture_digest for item in value)
+        if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
+            raise ValueError("verdict Captures must be sorted and unique")
         return value
 
 
@@ -519,6 +606,12 @@ def evaluate_claim_law(
     capture_contracts: Mapping[str, AcceptedCaptureContract],
     capture_store: CaptureObjectStoreProtocol,
     law_digest: str,
+    instance_id: str | None = None,
+    accepted_coordinate: AcceptedCoordinate | None = None,
+    accepted_referent_coordinates: frozenset[AcceptedCoordinate] | None = None,
+    providers: Mapping[str, ProviderV1] | None = None,
+    ledger_resolver: LedgerMaterialResolverProtocol | None = None,
+    evaluation_time: datetime | None = None,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures."""
 
@@ -672,12 +765,62 @@ def evaluate_claim_law(
             "An identity-sensitive Claim cannot add shell bytes to statement identity.",
             path=path,
         )
+    resolved_providers = providers or {}
+    verified_attestations: list[VerifiedClaimAttestationV1] = []
     if claim.backing.attestation_digests:
-        return _diagnostic(
-            "playbill.claim.attestations_deferred",
-            "Signed ClaimAttestations activate in PC-C.",
+        if instance_id is None or accepted_coordinate is None:
+            return _diagnostic(
+                "playbill.claim.attestation_context_missing",
+                "ClaimAttestation verification requires the exact accepted base coordinate.",
+                path=path,
+            )
+        candidate_claim = AcceptedClaim(
             path=path,
+            claim=claim,
+            statement_digest=claim_statement_digest(claim.statement).tagged,
+            artifact_digest=claim_artifact_digest(claim).tagged,
         )
+        for attestation_digest in claim.backing.attestation_digests:
+            try:
+                attestation = read_claim_attestation(
+                    attestation_digest,
+                    store=capture_store,
+                )
+                referent_coordinate = attestation.referent_coordinate
+                allowed_coordinates = accepted_referent_coordinates or frozenset(
+                    (accepted_coordinate,)
+                )
+                if referent_coordinate not in allowed_coordinates:
+                    raise PlaybillFormatError(
+                        "ClaimAttestation referent coordinate is not proven accepted"
+                    )
+                verified_attestations.append(
+                    verify_claim_attestation(
+                        attestation,
+                        expected_instance_id=instance_id,
+                        expected_coordinate=referent_coordinate,
+                        claim=candidate_claim,
+                        referent_subject_content_digest=subject.artifact_digest,
+                        referent_object_content_digest=(
+                            None if object_subject is None else object_subject.artifact_digest
+                        ),
+                        principals=principals.model_copy(
+                            update={"semantic_root": referent_coordinate.semantic_root}
+                        ),
+                        providers=resolved_providers,
+                        store=capture_store,
+                        current_subject_content_digest=subject.artifact_digest,
+                        current_object_content_digest=(
+                            None if object_subject is None else object_subject.artifact_digest
+                        ),
+                    )
+                )
+            except PlaybillFormatError as exc:
+                return _diagnostic(
+                    "playbill.claim.attestation_unverified",
+                    str(exc),
+                    path=path,
+                )
     roles: set[str] = set()
     if actor_id is not None:
         try:
@@ -778,6 +921,7 @@ def evaluate_claim_law(
             path=path,
         )
     evidence_basis: set[Literal["origin_only", "direct", "derivational"]] = set()
+    verdict_capture_evidence: list[CaptureVerdictEvidenceV1] = []
     verified_commitments: dict[str, EvidenceCommitmentV1] = {}
     capture_contract_pin_digests = {
         pin.artifact_digest for pin in claim.pins if pin.role == "capture-contract"
@@ -791,6 +935,11 @@ def evaluate_claim_law(
                     capture_digest_value,
                     store=capture_store,
                     contract=contract_candidate.contract,
+                    ledger_resolver=ledger_resolver,
+                    producer_artifact_digests={
+                        identity: provider_digest(provider).tagged
+                        for identity, provider in resolved_providers.items()
+                    },
                 )
             except (PlaybillFormatError, ValueError):
                 continue
@@ -816,13 +965,42 @@ def evaluate_claim_law(
             for span in mapping.spans
             if span.content_digest == envelope.commitment.digest
         )
-        source_bound = bool(relevant_spans) or (
+        exact_claim_subject_bound = bool(relevant_spans) or (
             getattr(envelope.source, "selector_type", None)
             in {"direct-claim-source-v1", "direct-claim-external-selector-v1"}
             and isinstance(getattr(envelope.source, "selector", None), dict)
             and getattr(envelope.source, "selector", {}).get("claim_id") == claim.identity.name
         )
+        contract_source_bound = _verified_contract_subject_binding(
+            envelope.source,
+            contract=resolved_contract.contract,
+            subject=statement.subject,
+        )
+        capture_admissions: set[Literal["origin_only", "direct", "derivational"]] = set()
+        capture_attestations = tuple(
+            item
+            for item in verified_attestations
+            if capture_digest_value in item.statement.capture_digests
+        )
+        if any(item.attestation_grade == "verified_provider" for item in capture_attestations):
+            attestation_grade: VerifiedAttestationGrade = "verified_provider"
+        elif any(item.attestation_grade == "verified_principal" for item in capture_attestations):
+            attestation_grade = "verified_principal"
+        else:
+            attestation_grade = "none"
         for kind in resolved_contract.contract.evidence_kinds:
+            matching_rules = tuple(
+                rule
+                for rule in contract.evidence_admission_policy.rules
+                if statement.role in rule.claim_roles
+                and resolved_contract.artifact_digest in rule.capture_contract_digests
+                and kind in rule.evidence_kinds
+            )
+            source_bound = any(
+                (rule.subject_binding == "exact_claim_subject" and exact_claim_subject_bound)
+                or (rule.subject_binding == "contract_source_mapping" and contract_source_bound)
+                for rule in matching_rules
+            )
             admission = evaluate_claim_evidence_admission(
                 contract.evidence_admission_policy,
                 EvidenceAdmissionInputV1(
@@ -831,11 +1009,75 @@ def evaluate_claim_law(
                     evidence_kind=kind,
                     reducer_digest=claim.backing.reducer_digest,
                     input_claim_artifact_digests=claim.backing.input_claim_digests,
+                    attestation_grade=attestation_grade,
                     source_subject_bound=source_bound,
                 ),
             )
             if admission.verdict == "eligible" and admission.admission is not None:
                 evidence_basis.add(admission.admission)
+                capture_admissions.add(admission.admission)
+        if "derivational" in capture_admissions:
+            capture_admission: Literal["origin_only", "direct", "derivational"] = "derivational"
+        elif "direct" in capture_admissions:
+            capture_admission = "direct"
+        else:
+            capture_admission = "origin_only"
+        producer_provider = resolved_providers.get(envelope.producer.qualified)
+        executable_provider = resolved_providers.get(
+            envelope.run_coordinate.executable_identity.qualified
+        )
+        required_providers = {
+            item.identity.qualified: item
+            for item in (producer_provider, executable_provider)
+            if item is not None
+        }
+        for required_provider in required_providers.values():
+            if not _required_pin(
+                claim,
+                role="provider",
+                identity=required_provider.identity,
+                digest=provider_digest(required_provider).tagged,
+            ):
+                return _diagnostic(
+                    "playbill.claim.provider_pin_missing",
+                    "A Provider-produced Capture requires every exact accepted Provider pin.",
+                    path=path,
+                )
+        control_domain = (
+            producer_provider.control_domain
+            if producer_provider is not None
+            else f"{envelope.producer.kind.casefold()}.{envelope.producer.name}"
+        )
+        upstream = () if producer_provider is None else producer_provider.upstream_provenance
+        verdict_capture_evidence.append(
+            CaptureVerdictEvidenceV1(
+                capture_digest=capture_digest_value,
+                admission=capture_admission,
+                basis_kind=(
+                    "arithmetic_derived"
+                    if capture_admission == "derivational"
+                    else ("replay_verified" if capture_admission == "direct" else "origin_only")
+                ),
+                producer=envelope.producer,
+                control_domain=control_domain,
+                upstream_provenance=upstream,
+                epistemic_grade=resolved_contract.contract.epistemic_grade,
+                provenance_grade=(
+                    "self-asserted"
+                    if resolved_contract.contract == DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+                    else "daemon-fetched"
+                ),
+                observed_at=envelope.observed_at,
+                source_effective_until=(
+                    None
+                    if envelope.source_effective_time is None
+                    else envelope.source_effective_time.effective_until
+                ),
+                current_replay_available=(
+                    envelope.commitment.materialization in {"ledger", "cas", "external"}
+                ),
+            )
+        )
     for mapping in claim.backing.source_mappings:
         for span in mapping.spans:
             commitment = verified_commitments.get(span.content_digest)
@@ -903,18 +1145,22 @@ def evaluate_claim_law(
     if not evidence_basis:
         evidence_basis.add("origin_only")
     statement_digest = claim_statement_digest(statement).tagged
-    adjudication_rule_digest = typed_digest(
-        Sha256Value,
-        "playbill-claim-adjudication-rule-v1",
-        {
-            "claim_type_digest": claim_type.artifact_digest,
-            "evidence_policy": contract.evidence_admission_policy.model_dump(mode="json"),
-            "resolution_policy": contract.resolution_policy.model_dump(mode="json"),
-        },
-    ).tagged
+    rule = claim_adjudication_rule(
+        contract,
+        claim_type_digest=claim_type.artifact_digest,
+    )
+    adjudication_rule_digest = claim_adjudication_rule_digest(rule)
     basis = tuple(sorted(evidence_basis, key=lambda item: item.encode("utf-8")))
-    initial_verdict: Literal["supported", "uncovered"] = (
-        "supported" if any(item != "origin_only" for item in basis) else "uncovered"
+    evaluated_at = evaluation_time or claim.backing.referent_context.observed_at
+    verdict_result = evaluate_claim_verdict(
+        claim_statement_digest=statement_digest,
+        rule=rule,
+        evaluation_time=evaluated_at,
+        captures=tuple(verdict_capture_evidence),
+        attestations=tuple(verified_attestations),
+        providers=resolved_providers,
+        claim_effective_from=statement.effective_from,
+        claim_effective_until=statement.effective_until,
     )
     return ClaimLawResult(
         verdict="accepted",
@@ -927,8 +1173,19 @@ def evaluate_claim_law(
             adjudication_rule_digest=adjudication_rule_digest,
             statement_digest=statement_digest,
             artifact_digest=digest,
-            initial_verdict=initial_verdict,
+            initial_verdict=verdict_result.verdict,
             evidence_basis=basis,
+            evaluation_time=evaluated_at,
+            verdict_result=verdict_result,
+            verified_attestation_digests=tuple(
+                sorted(item.attestation_digest for item in verified_attestations)
+            ),
+            verified_attestations=tuple(
+                sorted(verified_attestations, key=lambda item: item.attestation_digest)
+            ),
+            verdict_captures=tuple(
+                sorted(verdict_capture_evidence, key=lambda item: item.capture_digest)
+            ),
         ),
     )
 

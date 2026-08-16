@@ -227,7 +227,9 @@ class CaptureContractV1(_StrictCaptureModel):
         return self
 
 
-def _built_in_pin(role: str, name: str) -> ArtifactPin:
+def capture_component_pin(role: str, name: str) -> ArtifactPin:
+    """Return one compiler-owned, digest-addressed Capture component pin."""
+
     identity = ArtifactIdentity(kind="Contract", name=name)
     return ArtifactPin(
         role=role,
@@ -240,6 +242,43 @@ def _built_in_pin(role: str, name: str) -> ArtifactPin:
     )
 
 
+_CAPTURE_COMPONENT_PIN_NAMES: tuple[tuple[str, str], ...] = (
+    ("commitment-canonicalizer", "canonical-json-v1"),
+    ("commitment-canonicalizer", "sha256-bytes-v1"),
+    ("coordinate-grammar", "playbill.database-snapshot-coordinate-v1"),
+    ("coordinate-schema", "database-snapshot-v1"),
+    ("coordinate-schema", "postgres-lsn-v1"),
+    ("erasure-rule", "playbill.capture-erasure-authority-v1"),
+    ("proof-adapter", "playbill.database-snapshot-proof-v1"),
+    ("provenance-rule", "playbill.external.daemon-fetched-v1"),
+    ("replay-policy", "playbill.external.exact-replay-v1"),
+    ("selector-schema", "query-result-v1"),
+    ("selector-schema", "relation-primary-key-v1"),
+    ("source-subject-mapping", "playbill.external.record-subject-v1"),
+)
+
+
+class CaptureComponentRegistry:
+    """Fail-closed compiler registry for non-artifact Capture semantics."""
+
+    def __init__(self, pins: tuple[ArtifactPin, ...]) -> None:
+        entries: dict[tuple[str, str], str] = {}
+        for pin in pins:
+            key = (pin.role, pin.target.qualified)
+            if pin.target.kind != "Contract" or key in entries:
+                raise ValueError("Capture component registry entries must be unique Contracts")
+            entries[key] = pin.artifact_digest
+        self._entries = entries
+
+    def resolves(self, pin: ArtifactPin) -> bool:
+        return self._entries.get((pin.role, pin.target.qualified)) == pin.artifact_digest
+
+
+PLAYBILL_CAPTURE_COMPONENTS = CaptureComponentRegistry(
+    tuple(capture_component_pin(role, name) for role, name in _CAPTURE_COMPONENT_PIN_NAMES)
+)
+
+
 DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContractV1(
     identity=ArtifactIdentity(
         kind="CaptureContract",
@@ -248,14 +287,14 @@ DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContractV1(
     allowed_source_kinds=("cas", "external"),
     logical_source_identities=(DIRECT_SOURCE_IDENTITY,),
     coordinate_schema_pins=(
-        _built_in_pin("coordinate-schema", "playbill.authenticated-request-coordinate-v1"),
-        _built_in_pin("coordinate-schema", f"playbill.{DIRECT_EXTERNAL_COORDINATE_TYPE}"),
+        capture_component_pin("coordinate-schema", "playbill.authenticated-request-coordinate-v1"),
+        capture_component_pin("coordinate-schema", f"playbill.{DIRECT_EXTERNAL_COORDINATE_TYPE}"),
     ),
     selector_schema_pins=(
-        _built_in_pin("selector-schema", f"playbill.{DIRECT_EXTERNAL_SELECTOR_TYPE}"),
-        _built_in_pin("selector-schema", "playbill.direct-claim-source-selector-v1"),
+        capture_component_pin("selector-schema", f"playbill.{DIRECT_EXTERNAL_SELECTOR_TYPE}"),
+        capture_component_pin("selector-schema", "playbill.direct-claim-source-selector-v1"),
     ),
-    commitment_canonicalizer=_built_in_pin(
+    commitment_canonicalizer=capture_component_pin(
         "commitment-canonicalizer",
         "playbill.direct-claim-source-canonicalizer-v1",
     ),
@@ -456,6 +495,26 @@ def evaluate_capture_contract_law(
             *contract.pins,
         )
     }
+    component_pins = (
+        *contract.coordinate_schema_pins,
+        *contract.selector_schema_pins,
+        contract.commitment_canonicalizer,
+        *(pin for pin in contract.pins if pin.target.kind == "Contract"),
+    )
+    unresolved_components = tuple(
+        pin for pin in component_pins if not PLAYBILL_CAPTURE_COMPONENTS.resolves(pin)
+    )
+    if unresolved_components and contract != DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT:
+        return CaptureContractLawResult(
+            verdict="refused",
+            diagnostics=(
+                _diagnostic(
+                    "playbill.capture_contract.component_registry_unresolved",
+                    "A Capture component identifier/digest is absent from the compiler registry.",
+                    path=path,
+                ),
+            ),
+        )
     required_registry_entries = {
         ("replay-policy", contract.replay_policy_digest),
         ("provenance-rule", contract.provenance_rule_digest),
@@ -1323,6 +1382,7 @@ __all__ = [
     "CaptureContractLawResult",
     "CaptureContractV1",
     "CaptureBuildResult",
+    "CaptureComponentRegistry",
     "CaptureEnvelopeV1",
     "CaptureFormatError",
     "CaptureObjectStoreProtocol",
@@ -1333,6 +1393,7 @@ __all__ = [
     "DIRECT_SELF_ASSERTED_CONTRACT_ID",
     "DIRECT_EXTERNAL_COORDINATE_TYPES",
     "DIRECT_EXTERNAL_SELECTOR_TYPES",
+    "PLAYBILL_CAPTURE_COMPONENTS",
     "DirectCaptureBuildResult",
     "DirectByteSpanSelectionV1",
     "DirectClaimSelectionV1",
@@ -1348,6 +1409,7 @@ __all__ = [
     "build_ledger_capture",
     "capture_contract_digest",
     "capture_contract_path",
+    "capture_component_pin",
     "capture_digest",
     "evaluate_capture_contract_law",
     "parse_capture_contract",

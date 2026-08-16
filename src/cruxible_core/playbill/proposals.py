@@ -21,6 +21,13 @@ from pydantic import (
     model_validator,
 )
 
+from cruxible_core.playbill.acquisition_policies import (
+    AcceptedSourceAcquisitionPolicyV1,
+    SourceAcquisitionPolicyError,
+    acquisition_policy_digest,
+    evaluate_acquisition_policy_law,
+    parse_acquisition_policy,
+)
 from cruxible_core.playbill.actor_context import TransportCapability
 from cruxible_core.playbill.attestations import (
     ApprovalSubmission,
@@ -67,6 +74,9 @@ from cruxible_core.playbill.captures import (
     capture_contract_digest,
     evaluate_capture_contract_law,
     parse_capture_contract,
+)
+from cruxible_core.playbill.claim_attestations import (
+    accepted_referent_coordinates_from_tree,
 )
 from cruxible_core.playbill.claim_types import (
     AcceptedClaimType,
@@ -131,8 +141,23 @@ from cruxible_core.playbill.policies import (
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.principals import principal_registry_from_tree
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.playbill.providers import (
+    AcceptedProviderV1,
+    ProviderFormatError,
+    ProviderV1,
+    evaluate_provider_law,
+    parse_provider,
+    provider_digest,
+)
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_catalog import SourceCompilationManifest
+from cruxible_core.playbill.standing_mandates import (
+    AcceptedStandingMandateV1,
+    StandingMandateError,
+    evaluate_standing_mandate_law,
+    parse_standing_mandate,
+    standing_mandate_digest,
+)
 from cruxible_core.playbill.subjects import (
     AcceptedSubject,
     evaluate_subject_law,
@@ -155,6 +180,11 @@ _CLAIM_TYPE_PATH_RE = re.compile(
     r"[a-z][a-z0-9_]{0,63}\.yaml$"
 )
 _CAPTURE_CONTRACT_PATH_RE = re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.yaml$")
+_PROVIDER_PATH_RE = re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}\.yaml$")
+_SOURCE_ACQUISITION_POLICY_PATH_RE = re.compile(
+    r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.yaml$"
+)
+_STANDING_MANDATE_PATH_RE = re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$")
 _LFS_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
@@ -624,6 +654,9 @@ def validate_proposal_tree(
             or _SUBJECT_PATH_RE.fullmatch(path)
             or _CLAIM_TYPE_PATH_RE.fullmatch(path)
             or _CAPTURE_CONTRACT_PATH_RE.fullmatch(path)
+            or _PROVIDER_PATH_RE.fullmatch(path)
+            or _SOURCE_ACQUISITION_POLICY_PATH_RE.fullmatch(path)
+            or _STANDING_MANDATE_PATH_RE.fullmatch(path)
             or _CLAIM_PATH_RE.fullmatch(path)
         )
         if not authorable and base.get(path) != content:
@@ -645,6 +678,9 @@ def validate_proposal_tree(
             or _SUBJECT_PATH_RE.fullmatch(path)
             or _CLAIM_TYPE_PATH_RE.fullmatch(path)
             or _CAPTURE_CONTRACT_PATH_RE.fullmatch(path)
+            or _PROVIDER_PATH_RE.fullmatch(path)
+            or _SOURCE_ACQUISITION_POLICY_PATH_RE.fullmatch(path)
+            or _STANDING_MANDATE_PATH_RE.fullmatch(path)
             or _CLAIM_PATH_RE.fullmatch(path)
         )
         if not authorable and path not in result:
@@ -1262,6 +1298,9 @@ def _evaluate_v2_proposal_tree(
                     _SUBJECT_PATH_RE,
                     _CLAIM_TYPE_PATH_RE,
                     _CAPTURE_CONTRACT_PATH_RE,
+                    _PROVIDER_PATH_RE,
+                    _SOURCE_ACQUISITION_POLICY_PATH_RE,
+                    _STANDING_MANDATE_PATH_RE,
                     _CLAIM_PATH_RE,
                 )
             ):
@@ -1270,6 +1309,9 @@ def _evaluate_v2_proposal_tree(
             CaptureFormatError,
             ClaimFormatError,
             DocumentFormatError,
+            ProviderFormatError,
+            SourceAcquisitionPolicyError,
+            StandingMandateError,
             SubjectFormatError,
             ClaimTypeFormatError,
         ) as exc:
@@ -1322,6 +1364,10 @@ def _evaluate_v2_proposal_tree(
         current_tree,
         semantic_root=current.semantic_root,
     )
+    accepted_referent_coordinates = accepted_referent_coordinates_from_tree(
+        current_tree,
+        current=AcceptedCoordinate.from_internal(current),
+    )
     candidate_states = {item.path: item for item in dependency_artifacts(candidate_tree)}
     parent_states = {item.path: item for item in dependency_artifacts(current_tree)}
     candidate_identities = {
@@ -1331,6 +1377,7 @@ def _evaluate_v2_proposal_tree(
     resolved_subjects: dict[str, AcceptedSubject] = {}
     resolved_claim_types: dict[str, AcceptedClaimType] = {}
     resolved_capture_contracts: dict[str, AcceptedCaptureContract] = {}
+    resolved_providers: dict[str, ProviderV1] = {}
     for state in candidate_states.values():
         content = candidate_tree[state.path]
         if state.artifact_kind == "subject":
@@ -1356,6 +1403,9 @@ def _evaluate_v2_proposal_tree(
                     artifact_digest=state.artifact_digest,
                 )
             )
+        elif state.artifact_kind == "provider":
+            provider = parse_provider(content, path=state.path)
+            resolved_providers[provider.identity.qualified] = provider
     actor_roles: tuple[str, ...] = ()
     if actor_id is not None:
         try:
@@ -1421,6 +1471,142 @@ def _evaluate_v2_proposal_tree(
                     "playbill.proposal.unregistered_semantic_kind",
                     "No PC-A2 acceptance law is registered for this changed path.",
                     path,
+                )
+            )
+            continue
+        if _PROVIDER_PATH_RE.fullmatch(path):
+            provider = parse_provider(proposed_bytes, path=path)
+            predecessor_provider: AcceptedProviderV1 | None = None
+            if parent_state is not None:
+                previous_provider = parse_provider(current_tree[path], path=path)
+                predecessor_provider = AcceptedProviderV1(
+                    path=path,
+                    provider=previous_provider,
+                    artifact_digest=provider_digest(previous_provider).tagged,
+                )
+            provider_law = evaluate_provider_law(
+                provider,
+                path=path,
+                actor_roles=actor_roles,
+                predecessor=predecessor_provider,
+            )
+            if provider_law.verdict == "refused":
+                diagnostics.extend(provider_law.diagnostics)
+                continue
+            if provider_law.artifact_digest is None or provider_law.required_tier is None:
+                raise ProposalIntegrityError("accepted Provider law result is incomplete")
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+                artifact_tag=provider.artifact_format
+            )
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    (
+                        None
+                        if predecessor_provider is None
+                        else predecessor_provider.artifact_digest
+                    ),
+                    provider_law.artifact_digest,
+                    provider_law.required_tier,
+                    provider_law.approval_scope,
+                    "snapshot",
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    {
+                        "artifact_digest": provider_law.artifact_digest,
+                        "verdict": "accepted",
+                    },
+                    (),
+                    provider.lifecycle.state == "retired",
+                )
+            )
+            continue
+        if _SOURCE_ACQUISITION_POLICY_PATH_RE.fullmatch(path):
+            policy = parse_acquisition_policy(proposed_bytes, path=path)
+            predecessor_policy: AcceptedSourceAcquisitionPolicyV1 | None = None
+            if parent_state is not None:
+                previous_policy = parse_acquisition_policy(current_tree[path], path=path)
+                predecessor_policy = AcceptedSourceAcquisitionPolicyV1(
+                    path=path,
+                    policy=previous_policy,
+                    artifact_digest=acquisition_policy_digest(previous_policy).tagged,
+                )
+            policy_law = evaluate_acquisition_policy_law(
+                policy,
+                path=path,
+                actor_roles=actor_roles,
+                predecessor=predecessor_policy,
+            )
+            if policy_law.verdict == "refused":
+                diagnostics.extend(policy_law.diagnostics)
+                continue
+            if policy_law.artifact_digest is None or policy_law.required_tier is None:
+                raise ProposalIntegrityError(
+                    "accepted SourceAcquisitionPolicy law result is incomplete"
+                )
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag=policy.artifact_format)
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    None if predecessor_policy is None else predecessor_policy.artifact_digest,
+                    policy_law.artifact_digest,
+                    policy_law.required_tier,
+                    policy_law.approval_scope,
+                    "snapshot",
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    {
+                        "artifact_digest": policy_law.artifact_digest,
+                        "verdict": "accepted",
+                    },
+                    (),
+                    policy.lifecycle.state == "retired",
+                )
+            )
+            continue
+        if _STANDING_MANDATE_PATH_RE.fullmatch(path):
+            mandate = parse_standing_mandate(proposed_bytes, path=path)
+            predecessor_mandate: AcceptedStandingMandateV1 | None = None
+            if parent_state is not None:
+                previous_mandate = parse_standing_mandate(current_tree[path], path=path)
+                predecessor_mandate = AcceptedStandingMandateV1(
+                    path=path,
+                    mandate=previous_mandate,
+                    artifact_digest=standing_mandate_digest(previous_mandate).tagged,
+                )
+            mandate_law = evaluate_standing_mandate_law(
+                mandate,
+                path=path,
+                actor_roles=actor_roles,
+                predecessor=predecessor_mandate,
+            )
+            if mandate_law.verdict == "refused":
+                diagnostics.extend(mandate_law.diagnostics)
+                continue
+            if mandate_law.artifact_digest is None or mandate_law.required_tier is None:
+                raise ProposalIntegrityError("accepted StandingMandate law result is incomplete")
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+                artifact_tag=mandate.artifact_format
+            )
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    (None if predecessor_mandate is None else predecessor_mandate.artifact_digest),
+                    mandate_law.artifact_digest,
+                    mandate_law.required_tier,
+                    mandate_law.approval_scope,
+                    "snapshot",
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    {
+                        "artifact_digest": mandate_law.artifact_digest,
+                        "verdict": "accepted",
+                    },
+                    (),
+                    mandate.lifecycle.state == "retired",
                 )
             )
             continue
@@ -1502,7 +1688,12 @@ def _evaluate_v2_proposal_tree(
                 claim_types=resolved_claim_types,
                 capture_contracts=resolved_capture_contracts,
                 capture_store=bodies,
+                providers=resolved_providers,
                 law_digest=installed.coordinate.digest,
+                instance_id=current.instance_id,
+                accepted_coordinate=AcceptedCoordinate.from_internal(current),
+                accepted_referent_coordinates=accepted_referent_coordinates,
+                evaluation_time=datetime.fromisoformat(timestamp.replace("Z", "+00:00")),
             )
             if claim_law.verdict == "refused":
                 diagnostics.extend(claim_law.diagnostics)
@@ -1908,6 +2099,9 @@ def evaluate_proposal_tree(
                 for pattern in (
                     _CLAIM_TYPE_PATH_RE,
                     _CAPTURE_CONTRACT_PATH_RE,
+                    _PROVIDER_PATH_RE,
+                    _SOURCE_ACQUISITION_POLICY_PATH_RE,
+                    _STANDING_MANDATE_PATH_RE,
                     _CLAIM_PATH_RE,
                 )
             )
@@ -1951,7 +2145,14 @@ def evaluate_proposal_tree(
     if len(scope) > 1 or any(
         any(
             pattern.fullmatch(path)
-            for pattern in (_CLAIM_TYPE_PATH_RE, _CAPTURE_CONTRACT_PATH_RE, _CLAIM_PATH_RE)
+            for pattern in (
+                _CLAIM_TYPE_PATH_RE,
+                _CAPTURE_CONTRACT_PATH_RE,
+                _PROVIDER_PATH_RE,
+                _SOURCE_ACQUISITION_POLICY_PATH_RE,
+                _STANDING_MANDATE_PATH_RE,
+                _CLAIM_PATH_RE,
+            )
         )
         for path in scope
     ):

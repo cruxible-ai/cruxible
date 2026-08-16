@@ -19,7 +19,7 @@ from cruxible_core.playbill.governance import governance_identifier
 ClaimVerdict = Literal[
     "supported",
     "contradicted",
-    "mixed",
+    "unresolved",
     "uncovered",
     "stale",
 ]

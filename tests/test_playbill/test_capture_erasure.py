@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,8 @@ from cruxible_core.playbill.capture_erasure import (
     CaptureErasureStatementV1,
     capture_erasure_statement_bytes,
     erase_capture_body,
+    parse_capture_erasure_receipt,
+    render_capture_erasure_receipt,
     verify_erasure_receipt,
 )
 from cruxible_core.playbill.captures import (
@@ -18,6 +21,7 @@ from cruxible_core.playbill.captures import (
     build_cas_capture,
     capture_contract_digest,
 )
+from cruxible_core.playbill.cas import BodyAccessContext
 from tests.test_playbill._pc_c_support import (
     NOW,
     body_store,
@@ -79,6 +83,19 @@ def test_authorized_erasure_preserves_envelope_and_emits_signed_receipt(tmp_path
     assert store.verify(result.capture_digest)
     assert not store.verify(result.commitment_digest)
     assert receipt.body_digest == result.commitment_digest
+    assert store.verify(receipt.cas_digest)
+    assert (
+        parse_capture_erasure_receipt(
+            store.read(
+                receipt.cas_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+        )
+        == receipt
+    )
+    assert receipt.cas_digest.endswith(
+        hashlib.sha256(render_capture_erasure_receipt(receipt)).hexdigest()
+    )
 
 
 def test_contract_without_erasure_authority_refuses_body_deletion(tmp_path: Path) -> None:

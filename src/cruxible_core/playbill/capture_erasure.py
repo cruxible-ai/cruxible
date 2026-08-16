@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from datetime import datetime, timedelta
 from typing import Literal, Protocol, runtime_checkable
@@ -10,7 +12,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_core.playbill.canonical import CasDigest, Sha256Value, canonical_bytes, typed_digest
 from cruxible_core.playbill.captures import (
     CaptureContractV1,
     CaptureEnvelopeV1,
@@ -100,6 +102,24 @@ class CaptureErasureReceiptV1(CaptureErasureStatementV1):
             payload,
         ).tagged
 
+    @property
+    def cas_digest(self) -> str:
+        return CasDigest(hashlib.sha256(render_capture_erasure_receipt(self)).hexdigest()).tagged
+
+
+def render_capture_erasure_receipt(receipt: CaptureErasureReceiptV1) -> bytes:
+    return canonical_bytes(receipt.model_dump(mode="json")) + b"\n"
+
+
+def parse_capture_erasure_receipt(content: bytes) -> CaptureErasureReceiptV1:
+    try:
+        receipt = CaptureErasureReceiptV1.model_validate(json.loads(content))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise CaptureErasureError("Capture erasure receipt failed strict validation") from exc
+    if render_capture_erasure_receipt(receipt) != content:
+        raise CaptureErasureError("Capture erasure receipt is not canonical")
+    return receipt
+
 
 def capture_erasure_statement_bytes(statement: CaptureErasureStatementV1) -> bytes:
     return canonical_bytes(
@@ -187,6 +207,9 @@ def erase_capture_body(
     )
     if not store.erase(body_digest):
         raise CaptureErasureError("Capture body disappeared before authorized erasure")
+    stored = store.store(render_capture_erasure_receipt(receipt))
+    if stored.digest != receipt.cas_digest:
+        raise CaptureErasureError("Capture erasure receipt did not retain at its exact CAS digest")
     return receipt
 
 
@@ -210,5 +233,7 @@ __all__ = [
     "ErasableCaptureObjectStoreProtocol",
     "capture_erasure_statement_bytes",
     "erase_capture_body",
+    "parse_capture_erasure_receipt",
+    "render_capture_erasure_receipt",
     "verify_erasure_receipt",
 ]

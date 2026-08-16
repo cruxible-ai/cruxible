@@ -461,6 +461,36 @@ def playbill_claim_extension_registry() -> ProjectionExtensionRegistry:
     )
 
 
+def playbill_evidence_extension_registry() -> ProjectionExtensionRegistry:
+    """Return PC-C's additive provider, evidence, verdict, and mandate schemas."""
+
+    prior = playbill_claim_extension_registry()
+    evidence = tuple(
+        ProjectionFactDeclaration(
+            schema_id=schema_id,
+            schema_version=1,
+            classification="semantic",
+            constraints=("unique(subject_identity,fact_key)",),
+        )
+        for schema_id in (
+            "playbill.claim.attestation_coverage",
+            "playbill.claim.current_verdict",
+            "playbill.claim.evidence_basis",
+            "playbill.claim.governance",
+            "playbill.claim.history",
+            "playbill.claim.provenance",
+            "playbill.provider.identity",
+            "playbill.provider.keys",
+            "playbill.provider.provenance",
+            "playbill.source_acquisition_policy.policy",
+            "playbill.standing_mandate.authority",
+        )
+    )
+    return ProjectionExtensionRegistry(
+        (*prior.declarations("semantic"), *evidence, *prior.declarations("presentation"))
+    )
+
+
 __all__ = [
     "ProjectionExtensionRegistry",
     "ProjectionFact",
@@ -469,6 +499,7 @@ __all__ = [
     "fixture_extension_registry",
     "normalize_projection_value",
     "playbill_claim_extension_registry",
+    "playbill_evidence_extension_registry",
     "playbill_claim_type_extension_registry",
     "playbill_extension_registry",
     "playbill_governance_extension_registry",

@@ -16,6 +16,7 @@ from cruxible_core.playbill.captures import (
     CaptureRetentionErasurePolicyV1,
     CaptureRunCoordinateV1,
     CaptureSelectionBudgetV1,
+    capture_component_pin,
     capture_contract_digest,
 )
 from cruxible_core.playbill.cas import ContentAddressedBodyStore
@@ -47,24 +48,36 @@ def capture_contract(
     selector_privacy: str = "direct_allowed",
     erasure: bool = False,
 ) -> CaptureContractV1:
-    replay = artifact_digest("test-rule", f"{name}:replay")
-    provenance = artifact_digest("test-rule", f"{name}:provenance")
-    mapping = artifact_digest("test-rule", f"{name}:mapping")
-    erasure_rule = artifact_digest("test-rule", f"{name}:erasure") if erasure else None
+    replay_pin = capture_component_pin("replay-policy", "playbill.external.exact-replay-v1")
+    provenance_pin = capture_component_pin("provenance-rule", "playbill.external.daemon-fetched-v1")
+    mapping_pin = capture_component_pin(
+        "source-subject-mapping", "playbill.external.record-subject-v1"
+    )
+    erasure_pin = (
+        capture_component_pin("erasure-rule", "playbill.capture-erasure-authority-v1")
+        if erasure
+        else None
+    )
+    replay = replay_pin.artifact_digest
+    provenance = provenance_pin.artifact_digest
+    mapping = mapping_pin.artifact_digest
+    erasure_rule = None if erasure_pin is None else erasure_pin.artifact_digest
     registry_pins = [
-        pin("provenance-rule", f"{name}.provenance", digest_value=provenance),
-        pin("replay-policy", f"{name}.replay", digest_value=replay),
-        pin("source-subject-mapping", f"{name}.mapping", digest_value=mapping),
+        provenance_pin,
+        replay_pin,
+        mapping_pin,
     ]
-    if erasure_rule is not None:
-        registry_pins.append(pin("erasure-rule", f"{name}.erasure", digest_value=erasure_rule))
+    if erasure_pin is not None:
+        registry_pins.append(erasure_pin)
     return CaptureContractV1(
         identity=ArtifactIdentity(kind="CaptureContract", name=name),
         allowed_source_kinds=("cas", "external", "ledger"),
         logical_source_identities=("commerce.production.orders",),
-        coordinate_schema_pins=(pin("coordinate-schema", "postgres-lsn-v1"),),
-        selector_schema_pins=(pin("selector-schema", "relation-primary-key-v1"),),
-        commitment_canonicalizer=pin("commitment-canonicalizer", "canonical-json-v1"),
+        coordinate_schema_pins=(capture_component_pin("coordinate-schema", "postgres-lsn-v1"),),
+        selector_schema_pins=(capture_component_pin("selector-schema", "relation-primary-key-v1"),),
+        commitment_canonicalizer=capture_component_pin(
+            "commitment-canonicalizer", "canonical-json-v1"
+        ),
         allowed_materialization_modes=("cas", "external", "ledger", "none"),
         selection_budget=CaptureSelectionBudgetV1(
             max_bytes=4096,
@@ -106,6 +119,13 @@ def provider(
         ),
         capture_contract_digests=(capture_contract_digest(contract).tagged,),
         authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
+        pins=(
+            ArtifactPin(
+                role="capture-contract",
+                target=contract.identity,
+                artifact_digest=capture_contract_digest(contract).tagged,
+            ),
+        ),
     )
 
 
