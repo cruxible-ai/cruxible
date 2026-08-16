@@ -31,7 +31,6 @@ from cruxible_core.config.provenance import (
 )
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError, InstanceNotFoundError
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.legacy_identity import backfill_legacy_graph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
@@ -42,6 +41,7 @@ from cruxible_core.instance_protocol import (
     StateSnapshot,
     UpstreamMetadata,
 )
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.primitives import new_id
 from cruxible_core.procedure.digest import compute_node_digests
 from cruxible_core.procedure.graph_format import refuse_unknown_artifact_format

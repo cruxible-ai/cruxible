@@ -7,7 +7,6 @@ from typing import Any, NoReturn
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError, CoreError, EntityNotFoundError
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     EntityLifecycleState,
     RelationshipLifecycleState,
@@ -25,6 +24,7 @@ from cruxible_core.graph.operations import (
 )
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.runtime.permissions import check_permission
 from cruxible_core.service.mutation_receipts import mutation_receipt

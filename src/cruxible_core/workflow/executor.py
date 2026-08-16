@@ -13,9 +13,9 @@ from typing import Any, Literal, cast
 
 from cruxible_core.config.schema import CoreConfig, WorkflowSchema
 from cruxible_core.errors import ConfigError, QueryExecutionError
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.procedure.digest import compute_node_digests
 from cruxible_core.procedure.types import ABORT_TARGET
 from cruxible_core.receipt.builder import ReceiptBuilder

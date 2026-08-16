@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from cruxible_core.playbill.actor_context import (
-    GovernedActorContext,
     TRANSPORT_CAPABILITIES,
+    GovernedActorContext,
     derived_actor_kind,
     dump_actor_context,
     load_actor_context,

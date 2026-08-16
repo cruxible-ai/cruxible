@@ -26,8 +26,8 @@ from cruxible_core.config.schema import (
     reject_reserved_property_equality_condition_keys,
     workflow_step_kind,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.primitives import new_id
 from cruxible_core.procedure.graph_format import (
     DEFINITION_FORMAT_V1,

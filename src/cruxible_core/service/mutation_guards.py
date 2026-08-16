@@ -23,7 +23,6 @@ from cruxible_core.config.schema import (
     ResolutionContractGuardCondition,
 )
 from cruxible_core.errors import DataValidationError
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import RelationshipEvidence
 from cruxible_core.graph.operations import ValidatedEntity, ValidatedRelationship
@@ -32,6 +31,7 @@ from cruxible_core.instance_protocol import (
     InstanceProtocol,
     ResolutionContractStoreProtocol,
 )
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.query.engine import execute_query
 from cruxible_core.query.predicates import (
     entity_matches_predicates,

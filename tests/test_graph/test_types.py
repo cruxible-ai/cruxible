@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import EntityLifecycleState, RelationshipAssertion
 from cruxible_core.graph.types import (
     EntityInstance,
@@ -13,6 +12,7 @@ from cruxible_core.graph.types import (
     RelationshipInstance,
     RelationshipMetadata,
 )
+from cruxible_core.playbill.actor_context import GovernedActorContext
 
 
 def test_entity_instance_metadata_is_typed_entity_metadata() -> None:

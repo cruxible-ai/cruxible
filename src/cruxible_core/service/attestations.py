@@ -22,7 +22,6 @@ from cruxible_core.attestation.types import (
     compute_claim_content_digest,
 )
 from cruxible_core.errors import ConfigError, DataValidationError
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     SupersessionPointer,
     relationship_assertion_from_metadata,
@@ -41,6 +40,7 @@ from cruxible_core.graph.evidence import (
 from cruxible_core.graph.operations import apply_relationship, validate_relationship
 from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.service.types import ListResult, list_truncated

@@ -16,7 +16,6 @@ from cruxible_core.errors import (
     DataValidationError,
     GroupApprovedContentWriteRefusedError,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext, dump_actor_context
 from cruxible_core.graph.assertion_state import RelationshipLifecycleState
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.entity_identity import EntityIdentityWarning
@@ -48,6 +47,7 @@ from cruxible_core.instance_protocol import (
     InstanceProtocol,
     ResolutionContractStoreProtocol,
 )
+from cruxible_core.playbill.actor_context import GovernedActorContext, dump_actor_context
 from cruxible_core.service.direct_write_policy import (
     effective_relationship_write_policy,
     is_governed_source,

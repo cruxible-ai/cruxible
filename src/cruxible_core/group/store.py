@@ -11,11 +11,6 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Literal
 
-from cruxible_core.playbill.actor_context import (
-    derived_actor_kind,
-    dump_actor_context,
-    load_actor_context,
-)
 from cruxible_core.group.types import (
     CandidateGroup,
     CandidateMember,
@@ -23,6 +18,11 @@ from cruxible_core.group.types import (
     GroupResolution,
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol
+from cruxible_core.playbill.actor_context import (
+    derived_actor_kind,
+    dump_actor_context,
+    load_actor_context,
+)
 from cruxible_core.primitives import new_id
 from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.temporal import format_datetime, utc_now

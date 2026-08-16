@@ -13,12 +13,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast, get_args
 
+from cruxible_core.instance_protocol import ProcedureStoreProtocol
 from cruxible_core.playbill.actor_context import (
     GovernedActorContext,
     dump_actor_context,
     load_actor_context,
 )
-from cruxible_core.instance_protocol import ProcedureStoreProtocol
 from cruxible_core.procedure.digest import NodeDigests
 from cruxible_core.procedure.pins import AcceptanceNodePin
 from cruxible_core.procedure.types import (

@@ -15,12 +15,12 @@ from cruxible_core.errors import (
     ConfigError,
     SourceArtifactNotFoundError,
 )
+from cruxible_core.graph.evidence import EvidenceRef, merge_evidence_ref_objects
+from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.playbill.actor_context import (
     GovernedActorContext,
     dump_actor_context,
 )
-from cruxible_core.graph.evidence import EvidenceRef, merge_evidence_ref_objects
-from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import new_id
 from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.source_artifacts.markdown import parse_markdown_chunks

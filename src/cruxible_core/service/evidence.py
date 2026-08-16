@@ -8,13 +8,13 @@ from typing import Any
 from pydantic import ValidationError
 
 from cruxible_core.errors import DataValidationError
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.evidence import (
     EvidenceRef,
     merge_evidence_ref_objects,
     normalize_evidence_ref,
 )
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.service.source_artifacts import (
     resolve_citation_handle_refs,
     resolve_source_evidence_refs,

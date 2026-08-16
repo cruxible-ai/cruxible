@@ -10,11 +10,11 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import GroupNotFoundError
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata, mint_claim_id
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.service import (
     service_get_group,
     service_group_status,

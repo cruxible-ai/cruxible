@@ -13,7 +13,6 @@ from cruxible_core.errors import (
     DataValidationError,
     GroupNotFoundError,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import RelationshipReviewState
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import (
@@ -35,6 +34,7 @@ from cruxible_core.group.types import (
     ResolutionSource,
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.primitives import ordered_unique
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.runtime.permissions import (

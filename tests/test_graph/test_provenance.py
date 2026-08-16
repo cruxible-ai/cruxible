@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import (
     CLONE_ORIGIN_UPSTREAM_SNAPSHOT,
@@ -23,6 +22,7 @@ from cruxible_core.graph.types import (
     RelationshipMetadata,
     mint_claim_id,  # noqa: F401
 )
+from cruxible_core.playbill.actor_context import GovernedActorContext
 
 
 def test_make_provenance_returns_model_and_dump_returns_dict() -> None:

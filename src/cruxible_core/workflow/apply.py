@@ -21,7 +21,6 @@ from cruxible_core.config.schema import (
     ResolutionContractGuardCondition,
 )
 from cruxible_core.errors import DataValidationError, QueryExecutionError
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import (
     EvidenceRef,
@@ -46,6 +45,7 @@ from cruxible_core.graph.types import (
     RelationshipMetadata,
 )
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.step_helpers import (

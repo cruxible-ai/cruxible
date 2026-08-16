@@ -8,10 +8,10 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.service import (
     service_propose_group,
     service_resolve_group,

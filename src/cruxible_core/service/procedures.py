@@ -21,9 +21,9 @@ from cruxible_core.errors import (
     ProcedureWithdrawalRefusedError,
     QueryExecutionError,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
 from cruxible_core.instance_protocol import InstanceProtocol, ProcedureStoreProtocol
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.analysis import (
     build_procedure_graph,

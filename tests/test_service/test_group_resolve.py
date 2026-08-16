@@ -16,10 +16,10 @@ from cruxible_core.errors import (
     GroupNotFoundError,
     PermissionDeniedError,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
 from cruxible_core.service import (
     ResolveGroupResult,

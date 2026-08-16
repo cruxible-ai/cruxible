@@ -22,7 +22,6 @@ from cruxible_core.errors import (
     PendingEdgeWriteRefusedError,
     TerminalLifecycleWriteRefusedError,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     TERMINAL_ENTITY_LIFECYCLE_STATUSES,
     TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES,
@@ -49,6 +48,7 @@ from cruxible_core.graph.types import (
     RelationshipMetadata,
     mint_claim_id,
 )
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.temporal import utc_now
 
 

@@ -9,10 +9,10 @@ from typing import Any, Callable, Literal
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ProcedureBudgetExceededError
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.procedure.digest import NodeDigests
 from cruxible_core.procedure.types import ProcedureRunFiredNode
 from cruxible_core.provider.types import ExecutionTrace

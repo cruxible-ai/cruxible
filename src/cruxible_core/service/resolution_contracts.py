@@ -28,7 +28,6 @@ from cruxible_core.errors import (
     RetiredReservedKindError,
     UnknownReservedSubjectError,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import EvidenceRef, normalize_evidence_ref
 from cruxible_core.graph.types import EntityInstance
@@ -37,6 +36,7 @@ from cruxible_core.instance_protocol import (
     ProcedureStoreProtocol,
     ResolutionContractStoreProtocol,
 )
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.procedure.types import (
     ProcedureMeasurementDeclaration,
     ProcedureRecord,

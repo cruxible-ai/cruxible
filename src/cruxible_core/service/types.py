@@ -18,7 +18,6 @@ from cruxible_core.config.schema import (
     SurfaceType,
     WorkflowType,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import RelationshipLifecycleState
 from cruxible_core.graph.entity_identity import EntityIdentityWarning
 from cruxible_core.graph.evidence import EvidenceRef
@@ -43,6 +42,7 @@ from cruxible_core.group.types import (
     SuppressedProposalMember as SuppressedProposalMember,
 )
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.query.enums import (
     LifecycleStatus,

@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, Literal, get_args
 
 from cruxible_core.errors import ConfigError, GroupNotFoundError
-from cruxible_core.playbill.actor_context import derived_actor_kind, dump_actor_context
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.property_diffs import property_delta as build_property_delta
 from cruxible_core.graph.types import RelationshipInstance
@@ -16,6 +15,7 @@ from cruxible_core.group.types import (
     GroupStatus,
 )
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.playbill.actor_context import derived_actor_kind, dump_actor_context
 from cruxible_core.service.types import (
     GetGroupResult,
     GroupMemberReviewResult,

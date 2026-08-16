@@ -16,10 +16,10 @@ from cruxible_core.errors import (
     GovernedSourceSpoofRefusedError,
     GroupApprovedContentWriteRefusedError,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import GroupApprovalDrift
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (

@@ -9,7 +9,6 @@ import structlog
 
 from cruxible_core.config.schema import ProposalPolicySchema
 from cruxible_core.errors import ConfigError, DataValidationError
-from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.group.governance import (
     apply_workflow_policies,
@@ -46,6 +45,7 @@ from cruxible_core.group.types import (
     SignalBucketBasis,
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.primitives import canonical_json, new_id, ordered_unique
 from cruxible_core.runtime.permissions import (
     GROUP_RESOLUTION_PERMISSION,
