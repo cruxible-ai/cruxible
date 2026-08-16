@@ -1,0 +1,25 @@
+{
+  "artifact_digest": "sha256:3cbc34b2e69cc6b6e55c2ef14b47f2e109549d80b6b8fae7cbfe9bfd3974ec6e",
+  "wire": {
+    "artifact_format": "playbill-subject-v1",
+    "authority": {
+      "approve_roles": [
+        "owner"
+      ],
+      "propose_roles": [
+        "owner"
+      ]
+    },
+    "identity": {
+      "kind": "Subject",
+      "name": "project.work_item/wi-123"
+    },
+    "lifecycle": {
+      "predecessor_digest": null,
+      "state": "live"
+    },
+    "pins": [],
+    "subject_id": "wi-123",
+    "subject_kind": "project.work_item"
+  }
+}

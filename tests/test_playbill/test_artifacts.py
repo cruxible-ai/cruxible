@@ -88,7 +88,7 @@ def test_artifact_kind_reservations_and_unknown_paths_refuse() -> None:
     assert reserved.reserved_kinds() == ("claim-type",)
     with pytest.raises(ProjectionFormatError, match="reserved but unimplemented"):
         reserved.resolve_path("claim-types/project/status.yaml")
-    with pytest.raises(ProjectionFormatError, match="no unique registered"):
+    with pytest.raises(ProjectionFormatError, match="no registered"):
         reserved.resolve_path("unknown/value.yaml")
 
     activated = reserved.activate(kind="claim-type")

@@ -10,6 +10,7 @@ from cruxible_core.playbill.governance import AcceptanceLawCoordinate
 
 DOCUMENT_LAW_IDENTIFIER = "playbill.document.v1"
 PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
+SUBJECT_LAW_IDENTIFIER = "playbill.subject.v1"
 
 
 def _document_law_coordinate() -> AcceptanceLawCoordinate:
@@ -54,6 +55,24 @@ def _principal_lifecycle_law_coordinate() -> AcceptanceLawCoordinate:
 
 
 PRINCIPAL_LIFECYCLE_LAW = _principal_lifecycle_law_coordinate()
+
+
+def _subject_law_coordinate() -> AcceptanceLawCoordinate:
+    return AcceptanceLawCoordinate(
+        identifier=SUBJECT_LAW_IDENTIFIER,
+        digest=typed_digest(
+            AcceptanceLawDigest,
+            "playbill-law-v1",
+            {
+                "identifier": SUBJECT_LAW_IDENTIFIER,
+                "artifact_tag": "playbill-subject-v1",
+                "semantic_revision": 1,
+            },
+        ).tagged,
+    )
+
+
+SUBJECT_LAW = _subject_law_coordinate()
 
 
 @dataclass(frozen=True)
@@ -116,8 +135,17 @@ PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="principal-lifecycle",
     artifact_tag="playbill-principal-v1",
 )
+SUBJECT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=SUBJECT_LAW,
+    artifact_kind="subject",
+    artifact_tag="playbill-subject-v1",
+)
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
-    (DOCUMENT_ACCEPTANCE_LAW, PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW)
+    (
+        DOCUMENT_ACCEPTANCE_LAW,
+        PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
+        SUBJECT_ACCEPTANCE_LAW,
+    )
 )
 
 
@@ -131,4 +159,7 @@ __all__ = [
     "PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW",
     "PRINCIPAL_LIFECYCLE_LAW",
     "PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER",
+    "SUBJECT_ACCEPTANCE_LAW",
+    "SUBJECT_LAW",
+    "SUBJECT_LAW_IDENTIFIER",
 ]

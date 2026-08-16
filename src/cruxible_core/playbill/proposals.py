@@ -11,6 +11,7 @@ from typing import Callable, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from cruxible_core.playbill.actor_context import TransportCapability
 from cruxible_core.playbill.attestations import (
     ApprovalSubmission,
     approval_digest,
@@ -48,13 +49,21 @@ from cruxible_core.playbill.errors import (
     DocumentFormatError,
     ProposalAdmissionError,
     ProposalIntegrityError,
+    SubjectFormatError,
 )
 from cruxible_core.playbill.governance import ApprovalRequirement, MutationDisposition
 from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
+from cruxible_core.playbill.principals import principal_registry_from_tree
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_catalog import SourceCompilationManifest
+from cruxible_core.playbill.subjects import (
+    AcceptedSubject,
+    evaluate_subject_law,
+    parse_subject,
+    subject_digest,
+)
 from cruxible_core.playbill.types import GitObjectFormat
 
 _ACTOR_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -62,6 +71,10 @@ _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _PRINCIPAL_PATH_RE = re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$")
+_SUBJECT_PATH_RE = re.compile(
+    r"^subjects/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
+    r"[a-z][a-z0-9_.-]{0,255}\.yaml$"
+)
 _LFS_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
 
@@ -75,12 +88,23 @@ class AuthenticatedActor(_StrictProposalModel):
 
     tag: Literal["playbill-authenticated-actor-v1"] = "playbill-authenticated-actor-v1"
     actor_id: str
+    capabilities: tuple[TransportCapability, ...] = ("propose",)
 
     @field_validator("actor_id")
     @classmethod
     def _actor_id(cls, value: str) -> str:
         if not _ACTOR_RE.fullmatch(value):
             raise ValueError("authenticated actor_id is not canonical")
+        return value
+
+    @field_validator("capabilities")
+    @classmethod
+    def _capabilities(
+        cls,
+        value: tuple[TransportCapability, ...],
+    ) -> tuple[TransportCapability, ...]:
+        if tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))) != value:
+            raise ValueError("transport capabilities must be sorted and unique")
         return value
 
 
@@ -483,7 +507,11 @@ def validate_proposal_tree(
         content = tree[path]
         if not isinstance(content, bytes):
             raise ProposalAdmissionError("proposal tree values must be exact bytes")
-        authorable = _DOCUMENT_PATH_RE.fullmatch(path) or _PRINCIPAL_PATH_RE.fullmatch(path)
+        authorable = (
+            _DOCUMENT_PATH_RE.fullmatch(path)
+            or _PRINCIPAL_PATH_RE.fullmatch(path)
+            or _SUBJECT_PATH_RE.fullmatch(path)
+        )
         if not authorable and base.get(path) != content:
             raise ProposalAdmissionError(
                 f"proposal changed a daemon-controlled or unregistered path: {path}"
@@ -497,7 +525,11 @@ def validate_proposal_tree(
             raise ProposalAdmissionError("proposal exceeds its total-byte limit")
         result[path] = content
     for path in normalize_manifest_paths(list(base)):
-        authorable = _DOCUMENT_PATH_RE.fullmatch(path) or _PRINCIPAL_PATH_RE.fullmatch(path)
+        authorable = (
+            _DOCUMENT_PATH_RE.fullmatch(path)
+            or _PRINCIPAL_PATH_RE.fullmatch(path)
+            or _SUBJECT_PATH_RE.fullmatch(path)
+        )
         if not authorable and path not in result:
             raise ProposalAdmissionError(
                 f"proposal removed a daemon-controlled or unregistered path: {path}"
@@ -617,6 +649,94 @@ def evaluate_proposal_tree(
                 rebased,
             )
         return CandidateEvaluation(candidate_tree, lifecycle.candidate, (), rebased)
+    if _SUBJECT_PATH_RE.fullmatch(path):
+        proposed_bytes = candidate_tree.get(path)
+        if proposed_bytes is None:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (
+                    _diagnostic(
+                        "playbill.subject.removal_unsupported",
+                        "Subjects are retired by successor, never removed from accepted state.",
+                        path,
+                    ),
+                ),
+                rebased,
+            )
+        try:
+            subject_shell = parse_subject(proposed_bytes, path=path)
+        except SubjectFormatError as exc:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (_diagnostic("playbill.subject.format_invalid", str(exc), path),),
+                rebased,
+            )
+        subject_predecessor: AcceptedSubject | None = None
+        current_bytes = current_tree.get(path)
+        if current_bytes is not None:
+            try:
+                current_subject_shell = parse_subject(current_bytes, path=path)
+            except SubjectFormatError as exc:
+                raise ProposalIntegrityError("current accepted Subject cannot be parsed") from exc
+            subject_predecessor = AcceptedSubject(
+                path=path,
+                shell=current_subject_shell,
+                artifact_digest=subject_digest(current_subject_shell).tagged,
+            )
+        principals = principal_registry_from_tree(
+            current_tree,
+            semantic_root=current.semantic_root,
+        )
+        subject_law = evaluate_subject_law(
+            subject_shell,
+            path=path,
+            principals=principals,
+            actor_id=actor_id,
+            predecessor=subject_predecessor,
+        )
+        if subject_law.verdict == "refused":
+            return CandidateEvaluation(candidate_tree, None, subject_law.diagnostics, rebased)
+        if subject_law.required_tier is None or subject_law.artifact_digest is None:
+            raise ProposalIntegrityError("accepted Subject law result is incomplete")
+        semantic_tree = semantic_projection(candidate_tree)
+        semantic_candidate = SemanticCandidate(
+            parent_semantic_root=current.semantic_root,
+            candidate_manifest_root=manifest_root(semantic_tree).tagged,
+            semantic_diff_digest=diff_digest.tagged,
+            scope=scope,
+            timestamp=timestamp,
+        )
+        registered_law = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+            artifact_tag=subject_shell.artifact_format
+        )
+        record = CandidateRecord(
+            candidate=semantic_candidate,
+            candidate_digest=candidate_digest(semantic_candidate).tagged,
+            required_tier=subject_law.required_tier,
+            approval_requirements=tuple(
+                ApprovalRequirement(role=role) for role in subject_law.approval_scope
+            ),
+            activation_policy="snapshot",
+            closure_paths=scope,
+            members=(
+                CandidateMemberEvidence(
+                    path=path,
+                    artifact_kind=registered_law.artifact_kind,
+                    artifact_digest=file_digest(proposed_bytes).tagged,
+                    disposition=(
+                        "replacement" if subject_predecessor is None else "hand-authored-successor"
+                    ),
+                    law_identifier=registered_law.coordinate.identifier,
+                ),
+            ),
+            law_digests={
+                registered_law.coordinate.identifier: registered_law.coordinate.digest,
+            },
+            compiler_digest=current.compiler.rule_digest,
+        )
+        return CandidateEvaluation(candidate_tree, record, (), rebased)
     if not _DOCUMENT_PATH_RE.fullmatch(path):
         return CandidateEvaluation(
             candidate_tree,
@@ -764,6 +884,8 @@ class ProposalService:
         timestamp: str,
     ) -> ProposalResult:
         validate_candidate_timestamp(timestamp)
+        if "propose" not in actor.capabilities:
+            raise ProposalAdmissionError("authenticated actor lacks the propose capability")
         current = self._current_coordinate()
         namespace = request.target_ref.split("/")[2]
         if namespace != actor.actor_id:

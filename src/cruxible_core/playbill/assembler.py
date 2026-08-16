@@ -399,6 +399,9 @@ def _sorted_projection_tree(parsed: ParsedProjectionTree) -> ParsedProjectionTre
                 ),
             )
         ),
+        retired_identities=tuple(
+            sorted(parsed.retired_identities, key=lambda value: value.encode("utf-8"))
+        ),
         semantic_facts=tuple(
             sorted(
                 parsed.semantic_facts,

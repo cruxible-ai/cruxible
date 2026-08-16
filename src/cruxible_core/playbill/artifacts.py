@@ -189,7 +189,9 @@ class ArtifactKindRegistry:
             raise ProjectionFormatError("artifact path must already be canonical")
         matches = tuple(entry for entry in self._entries.values() if entry.pattern.fullmatch(path))
         if len(matches) != 1:
-            raise ProjectionFormatError(f"ledger path has no unique registered format: {path}")
+            raise ProjectionFormatError(
+                f"ledger path has no registered format or is ambiguous: {path}"
+            )
         entry = matches[0]
         if not entry.implemented:
             raise ProjectionFormatError(

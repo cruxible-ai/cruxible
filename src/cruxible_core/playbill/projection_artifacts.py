@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from cruxible_core.playbill.artifacts import (
+    ArtifactKindRegistry,
+    ArtifactPathKind,
+)
 from cruxible_core.playbill.bootstrap import render_principal
 from cruxible_core.playbill.canonical import ArtifactDigest, canonical_bytes, file_digest
 from cruxible_core.playbill.cas import BodyAccessContext, BodyProjectionProtocol
@@ -18,9 +22,11 @@ from cruxible_core.playbill.errors import (
     DocumentFormatError,
     PlaybillCasError,
     ProjectionFormatError,
+    SubjectFormatError,
 )
 from cruxible_core.playbill.explanation import (
     ProjectionCoordinateContext,
+    accepted_artifact_explanation_facts,
     accepted_document_explanation_facts,
 )
 from cruxible_core.playbill.projection_extensions import (
@@ -28,24 +34,53 @@ from cruxible_core.playbill.projection_extensions import (
     ProjectionFact,
 )
 from cruxible_core.playbill.semantic import SemanticAddress, whole_body_mapping
+from cruxible_core.playbill.subjects import parse_subject, subject_digest
 from cruxible_core.playbill.types import PrincipalRecord
 
 if TYPE_CHECKING:
     from cruxible_core.playbill.settlement import ChangeSetRecord
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
-_REGISTERED_PATHS = (
-    (re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$"), "principal"),
-    (re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.yaml$"), "document"),
-    (re.compile(r"^artifacts/fixtures/[a-z][a-z0-9_.-]{0,255}\.yaml$"), "fixture"),
+PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
     (
-        re.compile(r"^presentation/fixtures/[a-z][a-z0-9_.-]{0,255}\.json$"),
-        "presentation",
-    ),
-    (re.compile(r"^changesets/cs-[0-9]{20}\.json$"), "changeset"),
+        ArtifactPathKind(
+            "principal",
+            re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$"),
+        ),
+        ArtifactPathKind(
+            "document",
+            re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
+        ),
+        ArtifactPathKind(
+            "subject",
+            re.compile(
+                r"^subjects/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
+                r"[a-z][a-z0-9_.-]{0,255}\.yaml$"
+            ),
+        ),
+        ArtifactPathKind(
+            "fixture",
+            re.compile(r"^artifacts/fixtures/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
+        ),
+        ArtifactPathKind(
+            "presentation",
+            re.compile(r"^presentation/fixtures/[a-z][a-z0-9_.-]{0,255}\.json$"),
+        ),
+        ArtifactPathKind(
+            "changeset",
+            re.compile(r"^changesets/cs-[0-9]{20}\.json$"),
+        ),
+    )
 )
 
-RegisteredPathKind = Literal["changeset", "document", "fixture", "presentation", "principal"]
+RegisteredPathKind = Literal[
+    "changeset",
+    "document",
+    "fixture",
+    "presentation",
+    "principal",
+    "subject",
+]
 
 
 class _StrictArtifactModel(BaseModel):
@@ -172,15 +207,30 @@ class PinRow:
 class ParsedProjectionTree:
     envelopes: tuple[ArtifactEnvelopeRow, ...]
     pins: tuple[PinRow, ...]
+    retired_identities: tuple[str, ...]
     semantic_facts: tuple[ProjectionFact, ...]
     presentation_facts: tuple[ProjectionFact, ...]
 
 
 def registered_path_kind(path: str) -> RegisteredPathKind:
-    for pattern, kind in _REGISTERED_PATHS:
-        if pattern.fullmatch(path):
-            return cast(RegisteredPathKind, kind)
-    raise ProjectionFormatError(f"ledger path has no registered PB-B format: {path}")
+    return cast(RegisteredPathKind, PLAYBILL_ARTIFACT_KINDS.resolve_path(path))
+
+
+def _projected_revision(
+    records: tuple[tuple[str, ChangeSetRecord], ...],
+    *,
+    path: str,
+    input_digest: str,
+) -> int:
+    history = tuple(
+        member
+        for _record_path, record in records
+        for member in record.members
+        if member.path == path
+    )
+    if any(member.artifact_digest == input_digest for member in history):
+        return len(history)
+    return len(history) + 1
 
 
 def _pairs_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -225,6 +275,7 @@ def parse_projection_tree(
 
     envelopes: list[ArtifactEnvelopeRow] = []
     pins: list[PinRow] = []
+    retired_identities: list[str] = []
     semantic_facts: list[ProjectionFact] = []
     presentation_facts: list[ProjectionFact] = []
     identities: dict[str, str] = {}
@@ -385,6 +436,104 @@ def parse_projection_tree(
                         )
                     )
                 continue
+            if kind == "subject":
+                try:
+                    subject_shell = parse_subject(content, path=path)
+                except SubjectFormatError as exc:
+                    raise ProjectionFormatError(
+                        f"registered Subject failed strict validation: {path}"
+                    ) from exc
+                identity = subject_shell.qualified_identity
+                previous = identities.get(identity)
+                if previous is not None:
+                    raise ProjectionFormatError(
+                        f"duplicate semantic identity {identity!r}: {previous} and {path}"
+                    )
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = subject_digest(subject_shell).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="subject",
+                        format_tag=subject_shell.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=subject_shell.lifecycle.predecessor_digest,
+                        revision=_projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                        ),
+                    )
+                )
+                if subject_shell.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in subject_shell.pins
+                )
+                semantic_facts.extend(
+                    (
+                        ProjectionFact(
+                            schema_id="playbill.subject.identity",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="stable_referent",
+                            value={
+                                "address": SemanticAddress.whole_artifact(path).model_dump(
+                                    mode="json"
+                                ),
+                                "artifact_digest": {"$digest": artifact_digest},
+                                "identity": subject_shell.identity.model_dump(mode="json"),
+                                "input_digest": {"$digest": input_digest},
+                                "subject_id": subject_shell.subject_id,
+                                "subject_kind": subject_shell.subject_kind,
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.subject.lifecycle",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="accepted_shell",
+                            value={
+                                "authority": subject_shell.authority.model_dump(mode="json"),
+                                "lifecycle": subject_shell.lifecycle.model_dump(mode="json"),
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.subject.references",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="declared",
+                            value={
+                                "pins": [pin.model_dump(mode="json") for pin in subject_shell.pins]
+                            },
+                        ),
+                    )
+                )
+                if coordinate is not None and registry.supports(
+                    "playbill.subject.attestation_coverage",
+                    1,
+                    classification="semantic",
+                ):
+                    semantic_facts.extend(
+                        accepted_artifact_explanation_facts(
+                            artifact_family="subject",
+                            subject_identity=identity,
+                            artifact_path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                            predecessor_digest=subject_shell.lifecycle.predecessor_digest,
+                            records=accepted_change_sets,
+                            coordinate=coordinate,
+                        )
+                    )
+                continue
             if kind == "fixture":
                 artifact = FixtureArtifact.model_validate(payload)
                 if _canonical_model_bytes(artifact) != content:
@@ -452,6 +601,9 @@ def parse_projection_tree(
                 ),
             )
         ),
+        retired_identities=tuple(
+            sorted(retired_identities, key=lambda item: item.encode("utf-8"))
+        ),
         semantic_facts=validated_semantic,
         presentation_facts=validated_presentation,
     )
@@ -463,6 +615,7 @@ __all__ = [
     "FixturePin",
     "FixturePresentation",
     "ParsedProjectionTree",
+    "PLAYBILL_ARTIFACT_KINDS",
     "PinRow",
     "parse_projection_tree",
     "registered_path_kind",

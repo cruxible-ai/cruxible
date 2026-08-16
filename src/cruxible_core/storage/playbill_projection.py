@@ -37,6 +37,10 @@ from cruxible_core.playbill.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
 )
+from cruxible_core.playbill.projection_subjects import (
+    SubjectProjectionView,
+    subject_projection_view,
+)
 
 _PIECE_RE = re.compile(r"^piece-[0-9a-f]{64}-[0-9]{4}\.sqlite$")
 _MANIFEST_RE = re.compile(r"^projection-[0-9a-f]{64}\.json$")
@@ -283,9 +287,14 @@ def initialize_projection_database(
                 for row in parsed.envelopes
             ],
         )
+        retired_identities = frozenset(parsed.retired_identities)
         connection.executemany(
             "INSERT INTO live_identities VALUES (?,?,?)",
-            [(row.identity, row.artifact_digest, row.path) for row in parsed.envelopes],
+            [
+                (row.identity, row.artifact_digest, row.path)
+                for row in parsed.envelopes
+                if row.identity not in retired_identities
+            ],
         )
         connection.executemany(
             "INSERT INTO pins VALUES (?,?,?)",
@@ -605,6 +614,61 @@ class ProjectionHandle:
             view
             for row in identities
             if (view := self.document(cast(str, row["identity"]), access=access)) is not None
+        )
+
+    def subject(self, identity: str) -> SubjectProjectionView | None:
+        """Read one canonical identity-only Subject at this accepted coordinate."""
+
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        envelope = self._connection.execute(
+            "SELECT * FROM artifact_envelopes WHERE identity = ? AND kind = 'subject'",
+            (identity,),
+        ).fetchone()
+        if envelope is None:
+            return None
+        fact_rows = self._connection.execute(
+            "SELECT schema_id,schema_version,subject_identity,fact_key,value_json "
+            "FROM semantic_facts WHERE subject_identity = ? "
+            "ORDER BY schema_id,schema_version,fact_key",
+            (identity,),
+        ).fetchall()
+        facts = tuple(
+            ProjectionFact(
+                schema_id=row["schema_id"],
+                schema_version=row["schema_version"],
+                subject_identity=row["subject_identity"],
+                fact_key=row["fact_key"],
+                value=json.loads(row["value_json"]),
+            )
+            for row in fact_rows
+        )
+        return subject_projection_view(
+            ArtifactEnvelopeRow(
+                identity=envelope["identity"],
+                kind=envelope["kind"],
+                format_tag=envelope["format_tag"],
+                path=envelope["path"],
+                artifact_digest=envelope["artifact_digest"],
+                predecessor_digest=envelope["predecessor_digest"],
+                revision=envelope["revision"],
+            ),
+            facts,
+            coordinate=self.accepted,
+        )
+
+    def list_subjects(self) -> tuple[SubjectProjectionView, ...]:
+        """List canonical Subjects in stable kind-qualified identity order."""
+
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        identities = self._connection.execute(
+            "SELECT identity FROM artifact_envelopes WHERE kind = 'subject' ORDER BY identity"
+        ).fetchall()
+        return tuple(
+            view
+            for row in identities
+            if (view := self.subject(cast(str, row["identity"]))) is not None
         )
 
     def close(self) -> None:

@@ -9,6 +9,7 @@ from cruxible_core.playbill.projection_extensions import (
     fixture_extension_registry,
     playbill_extension_registry,
     playbill_governance_extension_registry,
+    playbill_subject_extension_registry,
 )
 from cruxible_core.playbill.types import CompilerCoordinate
 
@@ -28,11 +29,12 @@ def _coordinate(*, projection_content: str | None = None) -> CompilerCoordinate:
 PB_B_COMPILER = _coordinate()
 PB_C_COMPILER = _coordinate(projection_content="family-1-document-v1")
 PB_D_COMPILER = _coordinate(projection_content="family-1-document-governance-v1")
-SUPPORTED_COMPILERS = (PB_B_COMPILER, PB_C_COMPILER, PB_D_COMPILER)
+PC_A1_COMPILER = _coordinate(projection_content="claims-procedures-subject-v1")
+SUPPORTED_COMPILERS = (PB_B_COMPILER, PB_C_COMPILER, PB_D_COMPILER, PC_A1_COMPILER)
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return PB_D_COMPILER
+    return PC_A1_COMPILER
 
 
 def projection_registry_for_compiler(
@@ -44,6 +46,8 @@ def projection_registry_for_compiler(
         return playbill_extension_registry()
     if compiler == PB_D_COMPILER:
         return playbill_governance_extension_registry()
+    if compiler == PC_A1_COMPILER:
+        return playbill_subject_extension_registry()
     raise PlaybillFormatError("compiler coordinate has no installed deterministic registry")
 
 
@@ -51,6 +55,7 @@ __all__ = [
     "PB_B_COMPILER",
     "PB_C_COMPILER",
     "PB_D_COMPILER",
+    "PC_A1_COMPILER",
     "SUPPORTED_COMPILERS",
     "current_compiler_coordinate",
     "projection_registry_for_compiler",

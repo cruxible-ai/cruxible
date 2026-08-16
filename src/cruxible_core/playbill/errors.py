@@ -41,6 +41,14 @@ class DocumentNotFoundError(PlaybillError):
     """A requested accepted Document identity is absent at the coordinate."""
 
 
+class SubjectFormatError(PlaybillError):
+    """A governed Subject shell is unsupported, malformed, or mislocated."""
+
+
+class SubjectNotFoundError(PlaybillError):
+    """A requested accepted Subject identity is absent at the coordinate."""
+
+
 class ProposalAdmissionError(PlaybillError):
     """An unauthenticated, mis-scoped, oversized, or malformed proposal was refused."""
 
@@ -101,4 +109,6 @@ __all__ = [
     "ProjectionIntegrityError",
     "ProjectionPublicationError",
     "SettlementIntegrityError",
+    "SubjectFormatError",
+    "SubjectNotFoundError",
 ]

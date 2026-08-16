@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from cruxible_core.playbill.artifacts import parse_artifact_identity
 from cruxible_core.playbill.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -22,7 +23,6 @@ from cruxible_core.playbill.errors import ProjectionFormatError
 ProjectionFactClassification = Literal["semantic", "presentation"]
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
-_SUBJECT_IDENTITY_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}(?::[a-z][a-z0-9_.-]{0,255})?$")
 
 
 class _StrictProjectionModel(BaseModel):
@@ -203,10 +203,18 @@ class ProjectionFact(_StrictProjectionModel):
     @classmethod
     def _subject_identity(cls, value: str) -> str:
         normalized = _normalized_text(value, label="projection fact subject_identity")
-        if normalized != value or not _SUBJECT_IDENTITY_RE.fullmatch(value):
+        if normalized != value:
+            raise ValueError("projection fact subject_identity must be canonical")
+        if _IDENTIFIER_RE.fullmatch(value):
+            return value
+        try:
+            parsed = parse_artifact_identity(value)
+        except ValueError as exc:
             raise ValueError(
-                "projection fact subject_identity must be canonical and optionally kind-qualified"
-            )
+                "projection fact subject_identity must be canonical and kind-qualified"
+            ) from exc
+        if parsed.qualified != value:
+            raise ValueError("projection fact subject_identity must be canonically rendered")
         return value
 
     @field_validator("fact_key")
@@ -375,6 +383,32 @@ def playbill_governance_extension_registry() -> ProjectionExtensionRegistry:
     return ProjectionExtensionRegistry((*pb_c_semantic, *explanation, *presentation))
 
 
+def playbill_subject_extension_registry() -> ProjectionExtensionRegistry:
+    """Return PC-A1's additive Subject and Subject-explanation schemas."""
+
+    prior = playbill_governance_extension_registry()
+    subject = tuple(
+        ProjectionFactDeclaration(
+            schema_id=schema_id,
+            schema_version=1,
+            classification="semantic",
+            constraints=("unique(subject_identity,fact_key)",),
+        )
+        for schema_id in (
+            "playbill.subject.attestation_coverage",
+            "playbill.subject.governance",
+            "playbill.subject.history",
+            "playbill.subject.identity",
+            "playbill.subject.lifecycle",
+            "playbill.subject.provenance",
+            "playbill.subject.references",
+        )
+    )
+    return ProjectionExtensionRegistry(
+        (*prior.declarations("semantic"), *subject, *prior.declarations("presentation"))
+    )
+
+
 __all__ = [
     "ProjectionExtensionRegistry",
     "ProjectionFact",
@@ -384,4 +418,5 @@ __all__ = [
     "normalize_projection_value",
     "playbill_extension_registry",
     "playbill_governance_extension_registry",
+    "playbill_subject_extension_registry",
 ]

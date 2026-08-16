@@ -8,14 +8,24 @@ from pydantic import BaseModel, ConfigDict
 
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.documents import parse_document
-from cruxible_core.playbill.errors import DocumentNotFoundError, ProjectionIntegrityError
+from cruxible_core.playbill.errors import (
+    DocumentNotFoundError,
+    ProjectionIntegrityError,
+    SubjectNotFoundError,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.projection_artifacts import registered_path_kind
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillDocumentView,
     service_get_playbill_document,
 )
+from cruxible_core.playbill.service.subjects import (
+    PlaybillSubjectView,
+    service_get_playbill_subject,
+)
+from cruxible_core.playbill.subjects import parse_subject
 
 PlaybillExplainDetail = Literal["summary", "evidence", "proof"]
 PLAYBILL_EXPLAIN_SUPPORTED_DETAILS: tuple[Literal["summary", "evidence"], ...] = (
@@ -64,7 +74,7 @@ class PlaybillExplainUnsupportedDetail(_StrictExplainModel):
 PlaybillExplainResponse = PlaybillExplainResult | PlaybillExplainUnsupportedDetail
 
 
-def _facts(document: PlaybillDocumentView) -> dict[str, object]:
+def _facts(document: PlaybillDocumentView | PlaybillSubjectView) -> dict[str, object]:
     result: dict[str, object] = {}
     for fact in document.facts:
         schema_id = fact.get("schema_id")
@@ -208,19 +218,35 @@ def service_explain_playbill_subject(
     content = tree.get(subject.artifact_path)
     if content is None:
         raise DocumentNotFoundError(subject.artifact_path)
-    shell = parse_document(content, path=subject.artifact_path)
-    document = service_get_playbill_document(
-        instance,
-        identity=shell.identity,
-        access=access,
-        at=public_coordinate,
-    )
-    facts = _facts(document)
-    governance = _required_object(facts, "playbill.document.governance")
-    provenance = _required_object(facts, "playbill.document.provenance")
-    coverage = _required_object(facts, "playbill.document.attestation_coverage")
-    history = _required_object(facts, "playbill.document.history")
-    source = facts.get("playbill.document.source_mapping")
+    kind = registered_path_kind(subject.artifact_path)
+    if kind == "document":
+        document_shell = parse_document(content, path=subject.artifact_path)
+        projected_document = service_get_playbill_document(
+            instance,
+            identity=document_shell.identity,
+            access=access,
+            at=public_coordinate,
+        )
+        projected: PlaybillDocumentView | PlaybillSubjectView = projected_document
+        family = "document"
+        source_schema = "playbill.document.source_mapping"
+    elif kind == "subject":
+        subject_shell = parse_subject(content, path=subject.artifact_path)
+        projected = service_get_playbill_subject(
+            instance,
+            identity=subject_shell.qualified_identity,
+            at=public_coordinate,
+        )
+        family = "subject"
+        source_schema = None
+    else:
+        raise SubjectNotFoundError(subject.artifact_path)
+    facts = _facts(projected)
+    governance = _required_object(facts, f"playbill.{family}.governance")
+    provenance = _required_object(facts, f"playbill.{family}.provenance")
+    coverage = _required_object(facts, f"playbill.{family}.attestation_coverage")
+    history = _required_object(facts, f"playbill.{family}.history")
+    source = facts.get(source_schema) if source_schema is not None else None
     if source is not None and not isinstance(source, dict):
         raise ProjectionIntegrityError("Document source mapping has an invalid shape")
     proof_references = _proof_references(governance, provenance, coverage, history)
@@ -237,7 +263,9 @@ def service_explain_playbill_subject(
         history=history if detail == "evidence" else _summary_history(history),
         source_mapping=source,
         proof_references=proof_references,
-        redactions=() if access.can_read_body else ("body", "source_mapping"),
+        redactions=(
+            () if family == "subject" or access.can_read_body else ("body", "source_mapping")
+        ),
     )
 
 

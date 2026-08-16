@@ -206,27 +206,28 @@ def _record_for_current_artifact(
     return max(matches, key=lambda item: item[1].sequence) if matches else None
 
 
-def accepted_document_explanation_facts(
+def accepted_artifact_explanation_facts(
     *,
-    document_identity: str,
-    document_path: str,
+    artifact_family: str,
+    subject_identity: str,
+    artifact_path: str,
     input_digest: str,
     artifact_digest: str,
     predecessor_digest: str | None,
     records: tuple[tuple[str, ChangeSetRecord], ...],
     coordinate: ProjectionCoordinateContext,
 ) -> tuple[ProjectionFact, ...]:
-    """Compile accepted explanation facts only when a stored change set binds the bytes."""
+    """Compile explanation facts only when a stored change set binds exact bytes."""
 
     current = _record_for_current_artifact(
         records,
-        path=document_path,
+        path=artifact_path,
         input_digest=input_digest,
     )
     if current is None:
         return ()
     record_path, record = current
-    member = next(member for member in record.members if member.path == document_path)
+    member = next(member for member in record.members if member.path == artifact_path)
     law_digest = record.law_digests[member.law_identifier]
     proof = LedgerProofReference(
         change_set_path=record_path,
@@ -242,7 +243,7 @@ def accepted_document_explanation_facts(
     replay_basis = BasisRelation(kind="replay_verified", proof_ref=proof)
     coverage = CoverageBinding(
         coverage="containing_change_set",
-        subject_path=document_path,
+        subject_path=artifact_path,
         signed_payload_digest=record.candidate_digest,
         proof_ref=proof,
     )
@@ -278,7 +279,7 @@ def accepted_document_explanation_facts(
             "sequence": item.sequence,
         }
         for path, item in records
-        if any(candidate_member.path == document_path for candidate_member in item.members)
+        if any(candidate_member.path == artifact_path for candidate_member in item.members)
     ]
     common_basis = [
         authority_basis.projection_value(coordinate),
@@ -286,9 +287,9 @@ def accepted_document_explanation_facts(
     ]
     return (
         ProjectionFact(
-            schema_id="playbill.document.governance",
+            schema_id=f"playbill.{artifact_family}.governance",
             schema_version=1,
-            subject_identity=document_identity,
+            subject_identity=subject_identity,
             fact_key="accepted_governance",
             value={
                 "activation_policy": record.activation_policy,
@@ -303,9 +304,9 @@ def accepted_document_explanation_facts(
             },
         ),
         ProjectionFact(
-            schema_id="playbill.document.provenance",
+            schema_id=f"playbill.{artifact_family}.provenance",
             schema_version=1,
-            subject_identity=document_identity,
+            subject_identity=subject_identity,
             fact_key="accepted_source",
             value={
                 "actor_id": record.actor_binding.actor_id,
@@ -320,9 +321,9 @@ def accepted_document_explanation_facts(
             },
         ),
         ProjectionFact(
-            schema_id="playbill.document.attestation_coverage",
+            schema_id=f"playbill.{artifact_family}.attestation_coverage",
             schema_version=1,
-            subject_identity=document_identity,
+            subject_identity=subject_identity,
             fact_key="accepted_approvals",
             value={
                 "attestations": attestations,
@@ -331,9 +332,9 @@ def accepted_document_explanation_facts(
             },
         ),
         ProjectionFact(
-            schema_id="playbill.document.history",
+            schema_id=f"playbill.{artifact_family}.history",
             schema_version=1,
-            subject_identity=document_identity,
+            subject_identity=subject_identity,
             fact_key="ledger_history",
             value={
                 "basis": [replay_basis.projection_value(coordinate)],
@@ -347,6 +348,30 @@ def accepted_document_explanation_facts(
     )
 
 
+def accepted_document_explanation_facts(
+    *,
+    document_identity: str,
+    document_path: str,
+    input_digest: str,
+    artifact_digest: str,
+    predecessor_digest: str | None,
+    records: tuple[tuple[str, ChangeSetRecord], ...],
+    coordinate: ProjectionCoordinateContext,
+) -> tuple[ProjectionFact, ...]:
+    """Retain the frozen Family-1 Document projection shape through an adapter."""
+
+    return accepted_artifact_explanation_facts(
+        artifact_family="document",
+        subject_identity=document_identity,
+        artifact_path=document_path,
+        input_digest=input_digest,
+        artifact_digest=artifact_digest,
+        predecessor_digest=predecessor_digest,
+        records=records,
+        coordinate=coordinate,
+    )
+
+
 __all__ = [
     "AttestationCoverage",
     "BasisRelation",
@@ -354,5 +379,6 @@ __all__ = [
     "CoverageBinding",
     "LedgerProofReference",
     "ProjectionCoordinateContext",
+    "accepted_artifact_explanation_facts",
     "accepted_document_explanation_facts",
 ]

@@ -198,7 +198,6 @@ adapter. Every row has an owning removal batch.
 | `cruxible_core.runtime.instance` | PC-F | Temporary donor-parity harness | — |
 | `cruxible_core.storage.sqlite` | PC-F | Temporary donor-parity storage harness | — |
 | `cruxible_core.instance_protocol` | PC-F | Temporary interface, metadata, and integrity harness | — |
-| `cruxible_core.governance.actors` | PC-A1 | Governed identity until principal context lands | `cruxible_core.playbill.donors.actors` |
 
 The unserved lifecycle/group/feedback service code is behavior corpus, not a
 hidden product surface. Its operation names live in
@@ -232,6 +231,7 @@ tests/goldens/playbill/projection-v1.json
 tests/goldens/playbill/semantic-genesis-v1.json
 tests/goldens/playbill/served-surface-dp0b-v1.json
 tests/goldens/playbill/settlement-roots-v1.json
+tests/goldens/playbill/subject-v1.json
 tests/goldens/state_cross_section/car_parts_state_diff.json
 ```
 
