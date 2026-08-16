@@ -121,6 +121,7 @@ class PlaybillProposalReview(BaseModel):
     settlement_base: PlaybillAcceptedCoordinate
     base_oid: str
     complete_members: list[dict[str, Any]]
+    members: list[dict[str, Any]]
     governance: dict[str, Any]
     provenance: dict[str, Any]
     attestation_coverage: dict[str, Any]

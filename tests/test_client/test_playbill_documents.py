@@ -57,6 +57,7 @@ def _review() -> dict[str, Any]:
         "settlement_base": COORDINATE,
         "base_oid": COORDINATE["git_oid"],
         "complete_members": [],
+        "members": [],
         "governance": {},
         "provenance": {},
         "attestation_coverage": {"coverage": "containing_change_set"},
